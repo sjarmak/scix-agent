@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "requests>=2.31",
     "psycopg[binary]>=3.1",
+    "psycopg-pool>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -13,6 +14,16 @@ dev = [
     "pytest>=8.0",
     "black>=24.0",
     "ruff>=0.3",
+]
+embed = [
+    "transformers>=4.36",
+    "torch>=2.1",
+]
+search = [
+    "sentence-transformers>=2.6",
+]
+mcp = [
+    "mcp>=1.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -29,3 +40,7 @@ select = ["E", "F", "I", "W"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "integration: tests requiring a running scix database",
+]

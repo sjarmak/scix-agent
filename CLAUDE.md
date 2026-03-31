@@ -9,7 +9,7 @@ AI/ML experiments on a large scientific literature corpus (NASA ADS metadata). G
 - **Language**: Python 3
 - **Data source**: NASA ADS API (v1)
 - **Data format**: JSONL (some gzip/xz compressed)
-- **Database**: TBD (research phase — candidates include PostgreSQL + pgvector, others under evaluation)
+- **Database**: PostgreSQL 16 + pgvector 0.6.0
 
 ## Data
 
@@ -29,8 +29,19 @@ Each record contains: bibcode, title, abstract, authors, affiliations, keywords,
 ## Project Structure
 
 ```
-ads_metadata_year_*.py    — ADS API harvest scripts (by year range)
-ads_metadata_by_year_picard/  — Raw JSONL data files
+src/scix/                     — Python package
+  field_mapping.py            — JSONL→SQL field mapping + transform_record()
+  db.py                       — DB helpers (connection, IndexManager, IngestLog)
+  ingest.py                   — Ingestion pipeline (JSONL→PostgreSQL via COPY)
+scripts/
+  setup_db.sh                 — Idempotent database creation + schema application
+  ingest.py                   — CLI for ingestion pipeline
+migrations/
+  001_initial_schema.sql      — papers, citation_edges, paper_embeddings, extractions
+  002_ingest_log.sql          — Ingestion progress tracking
+tests/                        — pytest suite (53 tests)
+ads_metadata_year_*.py        — ADS API harvest scripts (by year range)
+ads_metadata_by_year_picard/  — Raw JSONL data files (~100GB)
 ```
 
 ## Security

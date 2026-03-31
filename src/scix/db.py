@@ -1,0 +1,157 @@
+"""Database helpers: connection, index management, and ingestion log."""
+
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import dataclass
+
+import psycopg
+from psycopg import sql
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_DSN = os.environ.get("SCIX_DSN", "dbname=scix")
+
+
+def get_connection(dsn: str | None = None, autocommit: bool = False) -> psycopg.Connection:
+    """Open a connection to the scix database."""
+    conn = psycopg.connect(dsn or DEFAULT_DSN)
+    conn.autocommit = autocommit
+    return conn
+
+
+@dataclass(frozen=True)
+class IndexDef:
+    """A stored index definition for drop/recreate cycles."""
+
+    name: str
+    table: str
+    definition: str  # full CREATE INDEX statement
+
+
+class IndexManager:
+    """Drop and recreate non-PK indexes on a table for bulk load performance."""
+
+    def __init__(self, conn: psycopg.Connection, table: str = "papers") -> None:
+        self._conn = conn
+        self._table = table
+
+    def get_non_pk_indexes(self) -> list[IndexDef]:
+        """Read all non-primary-key index definitions from pg_indexes."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT i.indexname, i.indexdef
+                FROM pg_indexes i
+                LEFT JOIN pg_constraint c
+                    ON c.conname = i.indexname AND c.conrelid = i.tablename::regclass
+                WHERE i.tablename = %s
+                  AND i.schemaname = 'public'
+                  AND (c.contype IS NULL OR c.contype != 'p')
+                """,
+                (self._table,),
+            )
+            return [
+                IndexDef(name=row[0], table=self._table, definition=row[1])
+                for row in cur.fetchall()
+            ]
+
+    def drop_indexes(self) -> list[IndexDef]:
+        """Drop all non-PK indexes on the table. Returns definitions for recreate."""
+        indexes = self.get_non_pk_indexes()
+        with self._conn.cursor() as cur:
+            for idx in indexes:
+                logger.info("Dropping index %s", idx.name)
+                cur.execute(sql.SQL("DROP INDEX IF EXISTS {}").format(sql.Identifier(idx.name)))
+        self._conn.commit()
+        return indexes
+
+    def recreate_indexes(self, indexes: list[IndexDef]) -> None:
+        """Recreate indexes from stored definitions."""
+        with self._conn.cursor() as cur:
+            for idx in indexes:
+                logger.info("Creating index %s", idx.name)
+                cur.execute(idx.definition)
+        self._conn.commit()
+
+
+class IngestLog:
+    """Track ingestion progress per file for resumability."""
+
+    def __init__(self, conn: psycopg.Connection) -> None:
+        self._conn = conn
+
+    def is_complete(self, filename: str) -> bool:
+        """Check if a file has already been fully ingested."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT status FROM ingest_log WHERE filename = %s",
+                (filename,),
+            )
+            row = cur.fetchone()
+            return row is not None and row[0] == "complete"
+
+    def start(self, filename: str) -> None:
+        """Mark a file as in-progress. Resets counters if re-ingesting."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO ingest_log (filename, status, started_at)
+                VALUES (%s, 'in_progress', NOW())
+                ON CONFLICT (filename) DO UPDATE SET
+                    status = 'in_progress',
+                    records_loaded = 0,
+                    errors_skipped = 0,
+                    edges_loaded = 0,
+                    started_at = NOW(),
+                    finished_at = NULL
+                """,
+                (filename,),
+            )
+        self._conn.commit()
+
+    def update_counts(
+        self, filename: str, records: int, errors: int, edges: int
+    ) -> None:
+        """Update cumulative counts for a file."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE ingest_log SET
+                    records_loaded = %s,
+                    errors_skipped = %s,
+                    edges_loaded = %s
+                WHERE filename = %s
+                """,
+                (records, errors, edges, filename),
+            )
+        self._conn.commit()
+
+    def finish(self, filename: str) -> None:
+        """Mark a file as complete."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE ingest_log SET
+                    status = 'complete',
+                    finished_at = NOW()
+                WHERE filename = %s
+                """,
+                (filename,),
+            )
+        self._conn.commit()
+
+    def mark_failed(self, filename: str) -> None:
+        """Mark a file as failed."""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE ingest_log SET
+                    status = 'failed',
+                    finished_at = NOW()
+                WHERE filename = %s
+                """,
+                (filename,),
+            )
+        self._conn.commit()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from typing import Literal
 
 import psycopg
 from psycopg import sql
@@ -19,6 +20,62 @@ def get_connection(dsn: str | None = None, autocommit: bool = False) -> psycopg.
     conn = psycopg.connect(dsn or DEFAULT_DSN)
     conn.autocommit = autocommit
     return conn
+
+
+# ---------------------------------------------------------------------------
+# pgvector version detection and iterative scan support
+# ---------------------------------------------------------------------------
+
+
+def get_pgvector_version(conn: psycopg.Connection) -> tuple[int, ...] | None:
+    """Return the installed pgvector version as a tuple, e.g. (0, 8, 0).
+
+    Returns None if the vector extension is not installed.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return tuple(int(x) for x in row[0].split("."))
+
+
+def supports_iterative_scan(conn: psycopg.Connection) -> bool:
+    """Check if the installed pgvector supports iterative index scans (>=0.8.0)."""
+    version = get_pgvector_version(conn)
+    if version is None:
+        return False
+    return version >= (0, 8, 0)
+
+
+IterativeScanMode = Literal["off", "relaxed_order", "strict_order"]
+
+
+def configure_iterative_scan(
+    conn: psycopg.Connection,
+    mode: IterativeScanMode = "relaxed_order",
+) -> bool:
+    """Enable iterative index scans for the current transaction (pgvector 0.8.0+).
+
+    Uses SET LOCAL so the setting applies only to the current transaction and
+    is automatically reverted on COMMIT/ROLLBACK.
+
+    Args:
+        conn: Database connection (must NOT be in autocommit mode).
+        mode: Scan mode — "relaxed_order" (best recall), "strict_order"
+              (exact ordering), or "off" (disable).
+
+    Returns True if the setting was applied, False if pgvector < 0.8.0.
+    """
+    if not supports_iterative_scan(conn):
+        logger.debug("pgvector < 0.8.0 — iterative scan not available, skipping")
+        return False
+
+    with conn.cursor() as cur:
+        cur.execute(f"SET LOCAL hnsw.iterative_scan = {mode}")
+
+    logger.debug("Enabled iterative scan mode: %s", mode)
+    return True
 
 
 @dataclass(frozen=True)
@@ -111,9 +168,7 @@ class IngestLog:
             )
         self._conn.commit()
 
-    def update_counts(
-        self, filename: str, records: int, errors: int, edges: int
-    ) -> None:
+    def update_counts(self, filename: str, records: int, errors: int, edges: int) -> None:
         """Update cumulative counts for a file."""
         with self._conn.cursor() as cur:
             cur.execute(

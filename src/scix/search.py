@@ -15,6 +15,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from scix.db import IterativeScanMode, configure_iterative_scan
 from scix.stubs import PaperStub
 
 logger = logging.getLogger(__name__)
@@ -158,6 +159,7 @@ def vector_search(
     filters: SearchFilters | None = None,
     limit: int = 20,
     ef_search: int = 100,
+    iterative_scan: IterativeScanMode | None = None,
 ) -> SearchResult:
     """Approximate nearest neighbor search using pgvector HNSW.
 
@@ -165,15 +167,32 @@ def vector_search(
         query_embedding: 768-dim float vector.
         model_name: Filter to a specific embedding model.
         ef_search: HNSW ef_search parameter (higher = more accurate, slower).
+            When iterative_scan is enabled, ef_search is less critical because
+            pgvector automatically expands the search to satisfy the LIMIT.
+        iterative_scan: pgvector 0.8.0+ iterative scan mode. When set to
+            "relaxed_order" or "strict_order", pgvector automatically expands
+            the index scan until LIMIT results pass the WHERE filters.
+            When None (default), iterative scan is auto-enabled with
+            "relaxed_order" if filters are present and pgvector >= 0.8.0.
     """
     t0 = time.perf_counter()
 
     vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
     filter_clause, filter_params = (filters or SearchFilters()).to_where_clause("p")
 
-    # Tune HNSW probe depth for this transaction
     with conn.cursor() as cur:
+        # Tune HNSW probe depth for this transaction
         cur.execute(f"SET LOCAL hnsw.ef_search = {int(ef_search)}")
+
+    # Auto-enable iterative scan for filtered queries on pgvector >= 0.8.0
+    has_filters = bool(filter_clause)
+    scan_mode = iterative_scan
+    if scan_mode is None and has_filters:
+        scan_mode = "relaxed_order"
+
+    iterative_applied = False
+    if scan_mode is not None:
+        iterative_applied = configure_iterative_scan(conn, mode=scan_mode)
 
     query = f"""
         SELECT {STUB_COLUMNS},
@@ -203,6 +222,7 @@ def vector_search(
         papers=papers,
         total=len(papers),
         timing_ms={"vector_ms": vector_ms},
+        metadata={"iterative_scan": iterative_applied},
     )
 
 
@@ -272,9 +292,7 @@ def hybrid_search(
     timing: dict[str, float] = {}
 
     # Lexical search
-    lex_result = lexical_search(
-        conn, query_text, filters=filters, limit=lexical_limit
-    )
+    lex_result = lexical_search(conn, query_text, filters=filters, limit=lexical_limit)
     timing["lexical_ms"] = lex_result.timing_ms["lexical_ms"]
 
     results_lists: list[list[dict[str, Any]]] = [lex_result.papers]
@@ -328,9 +346,7 @@ class CrossEncoderReranker:
     Batches all candidates in a single forward pass.
     """
 
-    def __init__(
-        self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-12-v2"
-    ) -> None:
+    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-12-v2") -> None:
         self._model_name = model_name
         self._model: Any = None
 

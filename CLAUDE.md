@@ -9,7 +9,7 @@ AI/ML experiments on a large scientific literature corpus (NASA ADS metadata). G
 - **Language**: Python 3
 - **Data source**: NASA ADS API (v1)
 - **Data format**: JSONL (some gzip/xz compressed)
-- **Database**: PostgreSQL 16 + pgvector 0.6.0
+- **Database**: PostgreSQL 16 + pgvector 0.6.0+ (migration 005 upgrades to 0.8.0+ for iterative scans)
 
 ## Data
 

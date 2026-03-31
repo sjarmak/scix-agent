@@ -1,3 +1,36 @@
+# Data files
+*.jsonl
+*.jsonl.gz
+*.jsonl.xz
+ads_metadata_by_year_picard/
+ads_metadata_by_year_full/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
 
 # Beads / Dolt files (added by bd init)
 .dolt/

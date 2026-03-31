@@ -1,0 +1,47 @@
+# SciX Experiments
+
+## Purpose
+
+AI/ML experiments on a large scientific literature corpus (NASA ADS metadata). Goal: make scientific knowledge navigable by agents using hybrid retrieval (semantic + structural + symbolic).
+
+## Tech Stack
+
+- **Language**: Python 3
+- **Data source**: NASA ADS API (v1)
+- **Data format**: JSONL (some gzip/xz compressed)
+- **Database**: TBD (research phase — candidates include PostgreSQL + pgvector, others under evaluation)
+
+## Data
+
+~100GB of ADS metadata across 6 years in `ads_metadata_by_year_picard/`:
+
+| Year | Records | Format    |
+| ---- | ------- | --------- |
+| 2021 | ~1.1M   | .jsonl.xz |
+| 2022 | ~1.1M   | .jsonl    |
+| 2023 | ~1.2M   | .jsonl    |
+| 2024 | ~1.2M   | .jsonl.gz |
+| 2025 | ~430K   | .jsonl    |
+| 2026 | 21      | .jsonl.gz |
+
+Each record contains: bibcode, title, abstract, authors, affiliations, keywords, citations, references, DOIs, arxiv_class, doctype, and more (~40 fields).
+
+## Project Structure
+
+```
+ads_metadata_year_*.py    — ADS API harvest scripts (by year range)
+ads_metadata_by_year_picard/  — Raw JSONL data files
+```
+
+## Security
+
+- ADS API key must be in `ADS_API_KEY` env var, never hardcoded
+- Add `.env` to `.gitignore`
+- Data files (_.jsonl, _.jsonl.gz, \*.jsonl.xz) should be in `.gitignore`
+
+## Conventions
+
+- Use `pytest` for testing
+- Use `black` + `ruff` for formatting/linting
+- Type annotations on all function signatures
+- Immutable data structures preferred (frozen dataclasses, NamedTuples)

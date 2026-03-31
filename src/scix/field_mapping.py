@@ -5,6 +5,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
+
+def _sanitize_text(val: str | None) -> str | None:
+    """Remove null bytes that PostgreSQL rejects in text columns."""
+    if val is None:
+        return None
+    return val.replace("\x00", "")
+
 # Column order for COPY INTO papers. Must match the INSERT/COPY column list exactly.
 COLUMN_ORDER: tuple[str, ...] = (
     "bibcode",
@@ -95,14 +102,17 @@ def transform_record(rec: dict[str, Any]) -> tuple[tuple[Any, ...], list[tuple[s
 
     row: dict[str, Any] = dict.fromkeys(COLUMN_ORDER)
 
-    # Direct text fields (bibcode already validated above, written here via the loop)
+    # Direct text fields — sanitize to strip null bytes PostgreSQL rejects
     for field in DIRECT_TEXT_FIELDS:
-        row[field] = rec.get(field)
+        row[field] = _sanitize_text(rec.get(field))
 
-    # Direct array fields
+    # Direct array fields — sanitize string elements within arrays
     for field in DIRECT_ARRAY_FIELDS:
         val = rec.get(field)
-        row[field] = val if isinstance(val, list) else None
+        if isinstance(val, list):
+            row[field] = [_sanitize_text(v) if isinstance(v, str) else v for v in val]
+        else:
+            row[field] = None
 
     # Direct integer fields (guard against non-numeric values in source data)
     for field in DIRECT_INT_FIELDS:
@@ -116,15 +126,18 @@ def transform_record(rec: dict[str, Any]) -> tuple[tuple[Any, ...], list[tuple[s
     # Renamed array fields: author -> authors, aff -> affiliations, keyword -> keywords
     for jsonl_name, sql_name in RENAMES.items():
         val = rec.get(jsonl_name)
-        row[sql_name] = val if isinstance(val, list) else None
+        if isinstance(val, list):
+            row[sql_name] = [_sanitize_text(v) if isinstance(v, str) else v for v in val]
+        else:
+            row[sql_name] = None
 
     # Special transforms
     # title: list[str] in JSONL -> first element as str
     title_val = rec.get("title")
     if isinstance(title_val, list) and title_val:
-        row["title"] = title_val[0]
+        row["title"] = _sanitize_text(title_val[0])
     elif isinstance(title_val, str):
-        row["title"] = title_val
+        row["title"] = _sanitize_text(title_val)
     else:
         row["title"] = None
 
@@ -134,8 +147,11 @@ def transform_record(rec: dict[str, Any]) -> tuple[tuple[Any, ...], list[tuple[s
     except (ValueError, TypeError):
         row["year"] = None
 
-    # Collect unmapped fields into raw JSONB
-    raw_fields = {k: v for k, v in rec.items() if k not in _MAPPED_JSONL_FIELDS}
+    # Collect unmapped fields into raw JSONB (sanitize string values before serialization)
+    raw_fields = {}
+    for k, v in rec.items():
+        if k not in _MAPPED_JSONL_FIELDS:
+            raw_fields[k] = _sanitize_text(v) if isinstance(v, str) else v
     row["raw"] = json.dumps(raw_fields) if raw_fields else None
 
     # Build the tuple in COLUMN_ORDER

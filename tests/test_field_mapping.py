@@ -165,6 +165,27 @@ class TestTransformRecord:
         with pytest.raises(ValueError, match="missing bibcode"):
             transform_record({"bibcode": "", "title": ["Empty"], "year": "2024"})
 
+    def test_null_bytes_stripped_from_text(self) -> None:
+        rec = {
+            **MINIMAL_RECORD,
+            "abstract": "Text with \x00null\x00 bytes",
+            "title": ["Title\x00with\x00nulls"],
+        }
+        row, _ = transform_record(rec)
+        assert row[COL["abstract"]] == "Text with null bytes"
+        assert row[COL["title"]] == "Titlewithnulls"
+
+    def test_null_bytes_stripped_from_arrays(self) -> None:
+        rec = {**MINIMAL_RECORD, "author": ["Author\x00, A."]}
+        row, _ = transform_record(rec)
+        assert row[COL["authors"]] == ["Author, A."]
+
+    def test_null_bytes_stripped_from_raw_jsonb(self) -> None:
+        rec = {**MINIMAL_RECORD, "body": "Full\x00text"}
+        row, _ = transform_record(rec)
+        raw = json.loads(row[COL["raw"]])
+        assert "\x00" not in raw["body"]
+
 
 class TestEdgeExtraction:
     def test_edges_from_references(self) -> None:

@@ -201,6 +201,7 @@ class IngestPipeline:
 
         except Exception:
             logger.exception("Failed ingesting %s", filename)
+            conn.rollback()  # Clear error state so mark_failed can execute
             ingest_log.mark_failed(filename)
             raise
 

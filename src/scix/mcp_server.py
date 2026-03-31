@@ -1,4 +1,4 @@
-"""MCP server exposing 7 core tools for agent navigation of the SciX corpus.
+"""MCP server exposing 8 tools for agent navigation of the SciX corpus.
 
 Uses the `mcp` Python SDK to register tools. Each tool is a thin wrapper
 around functions in search.py. Connection pooling via psycopg.pool for
@@ -14,12 +14,15 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from contextlib import contextmanager
 from typing import Any, Generator
 
 import psycopg
 
+from scix import search
 from scix.db import DEFAULT_DSN
+from scix.embed import _model_cache, clear_model_cache, embed_batch, load_model
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +96,7 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "get_references": float(os.environ.get("SCIX_TIMEOUT_REFERENCES", "10")),
     "get_author_papers": float(os.environ.get("SCIX_TIMEOUT_AUTHOR", "15")),
     "facet_counts": float(os.environ.get("SCIX_TIMEOUT_FACETS", "10")),
+    "health_check": float(os.environ.get("SCIX_TIMEOUT_HEALTH", "3")),
 }
 
 
@@ -111,9 +115,7 @@ def _set_timeout(conn: psycopg.Connection, tool_name: str) -> None:
 
 def _result_to_json(result: Any) -> str:
     """Serialize a SearchResult to JSON with timing metadata."""
-    from scix.search import SearchResult
-
-    if isinstance(result, SearchResult):
+    if isinstance(result, search.SearchResult):
         output: dict[str, Any] = {
             "papers": result.papers,
             "total": result.total,
@@ -125,13 +127,11 @@ def _result_to_json(result: Any) -> str:
     return json.dumps(result, indent=2, default=str)
 
 
-def _parse_filters(filters: dict[str, Any] | None = None):
+def _parse_filters(filters: dict[str, Any] | None = None) -> search.SearchFilters:
     """Parse a filter dict into a SearchFilters instance."""
-    from scix.search import SearchFilters
-
     if not filters:
-        return SearchFilters()
-    return SearchFilters(
+        return search.SearchFilters()
+    return search.SearchFilters(
         year_min=filters.get("year_min"),
         year_max=filters.get("year_max"),
         arxiv_class=filters.get("arxiv_class"),
@@ -141,20 +141,62 @@ def _parse_filters(filters: dict[str, Any] | None = None):
 
 
 # ---------------------------------------------------------------------------
+# Model pre-loading and lifecycle
+# ---------------------------------------------------------------------------
+
+
+def _init_model_impl() -> None:
+    """Eagerly load SPECTER2 model into cache at server startup.
+
+    Non-fatal: if torch/transformers are not installed, semantic_search
+    will be unavailable but all other tools still work.
+    """
+    try:
+        device = os.environ.get("SCIX_EMBED_DEVICE", "cpu")
+        load_model("specter2", device=device)
+        logger.info("SPECTER2 model pre-loaded on %s", device)
+    except ImportError:
+        logger.warning(
+            "torch/transformers not installed — semantic_search will be unavailable. "
+            "Install with: pip install transformers torch"
+        )
+    except Exception:
+        logger.exception("Failed to pre-load SPECTER2 model")
+
+
+def _shutdown() -> None:
+    """Clean up resources: close connection pool, clear model cache."""
+    global _pool
+    clear_model_cache()
+    if _pool is not None:
+        try:
+            _pool.close()
+            logger.info("Connection pool closed")
+        except Exception:
+            logger.exception("Error closing connection pool")
+        _pool = None
+
+
+# ---------------------------------------------------------------------------
 # MCP server creation
 # ---------------------------------------------------------------------------
 
 
 def create_server():
-    """Create and configure the MCP server with all 7 tools."""
+    """Create and configure the MCP server with 8 tools (7 core + health_check).
+
+    Eagerly pre-loads the SPECTER2 model so semantic_search is fast from
+    the first call.
+    """
     try:
         from mcp.server import Server
         from mcp.types import TextContent, Tool
     except ImportError:
         raise ImportError(
-            "mcp SDK is required for the MCP server. "
-            "Install with: pip install mcp"
+            "mcp SDK is required for the MCP server. " "Install with: pip install mcp"
         )
+
+    _init_model_impl()
 
     server = Server("scix")
 
@@ -287,8 +329,12 @@ def create_server():
                         "field": {
                             "type": "string",
                             "enum": [
-                                "year", "doctype", "arxiv_class",
-                                "database", "bibgroup", "property",
+                                "year",
+                                "doctype",
+                                "arxiv_class",
+                                "database",
+                                "bibgroup",
+                                "property",
                             ],
                         },
                         "filters": {
@@ -303,6 +349,17 @@ def create_server():
                         "limit": {"type": "integer", "default": 50},
                     },
                     "required": ["field"],
+                },
+            ),
+            Tool(
+                name="health_check",
+                description=(
+                    "Check server health: database connectivity, model cache status, "
+                    "and connection pool info."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
                 },
             ),
         ]
@@ -324,52 +381,47 @@ def create_server():
 
 def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) -> str:
     """Route a tool call to the appropriate search function."""
-    from scix import search
+    t_start = time.monotonic()
+    logger.info("tool_call: %s args=%s", name, list(args.keys()))
 
     if name == "semantic_search":
-        # Embed the query text to get a vector for semantic search
         try:
-            from scix.embed import embed_batch, load_model
-
-            model, tokenizer = load_model("specter2", device="cpu")
+            device = os.environ.get("SCIX_EMBED_DEVICE", "cpu")
+            model, tokenizer = load_model("specter2", device=device)
             vectors = embed_batch(model, tokenizer, [args["query"]], batch_size=1)
             query_embedding = vectors[0]
         except ImportError:
-            return json.dumps({
-                "error": "transformers/torch not installed for embedding",
-                "hint": "pip install transformers torch",
-            })
-
-        filters = _parse_filters(args.get("filters"))
-        limit = args.get("limit", 10)
-        result = search.vector_search(
-            conn, query_embedding, model_name="specter2", filters=filters, limit=limit
-        )
-        return _result_to_json(result)
+            result_json = json.dumps(
+                {
+                    "error": "transformers/torch not installed for embedding",
+                    "hint": "pip install transformers torch",
+                }
+            )
+        else:
+            filters = _parse_filters(args.get("filters"))
+            limit = args.get("limit", 10)
+            result = search.vector_search(
+                conn, query_embedding, model_name="specter2", filters=filters, limit=limit
+            )
+            result_json = _result_to_json(result)
 
     elif name == "keyword_search":
         filters = _parse_filters(args.get("filters"))
         limit = args.get("limit", 10)
-        result = search.lexical_search(
-            conn, args["terms"], filters=filters, limit=limit
-        )
-        return _result_to_json(result)
+        result = search.lexical_search(conn, args["terms"], filters=filters, limit=limit)
+        result_json = _result_to_json(result)
 
     elif name == "get_paper":
         result = search.get_paper(conn, args["bibcode"])
-        return _result_to_json(result)
+        result_json = _result_to_json(result)
 
     elif name == "get_citations":
-        result = search.get_citations(
-            conn, args["bibcode"], limit=args.get("limit", 20)
-        )
-        return _result_to_json(result)
+        result = search.get_citations(conn, args["bibcode"], limit=args.get("limit", 20))
+        result_json = _result_to_json(result)
 
     elif name == "get_references":
-        result = search.get_references(
-            conn, args["bibcode"], limit=args.get("limit", 20)
-        )
-        return _result_to_json(result)
+        result = search.get_references(conn, args["bibcode"], limit=args.get("limit", 20))
+        result_json = _result_to_json(result)
 
     elif name == "get_author_papers":
         result = search.get_author_papers(
@@ -378,18 +430,41 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
             year_min=args.get("year_min"),
             year_max=args.get("year_max"),
         )
-        return _result_to_json(result)
+        result_json = _result_to_json(result)
 
     elif name == "facet_counts":
         filters = _parse_filters(args.get("filters"))
         limit = args.get("limit", 50)
-        result = search.facet_counts(
-            conn, args["field"], filters=filters, limit=limit
-        )
-        return _result_to_json(result)
+        result = search.facet_counts(conn, args["field"], filters=filters, limit=limit)
+        result_json = _result_to_json(result)
+
+    elif name == "health_check":
+        status: dict[str, Any] = {"pool": "no_pool", "model_cached": False, "db": "unknown"}
+
+        # Check model cache
+        status["model_cached"] = len(_model_cache) > 0
+        status["cached_models"] = [f"{k[0]}@{k[1]}" for k in _model_cache]
+
+        # Check pool (inspect directly, don't call _get_pool() which would create it)
+        status["pool"] = "active" if _pool is not None else "no_pool"
+
+        # Check DB connectivity
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+            status["db"] = "ok"
+        except Exception:
+            status["db"] = "error"
+
+        result_json = json.dumps(status, indent=2)
 
     else:
-        return json.dumps({"error": f"Unknown tool: {name}"})
+        result_json = json.dumps({"error": f"Unknown tool: {name}"})
+
+    elapsed_ms = (time.monotonic() - t_start) * 1000
+    logger.info("tool_done: %s elapsed=%.1fms", name, elapsed_ms)
+    return result_json
 
 
 # ---------------------------------------------------------------------------
@@ -402,12 +477,18 @@ async def main() -> None:
     from mcp.server.stdio import stdio_server
 
     server = create_server()
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream)
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(read_stream, write_stream)
+    finally:
+        _shutdown()
 
 
 if __name__ == "__main__":
     import asyncio
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     asyncio.run(main())

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from scix.embed import EmbeddingInput, _vec_to_pgvector, prepare_input
+from scix.embed import _vec_to_pgvector, prepare_input
 
 
 class TestPrepareInput:
@@ -66,3 +66,81 @@ class TestVecToPgvector:
     def test_single_element(self) -> None:
         result = _vec_to_pgvector([0.5])
         assert result == "[0.5]"
+
+
+class TestLoadModelCache:
+    """Tests for load_model caching behavior."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_ml_imports(self):
+        """Patch torch/transformers imports and clear model cache around each test."""
+        from unittest.mock import MagicMock, patch
+
+        from scix.embed import _model_cache
+
+        _model_cache.clear()
+
+        mock_model = MagicMock()
+        mock_model.to.return_value = mock_model
+
+        self.mock_auto_model = MagicMock()
+        self.mock_auto_model.from_pretrained.return_value = mock_model
+        self.mock_auto_tokenizer = MagicMock()
+        self.mock_auto_tokenizer.from_pretrained.return_value = MagicMock()
+        self.mock_torch = MagicMock()
+        self.mock_torch.cuda.is_available.return_value = False
+
+        fake_transformers = type(
+            "mod",
+            (),
+            {"AutoModel": self.mock_auto_model, "AutoTokenizer": self.mock_auto_tokenizer},
+        )()
+
+        with patch.dict(
+            "sys.modules",
+            {"transformers": fake_transformers, "torch": self.mock_torch},
+        ):
+            yield
+
+        _model_cache.clear()
+
+    def test_cache_returns_same_objects(self) -> None:
+        """Second call with same args should return cached (model, tokenizer)."""
+        from scix.embed import load_model
+
+        result1 = load_model("specter2", device="cpu")
+        result2 = load_model("specter2", device="cpu")
+
+        assert result1 is result2
+        assert self.mock_auto_model.from_pretrained.call_count == 1
+
+    def test_auto_resolves_to_cpu_shares_cache(self) -> None:
+        """auto→cpu on non-GPU machine should share cache with explicit cpu."""
+        from scix.embed import _model_cache, load_model
+
+        load_model("specter2", device="cpu")
+        load_model("specter2", device="auto")
+
+        # auto resolves to cpu (mock has cuda.is_available=False),
+        # so both calls share the same cache entry
+        assert len(_model_cache) == 1
+        assert self.mock_auto_model.from_pretrained.call_count == 1
+
+    def test_clear_model_cache(self) -> None:
+        """clear_model_cache should empty the cache."""
+        from scix.embed import _model_cache, clear_model_cache, load_model
+
+        load_model("specter2", device="cpu")
+        assert len(_model_cache) == 1
+
+        clear_model_cache()
+        assert len(_model_cache) == 0
+
+    def test_unknown_model_raises(self) -> None:
+        """Unknown model name should raise ValueError, not touch cache."""
+        from scix.embed import _model_cache, load_model
+
+        with pytest.raises(ValueError, match="Unknown model"):
+            load_model("nonexistent_model", device="cpu")
+
+        assert len(_model_cache) == 0

@@ -18,8 +18,14 @@ from scix.db import get_connection
 
 logger = logging.getLogger(__name__)
 
-# Stub columns for the SELECT when fetching papers to embed
-_PAPER_COLS = "bibcode, title, abstract"
+# Module-level model cache: (model_name, device) -> (model, tokenizer)
+_model_cache: dict[tuple[str, str], tuple[Any, Any]] = {}
+
+
+def clear_model_cache() -> None:
+    """Clear the cached models, freeing memory."""
+    _model_cache.clear()
+    logger.info("Model cache cleared")
 
 
 @dataclass(frozen=True)
@@ -61,6 +67,8 @@ def load_model(model_name: str = "specter2", device: str = "cpu") -> tuple[Any, 
     """Load SPECTER2 model and tokenizer via transformers.
 
     Returns (model, tokenizer) tuple. The model is moved to the specified device.
+    Results are cached in _model_cache so subsequent calls with the same
+    (model_name, device) return instantly.
     """
     try:
         import torch
@@ -71,6 +79,16 @@ def load_model(model_name: str = "specter2", device: str = "cpu") -> tuple[Any, 
             "Install with: pip install transformers torch"
         )
 
+    # Resolve "auto" before forming cache key so that auto→cpu and cpu
+    # share the same cache entry on non-GPU machines.
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    cache_key = (model_name, device)
+    if cache_key in _model_cache:
+        logger.debug("Model cache hit for %s on %s", model_name, device)
+        return _model_cache[cache_key]
+
     if model_name == "specter2":
         hf_name = "allenai/specter2_base"
     else:
@@ -79,13 +97,13 @@ def load_model(model_name: str = "specter2", device: str = "cpu") -> tuple[Any, 
     logger.info("Loading model %s on %s", hf_name, device)
     tokenizer = AutoTokenizer.from_pretrained(hf_name)
     model = AutoModel.from_pretrained(hf_name)
-
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
     model.eval()
     logger.info("Model loaded on %s", device)
-    return model, tokenizer
+
+    result = (model, tokenizer)
+    _model_cache[cache_key] = result
+    return result
 
 
 def embed_batch(
@@ -204,32 +222,12 @@ def store_embeddings(
     return len(inputs)
 
 
-def fetch_unembedded_bibcodes(
-    conn: psycopg.Connection,
-    model_name: str,
-    limit: int | None = None,
-) -> list[tuple[str, str | None, str | None]]:
-    """Fetch papers that don't yet have embeddings for the given model.
-
-    Returns list of (bibcode, title, abstract) tuples.
-    """
-    query = """
-        SELECT p.bibcode, p.title, p.abstract
-        FROM papers p
-        LEFT JOIN paper_embeddings pe
-            ON p.bibcode = pe.bibcode AND pe.model_name = %s
-        WHERE pe.bibcode IS NULL
-          AND p.title IS NOT NULL
-        ORDER BY p.bibcode
-    """
-    params: list[Any] = [model_name]
-    if limit is not None:
-        query += " LIMIT %s"
-        params.append(limit)
-
-    with conn.cursor() as cur:
-        cur.execute(query, params)
-        return cur.fetchall()
+_UNEMBEDDED_WHERE = """
+    FROM papers p
+    LEFT JOIN paper_embeddings pe
+        ON p.bibcode = pe.bibcode AND pe.model_name = %s
+    WHERE pe.bibcode IS NULL AND p.title IS NOT NULL
+"""
 
 
 def run_embedding_pipeline(
@@ -262,14 +260,7 @@ def run_embedding_pipeline(
     try:
         # Count papers needing embeddings
         with read_conn.cursor() as cur:
-            count_sql = """
-                SELECT count(*)
-                FROM papers p
-                LEFT JOIN paper_embeddings pe
-                    ON p.bibcode = pe.bibcode AND pe.model_name = %s
-                WHERE pe.bibcode IS NULL AND p.title IS NOT NULL
-            """
-            cur.execute(count_sql, [model_name])
+            cur.execute("SELECT count(*) " + _UNEMBEDDED_WHERE, [model_name])
             total_to_embed = cur.fetchone()[0]
 
         if total_to_embed == 0:
@@ -296,14 +287,9 @@ def run_embedding_pipeline(
         buffer_inputs: list[EmbeddingInput] = []
         buffer_vectors: list[list[float]] = []
 
-        fetch_sql = """
-            SELECT p.bibcode, p.title, p.abstract
-            FROM papers p
-            LEFT JOIN paper_embeddings pe
-                ON p.bibcode = pe.bibcode AND pe.model_name = %s
-            WHERE pe.bibcode IS NULL AND p.title IS NOT NULL
-            ORDER BY p.bibcode
-        """
+        fetch_sql = (
+            "SELECT p.bibcode, p.title, p.abstract " + _UNEMBEDDED_WHERE + " ORDER BY p.bibcode"
+        )
         fetch_params: list[Any] = [model_name]
         if limit is not None:
             fetch_sql += " LIMIT %s"

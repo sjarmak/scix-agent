@@ -57,9 +57,7 @@ def prepare_input(bibcode: str, title: str | None, abstract: str | None) -> Embe
     )
 
 
-def load_model(
-    model_name: str = "specter2", device: str = "cpu"
-) -> tuple[Any, Any]:
+def load_model(model_name: str = "specter2", device: str = "cpu") -> tuple[Any, Any]:
     """Load SPECTER2 model and tokenizer via transformers.
 
     Returns (model, tokenizer) tuple. The model is moved to the specified device.
@@ -151,7 +149,13 @@ def store_embeddings_copy(
         ) as copy:
             for inp, vec in zip(inputs, vectors):
                 copy.write_row(
-                    (inp.bibcode, model_name, _vec_to_pgvector(vec), inp.input_type, inp.source_hash)
+                    (
+                        inp.bibcode,
+                        model_name,
+                        _vec_to_pgvector(vec),
+                        inp.input_type,
+                        inp.source_hash,
+                    )
                 )
 
         cur.execute(
@@ -235,8 +239,12 @@ def run_embedding_pipeline(
     device: str = "cpu",
     limit: int | None = None,
     use_copy: bool = True,
+    write_buffer: int = 2000,
 ) -> int:
-    """Full embedding pipeline: fetch unembedded papers, embed, store.
+    """Full embedding pipeline: stream unembedded papers, embed, store.
+
+    Uses a server-side cursor to avoid loading all 5M papers into memory.
+    Accumulates embeddings in a write buffer before flushing to DB via COPY.
 
     Args:
         dsn: Database connection string.
@@ -245,36 +253,31 @@ def run_embedding_pipeline(
         device: Torch device ('cpu', 'cuda', 'auto').
         limit: Max papers to embed (None = all).
         use_copy: Use COPY-based bulk writes (faster) vs individual INSERTs.
+        write_buffer: Number of embeddings to accumulate before DB flush.
 
     Returns total number of papers embedded.
     """
-    conn = get_connection(dsn)
+    read_conn = get_connection(dsn)
+    write_conn = get_connection(dsn)
     try:
-        # Fetch papers needing embeddings
-        papers = fetch_unembedded_bibcodes(conn, model_name, limit=limit)
-        if not papers:
+        # Count papers needing embeddings
+        with read_conn.cursor() as cur:
+            count_sql = """
+                SELECT count(*)
+                FROM papers p
+                LEFT JOIN paper_embeddings pe
+                    ON p.bibcode = pe.bibcode AND pe.model_name = %s
+                WHERE pe.bibcode IS NULL AND p.title IS NOT NULL
+            """
+            cur.execute(count_sql, [model_name])
+            total_to_embed = cur.fetchone()[0]
+
+        if total_to_embed == 0:
             logger.info("No papers need embedding for model %s", model_name)
             return 0
 
-        logger.info("Found %d papers to embed with %s", len(papers), model_name)
-
-        # Prepare inputs
-        inputs: list[EmbeddingInput] = []
-        for bibcode, title, abstract in papers:
-            inp = prepare_input(bibcode, title, abstract)
-            if inp is not None:
-                inputs.append(inp)
-
-        if not inputs:
-            logger.info("No valid inputs after preparation")
-            return 0
-
-        logger.info(
-            "%d inputs prepared (%d title_abstract, %d title_only)",
-            len(inputs),
-            sum(1 for i in inputs if i.input_type == "title_abstract"),
-            sum(1 for i in inputs if i.input_type == "title_only"),
-        )
+        actual_total = min(total_to_embed, limit) if limit else total_to_embed
+        logger.info("Found %d papers to embed with %s", actual_total, model_name)
 
         # Load model
         model, tokenizer = load_model(model_name, device=device)
@@ -282,34 +285,96 @@ def run_embedding_pipeline(
         # Pick storage function
         store_fn = store_embeddings_copy if use_copy else store_embeddings
 
-        # Embed in batches
+        # Stream papers via server-side cursor on read_conn,
+        # write embeddings via write_conn (separate connection to avoid
+        # COPY commits closing the server-side cursor).
         total_embedded = 0
+        title_abstract_count = 0
+        title_only_count = 0
         t_start = time.monotonic()
 
-        for batch_start in range(0, len(inputs), batch_size):
-            batch_inputs = inputs[batch_start : batch_start + batch_size]
-            batch_texts = [inp.text for inp in batch_inputs]
+        buffer_inputs: list[EmbeddingInput] = []
+        buffer_vectors: list[list[float]] = []
 
-            vectors = embed_batch(model, tokenizer, batch_texts, batch_size=batch_size)
-            stored = store_fn(conn, batch_inputs, vectors, model_name)
-            total_embedded += stored
+        fetch_sql = """
+            SELECT p.bibcode, p.title, p.abstract
+            FROM papers p
+            LEFT JOIN paper_embeddings pe
+                ON p.bibcode = pe.bibcode AND pe.model_name = %s
+            WHERE pe.bibcode IS NULL AND p.title IS NOT NULL
+            ORDER BY p.bibcode
+        """
+        fetch_params: list[Any] = [model_name]
+        if limit is not None:
+            fetch_sql += " LIMIT %s"
+            fetch_params.append(limit)
 
-            elapsed = time.monotonic() - t_start
-            rate = total_embedded / elapsed if elapsed > 0 else 0
-            logger.info(
-                "Embedded %d/%d (%.0f rec/s)",
-                total_embedded,
-                len(inputs),
-                rate,
-            )
+        with read_conn.cursor(name="embed_cursor") as cur:
+            cur.itersize = batch_size * 4
+            cur.execute(fetch_sql, fetch_params)
+
+            gpu_batch_texts: list[str] = []
+            gpu_batch_inputs: list[EmbeddingInput] = []
+
+            for bibcode, title, abstract in cur:
+                inp = prepare_input(bibcode, title, abstract)
+                if inp is None:
+                    continue
+
+                gpu_batch_texts.append(inp.text)
+                gpu_batch_inputs.append(inp)
+
+                if inp.input_type == "title_abstract":
+                    title_abstract_count += 1
+                else:
+                    title_only_count += 1
+
+                # When GPU batch is full, run inference
+                if len(gpu_batch_texts) >= batch_size:
+                    vectors = embed_batch(model, tokenizer, gpu_batch_texts, batch_size=batch_size)
+                    buffer_inputs.extend(gpu_batch_inputs)
+                    buffer_vectors.extend(vectors)
+                    gpu_batch_texts.clear()
+                    gpu_batch_inputs.clear()
+
+                    # Flush write buffer when large enough
+                    if len(buffer_inputs) >= write_buffer:
+                        stored = store_fn(write_conn, buffer_inputs, buffer_vectors, model_name)
+                        total_embedded += stored
+                        buffer_inputs.clear()
+                        buffer_vectors.clear()
+
+                        elapsed = time.monotonic() - t_start
+                        rate = total_embedded / elapsed if elapsed > 0 else 0
+                        logger.info(
+                            "Embedded %d/%d (%.0f rec/s)",
+                            total_embedded,
+                            actual_total,
+                            rate,
+                        )
+
+            # Process remaining GPU batch
+            if gpu_batch_texts:
+                vectors = embed_batch(model, tokenizer, gpu_batch_texts, batch_size=batch_size)
+                buffer_inputs.extend(gpu_batch_inputs)
+                buffer_vectors.extend(vectors)
+
+            # Flush remaining buffer
+            if buffer_inputs:
+                stored = store_fn(write_conn, buffer_inputs, buffer_vectors, model_name)
+                total_embedded += stored
 
         elapsed = time.monotonic() - t_start
         logger.info(
-            "Embedding complete: %d papers in %.1fs (%.0f rec/s)",
+            "Embedding complete: %d papers in %.1fs (%.0f rec/s) "
+            "(%d title_abstract, %d title_only)",
             total_embedded,
             elapsed,
             total_embedded / elapsed if elapsed > 0 else 0,
+            title_abstract_count,
+            title_only_count,
         )
         return total_embedded
     finally:
-        conn.close()
+        read_conn.close()
+        write_conn.close()

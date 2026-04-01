@@ -587,7 +587,6 @@ def run_pipeline(
     # --- Connect ---
     logger.info("Connecting to database...")
     conn = get_connection(dsn)
-    conn.autocommit = True
 
     # --- Load graph ---
     logger.info("Loading citation graph...")
@@ -655,6 +654,9 @@ def run_pipeline(
     timing["leiden_fine_ms"] = _elapsed_ms(t0)
 
     # --- Store metrics ---
+    # Switch to autocommit so each chunk commits immediately
+    conn.commit()
+    conn.autocommit = True
     logger.info("Storing metrics...")
     t0 = time.perf_counter()
     store_metrics(

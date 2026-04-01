@@ -413,7 +413,7 @@ def store_metrics(
     n = len(id_to_bibcode)
 
     staging_ddl = (
-        "CREATE TEMP TABLE _metrics_staging "
+        "CREATE TEMP TABLE IF NOT EXISTS _metrics_staging "
         "(LIKE paper_metrics INCLUDING DEFAULTS) ON COMMIT DELETE ROWS"
     )
     copy_sql = (

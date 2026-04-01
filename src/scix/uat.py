@@ -29,10 +29,10 @@ RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 RDFS = "http://www.w3.org/2000/01/rdf-schema#"
 UAT_NS = "http://astrothesaurus.org/uat/"
 
-UAT_SKOS_URL = "https://astrothesaurus.org/UAT/UAT-owl-skos.rdf"
+UAT_SKOS_URL = "https://raw.githubusercontent.com/astrothesaurus/UAT/master/UAT.rdf"
 
 # Default download destination
-_DEFAULT_DEST = Path("data/UAT-owl-skos.rdf")
+_DEFAULT_DEST = Path("data/UAT.rdf")
 
 
 @dataclass(frozen=True)
@@ -399,16 +399,16 @@ def map_keywords_exact(conn: psycopg.Connection, batch_size: int = 10_000) -> in
         total += pref_count
         logger.info("Mapped %d papers via preferred labels", pref_count)
 
-        # Match alternate labels
+        # Match alternate labels via materialized flat lookup
         cur.execute("""
             INSERT INTO paper_uat_mappings (bibcode, concept_id, match_type)
-            SELECT DISTINCT p.bibcode, uc.concept_id, 'exact'
+            SELECT DISTINCT p.bibcode, alt_lookup.concept_id, 'exact'
             FROM papers p,
                  LATERAL unnest(p.keywords) AS kw
-            JOIN uat_concepts uc
-                ON lower(kw) = ANY(
-                    SELECT lower(al) FROM unnest(uc.alternate_labels) al
-                )
+            JOIN (
+                SELECT concept_id, lower(al) AS alt_lower
+                FROM uat_concepts, LATERAL unnest(alternate_labels) AS al
+            ) alt_lookup ON lower(kw) = alt_lookup.alt_lower
             WHERE p.keywords IS NOT NULL
             ON CONFLICT DO NOTHING
         """)

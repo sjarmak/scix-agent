@@ -213,15 +213,15 @@ def calibrate_resolution(
     graph: Any,
     target_communities: int,
     tolerance: float = 0.3,
-    low: float = 0.001,
-    high: float = 100.0,
+    low: float = 1e-7,
+    high: float = 1.0,
     max_iter: int = 8,
     seed: int = 42,
 ) -> float:
-    """Binary search for a Leiden resolution that yields ~target_communities.
+    """Binary search (log-scale) for a Leiden resolution yielding ~target_communities.
 
-    Searches the [low, high] interval for a resolution parameter that produces
-    a community count within (1 +/- tolerance) * target_communities.
+    Searches the [low, high] interval on a logarithmic scale for a resolution
+    parameter that produces a community count within (1 +/- tolerance) * target.
 
     Args:
         graph: igraph.Graph (directed; will be converted internally).
@@ -235,11 +235,16 @@ def calibrate_resolution(
     Returns:
         Best resolution found (float).
     """
-    best_res = (low + high) / 2
+    import math
+
+    log_low = math.log10(low)
+    log_high = math.log10(high)
+    best_res = 10 ** ((log_low + log_high) / 2)
     best_diff = float("inf")
 
     for i in range(max_iter):
-        mid = (low + high) / 2
+        log_mid = (log_low + log_high) / 2
+        mid = 10**log_mid
         membership = compute_leiden(graph, resolution=mid, seed=seed)
         n_communities = len(set(membership))
         diff = abs(n_communities - target_communities)
@@ -269,11 +274,11 @@ def calibrate_resolution(
             )
             return mid
 
-        # Binary search direction: more communities -> lower resolution
+        # Binary search direction (log-scale): more communities -> lower resolution
         if n_communities > target_communities:
-            high = mid
+            log_high = log_mid
         else:
-            low = mid
+            log_low = log_mid
 
     logger.warning(
         "Calibration did not converge after %d iterations. " "Best resolution=%.6f (diff=%d)",

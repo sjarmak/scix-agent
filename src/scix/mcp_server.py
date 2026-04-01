@@ -562,7 +562,7 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
         result_json = _result_to_json(result)
 
     elif name == "citation_chain":
-        max_depth = min(args.get("max_depth", 5), 5)  # hard cap at 5
+        max_depth = max(1, min(args.get("max_depth", 5), 5))  # clamp to [1, 5]
         result = search.citation_chain(
             conn,
             args["source_bibcode"],

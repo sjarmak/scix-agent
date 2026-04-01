@@ -437,6 +437,10 @@ def get_paper(conn: psycopg.Connection, bibcode: str) -> SearchResult:
     )
 
 
+_EDGE_COLS = frozenset({"source_bibcode", "target_bibcode"})
+_COUNT_ALIASES = frozenset({"overlap_count", "shared_refs"})
+
+
 def _citation_edge_query(
     conn: psycopg.Connection,
     bibcode: str,
@@ -446,6 +450,9 @@ def _citation_edge_query(
     limit: int,
 ) -> SearchResult:
     """Shared implementation for get_citations and get_references."""
+    assert join_col in _EDGE_COLS, f"invalid join_col: {join_col}"
+    assert where_col in _EDGE_COLS, f"invalid where_col: {where_col}"
+
     t0 = time.perf_counter()
 
     sql = f"""
@@ -566,6 +573,11 @@ def _overlap_query(
     Both queries find papers that share citation edges with the given bibcode,
     differing only in which edge direction is joined and which is filtered.
     """
+    assert join_col in _EDGE_COLS, f"invalid join_col: {join_col}"
+    assert where_col in _EDGE_COLS, f"invalid where_col: {where_col}"
+    assert result_col in _EDGE_COLS, f"invalid result_col: {result_col}"
+    assert count_alias in _COUNT_ALIASES, f"invalid count_alias: {count_alias}"
+
     t0 = time.perf_counter()
 
     sql = f"""
@@ -690,14 +702,16 @@ def citation_chain(
         # Exclusion list is best-effort: nodes discovered within this BFS level
         # are filtered by the Python guard below, not by the DB query.
         exclusion_list = list(visited)
+        row_cap = 2 * max_visited
         sql = """
             SELECT source_bibcode, target_bibcode
             FROM citation_edges
             WHERE source_bibcode = ANY(%s)
               AND target_bibcode != ALL(%s)
+            LIMIT %s
         """
         with conn.cursor() as cur:
-            cur.execute(sql, (frontier, exclusion_list))
+            cur.execute(sql, (frontier, exclusion_list, row_cap))
             edges = cur.fetchall()
 
         next_frontier: list[str] = []
@@ -767,6 +781,7 @@ def temporal_evolution(
     *,
     year_start: int | None = None,
     year_end: int | None = None,
+    ts_config: str = "scix_english",
 ) -> SearchResult:
     """Show temporal trends: citations received by a paper, or publication volume for a query.
 
@@ -808,12 +823,12 @@ def temporal_evolution(
         sql = f"""
             SELECT p.year, COUNT(*) AS count
             FROM papers p
-            WHERE p.tsv @@ plainto_tsquery('scix_english', %s)
+            WHERE p.tsv @@ plainto_tsquery(%s, %s)
             {year_clause}
             GROUP BY p.year
             ORDER BY p.year
         """
-        params = [bibcode_or_query] + year_params
+        params = [ts_config, bibcode_or_query] + year_params
         mode = "publications"
 
     with conn.cursor(row_factory=dict_row) as cur:

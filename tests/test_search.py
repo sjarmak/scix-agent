@@ -220,8 +220,11 @@ def conn():
 
 
 @pytest.fixture(autouse=True)
-def _savepoint(conn):
-    """Wrap each test in a savepoint for isolation."""
+def _savepoint(request, conn):
+    """Wrap integration tests in a savepoint for isolation. No-op for unit tests."""
+    if "integration" not in {m.name for m in request.node.iter_markers()}:
+        yield
+        return
     with conn.cursor() as cur:
         cur.execute("SAVEPOINT test_sp")
     yield

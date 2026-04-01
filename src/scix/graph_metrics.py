@@ -558,6 +558,7 @@ def run_pipeline(
     res_medium: float = 1.0,
     res_fine: float = 0.1,
     seed: int = 42,
+    skip_labels: bool = False,
 ) -> dict[str, float]:
     """Run the full graph metrics pipeline.
 
@@ -586,6 +587,7 @@ def run_pipeline(
     # --- Connect ---
     logger.info("Connecting to database...")
     conn = get_connection(dsn)
+    conn.autocommit = True
 
     # --- Load graph ---
     logger.info("Loading citation graph...")
@@ -668,20 +670,22 @@ def run_pipeline(
     timing["store_metrics_ms"] = _elapsed_ms(t0)
 
     # --- Generate and store community labels ---
-    for res_name, membership in [
-        ("coarse", communities_coarse),
-        ("medium", communities_medium),
-        ("fine", communities_fine),
-    ]:
-        logger.info("Generating labels for %s communities...", res_name)
-        t0 = time.perf_counter()
+    if skip_labels:
+        logger.info("Skipping community label generation (--skip-labels)")
+    else:
+        for res_name, membership in [
+            ("coarse", communities_coarse),
+            ("medium", communities_medium),
+            ("fine", communities_fine),
+        ]:
+            logger.info("Generating labels for %s communities...", res_name)
+            t0 = time.perf_counter()
 
-        # Build bibcode -> community_id mapping
-        membership_by_bibcode = {id_to_bibcode[vid]: cid for vid, cid in enumerate(membership)}
+            membership_by_bibcode = {id_to_bibcode[vid]: cid for vid, cid in enumerate(membership)}
 
-        labels = generate_community_labels(conn, res_name)
-        store_community_metadata(conn, res_name, membership_by_bibcode, labels)
-        timing[f"labels_{res_name}_ms"] = _elapsed_ms(t0)
+            labels = generate_community_labels(conn, res_name)
+            store_community_metadata(conn, res_name, membership_by_bibcode, labels)
+            timing[f"labels_{res_name}_ms"] = _elapsed_ms(t0)
 
     conn.close()
 

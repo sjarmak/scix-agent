@@ -51,6 +51,11 @@ def main() -> None:
         help="Random seed for Leiden (default: 42)",
     )
     parser.add_argument(
+        "--skip-labels",
+        action="store_true",
+        help="Skip community label generation (slow with many communities)",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -72,6 +77,7 @@ def main() -> None:
         res_medium=args.res_medium,
         res_fine=args.res_fine,
         seed=args.seed,
+        skip_labels=args.skip_labels,
     )
 
 

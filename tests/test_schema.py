@@ -5,6 +5,8 @@ import os
 import psycopg
 import pytest
 
+pytestmark = pytest.mark.integration
+
 DSN = os.environ.get("SCIX_DSN", "dbname=scix")
 
 
@@ -71,7 +73,10 @@ class TestPaperTable:
     def test_insert_and_query(self, conn):
         with conn.cursor() as cur:
             _insert_paper(cur, SAMPLE_PAPER)
-            cur.execute("SELECT bibcode, title, year FROM papers WHERE bibcode = %s", (SAMPLE_PAPER["bibcode"],))
+            cur.execute(
+                "SELECT bibcode, title, year FROM papers WHERE bibcode = %s",
+                (SAMPLE_PAPER["bibcode"],),
+            )
             row = cur.fetchone()
             assert row is not None
             assert row[0] == SAMPLE_PAPER["bibcode"]
@@ -81,7 +86,10 @@ class TestPaperTable:
     def test_array_fields(self, conn):
         with conn.cursor() as cur:
             _insert_paper(cur, SAMPLE_PAPER)
-            cur.execute("SELECT authors, keywords, arxiv_class FROM papers WHERE bibcode = %s", (SAMPLE_PAPER["bibcode"],))
+            cur.execute(
+                "SELECT authors, keywords, arxiv_class FROM papers WHERE bibcode = %s",
+                (SAMPLE_PAPER["bibcode"],),
+            )
             row = cur.fetchone()
             assert row[0] == ["Author, A.", "Author, B."]
             assert "LIGO" in row[1]
@@ -107,7 +115,9 @@ class TestPaperTable:
                 "UPDATE papers SET raw = %s::jsonb WHERE bibcode = %s",
                 ('{"extra_field": "extra_value", "nested": {"key": 1}}', paper["bibcode"]),
             )
-            cur.execute("SELECT raw->>'extra_field' FROM papers WHERE bibcode = %s", (paper["bibcode"],))
+            cur.execute(
+                "SELECT raw->>'extra_field' FROM papers WHERE bibcode = %s", (paper["bibcode"],)
+            )
             assert cur.fetchone()[0] == "extra_value"
 
 
@@ -122,12 +132,18 @@ class TestCitationEdges:
                 (SAMPLE_PAPER["bibcode"], paper2["bibcode"]),
             )
             # Forward: what does the paper cite?
-            cur.execute("SELECT target_bibcode FROM citation_edges WHERE source_bibcode = %s", (SAMPLE_PAPER["bibcode"],))
+            cur.execute(
+                "SELECT target_bibcode FROM citation_edges WHERE source_bibcode = %s",
+                (SAMPLE_PAPER["bibcode"],),
+            )
             targets = [r[0] for r in cur.fetchall()]
             assert paper2["bibcode"] in targets
 
             # Backward: what cites this paper?
-            cur.execute("SELECT source_bibcode FROM citation_edges WHERE target_bibcode = %s", (paper2["bibcode"],))
+            cur.execute(
+                "SELECT source_bibcode FROM citation_edges WHERE target_bibcode = %s",
+                (paper2["bibcode"],),
+            )
             sources = [r[0] for r in cur.fetchall()]
             assert SAMPLE_PAPER["bibcode"] in sources
 

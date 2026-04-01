@@ -913,3 +913,209 @@ def facet_counts(
         timing_ms={"query_ms": query_ms},
         metadata={"facet_field": facet_field, "facets": facets},
     )
+
+
+# ---------------------------------------------------------------------------
+# Graph metrics queries
+# ---------------------------------------------------------------------------
+
+_VALID_RESOLUTIONS = frozenset({"coarse", "medium", "fine"})
+
+
+def get_paper_metrics(conn: psycopg.Connection, bibcode: str) -> SearchResult:
+    """Get precomputed graph metrics for a paper (PageRank, HITS, communities)."""
+    t0 = time.perf_counter()
+
+    sql = """
+        SELECT pm.*,
+               c_coarse.label AS community_label_coarse,
+               c_medium.label AS community_label_medium,
+               c_fine.label AS community_label_fine
+        FROM paper_metrics pm
+        LEFT JOIN communities c_coarse
+            ON c_coarse.community_id = pm.community_id_coarse
+            AND c_coarse.resolution = 'coarse'
+        LEFT JOIN communities c_medium
+            ON c_medium.community_id = pm.community_id_medium
+            AND c_medium.resolution = 'medium'
+        LEFT JOIN communities c_fine
+            ON c_fine.community_id = pm.community_id_fine
+            AND c_fine.resolution = 'fine'
+        WHERE pm.bibcode = %s
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(sql, (bibcode,))
+        row = cur.fetchone()
+
+    query_ms = _elapsed_ms(t0)
+
+    if row is None:
+        return SearchResult(papers=[], total=0, timing_ms={"query_ms": query_ms})
+
+    # Convert to serializable dict
+    metrics = {k: v for k, v in row.items() if k != "updated_at"}
+    if row.get("updated_at"):
+        metrics["updated_at"] = row["updated_at"].isoformat()
+
+    return SearchResult(
+        papers=[],
+        total=1,
+        timing_ms={"query_ms": query_ms},
+        metadata={"metrics": metrics},
+    )
+
+
+def explore_community(
+    conn: psycopg.Connection,
+    bibcode: str,
+    resolution: str = "coarse",
+    limit: int = 20,
+) -> SearchResult:
+    """Find a paper's community and return sibling papers by PageRank."""
+    assert resolution in _VALID_RESOLUTIONS, f"invalid resolution: {resolution}"
+    t0 = time.perf_counter()
+
+    col = f"community_id_{resolution}"
+
+    # Get the paper's community
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {col} FROM paper_metrics WHERE bibcode = %s", (bibcode,))
+        row = cur.fetchone()
+
+    if row is None or row[0] is None:
+        return SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"query_ms": _elapsed_ms(t0)},
+            metadata={"community_id": None, "resolution": resolution},
+        )
+
+    community_id = row[0]
+
+    # Get community metadata
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT label, paper_count, top_keywords FROM communities "
+            "WHERE community_id = %s AND resolution = %s",
+            (community_id, resolution),
+        )
+        community_row = cur.fetchone()
+
+    # Get top papers in this community by PageRank
+    sql = f"""
+        SELECT {STUB_COLUMNS}
+        FROM paper_metrics pm
+        JOIN papers p ON p.bibcode = pm.bibcode
+        WHERE pm.{col} = %s
+        ORDER BY pm.pagerank DESC NULLS LAST
+        LIMIT %s
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(sql, (community_id, limit))
+        rows = cur.fetchall()
+
+    query_ms = _elapsed_ms(t0)
+    papers = [PaperStub.from_row(row).to_dict() for row in rows]
+
+    meta: dict[str, Any] = {
+        "community_id": community_id,
+        "resolution": resolution,
+    }
+    if community_row:
+        meta["label"] = community_row["label"]
+        meta["paper_count"] = community_row["paper_count"]
+        meta["top_keywords"] = community_row["top_keywords"]
+
+    return SearchResult(
+        papers=papers, total=len(papers), timing_ms={"query_ms": query_ms}, metadata=meta
+    )
+
+
+def concept_search(
+    conn: psycopg.Connection,
+    query: str,
+    *,
+    include_subtopics: bool = True,
+    limit: int = 20,
+) -> SearchResult:
+    """Search for papers by UAT concept, optionally including subtopics.
+
+    Accepts a concept label (looked up case-insensitively) or concept_id URI.
+    """
+    t0 = time.perf_counter()
+
+    # Resolve concept_id from label or URI
+    with conn.cursor() as cur:
+        if query.startswith("http"):
+            cur.execute("SELECT concept_id FROM uat_concepts WHERE concept_id = %s", (query,))
+        else:
+            cur.execute(
+                "SELECT concept_id FROM uat_concepts WHERE lower(preferred_label) = lower(%s)",
+                (query,),
+            )
+        row = cur.fetchone()
+
+    if row is None:
+        return SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"query_ms": _elapsed_ms(t0)},
+            metadata={"concept_found": False, "query": query},
+        )
+
+    concept_id = row[0]
+
+    if include_subtopics:
+        sql = f"""
+            WITH RECURSIVE descendants AS (
+                SELECT child_id AS cid FROM uat_relationships WHERE parent_id = %s
+                UNION
+                SELECT r.child_id FROM uat_relationships r JOIN descendants d ON r.parent_id = d.cid
+            ),
+            all_concepts AS (
+                SELECT %s AS cid
+                UNION ALL
+                SELECT cid FROM descendants
+            )
+            SELECT DISTINCT {STUB_COLUMNS}
+            FROM all_concepts ac
+            JOIN paper_uat_mappings m ON m.concept_id = ac.cid
+            JOIN papers p ON p.bibcode = m.bibcode
+            ORDER BY p.citation_count DESC NULLS LAST
+            LIMIT %s
+        """
+        params: list[Any] = [concept_id, concept_id, limit]
+    else:
+        sql = f"""
+            SELECT DISTINCT {STUB_COLUMNS}
+            FROM paper_uat_mappings m
+            JOIN papers p ON p.bibcode = m.bibcode
+            WHERE m.concept_id = %s
+            ORDER BY p.citation_count DESC NULLS LAST
+            LIMIT %s
+        """
+        params = [concept_id, limit]
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+
+    query_ms = _elapsed_ms(t0)
+    papers = [PaperStub.from_row(row).to_dict() for row in rows]
+
+    # Get concept label
+    with conn.cursor() as cur:
+        cur.execute("SELECT preferred_label FROM uat_concepts WHERE concept_id = %s", (concept_id,))
+        label_row = cur.fetchone()
+
+    return SearchResult(
+        papers=papers,
+        total=len(papers),
+        timing_ms={"query_ms": query_ms},
+        metadata={
+            "concept_found": True,
+            "concept_id": concept_id,
+            "concept_label": label_row[0] if label_row else None,
+            "include_subtopics": include_subtopics,
+        },
+    )

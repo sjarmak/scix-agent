@@ -1,4 +1,4 @@
-"""MCP server exposing 12 tools for agent navigation of the SciX corpus.
+"""MCP server exposing 15 tools for agent navigation of the SciX corpus.
 
 Uses the `mcp` Python SDK to register tools. Each tool is a thin wrapper
 around functions in search.py. Connection pooling via psycopg.pool for
@@ -101,6 +101,9 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "bibliographic_coupling": float(os.environ.get("SCIX_TIMEOUT_COUPLING", "15")),
     "citation_chain": float(os.environ.get("SCIX_TIMEOUT_CHAIN", "20")),
     "temporal_evolution": float(os.environ.get("SCIX_TIMEOUT_TEMPORAL", "10")),
+    "get_paper_metrics": float(os.environ.get("SCIX_TIMEOUT_METRICS", "5")),
+    "explore_community": float(os.environ.get("SCIX_TIMEOUT_COMMUNITY", "10")),
+    "concept_search": float(os.environ.get("SCIX_TIMEOUT_CONCEPT", "15")),
 }
 
 
@@ -187,7 +190,7 @@ def _shutdown() -> None:
 
 
 def create_server():
-    """Create and configure the MCP server with 12 tools (7 core + 4 graph + health_check).
+    """Create and configure the MCP server with 15 tools (7 core + 4 graph + 3 intelligence + health_check).
 
     Eagerly pre-loads the SPECTER2 model so semantic_search is fast from
     the first call.
@@ -457,6 +460,74 @@ def create_server():
                 },
             ),
             Tool(
+                name="get_paper_metrics",
+                description=(
+                    "Get precomputed graph metrics for a paper: PageRank, "
+                    "HITS hub/authority scores, and Leiden community assignments "
+                    "at 3 resolutions with labels."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "bibcode": {
+                            "type": "string",
+                            "description": "ADS bibcode of the paper",
+                        },
+                    },
+                    "required": ["bibcode"],
+                },
+            ),
+            Tool(
+                name="explore_community",
+                description=(
+                    "Find what community a paper belongs to and return sibling "
+                    "papers (same community) ranked by PageRank. Use this to "
+                    "discover related work in the same research neighborhood."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "bibcode": {
+                            "type": "string",
+                            "description": "ADS bibcode of the paper",
+                        },
+                        "resolution": {
+                            "type": "string",
+                            "enum": ["coarse", "medium", "fine"],
+                            "default": "coarse",
+                            "description": "Community resolution level",
+                        },
+                        "limit": {"type": "integer", "default": 20},
+                    },
+                    "required": ["bibcode"],
+                },
+            ),
+            Tool(
+                name="concept_search",
+                description=(
+                    "Search for papers by Unified Astronomy Thesaurus (UAT) concept. "
+                    "Accepts a concept name (e.g., 'Galaxies', 'Exoplanets') or URI. "
+                    "With include_subtopics=true, also returns papers matching "
+                    "descendant concepts in the hierarchy."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "UAT concept label or URI",
+                        },
+                        "include_subtopics": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": "Include papers from descendant concepts",
+                        },
+                        "limit": {"type": "integer", "default": 20},
+                    },
+                    "required": ["query"],
+                },
+            ),
+            Tool(
                 name="health_check",
                 description=(
                     "Check server health: database connectivity, model cache status, "
@@ -577,6 +648,28 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
             args["bibcode_or_query"],
             year_start=args.get("year_start"),
             year_end=args.get("year_end"),
+        )
+        result_json = _result_to_json(result)
+
+    elif name == "get_paper_metrics":
+        result = search.get_paper_metrics(conn, args["bibcode"])
+        result_json = _result_to_json(result)
+
+    elif name == "explore_community":
+        result = search.explore_community(
+            conn,
+            args["bibcode"],
+            resolution=args.get("resolution", "coarse"),
+            limit=args.get("limit", 20),
+        )
+        result_json = _result_to_json(result)
+
+    elif name == "concept_search":
+        result = search.concept_search(
+            conn,
+            args["query"],
+            include_subtopics=args.get("include_subtopics", True),
+            limit=args.get("limit", 20),
         )
         result_json = _result_to_json(result)
 

@@ -132,6 +132,9 @@ class TestListTools:
             "bibliographic_coupling",
             "citation_chain",
             "temporal_evolution",
+            "get_paper_metrics",
+            "explore_community",
+            "concept_search",
             "health_check",
         }
         assert expected == tool_names

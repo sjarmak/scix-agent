@@ -21,6 +21,7 @@ def conn():
         yield c
 
 
+@pytest.mark.integration
 class TestGetConnection:
     def test_connects_successfully(self) -> None:
         c = get_connection(DSN)
@@ -32,6 +33,7 @@ class TestGetConnection:
             c.close()
 
 
+@pytest.mark.integration
 class TestIndexManager:
     def test_get_non_pk_indexes(self, conn) -> None:
         mgr = IndexManager(conn, "papers")
@@ -69,6 +71,7 @@ class TestIndexManager:
             raise
 
 
+@pytest.mark.integration
 class TestIngestLog:
     @pytest.fixture(autouse=True)
     def _cleanup(self, conn):

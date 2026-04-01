@@ -437,20 +437,22 @@ def get_paper(conn: psycopg.Connection, bibcode: str) -> SearchResult:
     )
 
 
-def get_citations(
+def _citation_edge_query(
     conn: psycopg.Connection,
     bibcode: str,
     *,
-    limit: int = 20,
+    join_col: str,
+    where_col: str,
+    limit: int,
 ) -> SearchResult:
-    """Get forward citations (papers that cite this paper). Returns stubs."""
+    """Shared implementation for get_citations and get_references."""
     t0 = time.perf_counter()
 
     sql = f"""
         SELECT {STUB_COLUMNS}
         FROM citation_edges ce
-        JOIN papers p ON p.bibcode = ce.source_bibcode
-        WHERE ce.target_bibcode = %s
+        JOIN papers p ON p.bibcode = ce.{join_col}
+        WHERE ce.{where_col} = %s
         ORDER BY p.citation_count DESC NULLS LAST
         LIMIT %s
     """
@@ -460,13 +462,24 @@ def get_citations(
         rows = cur.fetchall()
 
     query_ms = _elapsed_ms(t0)
-
     papers = [PaperStub.from_row(row).to_dict() for row in rows]
 
     return SearchResult(
         papers=papers,
         total=len(papers),
         timing_ms={"query_ms": query_ms},
+    )
+
+
+def get_citations(
+    conn: psycopg.Connection,
+    bibcode: str,
+    *,
+    limit: int = 20,
+) -> SearchResult:
+    """Get forward citations (papers that cite this paper). Returns stubs."""
+    return _citation_edge_query(
+        conn, bibcode, join_col="source_bibcode", where_col="target_bibcode", limit=limit
     )
 
 
@@ -477,29 +490,8 @@ def get_references(
     limit: int = 20,
 ) -> SearchResult:
     """Get backward references (papers this paper cites). Returns stubs."""
-    t0 = time.perf_counter()
-
-    sql = f"""
-        SELECT {STUB_COLUMNS}
-        FROM citation_edges ce
-        JOIN papers p ON p.bibcode = ce.target_bibcode
-        WHERE ce.source_bibcode = %s
-        ORDER BY p.citation_count DESC NULLS LAST
-        LIMIT %s
-    """
-
-    with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(sql, (bibcode, limit))
-        rows = cur.fetchall()
-
-    query_ms = _elapsed_ms(t0)
-
-    papers = [PaperStub.from_row(row).to_dict() for row in rows]
-
-    return SearchResult(
-        papers=papers,
-        total=len(papers),
-        timing_ms={"query_ms": query_ms},
+    return _citation_edge_query(
+        conn, bibcode, join_col="target_bibcode", where_col="source_bibcode", limit=limit
     )
 
 
@@ -551,6 +543,298 @@ def get_author_papers(
         total=len(papers),
         timing_ms={"query_ms": query_ms},
     )
+
+
+# ---------------------------------------------------------------------------
+# Graph analysis queries (co-citation, bibliographic coupling, citation chain)
+# ---------------------------------------------------------------------------
+
+
+def _overlap_query(
+    conn: psycopg.Connection,
+    bibcode: str,
+    *,
+    join_col: str,
+    where_col: str,
+    result_col: str,
+    count_alias: str,
+    min_overlap: int,
+    limit: int,
+) -> SearchResult:
+    """Shared implementation for co-citation analysis and bibliographic coupling.
+
+    Both queries find papers that share citation edges with the given bibcode,
+    differing only in which edge direction is joined and which is filtered.
+    """
+    t0 = time.perf_counter()
+
+    sql = f"""
+        SELECT {STUB_COLUMNS}, COUNT(*) AS {count_alias}
+        FROM citation_edges ce1
+        JOIN citation_edges ce2 ON ce1.{join_col} = ce2.{join_col}
+        JOIN papers p ON p.bibcode = ce2.{result_col}
+        WHERE ce1.{where_col} = %s
+          AND ce2.{result_col} != %s
+        GROUP BY {STUB_COLUMNS}
+        HAVING COUNT(*) >= %s
+        ORDER BY {count_alias} DESC
+        LIMIT %s
+    """
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(sql, (bibcode, bibcode, min_overlap, limit))
+        rows = cur.fetchall()
+
+    query_ms = _elapsed_ms(t0)
+
+    papers = []
+    for row in rows:
+        stub = PaperStub.from_row(row).to_dict()
+        stub[count_alias] = row[count_alias]
+        papers.append(stub)
+
+    return SearchResult(
+        papers=papers,
+        total=len(papers),
+        timing_ms={"query_ms": query_ms},
+    )
+
+
+def co_citation_analysis(
+    conn: psycopg.Connection,
+    bibcode: str,
+    *,
+    min_overlap: int = 2,
+    limit: int = 20,
+) -> SearchResult:
+    """Find papers frequently co-cited with the given paper.
+
+    Two papers are co-cited when a third paper cites both. This finds papers
+    that share the most citing papers with the given bibcode.
+    """
+    return _overlap_query(
+        conn,
+        bibcode,
+        join_col="source_bibcode",
+        where_col="target_bibcode",
+        result_col="target_bibcode",
+        count_alias="overlap_count",
+        min_overlap=min_overlap,
+        limit=limit,
+    )
+
+
+def bibliographic_coupling(
+    conn: psycopg.Connection,
+    bibcode: str,
+    *,
+    min_overlap: int = 2,
+    limit: int = 20,
+) -> SearchResult:
+    """Find papers that share references with the given paper.
+
+    Two papers are bibliographically coupled when they both cite the same paper.
+    This finds papers that share the most references with the given bibcode.
+    """
+    return _overlap_query(
+        conn,
+        bibcode,
+        join_col="target_bibcode",
+        where_col="source_bibcode",
+        result_col="source_bibcode",
+        count_alias="shared_refs",
+        min_overlap=min_overlap,
+        limit=limit,
+    )
+
+
+def citation_chain(
+    conn: psycopg.Connection,
+    source_bibcode: str,
+    target_bibcode: str,
+    *,
+    max_depth: int = 5,
+) -> SearchResult:
+    """Find the shortest citation path between two papers via iterative BFS.
+
+    Walks forward along citation edges (source cites target). Returns the
+    ordered path of papers from source to target, or empty if no path exists
+    within max_depth hops.
+
+    Uses Python-driven BFS rather than recursive CTEs to control fan-out
+    and enable early termination.
+    """
+    t0 = time.perf_counter()
+
+    if max_depth < 1:
+        raise ValueError(f"max_depth must be >= 1, got {max_depth}")
+
+    if source_bibcode == target_bibcode:
+        return SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"query_ms": _elapsed_ms(t0)},
+            metadata={"path_length": 0, "path_bibcodes": [source_bibcode]},
+        )
+
+    # BFS with memory cap to prevent runaway expansion on high-degree graphs
+    max_visited = 100_000
+    visited: set[str] = {source_bibcode}
+    parent: dict[str, str] = {}
+    frontier = [source_bibcode]
+
+    for _depth in range(max_depth):
+        if not frontier:
+            break
+
+        # Exclusion list is best-effort: nodes discovered within this BFS level
+        # are filtered by the Python guard below, not by the DB query.
+        exclusion_list = list(visited)
+        sql = """
+            SELECT source_bibcode, target_bibcode
+            FROM citation_edges
+            WHERE source_bibcode = ANY(%s)
+              AND target_bibcode != ALL(%s)
+        """
+        with conn.cursor() as cur:
+            cur.execute(sql, (frontier, exclusion_list))
+            edges = cur.fetchall()
+
+        next_frontier: list[str] = []
+        for src, tgt in edges:
+            if tgt not in visited:
+                visited.add(tgt)
+                parent[tgt] = src
+                next_frontier.append(tgt)
+
+                if tgt == target_bibcode:
+                    # Reconstruct path
+                    path = [tgt]
+                    node = tgt
+                    while node in parent:
+                        node = parent[node]
+                        path.append(node)
+                    path.reverse()
+
+                    # Fetch paper stubs for the path
+                    path_sql = f"""
+                        SELECT {STUB_COLUMNS}
+                        FROM papers p
+                        WHERE p.bibcode = ANY(%s)
+                    """
+                    with conn.cursor(row_factory=dict_row) as stub_cur:
+                        stub_cur.execute(path_sql, (path,))
+                        stub_rows = stub_cur.fetchall()
+
+                    # Order stubs to match path order
+                    stub_by_bib = {r["bibcode"]: r for r in stub_rows}
+                    papers = []
+                    for bib in path:
+                        if bib in stub_by_bib:
+                            papers.append(PaperStub.from_row(stub_by_bib[bib]).to_dict())
+
+                    query_ms = _elapsed_ms(t0)
+                    return SearchResult(
+                        papers=papers,
+                        total=len(papers),
+                        timing_ms={"query_ms": query_ms},
+                        metadata={"path_length": len(path) - 1, "path_bibcodes": path},
+                    )
+
+        frontier = next_frontier
+
+        if len(visited) > max_visited:
+            query_ms = _elapsed_ms(t0)
+            return SearchResult(
+                papers=[],
+                total=0,
+                timing_ms={"query_ms": query_ms},
+                metadata={"path_length": -1, "path_bibcodes": [], "truncated": True},
+            )
+
+    query_ms = _elapsed_ms(t0)
+    return SearchResult(
+        papers=[],
+        total=0,
+        timing_ms={"query_ms": query_ms},
+        metadata={"path_length": -1, "path_bibcodes": []},
+    )
+
+
+def temporal_evolution(
+    conn: psycopg.Connection,
+    bibcode_or_query: str,
+    *,
+    year_start: int | None = None,
+    year_end: int | None = None,
+) -> SearchResult:
+    """Show temporal trends: citations received by a paper, or publication volume for a query.
+
+    Mode detection:
+    - If bibcode_or_query matches an existing paper bibcode, shows citations per year.
+    - Otherwise, treats it as a search query and shows matching publications per year.
+    """
+    t0 = time.perf_counter()
+
+    # Detect mode: try to look up as a bibcode first
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM papers WHERE bibcode = %s", (bibcode_or_query,))
+        is_bibcode = cur.fetchone() is not None
+
+    year_clause = ""
+    year_params: list[Any] = []
+    if year_start is not None:
+        year_clause += " AND p.year >= %s"
+        year_params.append(year_start)
+    if year_end is not None:
+        year_clause += " AND p.year <= %s"
+        year_params.append(year_end)
+
+    if is_bibcode:
+        # Citations received per year
+        sql = f"""
+            SELECT p.year, COUNT(*) AS count
+            FROM citation_edges ce
+            JOIN papers p ON p.bibcode = ce.source_bibcode
+            WHERE ce.target_bibcode = %s
+            {year_clause}
+            GROUP BY p.year
+            ORDER BY p.year
+        """
+        params: list[Any] = [bibcode_or_query] + year_params
+        mode = "citations"
+    else:
+        # Publication volume matching query
+        sql = f"""
+            SELECT p.year, COUNT(*) AS count
+            FROM papers p
+            WHERE p.tsv @@ plainto_tsquery('scix_english', %s)
+            {year_clause}
+            GROUP BY p.year
+            ORDER BY p.year
+        """
+        params = [bibcode_or_query] + year_params
+        mode = "publications"
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+
+    query_ms = _elapsed_ms(t0)
+
+    yearly_counts = [{"year": row["year"], "count": row["count"]} for row in rows]
+
+    return SearchResult(
+        papers=[],
+        total=len(yearly_counts),
+        timing_ms={"query_ms": query_ms},
+        metadata={"mode": mode, "bibcode_found": is_bibcode, "yearly_counts": yearly_counts},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Facet counts
+# ---------------------------------------------------------------------------
 
 
 def facet_counts(

@@ -1,4 +1,4 @@
-"""MCP server exposing 8 tools for agent navigation of the SciX corpus.
+"""MCP server exposing 12 tools for agent navigation of the SciX corpus.
 
 Uses the `mcp` Python SDK to register tools. Each tool is a thin wrapper
 around functions in search.py. Connection pooling via psycopg.pool for
@@ -97,6 +97,10 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "get_author_papers": float(os.environ.get("SCIX_TIMEOUT_AUTHOR", "15")),
     "facet_counts": float(os.environ.get("SCIX_TIMEOUT_FACETS", "10")),
     "health_check": float(os.environ.get("SCIX_TIMEOUT_HEALTH", "3")),
+    "co_citation_analysis": float(os.environ.get("SCIX_TIMEOUT_COCITATION", "15")),
+    "bibliographic_coupling": float(os.environ.get("SCIX_TIMEOUT_COUPLING", "15")),
+    "citation_chain": float(os.environ.get("SCIX_TIMEOUT_CHAIN", "20")),
+    "temporal_evolution": float(os.environ.get("SCIX_TIMEOUT_TEMPORAL", "10")),
 }
 
 
@@ -183,7 +187,7 @@ def _shutdown() -> None:
 
 
 def create_server():
-    """Create and configure the MCP server with 8 tools (7 core + health_check).
+    """Create and configure the MCP server with 12 tools (7 core + 4 graph + health_check).
 
     Eagerly pre-loads the SPECTER2 model so semantic_search is fast from
     the first call.
@@ -234,7 +238,8 @@ def create_server():
                 name="keyword_search",
                 description=(
                     "Search for papers using keyword/full-text search. "
-                    "Uses PostgreSQL tsvector with weighted fields (title=A, abstract=B, keywords=C)."
+                    "Uses PostgreSQL tsvector with weighted fields "
+                    "(title=A, abstract=B, keywords=C)."
                 ),
                 inputSchema={
                     "type": "object",
@@ -352,6 +357,106 @@ def create_server():
                 },
             ),
             Tool(
+                name="co_citation_analysis",
+                description=(
+                    "Find papers frequently co-cited with a given paper. "
+                    "Two papers are co-cited when a third paper cites both. "
+                    "Use this to discover intellectually related work that citing "
+                    "authors consider together."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "bibcode": {
+                            "type": "string",
+                            "description": "ADS bibcode of the paper to analyze",
+                        },
+                        "min_overlap": {
+                            "type": "integer",
+                            "default": 2,
+                            "description": "Minimum number of shared citing papers",
+                        },
+                        "limit": {"type": "integer", "default": 20},
+                    },
+                    "required": ["bibcode"],
+                },
+            ),
+            Tool(
+                name="bibliographic_coupling",
+                description=(
+                    "Find papers that share references with a given paper. "
+                    "Two papers are bibliographically coupled when they cite the same works. "
+                    "Use this to find methodologically similar or contemporaneous research."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "bibcode": {
+                            "type": "string",
+                            "description": "ADS bibcode of the paper to analyze",
+                        },
+                        "min_overlap": {
+                            "type": "integer",
+                            "default": 2,
+                            "description": "Minimum number of shared references",
+                        },
+                        "limit": {"type": "integer", "default": 20},
+                    },
+                    "required": ["bibcode"],
+                },
+            ),
+            Tool(
+                name="citation_chain",
+                description=(
+                    "Find the shortest citation path between two papers. "
+                    "Walks forward along citation edges (A cites B cites C...). "
+                    "Returns the ordered path of papers, or empty if no path exists "
+                    "within max_depth hops. Use this to trace intellectual lineage."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "source_bibcode": {
+                            "type": "string",
+                            "description": "Starting paper (the one that cites)",
+                        },
+                        "target_bibcode": {
+                            "type": "string",
+                            "description": "Destination paper (the one being cited)",
+                        },
+                        "max_depth": {
+                            "type": "integer",
+                            "default": 5,
+                            "description": "Maximum number of hops (1-5)",
+                        },
+                    },
+                    "required": ["source_bibcode", "target_bibcode"],
+                },
+            ),
+            Tool(
+                name="temporal_evolution",
+                description=(
+                    "Show temporal trends. If given a bibcode, shows citations received "
+                    "per year. If given search terms, shows publication volume per year. "
+                    "Use this to understand how a topic or paper's impact evolves over time."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "bibcode_or_query": {
+                            "type": "string",
+                            "description": (
+                                "A bibcode (for citation trends) "
+                                "or search terms (for publication volume)"
+                            ),
+                        },
+                        "year_start": {"type": "integer"},
+                        "year_end": {"type": "integer"},
+                    },
+                    "required": ["bibcode_or_query"],
+                },
+            ),
+            Tool(
                 name="health_check",
                 description=(
                     "Check server health: database connectivity, model cache status, "
@@ -436,6 +541,43 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
         filters = _parse_filters(args.get("filters"))
         limit = args.get("limit", 50)
         result = search.facet_counts(conn, args["field"], filters=filters, limit=limit)
+        result_json = _result_to_json(result)
+
+    elif name == "co_citation_analysis":
+        result = search.co_citation_analysis(
+            conn,
+            args["bibcode"],
+            min_overlap=args.get("min_overlap", 2),
+            limit=args.get("limit", 20),
+        )
+        result_json = _result_to_json(result)
+
+    elif name == "bibliographic_coupling":
+        result = search.bibliographic_coupling(
+            conn,
+            args["bibcode"],
+            min_overlap=args.get("min_overlap", 2),
+            limit=args.get("limit", 20),
+        )
+        result_json = _result_to_json(result)
+
+    elif name == "citation_chain":
+        max_depth = min(args.get("max_depth", 5), 5)  # hard cap at 5
+        result = search.citation_chain(
+            conn,
+            args["source_bibcode"],
+            args["target_bibcode"],
+            max_depth=max_depth,
+        )
+        result_json = _result_to_json(result)
+
+    elif name == "temporal_evolution":
+        result = search.temporal_evolution(
+            conn,
+            args["bibcode_or_query"],
+            year_start=args.get("year_start"),
+            year_end=args.get("year_end"),
+        )
         result_json = _result_to_json(result)
 
     elif name == "health_check":

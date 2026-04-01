@@ -128,6 +128,10 @@ class TestListTools:
             "get_references",
             "get_author_papers",
             "facet_counts",
+            "co_citation_analysis",
+            "bibliographic_coupling",
+            "citation_chain",
+            "temporal_evolution",
             "health_check",
         }
         assert expected == tool_names

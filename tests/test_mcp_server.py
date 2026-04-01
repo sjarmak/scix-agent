@@ -134,6 +134,105 @@ class TestDispatchTool:
 
 
 # ---------------------------------------------------------------------------
+# _dispatch_tool — graph tool dispatch tests
+# ---------------------------------------------------------------------------
+
+
+class TestDispatchGraphTools:
+    @patch("scix.search.co_citation_analysis")
+    def test_co_citation_dispatches(self, mock_fn: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_fn.return_value = SearchResult(
+            papers=[{"bibcode": "A", "overlap_count": 5}],
+            total=1,
+            timing_ms={"query_ms": 10.0},
+        )
+        mock_conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(mock_conn, "co_citation_analysis", {"bibcode": "X", "min_overlap": 3})
+        )
+        assert result["total"] == 1
+        mock_fn.assert_called_once_with(mock_conn, "X", min_overlap=3, limit=20)
+
+    @patch("scix.search.bibliographic_coupling")
+    def test_bibliographic_coupling_dispatches(self, mock_fn: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_fn.return_value = SearchResult(
+            papers=[{"bibcode": "B", "shared_refs": 3}],
+            total=1,
+            timing_ms={"query_ms": 8.0},
+        )
+        mock_conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(mock_conn, "bibliographic_coupling", {"bibcode": "Y", "limit": 10})
+        )
+        assert result["total"] == 1
+        mock_fn.assert_called_once_with(mock_conn, "Y", min_overlap=2, limit=10)
+
+    @patch("scix.search.citation_chain")
+    def test_citation_chain_dispatches(self, mock_fn: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_fn.return_value = SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"query_ms": 5.0},
+            metadata={"path_length": -1, "path_bibcodes": []},
+        )
+        mock_conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(
+                mock_conn,
+                "citation_chain",
+                {"source_bibcode": "A", "target_bibcode": "B", "max_depth": 3},
+            )
+        )
+        assert result["metadata"]["path_length"] == -1
+        mock_fn.assert_called_once_with(mock_conn, "A", "B", max_depth=3)
+
+    @patch("scix.search.citation_chain")
+    def test_citation_chain_caps_depth_at_5(self, mock_fn: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_fn.return_value = SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"query_ms": 1.0},
+            metadata={"path_length": -1, "path_bibcodes": []},
+        )
+        mock_conn = MagicMock()
+        _dispatch_tool(
+            mock_conn,
+            "citation_chain",
+            {"source_bibcode": "A", "target_bibcode": "B", "max_depth": 99},
+        )
+        mock_fn.assert_called_once_with(mock_conn, "A", "B", max_depth=5)
+
+    @patch("scix.search.temporal_evolution")
+    def test_temporal_evolution_dispatches(self, mock_fn: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_fn.return_value = SearchResult(
+            papers=[],
+            total=2,
+            timing_ms={"query_ms": 3.0},
+            metadata={"mode": "citations", "yearly_counts": [{"year": 2023, "count": 10}]},
+        )
+        mock_conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(
+                mock_conn,
+                "temporal_evolution",
+                {"bibcode_or_query": "X", "year_start": 2020},
+            )
+        )
+        assert result["metadata"]["mode"] == "citations"
+        mock_fn.assert_called_once_with(mock_conn, "X", year_start=2020, year_end=None)
+
+
+# ---------------------------------------------------------------------------
 # _init_model
 # ---------------------------------------------------------------------------
 

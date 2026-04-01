@@ -6,29 +6,30 @@ Integration tests (marked with @pytest.mark.integration) require a running scix 
 
 from __future__ import annotations
 
-import os
-
 import psycopg
 import pytest
+from helpers import (
+    DSN,
+    get_cited_bibcode,
+    get_citing_bibcode,
+    has_citation_edges,
+    has_papers,
+    has_tsv_column,
+)
 
 from scix.search import (
-    CrossEncoderReranker,
     SearchFilters,
     SearchResult,
     _elapsed_ms,
+    bibliographic_coupling,
+    citation_chain,
+    co_citation_analysis,
     facet_counts,
-    get_author_papers,
-    get_citations,
     get_paper,
-    get_references,
-    hybrid_search,
     lexical_search,
     rrf_fuse,
-    vector_search,
+    temporal_evolution,
 )
-
-DSN = os.environ.get("SCIX_DSN", "dbname=scix")
-
 
 # ---------------------------------------------------------------------------
 # Unit tests (no database required)
@@ -228,28 +229,10 @@ def _savepoint(conn):
         cur.execute("ROLLBACK TO SAVEPOINT test_sp")
 
 
-def _has_papers(conn: psycopg.Connection) -> bool:
-    with conn.cursor() as cur:
-        cur.execute("SELECT EXISTS(SELECT 1 FROM papers LIMIT 1)")
-        return cur.fetchone()[0]
-
-
-def _has_tsv_column(conn: psycopg.Connection) -> bool:
-    """Check if the tsv column exists on papers (migration 003 applied)."""
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT EXISTS(
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name = 'papers' AND column_name = 'tsv'
-            )
-        """)
-        return cur.fetchone()[0]
-
-
 @pytest.mark.integration
 class TestLexicalSearchIntegration:
     def test_returns_search_result_with_timing(self, conn) -> None:
-        if not _has_papers(conn) or not _has_tsv_column(conn):
+        if not has_papers(conn) or not has_tsv_column(conn):
             pytest.skip("No papers or tsv column not available")
         # Use 'english' config as fallback if scix_english not available
         result = lexical_search(conn, "copper", ts_config="english")
@@ -258,7 +241,7 @@ class TestLexicalSearchIntegration:
         assert result.timing_ms["lexical_ms"] >= 0
 
     def test_returns_stubs_with_scores(self, conn) -> None:
-        if not _has_papers(conn) or not _has_tsv_column(conn):
+        if not has_papers(conn) or not has_tsv_column(conn):
             pytest.skip("No papers or tsv column not available")
         result = lexical_search(conn, "copper", ts_config="english")
         if result.total > 0:
@@ -270,7 +253,7 @@ class TestLexicalSearchIntegration:
 @pytest.mark.integration
 class TestGetPaperIntegration:
     def test_existing_paper(self, conn) -> None:
-        if not _has_papers(conn):
+        if not has_papers(conn):
             pytest.skip("No papers in database")
         # Get any bibcode
         with conn.cursor() as cur:
@@ -291,7 +274,7 @@ class TestGetPaperIntegration:
 @pytest.mark.integration
 class TestFacetCountsIntegration:
     def test_year_facets(self, conn) -> None:
-        if not _has_papers(conn):
+        if not has_papers(conn):
             pytest.skip("No papers in database")
         result = facet_counts(conn, "year")
         assert isinstance(result, SearchResult)
@@ -303,8 +286,152 @@ class TestFacetCountsIntegration:
             assert "count" in facet
 
     def test_doctype_facets(self, conn) -> None:
-        if not _has_papers(conn):
+        if not has_papers(conn):
             pytest.skip("No papers in database")
         result = facet_counts(conn, "doctype")
         assert isinstance(result, SearchResult)
         assert result.timing_ms["query_ms"] >= 0
+
+
+# ---------------------------------------------------------------------------
+# Integration tests for graph analysis functions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestCoCitationAnalysisIntegration:
+    def test_returns_search_result_with_timing(self, conn) -> None:
+        if not has_citation_edges(conn):
+            pytest.skip("No citation edges in database")
+        bibcode = get_cited_bibcode(conn)
+        if not bibcode:
+            pytest.skip("No cited bibcode found")
+        result = co_citation_analysis(conn, bibcode, min_overlap=1, limit=5)
+        assert isinstance(result, SearchResult)
+        assert "query_ms" in result.timing_ms
+        assert result.timing_ms["query_ms"] >= 0
+
+    def test_overlap_count_in_results(self, conn) -> None:
+        if not has_citation_edges(conn):
+            pytest.skip("No citation edges in database")
+        bibcode = get_cited_bibcode(conn)
+        if not bibcode:
+            pytest.skip("No cited bibcode found")
+        result = co_citation_analysis(conn, bibcode, min_overlap=1, limit=5)
+        for paper in result.papers:
+            assert "overlap_count" in paper
+            assert paper["overlap_count"] >= 1
+
+    def test_nonexistent_bibcode(self, conn) -> None:
+        result = co_citation_analysis(conn, "NONEXISTENT_XYZ_999")
+        assert result.total == 0
+        assert result.papers == []
+
+
+@pytest.mark.integration
+class TestBibliographicCouplingIntegration:
+    def test_returns_search_result_with_timing(self, conn) -> None:
+        if not has_citation_edges(conn):
+            pytest.skip("No citation edges in database")
+        bibcode = get_citing_bibcode(conn)
+        if not bibcode:
+            pytest.skip("No citing bibcode found")
+        result = bibliographic_coupling(conn, bibcode, min_overlap=1, limit=5)
+        assert isinstance(result, SearchResult)
+        assert "query_ms" in result.timing_ms
+
+    def test_shared_refs_in_results(self, conn) -> None:
+        if not has_citation_edges(conn):
+            pytest.skip("No citation edges in database")
+        bibcode = get_citing_bibcode(conn)
+        if not bibcode:
+            pytest.skip("No citing bibcode found")
+        result = bibliographic_coupling(conn, bibcode, min_overlap=1, limit=5)
+        for paper in result.papers:
+            assert "shared_refs" in paper
+            assert paper["shared_refs"] >= 1
+
+    def test_nonexistent_bibcode(self, conn) -> None:
+        result = bibliographic_coupling(conn, "NONEXISTENT_XYZ_999")
+        assert result.total == 0
+
+
+@pytest.mark.integration
+class TestCitationChainIntegration:
+    def test_same_bibcode_returns_zero_length(self, conn) -> None:
+        result = citation_chain(conn, "ANY_BIBCODE", "ANY_BIBCODE")
+        assert result.metadata["path_length"] == 0
+        assert result.metadata["path_bibcodes"] == ["ANY_BIBCODE"]
+
+    def test_no_path_returns_negative_one(self, conn) -> None:
+        result = citation_chain(conn, "NONEXISTENT_A", "NONEXISTENT_B", max_depth=2)
+        assert result.metadata["path_length"] == -1
+        assert result.metadata["path_bibcodes"] == []
+        assert result.total == 0
+
+    def test_direct_citation_path(self, conn) -> None:
+        if not has_citation_edges(conn):
+            pytest.skip("No citation edges in database")
+        # Get a known direct edge
+        with conn.cursor() as cur:
+            cur.execute("SELECT source_bibcode, target_bibcode FROM citation_edges LIMIT 1")
+            row = cur.fetchone()
+        if not row:
+            pytest.skip("No edges found")
+        source, target = row
+        result = citation_chain(conn, source, target, max_depth=1)
+        assert result.metadata["path_length"] == 1
+        assert result.metadata["path_bibcodes"][0] == source
+        assert result.metadata["path_bibcodes"][-1] == target
+
+    def test_timing_metadata(self, conn) -> None:
+        result = citation_chain(conn, "A", "B", max_depth=1)
+        assert "query_ms" in result.timing_ms
+        assert result.timing_ms["query_ms"] >= 0
+
+    def test_max_depth_zero_raises(self, conn) -> None:
+        with pytest.raises(ValueError, match="max_depth must be >= 1"):
+            citation_chain(conn, "A", "B", max_depth=0)
+
+
+@pytest.mark.integration
+class TestTemporalEvolutionIntegration:
+    def test_bibcode_mode(self, conn) -> None:
+        if not has_papers(conn) or not has_citation_edges(conn):
+            pytest.skip("No papers or citation edges")
+        bibcode = get_cited_bibcode(conn)
+        if not bibcode:
+            pytest.skip("No cited bibcode found")
+        result = temporal_evolution(conn, bibcode)
+        assert isinstance(result, SearchResult)
+        assert result.metadata["mode"] == "citations"
+        assert "yearly_counts" in result.metadata
+        assert "query_ms" in result.timing_ms
+
+    def test_query_mode(self, conn) -> None:
+        if not has_papers(conn) or not has_tsv_column(conn):
+            pytest.skip("No papers or tsv column")
+        result = temporal_evolution(conn, "galaxy formation")
+        assert result.metadata["mode"] == "publications"
+        assert "yearly_counts" in result.metadata
+
+    def test_year_range_filter(self, conn) -> None:
+        if not has_papers(conn) or not has_tsv_column(conn):
+            pytest.skip("No papers or tsv column")
+        result = temporal_evolution(conn, "galaxy", year_start=2023, year_end=2024)
+        for entry in result.metadata["yearly_counts"]:
+            assert 2023 <= entry["year"] <= 2024
+
+    def test_bibcode_found_metadata(self, conn) -> None:
+        if not has_papers(conn) or not has_citation_edges(conn):
+            pytest.skip("No papers or citation edges")
+        bibcode = get_cited_bibcode(conn)
+        if not bibcode:
+            pytest.skip("No cited bibcode found")
+        result = temporal_evolution(conn, bibcode)
+        assert result.metadata["bibcode_found"] is True
+
+    def test_nonexistent_bibcode_falls_to_query(self, conn) -> None:
+        result = temporal_evolution(conn, "NONEXISTENT_XYZ_999")
+        assert result.metadata["mode"] == "publications"
+        assert result.metadata["bibcode_found"] is False

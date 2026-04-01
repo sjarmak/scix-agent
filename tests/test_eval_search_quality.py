@@ -6,11 +6,11 @@ No database required for unit tests.
 
 from __future__ import annotations
 
-import pytest
-
 # Import from the script using sys.path manipulation matching the script's own pattern
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))

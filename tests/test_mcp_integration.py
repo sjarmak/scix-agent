@@ -373,6 +373,138 @@ class TestSemanticSearchIntegration:
 
 
 @pytest.mark.integration
+class TestCoCitationIntegration:
+    def test_returns_results_with_overlap(self, conn) -> None:
+        if not _has_citation_edges(conn):
+            pytest.skip("No citation edges in database")
+        bibcode = _get_citing_bibcode(conn)
+        if not bibcode:
+            pytest.skip("No citing bibcode found")
+        # Use the target of that edge (a paper that is cited)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT target_bibcode FROM citation_edges "
+                    "WHERE source_bibcode = %s LIMIT 1",
+                    (bibcode,),
+                )
+                row = cur.fetchone()
+        except psycopg.errors.QueryCanceled:
+            _rollback_and_reset(conn)
+            pytest.skip("Query timed out")
+        if not row:
+            pytest.skip("No target bibcode found")
+        result = _dispatch_safe(
+            conn, "co_citation_analysis", {"bibcode": row[0], "min_overlap": 1, "limit": 5}
+        )
+        assert "papers" in result
+        assert "timing_ms" in result
+
+    def test_nonexistent_bibcode(self, conn) -> None:
+        result = _dispatch_safe(conn, "co_citation_analysis", {"bibcode": "NONEXISTENT_XYZ_999"})
+        assert result["total"] == 0
+
+
+@pytest.mark.integration
+class TestBibliographicCouplingIntegration:
+    def test_returns_results(self, conn) -> None:
+        if not _has_citation_edges(conn):
+            pytest.skip("No citation edges in database")
+        bibcode = _get_referencing_bibcode(conn)
+        if not bibcode:
+            pytest.skip("No referencing bibcode found")
+        result = _dispatch_safe(
+            conn, "bibliographic_coupling", {"bibcode": bibcode, "min_overlap": 1, "limit": 5}
+        )
+        assert "papers" in result
+        assert "timing_ms" in result
+
+    def test_nonexistent_bibcode(self, conn) -> None:
+        result = _dispatch_safe(conn, "bibliographic_coupling", {"bibcode": "NONEXISTENT_XYZ_999"})
+        assert result["total"] == 0
+
+
+@pytest.mark.integration
+class TestCitationChainIntegration:
+    def test_direct_edge(self, conn) -> None:
+        if not _has_citation_edges(conn):
+            pytest.skip("No citation edges in database")
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT source_bibcode, target_bibcode FROM citation_edges LIMIT 1")
+                row = cur.fetchone()
+        except psycopg.errors.QueryCanceled:
+            _rollback_and_reset(conn)
+            pytest.skip("Query timed out")
+        if not row:
+            pytest.skip("No edges found")
+        source, target = row
+        result = _dispatch_safe(
+            conn,
+            "citation_chain",
+            {"source_bibcode": source, "target_bibcode": target, "max_depth": 1},
+        )
+        assert "metadata" in result
+        assert result["metadata"]["path_length"] == 1
+
+    def test_same_bibcode(self, conn) -> None:
+        result = _dispatch_safe(
+            conn,
+            "citation_chain",
+            {"source_bibcode": "ANY", "target_bibcode": "ANY"},
+        )
+        assert result["metadata"]["path_length"] == 0
+
+    def test_no_path(self, conn) -> None:
+        result = _dispatch_safe(
+            conn,
+            "citation_chain",
+            {"source_bibcode": "NONEXISTENT_A", "target_bibcode": "NONEXISTENT_B"},
+        )
+        assert result["metadata"]["path_length"] == -1
+
+
+@pytest.mark.integration
+class TestTemporalEvolutionIntegration:
+    def test_bibcode_mode(self, conn) -> None:
+        if not _has_citation_edges(conn):
+            pytest.skip("No citation edges in database")
+        bibcode = _get_citing_bibcode(conn)
+        if not bibcode:
+            pytest.skip("No citing bibcode found")
+        # Get a target (a paper that is cited)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT target_bibcode FROM citation_edges "
+                    "WHERE source_bibcode = %s LIMIT 1",
+                    (bibcode,),
+                )
+                row = cur.fetchone()
+        except psycopg.errors.QueryCanceled:
+            _rollback_and_reset(conn)
+            pytest.skip("Query timed out")
+        if not row:
+            pytest.skip("No target bibcode found")
+        result = _dispatch_safe(conn, "temporal_evolution", {"bibcode_or_query": row[0]})
+        assert "metadata" in result
+        assert result["metadata"]["mode"] == "citations"
+        assert "yearly_counts" in result["metadata"]
+
+    def test_query_mode(self, conn) -> None:
+        if not _has_papers(conn) or not _has_tsv_column(conn):
+            pytest.skip("No papers or tsv column")
+        result = _dispatch_safe(
+            conn,
+            "temporal_evolution",
+            {"bibcode_or_query": "galaxy evolution", "year_start": 2022, "year_end": 2024},
+        )
+        assert result["metadata"]["mode"] == "publications"
+        for entry in result["metadata"]["yearly_counts"]:
+            assert 2022 <= entry["year"] <= 2024
+
+
+@pytest.mark.integration
 class TestUnknownToolIntegration:
     def test_unknown_tool(self, conn) -> None:
         result = _dispatch_safe(conn, "nonexistent_tool_xyz", {})

@@ -81,6 +81,7 @@ class TestDiscoverFiles:
         assert discover_files(tmp_path) == []
 
 
+@pytest.mark.integration
 class TestIngestPipelineE2E:
     @pytest.mark.skipif(not SMALL_FILE.exists(), reason="2026 data file not found")
     def test_ingest_2026_file(self, conn, clean_db) -> None:
@@ -101,8 +102,10 @@ class TestIngestPipelineE2E:
             assert row[1] == 2026
 
             # Check ingest log
-            cur.execute("SELECT status, records_loaded FROM ingest_log WHERE filename = %s",
-                        (SMALL_FILE.name,))
+            cur.execute(
+                "SELECT status, records_loaded FROM ingest_log WHERE filename = %s",
+                (SMALL_FILE.name,),
+            )
             log_row = cur.fetchone()
             assert log_row[0] == "complete"
             assert log_row[1] == 21
@@ -161,9 +164,13 @@ class TestIngestPipelineE2E:
             assert cur.fetchone()[0] == 2
 
             # Check citation edges from reference[]
-            cur.execute("SELECT count(*) FROM citation_edges WHERE source_bibcode = '2024test...001A'")
+            cur.execute(
+                "SELECT count(*) FROM citation_edges WHERE source_bibcode = '2024test...001A'"
+            )
             assert cur.fetchone()[0] == 2
 
-            cur.execute("SELECT target_bibcode FROM citation_edges WHERE source_bibcode = '2024test...001A' ORDER BY target_bibcode")
+            cur.execute(
+                "SELECT target_bibcode FROM citation_edges WHERE source_bibcode = '2024test...001A' ORDER BY target_bibcode"
+            )
             targets = [r[0] for r in cur.fetchall()]
             assert targets == ["2024test...002B", "2024test...003C"]

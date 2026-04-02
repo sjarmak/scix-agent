@@ -273,6 +273,7 @@ def hybrid_search(
     query_embedding: list[float] | None = None,
     *,
     model_name: str = "specter2",
+    openai_embedding: list[float] | None = None,
     filters: SearchFilters | None = None,
     vector_limit: int = 60,
     lexical_limit: int = 60,
@@ -284,9 +285,13 @@ def hybrid_search(
     """Hybrid search combining vector and lexical via RRF, with optional reranking.
 
     If query_embedding is None, falls back to lexical-only mode (BM25-only).
+    If openai_embedding is provided, runs a second vector search with
+    text-embedding-3-large and fuses it alongside SPECTER2 results via RRF.
+    If the OpenAI vector search fails, falls back to SPECTER2+lexical only.
     If reranker is provided, re-ranks the top RRF results.
 
     Args:
+        openai_embedding: Optional pre-computed OpenAI text-embedding-3-large vector.
         reranker: Optional callable(query_text, papers) -> list[dict] with 'rerank_score'.
     """
     timing: dict[str, float] = {}
@@ -297,7 +302,7 @@ def hybrid_search(
 
     results_lists: list[list[dict[str, Any]]] = [lex_result.papers]
 
-    # Vector search (if embeddings available)
+    # SPECTER2 vector search (if embeddings available)
     if query_embedding is not None:
         vec_result = vector_search(
             conn,
@@ -311,6 +316,26 @@ def hybrid_search(
         results_lists.append(vec_result.papers)
     else:
         timing["vector_ms"] = 0.0
+
+    # OpenAI vector search (circuit breaker: fall back on failure)
+    timing["openai_vector_ms"] = 0.0
+    if openai_embedding is not None:
+        try:
+            openai_vec_result = vector_search(
+                conn,
+                openai_embedding,
+                model_name="text-embedding-3-large",
+                filters=filters,
+                limit=vector_limit,
+                ef_search=ef_search,
+            )
+            timing["openai_vector_ms"] = openai_vec_result.timing_ms["vector_ms"]
+            results_lists.append(openai_vec_result.papers)
+        except Exception:
+            logger.warning(
+                "OpenAI vector search failed; falling back to SPECTER2+lexical only",
+                exc_info=True,
+            )
 
     # RRF fusion
     t_fuse = time.perf_counter()

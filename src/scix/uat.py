@@ -249,9 +249,9 @@ def parse_skos(path: Path) -> tuple[list[UATConcept], list[UATRelationship]]:
 # Database Loading
 # ---------------------------------------------------------------------------
 
-_CONCEPT_STAGING_DDL = (
-    "CREATE TEMP TABLE _uat_concept_staging "
-    "(LIKE uat_concepts INCLUDING DEFAULTS) ON COMMIT DELETE ROWS"
+_CONCEPT_STAGING_DROP = "DROP TABLE IF EXISTS _uat_concept_staging"
+_CONCEPT_STAGING_CREATE = (
+    "CREATE TEMP TABLE _uat_concept_staging " "(LIKE uat_concepts INCLUDING DEFAULTS)"
 )
 
 _CONCEPT_MERGE_SQL = """
@@ -265,9 +265,8 @@ _CONCEPT_MERGE_SQL = """
         level = EXCLUDED.level
 """
 
-_REL_STAGING_DDL = (
-    "CREATE TEMP TABLE _uat_rel_staging " "(parent_id TEXT, child_id TEXT) ON COMMIT DELETE ROWS"
-)
+_REL_STAGING_DROP = "DROP TABLE IF EXISTS _uat_rel_staging"
+_REL_STAGING_CREATE = "CREATE TEMP TABLE _uat_rel_staging (parent_id TEXT, child_id TEXT)"
 
 _REL_MERGE_SQL = """
     INSERT INTO uat_relationships (parent_id, child_id)
@@ -289,7 +288,8 @@ def load_concepts(conn: psycopg.Connection, concepts: list[UATConcept]) -> int:
     t0 = time.monotonic()
 
     with conn.cursor() as cur:
-        cur.execute(_CONCEPT_STAGING_DDL)
+        cur.execute(_CONCEPT_STAGING_DROP)
+        cur.execute(_CONCEPT_STAGING_CREATE)
         with cur.copy(
             "COPY _uat_concept_staging "
             "(concept_id, preferred_label, alternate_labels, definition, level) "
@@ -329,7 +329,8 @@ def load_relationships(conn: psycopg.Connection, rels: list[UATRelationship]) ->
     t0 = time.monotonic()
 
     with conn.cursor() as cur:
-        cur.execute(_REL_STAGING_DDL)
+        cur.execute(_REL_STAGING_DROP)
+        cur.execute(_REL_STAGING_CREATE)
         with cur.copy("COPY _uat_rel_staging (parent_id, child_id) FROM STDIN") as copy:
             for r in rels:
                 copy.write_row((r.parent_id, r.child_id))

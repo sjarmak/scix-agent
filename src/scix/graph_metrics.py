@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 import logging
 import time
-from dataclasses import dataclass, field
 from typing import Any
 
 import psycopg
@@ -16,6 +15,8 @@ from scix.db import get_connection
 logger = logging.getLogger(__name__)
 
 _VALID_RESOLUTIONS = frozenset({"coarse", "medium", "fine"})
+
+_ASTRO_PH_PREFIX = "astro-ph"
 
 _CHUNK_SIZE = 100_000
 
@@ -136,6 +137,232 @@ def load_graph(
     )
 
     return graph, bibcode_to_id, id_to_bibcode
+
+
+# ---------------------------------------------------------------------------
+# Isolated node filtering
+# ---------------------------------------------------------------------------
+
+
+def filter_isolated_nodes(
+    graph: Any,
+    bibcode_to_id: dict[str, int],
+    id_to_bibcode: dict[int, str],
+) -> tuple[Any, dict[str, int], dict[int, str], set[str]]:
+    """Extract subgraph of nodes with degree >= 1 (at least one edge).
+
+    Isolated nodes (degree 0) are meaningless for community detection —
+    Leiden always assigns each to its own singleton community.
+
+    Args:
+        graph: Full igraph.Graph (directed).
+        bibcode_to_id: Full bibcode→vertex-id mapping.
+        id_to_bibcode: Full vertex-id→bibcode mapping.
+
+    Returns:
+        (subgraph, sub_bibcode_to_id, sub_id_to_bibcode, isolated_bibcodes)
+        where subgraph contains only connected vertices with new contiguous IDs.
+    """
+    t0 = time.perf_counter()
+
+    degrees = graph.degree(mode="all")
+    connected_vids: list[int] = []
+    isolated_bibcodes: set[str] = set()
+    for vid, deg in enumerate(degrees):
+        if deg > 0:
+            connected_vids.append(vid)
+        else:
+            isolated_bibcodes.add(id_to_bibcode[vid])
+
+    subgraph = graph.induced_subgraph(connected_vids)
+
+    # Build new contiguous ID mappings for the subgraph
+    sub_bibcode_to_id: dict[str, int] = {}
+    sub_id_to_bibcode: dict[int, str] = {}
+    for new_id, old_id in enumerate(connected_vids):
+        bib = id_to_bibcode[old_id]
+        sub_bibcode_to_id[bib] = new_id
+        sub_id_to_bibcode[new_id] = bib
+
+    logger.info(
+        "Filtered graph: %d connected nodes, %d isolated (%.1fms)",
+        len(connected_vids),
+        len(isolated_bibcodes),
+        _elapsed_ms(t0),
+    )
+    return subgraph, sub_bibcode_to_id, sub_id_to_bibcode, isolated_bibcodes
+
+
+# ---------------------------------------------------------------------------
+# Giant component extraction
+# ---------------------------------------------------------------------------
+
+
+def extract_giant_component(
+    graph: Any,
+    bibcode_to_id: dict[str, int],
+    id_to_bibcode: dict[int, str],
+) -> tuple[Any, dict[str, int], dict[int, str], set[str]]:
+    """Extract the largest connected component (giant component) from a graph.
+
+    After filtering isolated nodes, the remaining graph may still contain
+    multiple disconnected components.  Leiden should run only on the giant
+    component; papers in smaller components are assigned to communities
+    separately via embedding distance.
+
+    Uses weak (undirected) connectivity — appropriate for citation graphs
+    where an edge in either direction implies relatedness.
+
+    Args:
+        graph: igraph.Graph (directed), typically the output of filter_isolated_nodes().
+        bibcode_to_id: bibcode→vertex-id mapping for *graph*.
+        id_to_bibcode: vertex-id→bibcode mapping for *graph*.
+
+    Returns:
+        (giant_graph, giant_b2i, giant_i2b, small_bibcodes)
+        where giant_graph is the induced subgraph of the largest component,
+        giant_b2i / giant_i2b are the new contiguous ID mappings, and
+        small_bibcodes contains bibcodes from all other (smaller) components.
+    """
+    t0 = time.perf_counter()
+
+    components = graph.connected_components(mode="weak")
+
+    if len(components) <= 1:
+        # Entire graph is one component (or empty) — nothing to extract
+        logger.info(
+            "Graph has %d component(s); skipping giant-component extraction (%.1fms)",
+            len(components),
+            _elapsed_ms(t0),
+        )
+        return graph, bibcode_to_id, id_to_bibcode, set()
+
+    # Find the largest component by vertex count
+    giant_idx = max(range(len(components)), key=lambda i: len(components[i]))
+    giant_vids: list[int] = components[giant_idx]
+    giant_vid_set = set(giant_vids)
+
+    # Collect bibcodes in small components
+    small_bibcodes: set[str] = set()
+    for vid in range(graph.vcount()):
+        if vid not in giant_vid_set:
+            small_bibcodes.add(id_to_bibcode[vid])
+
+    # Extract giant component subgraph
+    giant_graph = graph.induced_subgraph(giant_vids)
+
+    # Build new contiguous ID mappings
+    giant_b2i: dict[str, int] = {}
+    giant_i2b: dict[int, str] = {}
+    for new_id, old_id in enumerate(giant_vids):
+        bib = id_to_bibcode[old_id]
+        giant_b2i[bib] = new_id
+        giant_i2b[new_id] = bib
+
+    logger.info(
+        "Giant component: %d nodes (%d small-component nodes in %d other components) (%.1fms)",
+        len(giant_vids),
+        len(small_bibcodes),
+        len(components) - 1,
+        _elapsed_ms(t0),
+    )
+    return giant_graph, giant_b2i, giant_i2b, small_bibcodes
+
+
+# ---------------------------------------------------------------------------
+# Small-component community assignment by embedding distance
+# ---------------------------------------------------------------------------
+
+
+def assign_small_component_communities(
+    small_bibcodes: set[str],
+    giant_membership: dict[str, int],
+    giant_embeddings: dict[str, Any],
+    small_embeddings: dict[str, Any],
+) -> dict[str, int | None]:
+    """Assign small-component papers to the nearest giant-component community.
+
+    Computes community centroids from giant-component embeddings, then assigns
+    each small-component paper to the community with the highest cosine
+    similarity to its embedding.
+
+    Args:
+        small_bibcodes: Bibcodes of papers in small components.
+        giant_membership: {bibcode: community_id} for giant-component papers.
+        giant_embeddings: {bibcode: np.ndarray} for giant-component papers.
+        small_embeddings: {bibcode: np.ndarray} for small-component papers.
+
+    Returns:
+        {bibcode: community_id} for each small-component paper.
+        Papers without embeddings get None.
+    """
+    import numpy as np
+
+    if not small_bibcodes:
+        return {}
+
+    t0 = time.perf_counter()
+
+    # Build community centroids from giant-component embeddings
+    community_sums: dict[int, Any] = {}
+    community_counts: dict[int, int] = {}
+    for bib, cid in giant_membership.items():
+        vec = giant_embeddings.get(bib)
+        if vec is None:
+            continue
+        if cid not in community_sums:
+            community_sums[cid] = np.zeros_like(vec, dtype=np.float64)
+            community_counts[cid] = 0
+        community_sums[cid] += vec
+        community_counts[cid] += 1
+
+    # Normalize centroids
+    centroids: dict[int, Any] = {}
+    for cid, s in community_sums.items():
+        centroid = s / community_counts[cid]
+        norm = np.linalg.norm(centroid)
+        if norm > 0:
+            centroid = centroid / norm
+        centroids[cid] = centroid
+
+    if not centroids:
+        logger.warning("No community centroids available — cannot assign small components")
+        return {bib: None for bib in small_bibcodes}
+
+    # Assign each small-component paper to nearest centroid
+    result: dict[str, int | None] = {}
+    assigned = 0
+    for bib in small_bibcodes:
+        vec = small_embeddings.get(bib)
+        if vec is None:
+            result[bib] = None
+            continue
+
+        vec_norm = np.linalg.norm(vec)
+        if vec_norm > 0:
+            vec_normalized = vec / vec_norm
+        else:
+            result[bib] = None
+            continue
+
+        best_cid = None
+        best_sim = -2.0
+        for cid, centroid in centroids.items():
+            sim = float(np.dot(vec_normalized, centroid))
+            if sim > best_sim:
+                best_sim = sim
+                best_cid = cid
+
+        result[bib] = best_cid
+        assigned += 1
+
+    logger.info(
+        "Assigned %d/%d small-component papers to communities (%.1fms)",
+        assigned,
+        len(small_bibcodes),
+        _elapsed_ms(t0),
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -397,9 +624,9 @@ def store_metrics(
     pagerank: list[float],
     hub_scores: list[float],
     authority_scores: list[float],
-    communities_coarse: list[int],
-    communities_medium: list[int],
-    communities_fine: list[int],
+    communities_coarse: list[int | None],
+    communities_medium: list[int | None],
+    communities_fine: list[int | None],
     id_to_bibcode: dict[int, str],
 ) -> int:
     """Store computed metrics into paper_metrics using COPY via a staging table.
@@ -446,17 +673,21 @@ def store_metrics(
             with conn.cursor() as cur:
                 cur.execute(staging_ddl)
 
+            _null = "\\N"
             buf = io.StringIO()
             for vid in range(chunk_start, chunk_end):
                 bibcode = id_to_bibcode[vid]
+                cc = communities_coarse[vid]
+                cm = communities_medium[vid]
+                cf = communities_fine[vid]
                 row = (
                     f"{bibcode}\t"
                     f"{pagerank[vid]}\t"
                     f"{hub_scores[vid]}\t"
                     f"{authority_scores[vid]}\t"
-                    f"{communities_coarse[vid]}\t"
-                    f"{communities_medium[vid]}\t"
-                    f"{communities_fine[vid]}\n"
+                    f"{_null if cc is None else cc}\t"
+                    f"{_null if cm is None else cm}\t"
+                    f"{_null if cf is None else cf}\n"
                 )
                 buf.write(row)
 
@@ -547,6 +778,137 @@ def store_community_metadata(
 
 
 # ---------------------------------------------------------------------------
+# Taxonomic community assignment (from arxiv_class)
+# ---------------------------------------------------------------------------
+
+
+def extract_taxonomic_community(arxiv_class: list[str] | None) -> str | None:
+    """Extract the primary taxonomic community from a paper's arxiv_class list.
+
+    Prefers astro-ph subcategories (astro-ph.CO, astro-ph.EP, etc.) over
+    non-astrophysics categories. If no astro-ph entry exists, returns the
+    first category in the list.
+
+    Args:
+        arxiv_class: List of arXiv classification strings, or None.
+
+    Returns:
+        Primary category string, or None if the list is empty/None.
+    """
+    if not arxiv_class:
+        return None
+
+    # Prefer the first astro-ph entry
+    for cat in arxiv_class:
+        if cat.startswith(_ASTRO_PH_PREFIX):
+            return cat
+
+    # Fall back to first category
+    return arxiv_class[0]
+
+
+def populate_taxonomic_communities(conn: psycopg.Connection) -> int:
+    """Bulk-populate community_taxonomic in paper_metrics from papers.arxiv_class.
+
+    Uses a single SQL UPDATE joining paper_metrics to papers, picking the first
+    astro-ph.* subcategory (or the first arxiv_class entry if no astro-ph match).
+
+    Args:
+        conn: Database connection.
+
+    Returns:
+        Number of rows updated.
+    """
+    t0 = time.perf_counter()
+
+    update_sql = """
+        UPDATE paper_metrics pm
+        SET community_taxonomic = (
+            SELECT COALESCE(
+                (SELECT unnest FROM unnest(p.arxiv_class) WHERE unnest LIKE 'astro-ph%%' LIMIT 1),
+                p.arxiv_class[1]
+            )
+        ),
+        updated_at = NOW()
+        FROM papers p
+        WHERE p.bibcode = pm.bibcode
+          AND p.arxiv_class IS NOT NULL
+          AND array_length(p.arxiv_class, 1) > 0
+          AND pm.community_taxonomic IS NULL
+    """
+
+    with conn.cursor() as cur:
+        cur.execute(update_sql)
+        rows_updated = cur.rowcount
+    conn.commit()
+
+    logger.info(
+        "Populated community_taxonomic for %d papers in %.1fms",
+        rows_updated,
+        _elapsed_ms(t0),
+    )
+    return rows_updated
+
+
+# ---------------------------------------------------------------------------
+# Embedding loader for small-component assignment
+# ---------------------------------------------------------------------------
+
+
+def _load_embeddings(
+    conn: psycopg.Connection,
+    bibcodes: set[str],
+) -> dict[str, Any]:
+    """Load embedding vectors from paper_embeddings for the given bibcodes.
+
+    Returns {bibcode: numpy array} for all bibcodes that have embeddings.
+    """
+    import numpy as np
+
+    if not bibcodes:
+        return {}
+
+    t0 = time.perf_counter()
+    result: dict[str, Any] = {}
+
+    # Use batched IN queries to avoid overly long parameter lists
+    bibcode_list = list(bibcodes)
+    batch_size = 10_000
+    for i in range(0, len(bibcode_list), batch_size):
+        batch = bibcode_list[i : i + batch_size]
+        placeholders = ",".join(["%s"] * len(batch))
+        sql = (
+            f"SELECT bibcode, embedding::text FROM paper_embeddings "
+            f"WHERE bibcode IN ({placeholders}) "
+            f"AND embedding IS NOT NULL "
+            f"ORDER BY bibcode "
+            f"LIMIT 1"  # one embedding per bibcode (latest model)
+        )
+        # Actually we want one per bibcode, use DISTINCT ON
+        sql = (
+            f"SELECT DISTINCT ON (bibcode) bibcode, embedding::text "
+            f"FROM paper_embeddings "
+            f"WHERE bibcode IN ({placeholders}) "
+            f"AND embedding IS NOT NULL "
+            f"ORDER BY bibcode"
+        )
+        with conn.cursor() as cur:
+            cur.execute(sql, batch)
+            for bibcode, emb_text in cur.fetchall():
+                # pgvector text format: "[0.1,0.2,...]"
+                vec = np.fromstring(emb_text.strip("[]"), sep=",", dtype=np.float32)
+                result[bibcode] = vec
+
+    logger.info(
+        "Loaded %d/%d embeddings in %.1fms",
+        len(result),
+        len(bibcodes),
+        _elapsed_ms(t0),
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Full pipeline orchestrator
 # ---------------------------------------------------------------------------
 
@@ -565,14 +927,16 @@ def run_pipeline(
     Steps:
         1. Load citation graph from PostgreSQL into igraph.
         2. Compute PageRank and HITS scores.
-        3. Run Leiden community detection at 3 resolutions.
-        4. Store all metrics into paper_metrics.
-        5. Generate and store community labels.
+        3. Filter isolated nodes, extract giant component.
+        4. Run Leiden community detection at 3 resolutions on giant component.
+        5. Assign small-component papers to nearest community by embedding distance.
+        6. Store all metrics into paper_metrics.
+        7. Generate and store community labels.
 
     Args:
         dsn: PostgreSQL DSN (defaults to SCIX_DSN env var).
         calibrate: If True, use binary search to calibrate Leiden resolutions
-            targeting ~50 (coarse), ~500 (medium), ~5000 (fine) communities.
+            targeting ~20 (coarse), ~200 (medium), ~2000 (fine) communities.
         res_coarse: Resolution for coarse communities (used if calibrate=False).
         res_medium: Resolution for medium communities (used if calibrate=False).
         res_fine: Resolution for fine communities (used if calibrate=False).
@@ -606,52 +970,134 @@ def run_pipeline(
     hub_scores, authority_scores = compute_hits(graph)
     timing["hits_ms"] = _elapsed_ms(t0)
 
-    # --- Leiden community detection (3 resolutions) ---
-    if calibrate:
-        logger.info("Calibrating Leiden resolutions...")
-
-        t0 = time.perf_counter()
-        res_coarse = calibrate_resolution(
-            graph,
-            target_communities=50,
-            seed=seed,
-        )
-        timing["calibrate_coarse_ms"] = _elapsed_ms(t0)
-
-        t0 = time.perf_counter()
-        res_medium = calibrate_resolution(
-            graph,
-            target_communities=500,
-            seed=seed,
-        )
-        timing["calibrate_medium_ms"] = _elapsed_ms(t0)
-
-        t0 = time.perf_counter()
-        res_fine = calibrate_resolution(
-            graph,
-            target_communities=5000,
-            seed=seed,
-        )
-        timing["calibrate_fine_ms"] = _elapsed_ms(t0)
-
-    logger.info(
-        "Running Leiden: coarse=%.4f, medium=%.4f, fine=%.4f",
-        res_coarse,
-        res_medium,
-        res_fine,
+    # --- Filter isolated nodes for Leiden ---
+    logger.info("Filtering isolated nodes for Leiden...")
+    t0 = time.perf_counter()
+    subgraph, sub_b2i, sub_i2b, isolated_bibcodes = filter_isolated_nodes(
+        graph, bibcode_to_id, id_to_bibcode
     )
+    timing["filter_isolates_ms"] = _elapsed_ms(t0)
+    timing["isolated_node_count"] = len(isolated_bibcodes)
+    del isolated_bibcodes  # free memory — count is recorded in timing
 
+    # --- Extract giant component ---
+    logger.info("Extracting giant component...")
     t0 = time.perf_counter()
-    communities_coarse = compute_leiden(graph, resolution=res_coarse, seed=seed)
-    timing["leiden_coarse_ms"] = _elapsed_ms(t0)
+    giant, giant_b2i, giant_i2b, small_component_bibcodes = extract_giant_component(
+        subgraph, sub_b2i, sub_i2b
+    )
+    timing["extract_giant_ms"] = _elapsed_ms(t0)
+    timing["small_component_node_count"] = len(small_component_bibcodes)
 
-    t0 = time.perf_counter()
-    communities_medium = compute_leiden(graph, resolution=res_medium, seed=seed)
-    timing["leiden_medium_ms"] = _elapsed_ms(t0)
+    # --- Leiden community detection (3 resolutions) on giant component ---
+    if giant.vcount() == 0:
+        logger.warning("No connected nodes — skipping Leiden entirely")
+        giant_coarse: list[int] = []
+        giant_medium: list[int] = []
+        giant_fine: list[int] = []
+    else:
+        if calibrate:
+            logger.info("Calibrating Leiden resolutions on giant component...")
 
-    t0 = time.perf_counter()
-    communities_fine = compute_leiden(graph, resolution=res_fine, seed=seed)
-    timing["leiden_fine_ms"] = _elapsed_ms(t0)
+            t0 = time.perf_counter()
+            res_coarse = calibrate_resolution(
+                giant,
+                target_communities=20,
+                seed=seed,
+            )
+            timing["calibrate_coarse_ms"] = _elapsed_ms(t0)
+
+            t0 = time.perf_counter()
+            res_medium = calibrate_resolution(
+                giant,
+                target_communities=200,
+                seed=seed,
+            )
+            timing["calibrate_medium_ms"] = _elapsed_ms(t0)
+
+            t0 = time.perf_counter()
+            res_fine = calibrate_resolution(
+                giant,
+                target_communities=2000,
+                seed=seed,
+            )
+            timing["calibrate_fine_ms"] = _elapsed_ms(t0)
+
+        logger.info(
+            "Running Leiden on %d giant-component nodes: coarse=%.4f, medium=%.4f, fine=%.4f",
+            giant.vcount(),
+            res_coarse,
+            res_medium,
+            res_fine,
+        )
+
+        t0 = time.perf_counter()
+        giant_coarse = compute_leiden(giant, resolution=res_coarse, seed=seed)
+        timing["leiden_coarse_ms"] = _elapsed_ms(t0)
+
+        t0 = time.perf_counter()
+        giant_medium = compute_leiden(giant, resolution=res_medium, seed=seed)
+        timing["leiden_medium_ms"] = _elapsed_ms(t0)
+
+        t0 = time.perf_counter()
+        giant_fine = compute_leiden(giant, resolution=res_fine, seed=seed)
+        timing["leiden_fine_ms"] = _elapsed_ms(t0)
+
+    # --- Assign small-component papers by embedding distance ---
+    if small_component_bibcodes and giant.vcount() > 0:
+        logger.info(
+            "Assigning %d small-component papers by embedding distance...",
+            len(small_component_bibcodes),
+        )
+        t0 = time.perf_counter()
+
+        # Load embeddings for giant-component and small-component papers
+        all_bibcodes_needing_embeddings = set(giant_b2i.keys()) | small_component_bibcodes
+        embeddings = _load_embeddings(conn, all_bibcodes_needing_embeddings)
+
+        giant_embeddings = {b: embeddings[b] for b in giant_b2i if b in embeddings}
+        small_embeddings = {b: embeddings[b] for b in small_component_bibcodes if b in embeddings}
+
+        # Build giant membership dicts for each resolution
+        giant_membership_coarse = {giant_i2b[vid]: giant_coarse[vid] for vid in giant_i2b}
+        giant_membership_medium = {giant_i2b[vid]: giant_medium[vid] for vid in giant_i2b}
+        giant_membership_fine = {giant_i2b[vid]: giant_fine[vid] for vid in giant_i2b}
+
+        small_assign_coarse = assign_small_component_communities(
+            small_component_bibcodes, giant_membership_coarse, giant_embeddings, small_embeddings
+        )
+        small_assign_medium = assign_small_component_communities(
+            small_component_bibcodes, giant_membership_medium, giant_embeddings, small_embeddings
+        )
+        small_assign_fine = assign_small_component_communities(
+            small_component_bibcodes, giant_membership_fine, giant_embeddings, small_embeddings
+        )
+        timing["assign_small_components_ms"] = _elapsed_ms(t0)
+    else:
+        small_assign_coarse = {}
+        small_assign_medium = {}
+        small_assign_fine = {}
+
+    # --- Expand giant-component communities back to full node list ---
+    # Giant-component nodes get their Leiden community ID.
+    # Small-component nodes get their embedding-assigned community ID (or None).
+    # Isolated nodes get None.
+    n = len(id_to_bibcode)
+    communities_coarse: list[int | None] = [None] * n
+    communities_medium: list[int | None] = [None] * n
+    communities_fine: list[int | None] = [None] * n
+
+    for giant_vid, bib in giant_i2b.items():
+        full_vid = bibcode_to_id[bib]
+        communities_coarse[full_vid] = giant_coarse[giant_vid]
+        communities_medium[full_vid] = giant_medium[giant_vid]
+        communities_fine[full_vid] = giant_fine[giant_vid]
+
+    for bib in small_component_bibcodes:
+        full_vid = bibcode_to_id[bib]
+        communities_coarse[full_vid] = small_assign_coarse.get(bib)
+        communities_medium[full_vid] = small_assign_medium.get(bib)
+        communities_fine[full_vid] = small_assign_fine.get(bib)
 
     # --- Store metrics ---
     # Switch to autocommit so each chunk commits immediately
@@ -683,11 +1129,20 @@ def run_pipeline(
             logger.info("Generating labels for %s communities...", res_name)
             t0 = time.perf_counter()
 
-            membership_by_bibcode = {id_to_bibcode[vid]: cid for vid, cid in enumerate(membership)}
+            membership_by_bibcode = {
+                id_to_bibcode[vid]: cid for vid, cid in enumerate(membership) if cid is not None
+            }
 
             labels = generate_community_labels(conn, res_name)
             store_community_metadata(conn, res_name, membership_by_bibcode, labels)
             timing[f"labels_{res_name}_ms"] = _elapsed_ms(t0)
+
+    # --- Populate taxonomic communities from arxiv_class ---
+    logger.info("Populating taxonomic communities from arxiv_class...")
+    conn.autocommit = False
+    t0 = time.perf_counter()
+    populate_taxonomic_communities(conn)
+    timing["taxonomic_communities_ms"] = _elapsed_ms(t0)
 
     conn.close()
 

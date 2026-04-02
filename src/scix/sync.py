@@ -18,16 +18,53 @@ logger = logging.getLogger(__name__)
 ADS_API_URL = "https://api.adsabs.harvard.edu/v1/search/query"
 
 # All fields to request from ADS (same as the original harvest scripts).
-ADS_FIELDS = ",".join([
-    "abstract", "ack", "aff", "alternate_bibcode", "alternate_title",
-    "arxiv_class", "author", "bibcode", "bibgroup", "bibstem",
-    "body", "citation", "citation_count", "copyright", "database",
-    "data", "doi", "doctype", "editor", "entry_date", "first_author",
-    "grant", "id", "identifier", "indexstamp", "issue", "keyword",
-    "lang", "orcid_pub", "orcid_user", "page", "property",
-    "pub", "pub_raw", "pubdate", "read_count", "reference",
-    "reference_count", "series", "title", "volume", "year",
-])
+ADS_FIELDS = ",".join(
+    [
+        "abstract",
+        "ack",
+        "aff",
+        "alternate_bibcode",
+        "alternate_title",
+        "arxiv_class",
+        "author",
+        "bibcode",
+        "bibgroup",
+        "bibstem",
+        # "body" omitted: full text is not stored in our schema and causes
+        # ADS gateway timeouts (504) on large batches for high-volume years.
+        "citation",
+        "citation_count",
+        "copyright",
+        "database",
+        "data",
+        "doi",
+        "doctype",
+        "editor",
+        "entry_date",
+        "first_author",
+        "grant",
+        "id",
+        "identifier",
+        "indexstamp",
+        "issue",
+        "keyword",
+        "lang",
+        "orcid_pub",
+        "orcid_user",
+        "page",
+        "property",
+        "pub",
+        "pub_raw",
+        "pubdate",
+        "read_count",
+        "reference",
+        "reference_count",
+        "series",
+        "title",
+        "volume",
+        "year",
+    ]
+)
 
 
 @dataclass(frozen=True)
@@ -52,7 +89,9 @@ def _load_state(state_path: Path) -> dict[str, SyncState]:
 
 def _save_state(state_path: Path, states: dict[str, SyncState]) -> None:
     """Save sync state to JSON file."""
-    data = {k: {"filename": v.filename, "records_fetched": v.records_fetched} for k, v in states.items()}
+    data = {
+        k: {"filename": v.filename, "records_fetched": v.records_fetched} for k, v in states.items()
+    }
     with open(state_path, "w") as f:
         json.dump(data, f, indent=2)
 
@@ -100,7 +139,9 @@ class SyncClient:
         total_expected = self.count(query)
         logger.info(
             "%s: %d records expected, resuming from %d",
-            label, total_expected, start,
+            label,
+            total_expected,
+            start,
         )
 
         mode = "at" if resume_offset > 0 else "wt"
@@ -121,7 +162,11 @@ class SyncClient:
                 pct = total_written / total_expected * 100 if total_expected > 0 else 0
                 logger.info(
                     "%s: %d/%d (%.1f%%) %.0f rec/s",
-                    label, total_written, total_expected, pct, rate,
+                    label,
+                    total_written,
+                    total_expected,
+                    pct,
+                    rate,
                 )
 
                 time.sleep(self._throttle)
@@ -135,12 +180,16 @@ class SyncClient:
         return resp.get("response", {}).get("docs", [])
 
     def _request(
-        self, query: str, start: int = 0, rows: int = 0
+        self, query: str, start: int = 0, rows: int = 0, max_retries: int = 20
     ) -> dict[str, Any]:
-        """Make an API request with exponential backoff retry."""
+        """Make an API request with exponential backoff retry.
+
+        Raises RuntimeError after max_retries consecutive failures.
+        Rate-limit (429) retries do not count toward the limit.
+        """
         params = {"q": query, "start": start, "rows": rows, "fl": ADS_FIELDS}
         attempt = 0
-        while True:
+        while attempt < max_retries:
             try:
                 resp = requests.get(
                     ADS_API_URL,
@@ -154,7 +203,9 @@ class SyncClient:
                     reset = resp.headers.get("X-RateLimit-Reset")
                     if reset:
                         wait = max(1, int(reset) - int(time.time()))
-                        logger.warning("Rate limit low (%s remaining), waiting %ds", remaining, wait)
+                        logger.warning(
+                            "Rate limit low (%s remaining), waiting %ds", remaining, wait
+                        )
                         time.sleep(wait)
 
                 if resp.status_code == 200:
@@ -163,13 +214,24 @@ class SyncClient:
                     wait = int(resp.headers.get("Retry-After", 60))
                     logger.warning("Rate limited (429), waiting %ds", wait)
                     time.sleep(wait)
+                    continue  # 429 does not count as a failure attempt
                 else:
-                    logger.warning("HTTP %d: %s", resp.status_code, resp.text[:200])
+                    logger.warning(
+                        "HTTP %d (attempt %d/%d): %s",
+                        resp.status_code,
+                        attempt + 1,
+                        max_retries,
+                        resp.text[:200],
+                    )
             except requests.exceptions.RequestException as e:
-                logger.warning("Request failed (attempt %d): %s", attempt + 1, e)
+                logger.warning("Request failed (attempt %d/%d): %s", attempt + 1, max_retries, e)
 
             attempt += 1
             time.sleep(min(60, 2 ** min(attempt, 6)))
+
+        raise RuntimeError(
+            f"ADS API request failed after {max_retries} retries: q={params['q']}, start={start}"
+        )
 
 
 def harvest_years(
@@ -195,16 +257,24 @@ def harvest_years(
         if key in states and states[key].records_fetched > 0:
             expected = client.count(f"year:{year}")
             if states[key].records_fetched >= expected:
-                logger.info("Year %d: already complete (%d records), skipping", year, states[key].records_fetched)
+                logger.info(
+                    "Year %d: already complete (%d records), skipping",
+                    year,
+                    states[key].records_fetched,
+                )
                 output_files.append(output_path)
                 continue
 
-        total = client.fetch_to_file(
-            query=f"year:{year}",
-            output_path=output_path,
-            label=f"Year {year}",
-            resume_offset=resume_offset,
-        )
+        try:
+            total = client.fetch_to_file(
+                query=f"year:{year}",
+                output_path=output_path,
+                label=f"Year {year}",
+                resume_offset=resume_offset,
+            )
+        except RuntimeError as e:
+            logger.error("Year %d: FAILED — %s, moving to next year", year, e)
+            continue
 
         states[key] = SyncState(filename=filename, records_fetched=total)
         _save_state(state_path, states)
@@ -263,7 +333,9 @@ def fill_gaps(
 
             if db_count < api_count:
                 gap = api_count - db_count
-                logger.info("Year %d: DB has %d, API has %d (gap: %d)", year, db_count, api_count, gap)
+                logger.info(
+                    "Year %d: DB has %d, API has %d (gap: %d)", year, db_count, api_count, gap
+                )
                 gaps.append((year, db_count, api_count))
             else:
                 logger.info("Year %d: OK (%d/%d)", year, db_count, api_count)

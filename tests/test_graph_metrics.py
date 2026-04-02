@@ -14,10 +14,14 @@ leidenalg = pytest.importorskip("leidenalg")
 
 from scix.graph_metrics import (
     _VALID_RESOLUTIONS,
+    assign_small_component_communities,
     calibrate_resolution,
     compute_hits,
     compute_leiden,
     compute_pagerank,
+    extract_giant_component,
+    extract_taxonomic_community,
+    filter_isolated_nodes,
 )
 
 # ---------------------------------------------------------------------------
@@ -239,6 +243,347 @@ class TestCalibrateResolution:
 # ---------------------------------------------------------------------------
 
 
+def _two_clique_with_isolates(clique_size: int = 10, n_isolates: int = 5) -> tuple:
+    """Two cliques + isolated nodes. Returns (graph, bibcode_to_id, id_to_bibcode).
+
+    Nodes 0..clique_size-1: Clique A
+    Nodes clique_size..2*clique_size-1: Clique B (bridge from 0 to clique_size)
+    Nodes 2*clique_size..2*clique_size+n_isolates-1: Isolated (no edges)
+    """
+    base = _two_clique_graph(clique_size)
+    graph = base.copy()
+    graph.add_vertices(n_isolates)
+
+    n = graph.vcount()
+    bibcode_to_id = {f"BIB{i:04d}": i for i in range(n)}
+    id_to_bibcode = {i: f"BIB{i:04d}" for i in range(n)}
+
+    return graph, bibcode_to_id, id_to_bibcode
+
+
+# ---------------------------------------------------------------------------
+# Filter isolated nodes tests
+# ---------------------------------------------------------------------------
+
+
+class TestFilterIsolatedNodes:
+    def test_removes_degree_zero_nodes(self) -> None:
+        """Isolated nodes should not appear in the subgraph."""
+        graph, b2i, i2b = _two_clique_with_isolates(clique_size=5, n_isolates=3)
+        subgraph, sub_b2i, sub_i2b, isolates = filter_isolated_nodes(graph, b2i, i2b)
+
+        assert subgraph.vcount() == 10  # 2 cliques of 5
+        assert len(sub_b2i) == 10
+        assert len(sub_i2b) == 10
+
+    def test_preserves_connected_nodes(self) -> None:
+        """All connected nodes should appear in the subgraph with correct edges."""
+        graph, b2i, i2b = _two_clique_with_isolates(clique_size=5, n_isolates=3)
+        subgraph, sub_b2i, sub_i2b, isolates = filter_isolated_nodes(graph, b2i, i2b)
+
+        # Subgraph should have edges from both cliques + bridge
+        # Each clique of 5: 5*4=20 directed edges, bridge: 1
+        assert subgraph.ecount() == 41
+
+        # Isolated bibcodes must not appear in subgraph mappings
+        for bib in isolates:
+            assert bib not in sub_b2i
+
+    def test_returns_isolated_bibcodes(self) -> None:
+        """Isolated bibcodes should be tracked in the returned set."""
+        graph, b2i, i2b = _two_clique_with_isolates(clique_size=5, n_isolates=3)
+        _subgraph, _sub_b2i, _sub_i2b, isolates = filter_isolated_nodes(graph, b2i, i2b)
+
+        expected = {f"BIB{i:04d}" for i in range(10, 13)}
+        assert isolates == expected
+
+    def test_no_isolates_returns_same_size(self) -> None:
+        """Graph with no isolated nodes returns a subgraph of same size."""
+        graph = _two_clique_graph(clique_size=5)
+        b2i = {f"BIB{i:04d}": i for i in range(10)}
+        i2b = {i: f"BIB{i:04d}" for i in range(10)}
+        subgraph, sub_b2i, sub_i2b, isolates = filter_isolated_nodes(graph, b2i, i2b)
+
+        assert subgraph.vcount() == 10
+        assert len(isolates) == 0
+
+    def test_all_isolates_returns_empty_graph(self) -> None:
+        """Graph of only isolated nodes returns an empty subgraph."""
+        graph = igraph.Graph(n=5, edges=[], directed=True)
+        b2i = {f"BIB{i:04d}": i for i in range(5)}
+        i2b = {i: f"BIB{i:04d}" for i in range(5)}
+        subgraph, sub_b2i, sub_i2b, isolates = filter_isolated_nodes(graph, b2i, i2b)
+
+        assert subgraph.vcount() == 0
+        assert len(isolates) == 5
+
+    def test_subgraph_id_mapping_is_contiguous(self) -> None:
+        """Subgraph vertex IDs should be 0..n-1 with correct bibcode mapping."""
+        graph, b2i, i2b = _two_clique_with_isolates(clique_size=5, n_isolates=3)
+        _subgraph, sub_b2i, sub_i2b, _isolates = filter_isolated_nodes(graph, b2i, i2b)
+
+        # IDs should be contiguous 0..9
+        assert set(sub_i2b.keys()) == set(range(10))
+        # Round-trip: every bibcode in sub_b2i maps to an id that maps back
+        for bib, vid in sub_b2i.items():
+            assert sub_i2b[vid] == bib
+
+
+class TestLeidenOnFilteredGraph:
+    def test_no_singleton_communities_after_filtering(self) -> None:
+        """Leiden on filtered graph should not produce singleton communities from isolates."""
+        graph, b2i, i2b = _two_clique_with_isolates(clique_size=10, n_isolates=20)
+        subgraph, sub_b2i, sub_i2b, isolates = filter_isolated_nodes(graph, b2i, i2b)
+
+        membership = compute_leiden(subgraph, resolution=1.0, seed=42)
+        n_communities = len(set(membership))
+        # Should find 2 communities (the two cliques), not 22
+        assert n_communities == 2
+        assert len(membership) == 20  # only connected nodes
+
+
+# ---------------------------------------------------------------------------
+# Giant component extraction helpers
+# ---------------------------------------------------------------------------
+
+
+def _two_clique_with_small_component(clique_size: int = 10, small_size: int = 3) -> tuple:
+    """Two large cliques (bridged) + one small disconnected component.
+
+    Returns (graph, bibcode_to_id, id_to_bibcode).
+
+    Layout:
+      Nodes 0..clique_size-1: Clique A (giant component part 1)
+      Nodes clique_size..2*clique_size-1: Clique B (giant component part 2, bridge from 0)
+      Nodes 2*clique_size..2*clique_size+small_size-1: Small component (cycle)
+    """
+    base = _two_clique_graph(clique_size)
+    graph = base.copy()
+    graph.add_vertices(small_size)
+
+    # Connect small component as a cycle
+    offset = 2 * clique_size
+    for i in range(small_size):
+        j = (i + 1) % small_size
+        graph.add_edge(offset + i, offset + j)
+        graph.add_edge(offset + j, offset + i)
+
+    n = graph.vcount()
+    bibcode_to_id = {f"BIB{i:04d}": i for i in range(n)}
+    id_to_bibcode = {i: f"BIB{i:04d}" for i in range(n)}
+
+    return graph, bibcode_to_id, id_to_bibcode
+
+
+# ---------------------------------------------------------------------------
+# Giant component extraction tests
+# ---------------------------------------------------------------------------
+
+
+class TestExtractGiantComponent:
+    def test_extracts_largest_component(self) -> None:
+        """Giant component should contain both cliques, not the small component."""
+        graph, b2i, i2b = _two_clique_with_small_component(clique_size=10, small_size=3)
+        # First filter isolates (there are none here, but follow pipeline flow)
+        subgraph, sub_b2i, sub_i2b, _isolates = filter_isolated_nodes(graph, b2i, i2b)
+
+        giant, giant_b2i, giant_i2b, small_bibs = extract_giant_component(
+            subgraph, sub_b2i, sub_i2b
+        )
+
+        assert giant.vcount() == 20  # two cliques of 10
+        assert len(small_bibs) == 3  # small cycle component
+
+    def test_small_component_bibcodes_returned(self) -> None:
+        """Small component bibcodes should be returned as a set."""
+        graph, b2i, i2b = _two_clique_with_small_component(clique_size=5, small_size=3)
+        subgraph, sub_b2i, sub_i2b, _isolates = filter_isolated_nodes(graph, b2i, i2b)
+
+        _giant, _giant_b2i, _giant_i2b, small_bibs = extract_giant_component(
+            subgraph, sub_b2i, sub_i2b
+        )
+
+        expected = {f"BIB{i:04d}" for i in range(10, 13)}
+        assert small_bibs == expected
+
+    def test_giant_component_id_mapping_contiguous(self) -> None:
+        """Giant component should have contiguous vertex IDs 0..n-1."""
+        graph, b2i, i2b = _two_clique_with_small_component(clique_size=5, small_size=3)
+        subgraph, sub_b2i, sub_i2b, _isolates = filter_isolated_nodes(graph, b2i, i2b)
+
+        giant, giant_b2i, giant_i2b, _small_bibs = extract_giant_component(
+            subgraph, sub_b2i, sub_i2b
+        )
+
+        assert set(giant_i2b.keys()) == set(range(giant.vcount()))
+        for bib, vid in giant_b2i.items():
+            assert giant_i2b[vid] == bib
+
+    def test_no_small_components_returns_full_graph(self) -> None:
+        """If the entire graph is one component, small_bibs should be empty."""
+        graph = _two_clique_graph(clique_size=5)
+        b2i = {f"BIB{i:04d}": i for i in range(10)}
+        i2b = {i: f"BIB{i:04d}" for i in range(10)}
+
+        giant, giant_b2i, giant_i2b, small_bibs = extract_giant_component(graph, b2i, i2b)
+
+        assert giant.vcount() == 10
+        assert len(small_bibs) == 0
+
+    def test_leiden_on_giant_component(self) -> None:
+        """Leiden on giant component should find 2 communities (the two cliques)."""
+        graph, b2i, i2b = _two_clique_with_small_component(clique_size=10, small_size=3)
+        subgraph, sub_b2i, sub_i2b, _isolates = filter_isolated_nodes(graph, b2i, i2b)
+        giant, giant_b2i, giant_i2b, _small_bibs = extract_giant_component(
+            subgraph, sub_b2i, sub_i2b
+        )
+
+        membership = compute_leiden(giant, resolution=1.0, seed=42)
+        n_communities = len(set(membership))
+        assert n_communities == 2
+        assert len(membership) == 20
+
+
+# ---------------------------------------------------------------------------
+# Small component community assignment tests
+# ---------------------------------------------------------------------------
+
+
+class TestAssignSmallComponentCommunities:
+    def test_assigns_by_nearest_embedding(self) -> None:
+        """Papers should be assigned to the community whose centroid is nearest."""
+        # Two communities with known centroids
+        import numpy as np
+
+        # Community 0 centroid near [1,0,0], community 1 near [0,1,0]
+        giant_membership = {
+            "BIB0000": 0,
+            "BIB0001": 0,
+            "BIB0002": 1,
+            "BIB0003": 1,
+        }
+        giant_embeddings = {
+            "BIB0000": np.array([1.0, 0.0, 0.0]),
+            "BIB0001": np.array([0.9, 0.1, 0.0]),
+            "BIB0002": np.array([0.0, 1.0, 0.0]),
+            "BIB0003": np.array([0.1, 0.9, 0.0]),
+        }
+        # Small-component paper near community 0
+        small_embeddings = {
+            "BIB0010": np.array([0.8, 0.2, 0.0]),
+        }
+
+        result = assign_small_component_communities(
+            small_bibcodes={"BIB0010"},
+            giant_membership=giant_membership,
+            giant_embeddings=giant_embeddings,
+            small_embeddings=small_embeddings,
+        )
+
+        assert result["BIB0010"] == 0
+
+    def test_assigns_to_nearer_community(self) -> None:
+        """A paper closer to community 1 should be assigned to community 1."""
+        import numpy as np
+
+        giant_membership = {
+            "BIB0000": 0,
+            "BIB0001": 1,
+        }
+        giant_embeddings = {
+            "BIB0000": np.array([1.0, 0.0]),
+            "BIB0001": np.array([0.0, 1.0]),
+        }
+        small_embeddings = {
+            "BIB0010": np.array([0.1, 0.9]),
+        }
+
+        result = assign_small_component_communities(
+            small_bibcodes={"BIB0010"},
+            giant_membership=giant_membership,
+            giant_embeddings=giant_embeddings,
+            small_embeddings=small_embeddings,
+        )
+
+        assert result["BIB0010"] == 1
+
+    def test_missing_embedding_returns_none(self) -> None:
+        """Papers without embeddings should get None (unassigned)."""
+        import numpy as np
+
+        giant_membership = {"BIB0000": 0}
+        giant_embeddings = {"BIB0000": np.array([1.0, 0.0])}
+        small_embeddings: dict = {}  # BIB0010 has no embedding
+
+        result = assign_small_component_communities(
+            small_bibcodes={"BIB0010"},
+            giant_membership=giant_membership,
+            giant_embeddings=giant_embeddings,
+            small_embeddings=small_embeddings,
+        )
+
+        assert result["BIB0010"] is None
+
+    def test_empty_small_bibcodes(self) -> None:
+        """No small-component papers should return empty dict."""
+        result = assign_small_component_communities(
+            small_bibcodes=set(),
+            giant_membership={},
+            giant_embeddings={},
+            small_embeddings={},
+        )
+        assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# Validation tests
+# ---------------------------------------------------------------------------
+
+
 class TestValidResolutions:
     def test_valid_resolutions_set(self) -> None:
         assert _VALID_RESOLUTIONS == {"coarse", "medium", "fine"}
+
+
+# ---------------------------------------------------------------------------
+# Taxonomic community extraction tests
+# ---------------------------------------------------------------------------
+
+
+class TestExtractTaxonomicCommunity:
+    def test_single_astroph_subcategory(self) -> None:
+        assert extract_taxonomic_community(["astro-ph.SR"]) == "astro-ph.SR"
+
+    def test_multiple_astroph_returns_first(self) -> None:
+        assert extract_taxonomic_community(["astro-ph.GA", "astro-ph.CO"]) == "astro-ph.GA"
+
+    def test_mixed_categories_prefers_astroph(self) -> None:
+        assert extract_taxonomic_community(["gr-qc", "astro-ph.HE"]) == "astro-ph.HE"
+
+    def test_no_astroph_returns_first(self) -> None:
+        assert extract_taxonomic_community(["hep-th", "gr-qc"]) == "hep-th"
+
+    def test_empty_list_returns_none(self) -> None:
+        assert extract_taxonomic_community([]) is None
+
+    def test_none_returns_none(self) -> None:
+        assert extract_taxonomic_community(None) is None
+
+    def test_all_six_subcategories(self) -> None:
+        """Each of the 6 astro-ph subcategories should be recognized."""
+        for sub in [
+            "astro-ph.CO",
+            "astro-ph.EP",
+            "astro-ph.GA",
+            "astro-ph.HE",
+            "astro-ph.IM",
+            "astro-ph.SR",
+        ]:
+            assert extract_taxonomic_community([sub]) == sub
+
+    def test_bare_astroph(self) -> None:
+        """Plain 'astro-ph' (no subcategory) should still be returned."""
+        assert extract_taxonomic_community(["astro-ph"]) == "astro-ph"
+
+    def test_non_astroph_single(self) -> None:
+        assert extract_taxonomic_community(["cs.AI"]) == "cs.AI"

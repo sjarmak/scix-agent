@@ -1,13 +1,16 @@
-"""Embedding pipeline: generate SPECTER2 embeddings and store in paper_embeddings.
+"""Embedding pipeline: SPECTER2 and OpenAI embeddings, stored in paper_embeddings.
 
-Uses HuggingFace transformers + torch directly (no sentence-transformers wrapper).
+Uses HuggingFace transformers + torch directly (no sentence-transformers wrapper)
+for SPECTER2, and the OpenAI SDK for text-embedding-3-large.
 Writes embeddings via psycopg COPY for bulk throughput.
 """
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -364,3 +367,90 @@ def run_embedding_pipeline(
     finally:
         read_conn.close()
         write_conn.close()
+
+
+# ---------------------------------------------------------------------------
+# OpenAI text-embedding-3-large support
+# ---------------------------------------------------------------------------
+
+_OPENAI_MODEL = "text-embedding-3-large"
+_OPENAI_DEFAULT_DIM = 1024
+
+
+def _get_openai_client() -> Any:
+    """Build an OpenAI client, reading OPENAI_API_KEY from environment.
+
+    Raises ValueError if the key is not set.
+    """
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "OPENAI_API_KEY environment variable is not set. "
+            "Set it before calling OpenAI embedding functions."
+        )
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise ImportError(
+            "openai package is required for OpenAI embeddings. " "Install with: pip install openai"
+        )
+    return OpenAI(api_key=api_key)
+
+
+def embed_openai(texts: list[str], dimensions: int = _OPENAI_DEFAULT_DIM) -> list[list[float]]:
+    """Generate embeddings via OpenAI text-embedding-3-large.
+
+    Uses Matryoshka dimensionality reduction to *dimensions* (default 1024).
+
+    Args:
+        texts: List of input strings to embed.
+        dimensions: Desired embedding dimension (Matryoshka truncation).
+
+    Returns:
+        List of float vectors, one per input text.
+
+    Raises:
+        ValueError: If OPENAI_API_KEY is missing or returned dimensions mismatch.
+    """
+    if not texts:
+        return []
+
+    client = _get_openai_client()
+    response = client.embeddings.create(
+        model=_OPENAI_MODEL,
+        input=texts,
+        dimensions=dimensions,
+    )
+
+    embeddings: list[list[float]] = [item.embedding for item in response.data]
+
+    # Validate returned dimensions
+    for idx, vec in enumerate(embeddings):
+        if len(vec) != dimensions:
+            raise ValueError(f"Embedding {idx} has {len(vec)} dimensions, expected {dimensions}")
+
+    logger.debug(
+        "OpenAI embedded %d texts (%d dims, model=%s)",
+        len(texts),
+        dimensions,
+        _OPENAI_MODEL,
+    )
+    return embeddings
+
+
+@functools.lru_cache(maxsize=512)
+def embed_query_openai(text: str, dimensions: int = _OPENAI_DEFAULT_DIM) -> list[float]:
+    """Embed a single query string via OpenAI, with LRU caching.
+
+    Args:
+        text: Query string to embed.
+        dimensions: Desired embedding dimension (Matryoshka truncation).
+
+    Returns:
+        List of floats representing the embedding vector.
+
+    Raises:
+        ValueError: If OPENAI_API_KEY is missing or returned dimensions mismatch.
+    """
+    vectors = embed_openai([text], dimensions=dimensions)
+    return vectors[0]

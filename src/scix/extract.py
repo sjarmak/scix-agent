@@ -1,0 +1,665 @@
+"""Entity extraction pipeline: batch extraction via Anthropic Messages Batches API.
+
+Extracts methods, datasets, instruments, and materials from paper abstracts
+using Claude with tool-use schema. Results are checkpointed to local JSONL
+before loading into the extractions table.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import psycopg
+
+from scix.db import get_connection
+
+logger = logging.getLogger(__name__)
+
+EXTRACTION_VERSION = "v1"
+EXTRACTION_TYPES = ("methods", "datasets", "instruments", "materials")
+
+# ---------------------------------------------------------------------------
+# Data structures
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ExtractionRequest:
+    """A paper queued for entity extraction."""
+
+    bibcode: str
+    title: str
+    abstract: str
+
+
+@dataclass(frozen=True)
+class ExtractionRow:
+    """A single extraction result ready for DB insertion."""
+
+    bibcode: str
+    extraction_type: str
+    extraction_version: str
+    payload: dict[str, Any]
+
+
+# ---------------------------------------------------------------------------
+# Cohort selection
+# ---------------------------------------------------------------------------
+
+
+def select_pilot_cohort(
+    conn: psycopg.Connection,
+    limit: int = 10_000,
+) -> list[ExtractionRequest]:
+    """Select top papers by citation_count with abstract length > 100.
+
+    Returns papers ordered by citation_count DESC, filtered to those
+    with a non-null abstract longer than 100 characters.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT bibcode, title, abstract
+            FROM papers
+            WHERE abstract IS NOT NULL
+              AND length(abstract) > 100
+            ORDER BY citation_count DESC NULLS LAST
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+
+    results = [ExtractionRequest(bibcode=r[0], title=r[1] or "", abstract=r[2]) for r in rows]
+    logger.info("Selected %d papers for extraction (requested %d)", len(results), limit)
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Prompt construction
+# ---------------------------------------------------------------------------
+
+_SYSTEM_PROMPT = """\
+You are a scientific entity extraction assistant specializing in astronomy \
+and astrophysics literature. Your task is to extract structured entities from \
+paper abstracts.
+
+For each paper, identify and extract:
+- **methods**: Statistical methods, computational techniques, algorithms, \
+analysis approaches (e.g., "Markov chain Monte Carlo", "spectral energy \
+distribution fitting", "principal component analysis")
+- **datasets**: Named surveys, catalogs, data releases, or observational \
+datasets (e.g., "Sloan Digital Sky Survey DR16", "Gaia DR3", "2MASS")
+- **instruments**: Telescopes, detectors, spectrographs, or space missions \
+(e.g., "Hubble Space Telescope", "ALMA", "James Webb Space Telescope")
+- **materials**: Physical materials, chemical compounds, or sample types \
+studied (e.g., "carbonaceous chondrites", "iron meteorites", "silicate dust")
+
+Extract ONLY entities explicitly mentioned in the abstract. Do not infer \
+entities not present in the text. Return empty lists for categories with \
+no matches."""
+
+_FEW_SHOT_EXAMPLES: list[dict[str, Any]] = [
+    {
+        "role": "user",
+        "content": (
+            "Title: Constraining Cosmological Parameters with CMB Lensing\n\n"
+            "Abstract: We present new constraints on cosmological parameters "
+            "using cosmic microwave background lensing data from the Planck "
+            "2018 release combined with baryon acoustic oscillation "
+            "measurements from the Sloan Digital Sky Survey DR16. Our analysis "
+            "employs Markov chain Monte Carlo sampling to explore the parameter "
+            "space, finding tight constraints on the matter density and Hubble "
+            "constant. We use the CAMB Boltzmann solver for theoretical "
+            "predictions."
+        ),
+    },
+    {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "extract_entities",
+                    "arguments": json.dumps(
+                        {
+                            "methods": [
+                                "Markov chain Monte Carlo sampling",
+                                "CAMB Boltzmann solver",
+                                "baryon acoustic oscillation measurements",
+                            ],
+                            "datasets": [
+                                "Planck 2018 release",
+                                "Sloan Digital Sky Survey DR16",
+                            ],
+                            "instruments": [],
+                            "materials": [],
+                        }
+                    ),
+                },
+            }
+        ],
+    },
+    {
+        "role": "user",
+        "content": (
+            "Title: Characterizing Exoplanet Atmospheres with JWST\n\n"
+            "Abstract: We report transmission spectroscopy observations of the "
+            "hot Jupiter WASP-39b obtained with the James Webb Space Telescope "
+            "NIRSpec instrument. Using nested sampling with the MultiNest "
+            "algorithm and the POSEIDON retrieval framework, we detect carbon "
+            "dioxide, water vapor, and sulfur dioxide in the planetary "
+            "atmosphere. Our results are compared with Hubble Space Telescope "
+            "WFC3 archival data from the Mikulski Archive for Space Telescopes."
+        ),
+    },
+    {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "extract_entities",
+                    "arguments": json.dumps(
+                        {
+                            "methods": [
+                                "transmission spectroscopy",
+                                "nested sampling",
+                                "MultiNest algorithm",
+                                "POSEIDON retrieval framework",
+                            ],
+                            "datasets": [
+                                "Mikulski Archive for Space Telescopes",
+                            ],
+                            "instruments": [
+                                "James Webb Space Telescope",
+                                "NIRSpec",
+                                "Hubble Space Telescope",
+                                "WFC3",
+                            ],
+                            "materials": [
+                                "carbon dioxide",
+                                "water vapor",
+                                "sulfur dioxide",
+                            ],
+                        }
+                    ),
+                },
+            }
+        ],
+    },
+    {
+        "role": "user",
+        "content": (
+            "Title: Solar Wind Interaction with Martian Atmosphere\n\n"
+            "Abstract: Using magnetometer data from the Mars Atmosphere and "
+            "Volatile EvolutioN (MAVEN) mission, we study the interaction of "
+            "solar wind with the Martian ionosphere. We apply hybrid particle-"
+            "in-cell simulations calibrated against in-situ measurements from "
+            "the Solar Wind Ion Analyzer. Analysis of ion escape rates reveals "
+            "enhanced oxygen and carbon ion loss during solar energetic particle "
+            "events, with implications for long-term atmospheric erosion of "
+            "silicate-rich planetary surfaces."
+        ),
+    },
+    {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "type": "function",
+                "function": {
+                    "name": "extract_entities",
+                    "arguments": json.dumps(
+                        {
+                            "methods": [
+                                "hybrid particle-in-cell simulations",
+                            ],
+                            "datasets": [],
+                            "instruments": [
+                                "MAVEN",
+                                "Solar Wind Ion Analyzer",
+                            ],
+                            "materials": [
+                                "silicate-rich planetary surfaces",
+                            ],
+                        }
+                    ),
+                },
+            }
+        ],
+    },
+]
+
+_TOOL_SCHEMA: dict[str, Any] = {
+    "name": "extract_entities",
+    "description": (
+        "Extract scientific entities from a paper abstract. "
+        "Returns lists of methods, datasets, instruments, and materials "
+        "mentioned in the text."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "methods": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Statistical methods, computational techniques, "
+                    "algorithms, or analysis approaches."
+                ),
+            },
+            "datasets": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Named surveys, catalogs, data releases, " "or observational datasets."
+                ),
+            },
+            "instruments": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": ("Telescopes, detectors, spectrographs, " "or space missions."),
+            },
+            "materials": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Physical materials, chemical compounds, " "or sample types studied."
+                ),
+            },
+        },
+        "required": ["methods", "datasets", "instruments", "materials"],
+    },
+}
+
+
+def build_extraction_prompt(
+    title: str,
+    abstract: str,
+) -> dict[str, Any]:
+    """Build an Anthropic Messages API request body for entity extraction.
+
+    Returns a dict with 'system', 'messages', and 'tools' keys suitable
+    for passing to client.messages.create() or batch request construction.
+    """
+    user_message = f"Title: {title}\n\nAbstract: {abstract}"
+
+    # Convert few-shot examples to Anthropic message format
+    messages: list[dict[str, Any]] = []
+    for example in _FEW_SHOT_EXAMPLES:
+        if example["role"] == "user":
+            messages.append({"role": "user", "content": example["content"]})
+        elif example["role"] == "assistant":
+            # Anthropic format: tool_use content blocks
+            tool_call = example["tool_calls"][0]
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": f"toolu_example_{len(messages)}",
+                            "name": tool_call["function"]["name"],
+                            "input": json.loads(tool_call["function"]["arguments"]),
+                        }
+                    ],
+                }
+            )
+            # Add tool_result for the assistant's tool call
+            messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": f"toolu_example_{len(messages) - 1}",
+                            "content": "Entities extracted successfully.",
+                        }
+                    ],
+                }
+            )
+
+    # Add the actual request
+    messages.append({"role": "user", "content": user_message})
+
+    return {
+        "system": _SYSTEM_PROMPT,
+        "messages": messages,
+        "tools": [_TOOL_SCHEMA],
+        "tool_choice": {"type": "tool", "name": "extract_entities"},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Batch submission and polling
+# ---------------------------------------------------------------------------
+
+
+def submit_batch(
+    client: Any,
+    requests: list[ExtractionRequest],
+    model: str = "claude-sonnet-4-20250514",
+    max_tokens: int = 1024,
+) -> str:
+    """Submit a batch of extraction requests via Anthropic Messages Batches API.
+
+    Args:
+        client: An anthropic.Anthropic client instance.
+        requests: Papers to extract entities from.
+        model: Anthropic model ID.
+        max_tokens: Max tokens per response.
+
+    Returns the batch ID string.
+    """
+    batch_requests = []
+    for req in requests:
+        prompt = build_extraction_prompt(req.title, req.abstract)
+        batch_requests.append(
+            {
+                "custom_id": req.bibcode,
+                "params": {
+                    "model": model,
+                    "max_tokens": max_tokens,
+                    "system": prompt["system"],
+                    "messages": prompt["messages"],
+                    "tools": prompt["tools"],
+                    "tool_choice": prompt["tool_choice"],
+                },
+            }
+        )
+
+    batch = client.messages.batches.create(requests=batch_requests)
+    logger.info("Submitted batch %s with %d requests", batch.id, len(requests))
+    return batch.id
+
+
+def poll_batch(
+    client: Any,
+    batch_id: str,
+    interval: int = 60,
+    max_wait: int = 86400,
+) -> Any:
+    """Poll a batch until it reaches a terminal state.
+
+    Args:
+        client: An anthropic.Anthropic client instance.
+        batch_id: The batch ID to poll.
+        interval: Seconds between polls.
+        max_wait: Maximum seconds to wait before raising TimeoutError.
+
+    Returns the final batch object.
+    """
+    elapsed = 0
+    while elapsed < max_wait:
+        batch = client.messages.batches.retrieve(batch_id)
+        status = batch.processing_status
+        logger.info(
+            "Batch %s status: %s (elapsed %ds)",
+            batch_id,
+            status,
+            elapsed,
+        )
+        if status == "ended":
+            return batch
+        time.sleep(interval)
+        elapsed += interval
+
+    raise TimeoutError(f"Batch {batch_id} did not complete within {max_wait}s")
+
+
+# ---------------------------------------------------------------------------
+# JSONL checkpoint
+# ---------------------------------------------------------------------------
+
+
+def save_results_jsonl(
+    client: Any,
+    batch_id: str,
+    output_path: Path,
+) -> Path:
+    """Save batch results to a local JSONL checkpoint file.
+
+    Streams results from the Anthropic API and writes each as a JSON line.
+    This checkpoint ensures results are persisted locally before any DB writes.
+
+    Args:
+        client: An anthropic.Anthropic client instance.
+        batch_id: The completed batch ID.
+        output_path: Path to write the JSONL file.
+
+    Returns the output path.
+    """
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    count = 0
+    with open(output_path, "w", encoding="utf-8") as f:
+        for result in client.messages.batches.results(batch_id):
+            line = {
+                "custom_id": result.custom_id,
+                "result": (
+                    result.result.model_dump()
+                    if hasattr(result.result, "model_dump")
+                    else result.result
+                ),
+            }
+            f.write(json.dumps(line) + "\n")
+            count += 1
+
+    logger.info(
+        "Saved %d results to %s",
+        count,
+        output_path,
+    )
+    return output_path
+
+
+# ---------------------------------------------------------------------------
+# DB loading
+# ---------------------------------------------------------------------------
+
+
+def _parse_extraction_rows(
+    line: dict[str, Any],
+    extraction_version: str,
+) -> list[ExtractionRow]:
+    """Parse a single JSONL result line into ExtractionRow objects."""
+    bibcode = line["custom_id"]
+    result = line.get("result", {})
+
+    # Handle different result structures
+    result_type = result.get("type", "")
+    if result_type == "errored" or result_type == "expired":
+        logger.warning("Skipping %s result for %s", result_type, bibcode)
+        return []
+
+    # Extract tool_use content from the message
+    message = result.get("message", {})
+    content_blocks = message.get("content", [])
+
+    rows: list[ExtractionRow] = []
+    for block in content_blocks:
+        if block.get("type") != "tool_use":
+            continue
+        if block.get("name") != "extract_entities":
+            continue
+
+        tool_input = block.get("input", {})
+        for etype in EXTRACTION_TYPES:
+            entities = tool_input.get(etype, [])
+            if entities:
+                rows.append(
+                    ExtractionRow(
+                        bibcode=bibcode,
+                        extraction_type=etype,
+                        extraction_version=extraction_version,
+                        payload={"entities": entities},
+                    )
+                )
+    return rows
+
+
+def load_results_to_db(
+    conn: psycopg.Connection,
+    jsonl_path: Path,
+    extraction_version: str = EXTRACTION_VERSION,
+    chunk_size: int = 500,
+) -> int:
+    """Load extraction results from JSONL checkpoint into the extractions table.
+
+    Reads the JSONL file, parses tool_use results, and writes in chunks
+    of `chunk_size` rows with COMMIT between chunks. Uses ON CONFLICT
+    for idempotent upserts.
+
+    Args:
+        conn: Database connection (should NOT be in autocommit mode).
+        jsonl_path: Path to the JSONL checkpoint file.
+        extraction_version: Version tag for these extractions.
+        chunk_size: Number of rows per chunk (COMMIT between chunks).
+
+    Returns total number of rows written/updated.
+    """
+    jsonl_path = Path(jsonl_path)
+    all_rows: list[ExtractionRow] = []
+
+    with open(jsonl_path, "r", encoding="utf-8") as f:
+        for line_str in f:
+            line_str = line_str.strip()
+            if not line_str:
+                continue
+            line = json.loads(line_str)
+            all_rows.extend(_parse_extraction_rows(line, extraction_version))
+
+    logger.info(
+        "Parsed %d extraction rows from %s",
+        len(all_rows),
+        jsonl_path,
+    )
+
+    total_written = 0
+    for i in range(0, len(all_rows), chunk_size):
+        chunk = all_rows[i : i + chunk_size]
+        with conn.cursor() as cur:
+            for row in chunk:
+                cur.execute(
+                    """
+                    INSERT INTO extractions
+                        (bibcode, extraction_type, extraction_version, payload)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (bibcode, extraction_type, extraction_version)
+                    DO UPDATE SET
+                        payload = EXCLUDED.payload,
+                        created_at = NOW()
+                    """,
+                    (
+                        row.bibcode,
+                        row.extraction_type,
+                        row.extraction_version,
+                        json.dumps(row.payload),
+                    ),
+                )
+        conn.commit()
+        total_written += len(chunk)
+        logger.info(
+            "Loaded chunk %d-%d (%d/%d rows)",
+            i,
+            i + len(chunk),
+            total_written,
+            len(all_rows),
+        )
+
+    logger.info("Total rows loaded: %d", total_written)
+    return total_written
+
+
+# ---------------------------------------------------------------------------
+# Full pipeline orchestration
+# ---------------------------------------------------------------------------
+
+
+def run_extraction_pipeline(
+    dsn: str | None = None,
+    pilot_size: int = 10_000,
+    model: str = "claude-sonnet-4-20250514",
+    output_dir: str = "data/extractions",
+    extraction_version: str = EXTRACTION_VERSION,
+    batch_size: int = 10_000,
+    poll_interval: int = 60,
+) -> int:
+    """Run the full extraction pipeline: select -> submit -> poll -> save -> load.
+
+    Args:
+        dsn: Database connection string.
+        pilot_size: Number of papers to extract.
+        model: Anthropic model ID.
+        output_dir: Directory for JSONL checkpoint files.
+        extraction_version: Version tag.
+        batch_size: Papers per batch submission.
+        poll_interval: Seconds between batch status polls.
+
+    Returns total extraction rows loaded to DB.
+    """
+    try:
+        import anthropic
+    except ImportError:
+        raise ImportError(
+            "anthropic is required for extraction. " "Install with: pip install anthropic"
+        )
+
+    client = anthropic.Anthropic()
+    conn = get_connection(dsn)
+
+    try:
+        # 1. Select cohort
+        cohort = select_pilot_cohort(conn, limit=pilot_size)
+        if not cohort:
+            logger.info("No papers found for extraction")
+            return 0
+
+        total_loaded = 0
+        output_path = Path(output_dir)
+
+        # 2. Process in batches
+        for batch_start in range(0, len(cohort), batch_size):
+            batch_reqs = cohort[batch_start : batch_start + batch_size]
+            batch_num = batch_start // batch_size + 1
+
+            logger.info(
+                "Processing batch %d (%d papers)",
+                batch_num,
+                len(batch_reqs),
+            )
+
+            # Submit
+            batch_id = submit_batch(client, batch_reqs, model=model)
+
+            # Poll
+            poll_batch(client, batch_id, interval=poll_interval)
+
+            # Save JSONL checkpoint
+            jsonl_file = output_path / f"batch_{batch_id}.jsonl"
+            save_results_jsonl(client, batch_id, jsonl_file)
+
+            # Load to DB
+            loaded = load_results_to_db(
+                conn,
+                jsonl_file,
+                extraction_version=extraction_version,
+            )
+            total_loaded += loaded
+
+        logger.info(
+            "Extraction pipeline complete: %d total rows loaded",
+            total_loaded,
+        )
+        return total_loaded
+    finally:
+        conn.close()

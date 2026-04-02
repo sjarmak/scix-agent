@@ -1,4 +1,4 @@
-"""MCP server exposing 15 tools for agent navigation of the SciX corpus.
+"""MCP server exposing 22 tools for agent navigation of the SciX corpus.
 
 Uses the `mcp` Python SDK to register tools. Each tool is a thin wrapper
 around functions in search.py. Connection pooling via psycopg.pool for
@@ -11,6 +11,7 @@ Usage:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -23,6 +24,7 @@ import psycopg
 from scix import search
 from scix.db import DEFAULT_DSN
 from scix.embed import _model_cache, clear_model_cache, embed_batch, load_model
+from scix.session import SessionState, WorkingSetEntry
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +106,9 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "get_paper_metrics": float(os.environ.get("SCIX_TIMEOUT_METRICS", "5")),
     "explore_community": float(os.environ.get("SCIX_TIMEOUT_COMMUNITY", "10")),
     "concept_search": float(os.environ.get("SCIX_TIMEOUT_CONCEPT", "15")),
+    "entity_search": float(os.environ.get("SCIX_TIMEOUT_ENTITY_SEARCH", "10")),
+    "entity_profile": float(os.environ.get("SCIX_TIMEOUT_ENTITY_PROFILE", "5")),
+    "find_gaps": float(os.environ.get("SCIX_TIMEOUT_FIND_GAPS", "15")),
 }
 
 
@@ -121,10 +126,13 @@ def _set_timeout(conn: psycopg.Connection, tool_name: str) -> None:
 
 
 def _result_to_json(result: Any) -> str:
-    """Serialize a SearchResult to JSON with timing metadata."""
+    """Serialize a SearchResult to JSON with timing metadata.
+
+    All paper-returning results are annotated with ``in_working_set``.
+    """
     if isinstance(result, search.SearchResult):
         output: dict[str, Any] = {
-            "papers": result.papers,
+            "papers": _annotate_working_set(result.papers),
             "total": result.total,
             "timing_ms": result.timing_ms,
         }
@@ -145,6 +153,21 @@ def _parse_filters(filters: dict[str, Any] | None = None) -> search.SearchFilter
         doctype=filters.get("doctype"),
         first_author=filters.get("first_author"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Session state (singleton for the server process)
+# ---------------------------------------------------------------------------
+
+_session_state = SessionState()
+
+
+def _annotate_working_set(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add 'in_working_set' boolean to each paper dict."""
+    return [
+        {**paper, "in_working_set": _session_state.is_in_working_set(paper.get("bibcode", ""))}
+        for paper in papers
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +213,7 @@ def _shutdown() -> None:
 
 
 def create_server():
-    """Create and configure the MCP server with 15 tools (7 core + 4 graph + 3 intelligence + health_check).
+    """Create and configure the MCP server with 22 tools (7 core + 4 graph + 3 intelligence + 7 entity/session + health_check).
 
     Eagerly pre-loads the SPECTER2 model so semantic_search is fast from
     the first call.
@@ -528,6 +551,133 @@ def create_server():
                 },
             ),
             Tool(
+                name="entity_search",
+                description=(
+                    "Search for papers containing a specific entity in their extractions. "
+                    "Uses JSONB containment (@>) on the GIN-indexed payload column."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "entity_type": {
+                            "type": "string",
+                            "description": "Extraction type to search within (e.g., 'entities', 'keywords')",
+                        },
+                        "entity_name": {
+                            "type": "string",
+                            "description": "Entity name to search for",
+                        },
+                        "limit": {"type": "integer", "default": 20},
+                    },
+                    "required": ["entity_type", "entity_name"],
+                },
+            ),
+            Tool(
+                name="entity_profile",
+                description=(
+                    "Get all extracted entities for a paper by bibcode. "
+                    "Returns extraction types, versions, and payloads."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "bibcode": {
+                            "type": "string",
+                            "description": "ADS bibcode of the paper",
+                        },
+                    },
+                    "required": ["bibcode"],
+                },
+            ),
+            Tool(
+                name="add_to_working_set",
+                description=(
+                    "Add one or more papers to the session working set. "
+                    "The working set tracks papers the agent is actively exploring."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "bibcodes": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of ADS bibcodes to add",
+                        },
+                        "source_tool": {
+                            "type": "string",
+                            "description": "Name of the tool that found these papers",
+                        },
+                        "source_context": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Query or context that produced these papers",
+                        },
+                        "relevance_hint": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Why these papers are relevant",
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "default": [],
+                            "description": "Optional tags for categorization",
+                        },
+                    },
+                    "required": ["bibcodes", "source_tool"],
+                },
+            ),
+            Tool(
+                name="get_working_set",
+                description=(
+                    "Return the current session working set — all papers the agent "
+                    "has collected for active exploration."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                },
+            ),
+            Tool(
+                name="get_session_summary",
+                description=(
+                    "Return summary statistics for the current session: "
+                    "working set size, seen papers count."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                },
+            ),
+            Tool(
+                name="find_gaps",
+                description=(
+                    "Find papers in unexplored communities that cite papers in the "
+                    "working set. Useful for discovering blind spots and cross-community "
+                    "bridge papers the agent hasn't examined."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "resolution": {
+                            "type": "string",
+                            "enum": ["coarse", "medium", "fine"],
+                            "default": "coarse",
+                            "description": "Community resolution level",
+                        },
+                        "limit": {"type": "integer", "default": 20},
+                    },
+                },
+            ),
+            Tool(
+                name="clear_working_set",
+                description="Clear all papers from the session working set.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                },
+            ),
+            Tool(
                 name="health_check",
                 description=(
                     "Check server health: database connectivity, model cache status, "
@@ -672,6 +822,166 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
             limit=args.get("limit", 20),
         )
         result_json = _result_to_json(result)
+
+    elif name == "entity_search":
+        entity_type = args["entity_type"]
+        entity_name = args["entity_name"]
+        limit = args.get("limit", 20)
+        # Use JSONB containment (@>) which leverages the GIN index
+        containment = json.dumps({entity_type: [entity_name]})
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT e.bibcode, e.extraction_type, e.extraction_version, e.payload,
+                       p.title
+                FROM extractions e
+                JOIN papers p ON p.bibcode = e.bibcode
+                WHERE e.payload @> %s::jsonb
+                LIMIT %s
+                """,
+                (containment, limit),
+            )
+            rows = cur.fetchall()
+        papers = [
+            {
+                "bibcode": row[0],
+                "extraction_type": row[1],
+                "extraction_version": row[2],
+                "payload": row[3],
+                "title": row[4],
+            }
+            for row in rows
+        ]
+        papers = _annotate_working_set(papers)
+        result_json = json.dumps({"papers": papers, "total": len(papers)}, indent=2, default=str)
+
+    elif name == "entity_profile":
+        bibcode = args["bibcode"]
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT extraction_type, extraction_version, payload, created_at
+                FROM extractions
+                WHERE bibcode = %s
+                ORDER BY extraction_type, extraction_version
+                """,
+                (bibcode,),
+            )
+            rows = cur.fetchall()
+        extractions = [
+            {
+                "extraction_type": row[0],
+                "extraction_version": row[1],
+                "payload": row[2],
+                "created_at": row[3],
+            }
+            for row in rows
+        ]
+        result_json = json.dumps(
+            {"bibcode": bibcode, "extractions": extractions, "total": len(extractions)},
+            indent=2,
+            default=str,
+        )
+
+    elif name == "add_to_working_set":
+        bibcodes = args["bibcodes"]
+        source_tool = args["source_tool"]
+        source_context = args.get("source_context", "")
+        relevance_hint = args.get("relevance_hint", "")
+        tags = args.get("tags", [])
+        entries = []
+        for bib in bibcodes:
+            entry = _session_state.add_to_working_set(
+                bibcode=bib,
+                source_tool=source_tool,
+                source_context=source_context,
+                relevance_hint=relevance_hint,
+                tags=tags,
+            )
+            entries.append(dataclasses.asdict(entry))
+        result_json = json.dumps({"added": len(entries), "entries": entries}, indent=2, default=str)
+
+    elif name == "get_working_set":
+        entries = _session_state.get_working_set()
+        result_json = json.dumps(
+            {
+                "entries": [dataclasses.asdict(e) for e in entries],
+                "total": len(entries),
+            },
+            indent=2,
+            default=str,
+        )
+
+    elif name == "get_session_summary":
+        summary = _session_state.get_session_summary()
+        result_json = json.dumps(summary, indent=2, default=str)
+
+    elif name == "find_gaps":
+        resolution = args.get("resolution", "coarse")
+        limit = args.get("limit", 20)
+        # Validate resolution to prevent SQL injection
+        valid_resolutions = {"coarse", "medium", "fine"}
+        if resolution not in valid_resolutions:
+            result_json = json.dumps(
+                {
+                    "error": f"Invalid resolution: {resolution}. Must be one of {sorted(valid_resolutions)}"
+                }
+            )
+        else:
+            ws_bibcodes = [e.bibcode for e in _session_state.get_working_set()]
+            if not ws_bibcodes:
+                result_json = json.dumps(
+                    {
+                        "papers": [],
+                        "total": 0,
+                        "message": "Working set is empty. Add papers first.",
+                    },
+                    indent=2,
+                )
+            else:
+                community_col = f"community_id_{resolution}"
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        SELECT DISTINCT p.bibcode, p.title, pm.pagerank,
+                               pm.{community_col} AS community_id
+                        FROM citation_edges ce
+                        JOIN papers p ON p.bibcode = ce.citing
+                        JOIN paper_metrics pm ON pm.bibcode = p.bibcode
+                        WHERE ce.cited = ANY(%s)
+                          AND pm.{community_col} IS NOT NULL
+                          AND pm.{community_col} NOT IN (
+                              SELECT DISTINCT pm2.{community_col}
+                              FROM paper_metrics pm2
+                              WHERE pm2.bibcode = ANY(%s)
+                                AND pm2.{community_col} IS NOT NULL
+                          )
+                          AND p.bibcode <> ALL(%s)
+                        ORDER BY pm.pagerank DESC NULLS LAST
+                        LIMIT %s
+                        """,
+                        (ws_bibcodes, ws_bibcodes, ws_bibcodes, limit),
+                    )
+                    rows = cur.fetchall()
+                papers = [
+                    {
+                        "bibcode": row[0],
+                        "title": row[1],
+                        "pagerank": row[2],
+                        "community_id": row[3],
+                    }
+                    for row in rows
+                ]
+                papers = _annotate_working_set(papers)
+                result_json = json.dumps(
+                    {"papers": papers, "total": len(papers), "resolution": resolution},
+                    indent=2,
+                    default=str,
+                )
+
+    elif name == "clear_working_set":
+        removed = _session_state.clear_working_set()
+        result_json = json.dumps({"removed": removed}, indent=2)
 
     elif name == "health_check":
         status: dict[str, Any] = {"pool": "no_pool", "model_cached": False, "db": "unknown"}

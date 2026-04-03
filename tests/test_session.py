@@ -31,7 +31,7 @@ class TestWorkingSetEntry:
             source_context="",
             relevance_hint="",
         )
-        assert entry.tags == []
+        assert entry.tags == ()
 
 
 class TestSessionStateWorkingSet:
@@ -87,28 +87,14 @@ class TestSessionStateWorkingSet:
         assert state.is_in_working_set("A", session_id="s2") is False
 
 
-class TestSeenPapers:
-    def test_mark_and_check_seen(self) -> None:
-        state = SessionState()
-        assert state.is_seen("X") is False
-        state.mark_seen("X")
-        assert state.is_seen("X") is True
-
-    def test_add_to_working_set_marks_seen(self) -> None:
-        state = SessionState()
-        state.add_to_working_set(bibcode="Z", source_tool="t")
-        assert state.is_seen("Z") is True
-
-
 class TestSessionSummary:
     def test_summary_counts(self) -> None:
         state = SessionState()
         state.add_to_working_set(bibcode="A", source_tool="t")
         state.add_to_working_set(bibcode="B", source_tool="t")
-        state.mark_seen("C")
         summary = state.get_session_summary()
         assert summary["working_set_size"] == 2
-        assert summary["seen_papers_count"] == 3  # A, B auto-seen + C
+        assert summary["seen_papers_count"] == 2  # A, B auto-seen via add
 
 
 class TestSoftLimit:

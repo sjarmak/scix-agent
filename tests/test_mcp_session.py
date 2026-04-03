@@ -59,7 +59,7 @@ class TestEntitySearch:
         result_json = mcp_server._dispatch_tool(
             conn,
             "entity_search",
-            {"entity_type": "entities", "entity_name": "dark matter", "limit": 10},
+            {"entity_type": "instruments", "entity_name": "dark matter", "limit": 10},
         )
         result = json.loads(result_json)
         assert result["total"] == 1
@@ -71,15 +71,15 @@ class TestEntitySearch:
         mcp_server._dispatch_tool(
             conn,
             "entity_search",
-            {"entity_type": "keywords", "entity_name": "exoplanet"},
+            {"entity_type": "methods", "entity_name": "MCMC"},
         )
         cur = conn.cursor.return_value
         call_args = cur.execute.call_args
         sql = call_args[0][0]
         assert "@>" in sql
         params = call_args[0][1]
-        # Containment JSON should be {"keywords": ["exoplanet"]}
-        assert json.loads(params[0]) == {"keywords": ["exoplanet"]}
+        # Containment JSON should be {"methods": ["MCMC"]}
+        assert json.loads(params[0]) == {"methods": ["MCMC"]}
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +267,7 @@ class TestInWorkingSetAnnotation:
         result_json = mcp_server._dispatch_tool(
             conn,
             "entity_search",
-            {"entity_type": "entities", "entity_name": "test"},
+            {"entity_type": "instruments", "entity_name": "test"},
         )
         result = json.loads(result_json)
         assert result["papers"][0]["in_working_set"] is True

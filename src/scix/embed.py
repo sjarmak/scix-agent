@@ -438,6 +438,9 @@ def embed_openai(texts: list[str], dimensions: int = _OPENAI_DEFAULT_DIM) -> lis
     return embeddings
 
 
+# Cache persists for process lifetime (MCP server is long-running).
+# 512 entries × 1024 floats × 8 bytes ≈ 4MB — acceptable.
+# Call embed_query_openai.cache_clear() to evict if needed.
 @functools.lru_cache(maxsize=512)
 def embed_query_openai(text: str, dimensions: int = _OPENAI_DEFAULT_DIM) -> list[float]:
     """Embed a single query string via OpenAI, with LRU caching.

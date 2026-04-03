@@ -826,7 +826,16 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
     elif name == "entity_search":
         entity_type = args["entity_type"]
         entity_name = args["entity_name"]
-        limit = args.get("limit", 20)
+        limit = min(args.get("limit", 20), 200)
+        # Validate entity_type against known types
+        _VALID_ENTITY_TYPES = {"methods", "datasets", "instruments", "materials"}
+        if entity_type not in _VALID_ENTITY_TYPES:
+            result_json = json.dumps(
+                {
+                    "error": f"Invalid entity_type '{entity_type}'. Must be one of {sorted(_VALID_ENTITY_TYPES)}"
+                }
+            )
+            return result_json
         # Use JSONB containment (@>) which leverages the GIN index
         containment = json.dumps({entity_type: [entity_name]})
         with conn.cursor() as cur:
@@ -857,6 +866,8 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
 
     elif name == "entity_profile":
         bibcode = args["bibcode"]
+        if not bibcode or not bibcode.strip():
+            return json.dumps({"error": "bibcode must be a non-empty string"})
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -918,17 +929,24 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
 
     elif name == "find_gaps":
         resolution = args.get("resolution", "coarse")
-        limit = args.get("limit", 20)
-        # Validate resolution to prevent SQL injection
-        valid_resolutions = {"coarse", "medium", "fine"}
-        if resolution not in valid_resolutions:
+        limit = min(args.get("limit", 20), 200)
+        # Hardcoded column map — never derive column names from user input
+        _RESOLUTION_COLS: dict[str, str] = {
+            "coarse": "community_id_coarse",
+            "medium": "community_id_medium",
+            "fine": "community_id_fine",
+        }
+        community_col = _RESOLUTION_COLS.get(resolution)
+        if community_col is None:
             result_json = json.dumps(
                 {
-                    "error": f"Invalid resolution: {resolution}. Must be one of {sorted(valid_resolutions)}"
+                    "error": f"Invalid resolution: {resolution}. Must be one of {sorted(_RESOLUTION_COLS)}"
                 }
             )
         else:
             ws_bibcodes = [e.bibcode for e in _session_state.get_working_set()]
+            # Cap bibcode array to prevent expensive ANY() scans
+            ws_bibcodes = ws_bibcodes[:200]
             if not ws_bibcodes:
                 result_json = json.dumps(
                     {
@@ -939,29 +957,27 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
                     indent=2,
                 )
             else:
-                community_col = f"community_id_{resolution}"
+                # community_col is a Python literal from _RESOLUTION_COLS, safe for SQL
+                query = f"""
+                    SELECT DISTINCT p.bibcode, p.title, pm.pagerank,
+                           pm.{community_col} AS community_id
+                    FROM citation_edges ce
+                    JOIN papers p ON p.bibcode = ce.citing
+                    JOIN paper_metrics pm ON pm.bibcode = p.bibcode
+                    WHERE ce.cited = ANY(%s)
+                      AND pm.{community_col} IS NOT NULL
+                      AND pm.{community_col} NOT IN (
+                          SELECT DISTINCT pm2.{community_col}
+                          FROM paper_metrics pm2
+                          WHERE pm2.bibcode = ANY(%s)
+                            AND pm2.{community_col} IS NOT NULL
+                      )
+                      AND p.bibcode <> ALL(%s)
+                    ORDER BY pm.pagerank DESC NULLS LAST
+                    LIMIT %s
+                """
                 with conn.cursor() as cur:
-                    cur.execute(
-                        f"""
-                        SELECT DISTINCT p.bibcode, p.title, pm.pagerank,
-                               pm.{community_col} AS community_id
-                        FROM citation_edges ce
-                        JOIN papers p ON p.bibcode = ce.citing
-                        JOIN paper_metrics pm ON pm.bibcode = p.bibcode
-                        WHERE ce.cited = ANY(%s)
-                          AND pm.{community_col} IS NOT NULL
-                          AND pm.{community_col} NOT IN (
-                              SELECT DISTINCT pm2.{community_col}
-                              FROM paper_metrics pm2
-                              WHERE pm2.bibcode = ANY(%s)
-                                AND pm2.{community_col} IS NOT NULL
-                          )
-                          AND p.bibcode <> ALL(%s)
-                        ORDER BY pm.pagerank DESC NULLS LAST
-                        LIMIT %s
-                        """,
-                        (ws_bibcodes, ws_bibcodes, ws_bibcodes, limit),
-                    )
+                    cur.execute(query, (ws_bibcodes, ws_bibcodes, ws_bibcodes, limit))
                     rows = cur.fetchall()
                 papers = [
                     {

@@ -28,7 +28,7 @@ class WorkingSetEntry:
     source_tool: str
     source_context: str
     relevance_hint: str
-    tags: list[str] = field(default_factory=list)
+    tags: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass
@@ -77,7 +77,7 @@ class SessionState:
             source_tool=source_tool,
             source_context=source_context,
             relevance_hint=relevance_hint,
-            tags=tags if tags is not None else [],
+            tags=tuple(tags) if tags is not None else (),
         )
         data.working_set[bibcode] = entry
         data.seen_papers.add(bibcode)
@@ -108,18 +108,6 @@ class SessionState:
         count = len(data.working_set)
         data.working_set.clear()
         return count
-
-    # -- seen papers --------------------------------------------------------
-
-    def mark_seen(self, bibcode: str, session_id: str = "_default") -> None:
-        """Record that the agent has seen a paper."""
-        data = self._get(session_id)
-        data.seen_papers.add(bibcode)
-
-    def is_seen(self, bibcode: str, session_id: str = "_default") -> bool:
-        """Check whether a paper has been seen in this session."""
-        data = self._get(session_id)
-        return bibcode in data.seen_papers
 
     # -- summary ------------------------------------------------------------
 

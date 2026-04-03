@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -614,7 +615,13 @@ def run_extraction_pipeline(
             "anthropic is required for extraction. " "Install with: pip install anthropic"
         )
 
-    client = anthropic.Anthropic()
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "ANTHROPIC_API_KEY environment variable is not set. "
+            "Set it before running the extraction pipeline."
+        )
+    client = anthropic.Anthropic(api_key=api_key)
     conn = get_connection(dsn)
 
     try:
@@ -645,7 +652,8 @@ def run_extraction_pipeline(
             poll_batch(client, batch_id, interval=poll_interval)
 
             # Save JSONL checkpoint
-            jsonl_file = output_path / f"batch_{batch_id}.jsonl"
+            safe_id = batch_id.replace("/", "_").replace("..", "__")
+            jsonl_file = output_path / f"batch_{safe_id}.jsonl"
             save_results_jsonl(client, batch_id, jsonl_file)
 
             # Load to DB

@@ -244,8 +244,12 @@ def run_embedding_pipeline(
 ) -> int:
     """Full embedding pipeline: stream unembedded papers, embed, store.
 
-    Uses a server-side cursor to avoid loading all 5M papers into memory.
-    Accumulates embeddings in a write buffer before flushing to DB via COPY.
+    Uses a 3-stage producer/consumer pipeline with threading so that
+    DB reads, GPU inference, and DB writes overlap:
+
+      Reader thread → [read_queue] → GPU thread → [write_queue] → Writer thread
+
+    This keeps the GPU busy instead of waiting for DB I/O.
 
     Args:
         dsn: Database connection string.
@@ -258,6 +262,11 @@ def run_embedding_pipeline(
 
     Returns total number of papers embedded.
     """
+    import queue
+    import threading
+
+    _SENTINEL = None  # signals end-of-stream
+
     read_conn = get_connection(dsn)
     write_conn = get_connection(dsn)
     try:
@@ -279,91 +288,138 @@ def run_embedding_pipeline(
         # Pick storage function
         store_fn = store_embeddings_copy if use_copy else store_embeddings
 
-        # Stream papers via server-side cursor on read_conn,
-        # write embeddings via write_conn (separate connection to avoid
-        # COPY commits closing the server-side cursor).
-        total_embedded = 0
-        title_abstract_count = 0
-        title_only_count = 0
+        # Queues for the pipeline stages
+        # read_queue: batches of (texts, inputs) ready for GPU
+        # write_queue: batches of (inputs, vectors) ready for DB
+        read_queue: queue.Queue[list[EmbeddingInput] | None] = queue.Queue(maxsize=8)
+        write_queue: queue.Queue[tuple[list[EmbeddingInput], list[list[float]]] | None] = (
+            queue.Queue(maxsize=4)
+        )
+
+        # Shared counters (protected by the GIL for simple int ops)
+        stats = {"embedded": 0, "title_abstract": 0, "title_only": 0}
+        reader_error: list[Exception] = []
+        writer_error: list[Exception] = []
         t_start = time.monotonic()
 
-        buffer_inputs: list[EmbeddingInput] = []
-        buffer_vectors: list[list[float]] = []
+        # --- Reader thread: stream from DB cursor into read_queue ---
+        def reader() -> None:
+            try:
+                fetch_sql = (
+                    "SELECT p.bibcode, p.title, p.abstract "
+                    + _UNEMBEDDED_WHERE
+                    + " ORDER BY p.bibcode"
+                )
+                fetch_params: list[Any] = [model_name]
+                if limit is not None:
+                    fetch_sql += " LIMIT %s"
+                    fetch_params.append(limit)
 
-        fetch_sql = (
-            "SELECT p.bibcode, p.title, p.abstract " + _UNEMBEDDED_WHERE + " ORDER BY p.bibcode"
-        )
-        fetch_params: list[Any] = [model_name]
-        if limit is not None:
-            fetch_sql += " LIMIT %s"
-            fetch_params.append(limit)
+                with read_conn.cursor(name="embed_cursor") as cur:
+                    cur.itersize = batch_size * 8
+                    cur.execute(fetch_sql, fetch_params)
 
-        with read_conn.cursor(name="embed_cursor") as cur:
-            cur.itersize = batch_size * 4
-            cur.execute(fetch_sql, fetch_params)
+                    batch: list[EmbeddingInput] = []
+                    for bibcode, title, abstract in cur:
+                        inp = prepare_input(bibcode, title, abstract)
+                        if inp is None:
+                            continue
+                        batch.append(inp)
+                        if len(batch) >= batch_size:
+                            read_queue.put(batch)
+                            batch = []
 
-            gpu_batch_texts: list[str] = []
-            gpu_batch_inputs: list[EmbeddingInput] = []
+                    # Send remaining partial batch
+                    if batch:
+                        read_queue.put(batch)
+            except Exception as e:
+                reader_error.append(e)
+                logger.error("Reader thread error: %s", e)
+            finally:
+                read_queue.put(_SENTINEL)
 
-            for bibcode, title, abstract in cur:
-                inp = prepare_input(bibcode, title, abstract)
-                if inp is None:
-                    continue
+        # --- Writer thread: drain write_queue into DB ---
+        def writer() -> None:
+            try:
+                buf_inputs: list[EmbeddingInput] = []
+                buf_vectors: list[list[float]] = []
 
-                gpu_batch_texts.append(inp.text)
-                gpu_batch_inputs.append(inp)
+                while True:
+                    item = write_queue.get()
+                    if item is _SENTINEL:
+                        # Flush remaining
+                        if buf_inputs:
+                            stored = store_fn(write_conn, buf_inputs, buf_vectors, model_name)
+                            stats["embedded"] += stored
+                        break
 
-                if inp.input_type == "title_abstract":
-                    title_abstract_count += 1
-                else:
-                    title_only_count += 1
+                    inputs_chunk, vectors_chunk = item
+                    buf_inputs.extend(inputs_chunk)
+                    buf_vectors.extend(vectors_chunk)
 
-                # When GPU batch is full, run inference
-                if len(gpu_batch_texts) >= batch_size:
-                    vectors = embed_batch(model, tokenizer, gpu_batch_texts, batch_size=batch_size)
-                    buffer_inputs.extend(gpu_batch_inputs)
-                    buffer_vectors.extend(vectors)
-                    gpu_batch_texts.clear()
-                    gpu_batch_inputs.clear()
-
-                    # Flush write buffer when large enough
-                    if len(buffer_inputs) >= write_buffer:
-                        stored = store_fn(write_conn, buffer_inputs, buffer_vectors, model_name)
-                        total_embedded += stored
-                        buffer_inputs.clear()
-                        buffer_vectors.clear()
+                    if len(buf_inputs) >= write_buffer:
+                        stored = store_fn(write_conn, buf_inputs, buf_vectors, model_name)
+                        stats["embedded"] += stored
+                        buf_inputs = []
+                        buf_vectors = []
 
                         elapsed = time.monotonic() - t_start
-                        rate = total_embedded / elapsed if elapsed > 0 else 0
+                        rate = stats["embedded"] / elapsed if elapsed > 0 else 0
                         logger.info(
                             "Embedded %d/%d (%.0f rec/s)",
-                            total_embedded,
+                            stats["embedded"],
                             actual_total,
                             rate,
                         )
+            except Exception as e:
+                writer_error.append(e)
+                logger.error("Writer thread error: %s", e)
 
-            # Process remaining GPU batch
-            if gpu_batch_texts:
-                vectors = embed_batch(model, tokenizer, gpu_batch_texts, batch_size=batch_size)
-                buffer_inputs.extend(gpu_batch_inputs)
-                buffer_vectors.extend(vectors)
+        # Start reader and writer threads
+        reader_thread = threading.Thread(target=reader, name="embed-reader", daemon=True)
+        writer_thread = threading.Thread(target=writer, name="embed-writer", daemon=True)
+        reader_thread.start()
+        writer_thread.start()
 
-            # Flush remaining buffer
-            if buffer_inputs:
-                stored = store_fn(write_conn, buffer_inputs, buffer_vectors, model_name)
-                total_embedded += stored
+        # --- Main thread: GPU inference ---
+        while True:
+            batch_inputs = read_queue.get()
+            if batch_inputs is _SENTINEL:
+                # Signal writer to flush and exit
+                write_queue.put(_SENTINEL)
+                break
+
+            texts = [inp.text for inp in batch_inputs]
+            for inp in batch_inputs:
+                if inp.input_type == "title_abstract":
+                    stats["title_abstract"] += 1
+                else:
+                    stats["title_only"] += 1
+
+            vectors = embed_batch(model, tokenizer, texts, batch_size=batch_size)
+            write_queue.put((batch_inputs, vectors))
+
+        # Wait for threads to complete
+        reader_thread.join(timeout=300)
+        writer_thread.join(timeout=300)
+
+        # Check for errors
+        if reader_error:
+            raise reader_error[0]
+        if writer_error:
+            raise writer_error[0]
 
         elapsed = time.monotonic() - t_start
         logger.info(
             "Embedding complete: %d papers in %.1fs (%.0f rec/s) "
             "(%d title_abstract, %d title_only)",
-            total_embedded,
+            stats["embedded"],
             elapsed,
-            total_embedded / elapsed if elapsed > 0 else 0,
-            title_abstract_count,
-            title_only_count,
+            stats["embedded"] / elapsed if elapsed > 0 else 0,
+            stats["title_abstract"],
+            stats["title_only"],
         )
-        return total_embedded
+        return stats["embedded"]
     finally:
         read_conn.close()
         write_conn.close()

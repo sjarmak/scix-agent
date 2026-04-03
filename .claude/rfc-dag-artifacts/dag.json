@@ -1,0 +1,152 @@
+[
+  {
+    "id": "migration-009",
+    "name": "Migration 009: Knowledge Enrichment Schema",
+    "description": "SQL migration adding unique constraint on extractions(bibcode, extraction_type, extraction_version), GIN index with jsonb_path_ops on extractions.payload, ALTER paper_embeddings.embedding to untyped vector, CHECK constraint for dimension validation per model_name, and halfvec HNSW index placeholder for text-embedding-3-large.",
+    "deps": [],
+    "tier": "small",
+    "acceptance": [
+      "File migrations/009_knowledge_enrichment.sql exists and is valid SQL wrapped in BEGIN/COMMIT",
+      "Contains ADD CONSTRAINT uq_extractions_bibcode_type_version UNIQUE (bibcode, extraction_type, extraction_version)",
+      "Contains CREATE INDEX idx_extractions_payload_gin USING GIN (payload jsonb_path_ops)",
+      "Contains ALTER TABLE paper_embeddings ALTER COLUMN embedding TYPE vector",
+      "Contains CHECK constraint validating embedding dimension matches model_name (768 for specter2, 1024 for text-embedding-3-large)",
+      "Contains CREATE INDEX idx_embed_hnsw_openai using halfvec(1024) with WHERE model_name = 'text-embedding-3-large'",
+      "Running `python -c \"open('migrations/009_knowledge_enrichment.sql').read()\"` succeeds (file is readable)"
+    ],
+    "layer": 0,
+    "scope": ["migrations/009_knowledge_enrichment.sql"],
+    "status": "pending",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "session-state-module",
+    "name": "Session State Module",
+    "description": "New src/scix/session.py implementing WorkingSetEntry (frozen dataclass with bibcode, added_at, source_tool, source_context, relevance_hint, tags) and SessionState class with in-memory dict storage keyed by session_id (default '_default'). Supports add/get/clear working set, seen_papers tracking, and session summary stats. Max 1000 entries with warning. Plus tests/test_session.py with unit tests.",
+    "deps": [],
+    "tier": "small",
+    "acceptance": [
+      "File src/scix/session.py exists with WorkingSetEntry frozen dataclass and SessionState class",
+      "WorkingSetEntry has fields: bibcode (str), added_at (str), source_tool (str), source_context (str), relevance_hint (str), tags (list[str])",
+      "SessionState has methods: add_to_working_set, get_working_set, clear_working_set, get_session_summary, mark_seen, is_in_working_set",
+      "SessionState defaults session_id to '_default' for stdio transport",
+      "Working set enforces soft limit of 1000 entries (logs warning, does not reject)",
+      "File tests/test_session.py exists with at least 8 unit tests covering add/get/clear/summary/seen/limit",
+      "Running `python -m pytest tests/test_session.py -v` passes with 0 failures"
+    ],
+    "layer": 0,
+    "scope": ["src/scix/session.py", "tests/test_session.py"],
+    "status": "pending",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "extraction-pipeline",
+    "name": "Entity Extraction Pipeline",
+    "description": "New src/scix/extract.py implementing batch entity extraction via Anthropic Messages Batches API. Includes: pilot cohort selection (10K by citation_count), prompt construction with few-shot examples for methods/datasets/instruments/materials, batch submission and polling, JSONL checkpoint (API results to local file before DB), chunked DB writes (500 rows with COMMIT between), ON CONFLICT DO UPDATE for idempotent upserts, extraction_log tracking. Plus scripts/extract.py CLI entry point and tests/test_extract.py.",
+    "deps": [],
+    "tier": "medium",
+    "acceptance": [
+      "File src/scix/extract.py exists with functions: select_pilot_cohort, build_extraction_prompt, submit_batch, poll_batch, save_results_jsonl, load_results_to_db",
+      "select_pilot_cohort returns papers ordered by citation_count DESC with abstract length > 100",
+      "build_extraction_prompt includes system prompt, 3+ few-shot examples across astronomy subfields, and tool-use schema for methods/datasets/instruments/materials",
+      "save_results_jsonl writes batch API results to a local JSONL checkpoint file before any DB writes",
+      "load_results_to_db writes in chunks of 500 rows with COMMIT between chunks",
+      "load_results_to_db uses ON CONFLICT (bibcode, extraction_type, extraction_version) DO UPDATE for idempotent upserts",
+      "File scripts/extract.py exists as CLI entry point with --pilot-size, --batch-size, --output-dir arguments",
+      "File tests/test_extract.py exists with at least 10 unit tests covering prompt construction, JSONL checkpoint, chunked loading, and idempotent upserts",
+      "Running `python -m pytest tests/test_extract.py -v` passes with 0 failures"
+    ],
+    "layer": 0,
+    "scope": [
+      "src/scix/extract.py",
+      "scripts/extract.py",
+      "tests/test_extract.py"
+    ],
+    "status": "pending",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "openai-embedding-support",
+    "name": "OpenAI Embedding Pipeline Extension",
+    "description": "Extend src/scix/embed.py to support text-embedding-3-large via OpenAI API. Add embed_openai() function that calls OpenAI batch/single embedding API at 1024 dimensions (Matryoshka truncation). Add embed_query_openai() for single-query embedding at search time with caching. Integrate with existing model_name-parameterized pipeline. Reads OPENAI_API_KEY from env var. Plus tests.",
+    "deps": ["migration-009"],
+    "tier": "medium",
+    "acceptance": [
+      "src/scix/embed.py contains function embed_openai(texts: list[str], dimensions: int = 1024) -> list[list[float]]",
+      "src/scix/embed.py contains function embed_query_openai(text: str, dimensions: int = 1024) -> list[float] with LRU cache",
+      "OPENAI_API_KEY is read from environment variable, raises ValueError if missing when called",
+      "embed_openai validates that returned embeddings have correct dimension (1024)",
+      "File tests/test_embed_openai.py exists with at least 6 tests covering: API call mocking, dimension validation, cache behavior, missing API key error",
+      "Running `python -m pytest tests/test_embed_openai.py -v` passes with 0 failures"
+    ],
+    "layer": 1,
+    "scope": ["src/scix/embed.py", "tests/test_embed_openai.py"],
+    "status": "pending",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "dual-model-search",
+    "name": "Dual-Model RRF Fusion Search",
+    "description": "Extend src/scix/search.py hybrid_search() to perform two vector searches (SPECTER2 + OpenAI) and fuse with RRF. When both models available, run parallel vector searches and add OpenAI results as a third list to rrf_fuse(). Circuit breaker: if OpenAI embedding fails, fall back to SPECTER2-only gracefully. Plus tests.",
+    "deps": ["openai-embedding-support"],
+    "tier": "medium",
+    "acceptance": [
+      "hybrid_search() in src/scix/search.py accepts optional openai_embedding parameter",
+      "When openai_embedding is provided, runs vector_search for both specter2 and text-embedding-3-large models",
+      "RRF fusion includes all available ranked lists (lexical + specter2 + openai when present)",
+      "If OpenAI vector search raises an exception, hybrid_search falls back to SPECTER2+lexical only (no crash)",
+      "File tests/test_search_dual.py exists with at least 6 tests covering: dual-model fusion, single-model fallback, circuit breaker behavior",
+      "Running `python -m pytest tests/test_search_dual.py -v` passes with 0 failures"
+    ],
+    "layer": 2,
+    "scope": ["src/scix/search.py", "tests/test_search_dual.py"],
+    "status": "pending",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "mcp-server-extensions",
+    "name": "MCP Server: Entity + Session Tools",
+    "description": "Add 7 new MCP tools to src/scix/mcp_server.py: entity_search, entity_profile (query extractions table via GIN index), add_to_working_set, get_working_set, get_session_summary, find_gaps (SQL query for cross-community bridge papers), clear_working_set. Integrate SessionState from session.py. Annotate all paper-returning tools with in_working_set flag. Plus integration tests.",
+    "deps": ["session-state-module", "extraction-pipeline"],
+    "tier": "large",
+    "acceptance": [
+      "src/scix/mcp_server.py registers 7 new tools: entity_search, entity_profile, add_to_working_set, get_working_set, get_session_summary, find_gaps, clear_working_set",
+      "entity_search accepts entity_type, entity_name, limit params and uses payload @> containment query",
+      "entity_profile accepts bibcode and returns all extracted entities for that paper",
+      "add_to_working_set accepts bibcodes list and metadata, delegates to SessionState",
+      "find_gaps accepts limit and resolution params, runs SQL finding papers in unexplored communities citing working set papers",
+      "All paper-returning tools annotate results with 'in_working_set' boolean field",
+      "Module-level SessionState instance is created at import time (singleton for the server process)",
+      "File tests/test_mcp_session.py exists with at least 10 tests covering all 7 new tools and the in_working_set annotation",
+      "Running `python -m pytest tests/test_mcp_session.py -v` passes with 0 failures"
+    ],
+    "layer": 1,
+    "scope": ["src/scix/mcp_server.py", "tests/test_mcp_session.py"],
+    "status": "pending",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  }
+]

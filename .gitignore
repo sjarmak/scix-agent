@@ -1,14 +1,23 @@
-# Data files
+# Data files (large, not in repo)
 *.jsonl
 *.jsonl.gz
 *.jsonl.xz
 ads_metadata_by_year_picard/
 ads_metadata_by_year_full/
+data/
 
-# Environment
+# Logs
+*.log
+ingest_all.log
+embed_run*.log
+graph_run*.log
+uat_run.log
+
+# Secrets & environment
 .env
 .env.*
 !.env.example
+.beads-credential-key
 
 # Python
 __pycache__/
@@ -32,7 +41,13 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Beads / Dolt files (added by bd init)
+# Beads / Dolt (local issue tracking DB)
 .dolt/
 *.db
-.beads-credential-key
+
+# Brainstorm artifacts (local working files)
+.brainstorm/
+
+# RFC-DAG state (ephemeral orchestration state)
+.claude/rfc-dag.state.json
+.claude/rfc-dag.log.md

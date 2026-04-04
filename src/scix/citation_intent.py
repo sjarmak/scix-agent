@@ -19,6 +19,12 @@ from scix.db import get_connection
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Module-level pipeline cache (keyed by model_path) for frozen dataclasses
+# ---------------------------------------------------------------------------
+
+_pipeline_cache: dict[str, Any] = {}
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
@@ -117,7 +123,14 @@ class SciBertClassifier:
     device: int = -1
 
     def _get_pipeline(self) -> Any:
-        """Lazily build the transformers pipeline."""
+        """Lazily build (or retrieve from cache) the transformers pipeline.
+
+        Uses a module-level cache keyed by ``model_path`` so that frozen
+        dataclass instances do not rebuild the pipeline on every call.
+        """
+        if self.model_path in _pipeline_cache:
+            return _pipeline_cache[self.model_path]
+
         try:
             from transformers import pipeline as hf_pipeline
         except ImportError:
@@ -125,12 +138,14 @@ class SciBertClassifier:
                 "transformers is required for SciBertClassifier. "
                 "Install with: pip install transformers torch"
             )
-        return hf_pipeline(
+        pipe = hf_pipeline(
             "text-classification",
             model=self.model_path,
             device=self.device,
             truncation=True,
         )
+        _pipeline_cache[self.model_path] = pipe
+        return pipe
 
     def classify_intent(self, context_text: str) -> str:
         """Classify a single citation context using the SciBERT model."""
@@ -221,7 +236,13 @@ class LLMClassifier:
         return self._classify_single(client, context_text)
 
     def classify_batch(self, texts: list[str]) -> list[str]:
-        """Classify multiple citation contexts sequentially via the API."""
+        """Classify multiple citation contexts sequentially via the API.
+
+        Note: This processes texts one at a time because the Anthropic Messages
+        API does not support native batching of independent classification
+        requests.  For high-throughput workloads, prefer ``SciBertClassifier``
+        which uses batched local inference.
+        """
         if not texts:
             return []
         client = self._get_client()
@@ -230,6 +251,47 @@ class LLMClassifier:
             label = self._classify_single(client, text)
             labels.append(label)
         return labels
+
+
+# ---------------------------------------------------------------------------
+# Module-level convenience functions
+# ---------------------------------------------------------------------------
+
+
+def classify_intent(classifier: IntentClassifier, context_text: str) -> str:
+    """Classify a single citation context using the given classifier.
+
+    Parameters
+    ----------
+    classifier : IntentClassifier
+        Any object satisfying the IntentClassifier protocol.
+    context_text : str
+        The citation context to classify.
+
+    Returns
+    -------
+    str
+        One of: 'background', 'method', 'result_comparison'.
+    """
+    return classifier.classify_intent(context_text)
+
+
+def classify_batch(classifier: IntentClassifier, texts: list[str]) -> list[str]:
+    """Classify multiple citation contexts using the given classifier.
+
+    Parameters
+    ----------
+    classifier : IntentClassifier
+        Any object satisfying the IntentClassifier protocol.
+    texts : list[str]
+        Citation contexts to classify.
+
+    Returns
+    -------
+    list[str]
+        Intent labels, one per input text.
+    """
+    return classifier.classify_batch(texts)
 
 
 # ---------------------------------------------------------------------------

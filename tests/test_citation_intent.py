@@ -16,8 +16,11 @@ from scix.citation_intent import (
     IntentClassifier,
     SciBertClassifier,
     LLMClassifier,
+    classify_intent,
+    classify_batch,
     _validate_intent,
     _map_scicite_label,
+    _pipeline_cache,
 )
 
 # ---------------------------------------------------------------------------
@@ -287,3 +290,98 @@ class TestLLMClassifier:
         clf = LLMClassifier()
         # .strip().lower() should normalize "  Background " -> "background"
         assert clf.classify_intent("text") == "background"
+
+
+# ---------------------------------------------------------------------------
+# Module-level convenience functions
+# ---------------------------------------------------------------------------
+
+
+class TestModuleLevelFunctions:
+    """Test the module-level classify_intent() and classify_batch() functions."""
+
+    @patch("scix.citation_intent.SciBertClassifier._get_pipeline")
+    def test_classify_intent_delegates_to_classifier(self, mock_get_pipe: MagicMock) -> None:
+        pipe = MagicMock()
+        pipe.return_value = [{"label": "method", "score": 0.9}]
+        mock_get_pipe.return_value = pipe
+
+        clf = SciBertClassifier(model_path="m")
+        result = classify_intent(clf, "We used the approach from...")
+        assert result == "method"
+
+    @patch("scix.citation_intent.SciBertClassifier._get_pipeline")
+    def test_classify_batch_delegates_to_classifier(self, mock_get_pipe: MagicMock) -> None:
+        pipe = MagicMock()
+        pipe.return_value = [
+            {"label": "background", "score": 0.9},
+            {"label": "result", "score": 0.8},
+        ]
+        mock_get_pipe.return_value = pipe
+
+        clf = SciBertClassifier(model_path="m", batch_size=8)
+        results = classify_batch(clf, ["ctx1", "ctx2"])
+        assert results == ["background", "result_comparison"]
+
+    @patch("scix.citation_intent.SciBertClassifier._get_pipeline")
+    def test_classify_batch_empty(self, mock_get_pipe: MagicMock) -> None:
+        clf = SciBertClassifier(model_path="m")
+        assert classify_batch(clf, []) == []
+        mock_get_pipe.assert_not_called()
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"})
+    @patch("scix.citation_intent.LLMClassifier._get_client")
+    def test_classify_intent_with_llm_classifier(self, mock_get_client: MagicMock) -> None:
+        content_block = MagicMock()
+        content_block.text = "background"
+        response = MagicMock()
+        response.content = [content_block]
+        client = MagicMock()
+        client.messages.create.return_value = response
+        mock_get_client.return_value = client
+
+        clf = LLMClassifier()
+        result = classify_intent(clf, "Prior work shows...")
+        assert result == "background"
+
+
+# ---------------------------------------------------------------------------
+# Pipeline caching
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineCaching:
+    """Test that SciBertClassifier caches pipelines at module level."""
+
+    def setup_method(self) -> None:
+        _pipeline_cache.clear()
+
+    def teardown_method(self) -> None:
+        _pipeline_cache.clear()
+
+    def test_cache_is_populated(self) -> None:
+        """After a call, the model_path key should exist in _pipeline_cache."""
+        # Pre-populate cache so _get_pipeline returns it without importing transformers.
+        fake_pipe = MagicMock()
+        fake_pipe.return_value = [{"label": "background", "score": 0.9}]
+        _pipeline_cache["cached-model"] = fake_pipe
+
+        clf = SciBertClassifier(model_path="cached-model")
+        result = clf.classify_intent("text")
+        assert result == "background"
+        # The fake pipeline was used — no transformers import needed
+        fake_pipe.assert_called_once_with("text")
+
+    def test_cache_reuses_pipeline(self) -> None:
+        """Two classifiers with the same model_path should share the cached pipeline."""
+        fake_pipe = MagicMock()
+        fake_pipe.return_value = [{"label": "method", "score": 0.9}]
+        _pipeline_cache["shared-model"] = fake_pipe
+
+        clf1 = SciBertClassifier(model_path="shared-model")
+        clf2 = SciBertClassifier(model_path="shared-model")
+
+        clf1.classify_intent("a")
+        clf2.classify_intent("b")
+
+        assert fake_pipe.call_count == 2

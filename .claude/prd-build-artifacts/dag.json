@@ -146,7 +146,7 @@
       "scripts/train_citation_intent.py",
       "tests/test_citation_intent.py"
     ],
-    "status": "pending",
+    "status": "landed",
     "branch": null,
     "pipeline_stage": null,
     "pipeline_output": {},

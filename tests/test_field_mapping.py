@@ -125,12 +125,29 @@ class TestTransformRecord:
         assert row[COL["read_count"]] == 79
         assert row[COL["reference_count"]] == 35
 
+    def test_body_as_dedicated_column(self) -> None:
+        row, _ = transform_record(FULL_RECORD)
+        assert row[COL["body"]] == "Full text here..."
+
+    def test_body_not_in_raw(self) -> None:
+        row, _ = transform_record(FULL_RECORD)
+        raw = json.loads(row[COL["raw"]])
+        assert "body" not in raw
+
+    def test_body_none_when_missing(self) -> None:
+        row, _ = transform_record(MINIMAL_RECORD)
+        assert row[COL["body"]] is None
+
+    def test_body_null_bytes_stripped(self) -> None:
+        rec = {**MINIMAL_RECORD, "body": "Full\x00text\x00here"}
+        row, _ = transform_record(rec)
+        assert row[COL["body"]] == "Fulltexthere"
+
     def test_unmapped_fields_in_raw_jsonb(self) -> None:
         row, _ = transform_record(FULL_RECORD)
         raw_str = row[COL["raw"]]
         assert raw_str is not None
         raw = json.loads(raw_str)
-        assert raw["body"] == "Full text here..."
         assert raw["ack"] == "We thank the reviewer."
         assert raw["id"] == "26840679"
         assert "reference" in raw  # preserved in raw for provenance
@@ -145,6 +162,7 @@ class TestTransformRecord:
         assert "author" not in raw
         assert "year" not in raw
         assert "abstract" not in raw
+        assert "body" not in raw
 
     def test_raw_none_when_no_unmapped(self) -> None:
         row, _ = transform_record(MINIMAL_RECORD)
@@ -181,10 +199,10 @@ class TestTransformRecord:
         assert row[COL["authors"]] == ["Author, A."]
 
     def test_null_bytes_stripped_from_raw_jsonb(self) -> None:
-        rec = {**MINIMAL_RECORD, "body": "Full\x00text"}
+        rec = {**MINIMAL_RECORD, "ack": "Thanks\x00reviewer"}
         row, _ = transform_record(rec)
         raw = json.loads(row[COL["raw"]])
-        assert "\x00" not in raw["body"]
+        assert "\x00" not in raw["ack"]
 
 
 class TestEdgeExtraction:
@@ -218,8 +236,8 @@ class TestEdgeExtraction:
 
 class TestColumnOrder:
     def test_column_count_matches_schema(self) -> None:
-        # papers table has 33 columns (32 named + raw)
-        assert len(COLUMN_ORDER) == 33
+        # papers table has 34 columns (33 named + raw)
+        assert len(COLUMN_ORDER) == 34
 
     def test_bibcode_is_first(self) -> None:
         assert COLUMN_ORDER[0] == "bibcode"

@@ -58,6 +58,12 @@ def main() -> None:
         help="Seconds between batch status polls (default: 60)",
     )
     parser.add_argument(
+        "--budget",
+        type=float,
+        default=10.0,
+        help="Max spend in USD; aborts before submission if estimate exceeds this (default: $10)",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -80,6 +86,7 @@ def main() -> None:
         extraction_version=args.extraction_version,
         batch_size=args.batch_size,
         poll_interval=args.poll_interval,
+        budget_usd=args.budget,
     )
     logger = logging.getLogger(__name__)
     logger.info("Done. Loaded %d extraction rows.", total)

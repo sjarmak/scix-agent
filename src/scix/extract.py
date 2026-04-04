@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +24,29 @@ logger = logging.getLogger(__name__)
 
 EXTRACTION_VERSION = "v1"
 EXTRACTION_TYPES = ("methods", "datasets", "instruments", "materials")
+
+# Cost per million tokens (USD) — Batches API pricing (50% of standard)
+# Updated 2026-04. See https://docs.anthropic.com/en/docs/about-claude/models
+_MODEL_COSTS: dict[str, tuple[float, float]] = {
+    # (input_per_M, output_per_M)
+    "claude-haiku-4-5-20251001": (0.40, 2.00),
+    "claude-sonnet-4-20250514": (1.50, 7.50),
+    "claude-opus-4-20250514": (7.50, 37.50),
+}
+_DEFAULT_BUDGET_USD = 10.0
+
+_SAFE_ID_RE = re.compile(r"[^a-zA-Z0-9_-]")
+
+
+def _encode_bibcode(bibcode: str) -> str:
+    """Encode bibcode to Batches API custom_id (alphanumeric + _ -)."""
+    return _SAFE_ID_RE.sub("_", bibcode)[:64]
+
+
+def _decode_bibcode(custom_id: str) -> str:
+    """Best-effort decode — stored in JSONL alongside raw bibcode for safety."""
+    return custom_id
+
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -282,6 +306,32 @@ _TOOL_SCHEMA: dict[str, Any] = {
 }
 
 
+def estimate_cost(
+    num_requests: int,
+    model: str,
+    avg_input_tokens: int = 1200,
+    avg_output_tokens: int = 250,
+) -> float:
+    """Estimate batch cost in USD.
+
+    Args:
+        num_requests: Number of papers to process.
+        model: Model ID string.
+        avg_input_tokens: Estimated input tokens per request (system + few-shot + abstract).
+        avg_output_tokens: Estimated output tokens per response (tool_use JSON ~200-300 tokens).
+
+    Returns estimated cost in USD.
+    """
+    costs = _MODEL_COSTS.get(model)
+    if costs is None:
+        logger.warning("No cost data for model %s — cannot estimate", model)
+        return float("inf")
+    input_cost, output_cost = costs
+    total_input = num_requests * avg_input_tokens / 1_000_000
+    total_output = num_requests * avg_output_tokens / 1_000_000
+    return total_input * input_cost + total_output * output_cost
+
+
 def build_extraction_prompt(
     title: str,
     abstract: str,
@@ -293,43 +343,59 @@ def build_extraction_prompt(
     """
     user_message = f"Title: {title}\n\nAbstract: {abstract}"
 
-    # Convert few-shot examples to Anthropic message format
+    # Convert few-shot examples to Anthropic message format.
+    # Must avoid consecutive same-role turns — merge text into prior
+    # tool_result user turns when needed.
     messages: list[dict[str, Any]] = []
+    example_idx = 0
     for example in _FEW_SHOT_EXAMPLES:
         if example["role"] == "user":
-            messages.append({"role": "user", "content": example["content"]})
+            text_block = {"type": "text", "text": example["content"]}
+            # Merge into previous user turn (tool_result) if it exists
+            if (
+                messages
+                and messages[-1]["role"] == "user"
+                and isinstance(messages[-1]["content"], list)
+            ):
+                messages[-1]["content"].append(text_block)
+            else:
+                messages.append({"role": "user", "content": [text_block]})
         elif example["role"] == "assistant":
-            # Anthropic format: tool_use content blocks
             tool_call = example["tool_calls"][0]
+            tool_id = f"toolu_example_{example_idx}"
+            example_idx += 1
             messages.append(
                 {
                     "role": "assistant",
                     "content": [
                         {
                             "type": "tool_use",
-                            "id": f"toolu_example_{len(messages)}",
+                            "id": tool_id,
                             "name": tool_call["function"]["name"],
                             "input": json.loads(tool_call["function"]["arguments"]),
                         }
                     ],
                 }
             )
-            # Add tool_result for the assistant's tool call
             messages.append(
                 {
                     "role": "user",
                     "content": [
                         {
                             "type": "tool_result",
-                            "tool_use_id": f"toolu_example_{len(messages) - 1}",
+                            "tool_use_id": tool_id,
                             "content": "Entities extracted successfully.",
                         }
                     ],
                 }
             )
 
-    # Add the actual request
-    messages.append({"role": "user", "content": user_message})
+    # Merge actual request into the last user turn (tool_result)
+    last_user_block = {"type": "text", "text": user_message}
+    if messages and messages[-1]["role"] == "user" and isinstance(messages[-1]["content"], list):
+        messages[-1]["content"].append(last_user_block)
+    else:
+        messages.append({"role": "user", "content": [last_user_block]})
 
     return {
         "system": _SYSTEM_PROMPT,
@@ -349,7 +415,7 @@ def submit_batch(
     requests: list[ExtractionRequest],
     model: str = "claude-sonnet-4-20250514",
     max_tokens: int = 1024,
-) -> str:
+) -> tuple[str, dict[str, str]]:
     """Submit a batch of extraction requests via Anthropic Messages Batches API.
 
     Args:
@@ -360,12 +426,17 @@ def submit_batch(
 
     Returns the batch ID string.
     """
+    # Build a mapping from encoded custom_id back to original bibcode,
+    # since the encoding is lossy (special chars like & become _).
+    id_to_bibcode: dict[str, str] = {}
     batch_requests = []
     for req in requests:
+        encoded_id = _encode_bibcode(req.bibcode)
+        id_to_bibcode[encoded_id] = req.bibcode
         prompt = build_extraction_prompt(req.title, req.abstract)
         batch_requests.append(
             {
-                "custom_id": req.bibcode,
+                "custom_id": encoded_id,
                 "params": {
                     "model": model,
                     "max_tokens": max_tokens,
@@ -379,7 +450,7 @@ def submit_batch(
 
     batch = client.messages.batches.create(requests=batch_requests)
     logger.info("Submitted batch %s with %d requests", batch.id, len(requests))
-    return batch.id
+    return batch.id, id_to_bibcode
 
 
 def poll_batch(
@@ -425,6 +496,7 @@ def save_results_jsonl(
     client: Any,
     batch_id: str,
     output_path: Path,
+    id_to_bibcode: dict[str, str] | None = None,
 ) -> Path:
     """Save batch results to a local JSONL checkpoint file.
 
@@ -435,17 +507,21 @@ def save_results_jsonl(
         client: An anthropic.Anthropic client instance.
         batch_id: The completed batch ID.
         output_path: Path to write the JSONL file.
+        id_to_bibcode: Mapping from encoded custom_id back to original bibcode.
 
     Returns the output path.
     """
+    id_to_bibcode = id_to_bibcode or {}
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     count = 0
     with open(output_path, "w", encoding="utf-8") as f:
         for result in client.messages.batches.results(batch_id):
+            # Restore original bibcode from the mapping
+            bibcode = id_to_bibcode.get(result.custom_id, result.custom_id)
             line = {
-                "custom_id": result.custom_id,
+                "custom_id": bibcode,
                 "result": (
                     result.result.model_dump()
                     if hasattr(result.result, "model_dump")
@@ -594,6 +670,7 @@ def run_extraction_pipeline(
     extraction_version: str = EXTRACTION_VERSION,
     batch_size: int = 10_000,
     poll_interval: int = 60,
+    budget_usd: float = _DEFAULT_BUDGET_USD,
 ) -> int:
     """Run the full extraction pipeline: select -> submit -> poll -> save -> load.
 
@@ -605,6 +682,8 @@ def run_extraction_pipeline(
         extraction_version: Version tag.
         batch_size: Papers per batch submission.
         poll_interval: Seconds between batch status polls.
+        budget_usd: Maximum spend allowed. Pipeline aborts before submission
+            if the estimated cost exceeds this. Default $10.
 
     Returns total extraction rows loaded to DB.
     """
@@ -631,10 +710,25 @@ def run_extraction_pipeline(
             logger.info("No papers found for extraction")
             return 0
 
+        # 2. Budget check
+        est = estimate_cost(len(cohort), model)
+        logger.info(
+            "Estimated cost: $%.2f for %d papers with %s (budget: $%.2f)",
+            est,
+            len(cohort),
+            model,
+            budget_usd,
+        )
+        if est > budget_usd:
+            raise ValueError(
+                f"Estimated cost ${est:.2f} exceeds budget ${budget_usd:.2f}. "
+                f"Reduce pilot_size, switch to a cheaper model, or raise budget_usd."
+            )
+
         total_loaded = 0
         output_path = Path(output_dir)
 
-        # 2. Process in batches
+        # 3. Process in batches
         for batch_start in range(0, len(cohort), batch_size):
             batch_reqs = cohort[batch_start : batch_start + batch_size]
             batch_num = batch_start // batch_size + 1
@@ -646,7 +740,7 @@ def run_extraction_pipeline(
             )
 
             # Submit
-            batch_id = submit_batch(client, batch_reqs, model=model)
+            batch_id, id_to_bibcode = submit_batch(client, batch_reqs, model=model)
 
             # Poll
             poll_batch(client, batch_id, interval=poll_interval)
@@ -654,7 +748,7 @@ def run_extraction_pipeline(
             # Save JSONL checkpoint
             safe_id = batch_id.replace("/", "_").replace("..", "__")
             jsonl_file = output_path / f"batch_{safe_id}.jsonl"
-            save_results_jsonl(client, batch_id, jsonl_file)
+            save_results_jsonl(client, batch_id, jsonl_file, id_to_bibcode)
 
             # Load to DB
             loaded = load_results_to_db(

@@ -19,11 +19,6 @@ from typing import Any, Sequence
 # Add src/ to path for direct script execution
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
 import psycopg
 
 from scix.db import DEFAULT_DSN, get_connection
@@ -191,6 +186,16 @@ def get_journal_distribution(conn: psycopg.Connection) -> list[DistributionRow]:
 # ---------------------------------------------------------------------------
 
 
+def _get_plt():
+    """Lazily import matplotlib.pyplot with Agg backend."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    return plt
+
+
 def _make_bar_chart(
     rows: Sequence[DistributionRow],
     title: str,
@@ -204,6 +209,7 @@ def _make_bar_chart(
     with_body = [r.with_body for r in rows]
     without_body = [r.without_body for r in rows]
 
+    plt = _get_plt()
     fig, ax = plt.subplots(figsize=(12, 6))
     x = range(len(labels))
     width = 0.35
@@ -240,6 +246,7 @@ def _make_pct_chart(
     labels = [r.label for r in rows]
     pcts = [r.pct_with_body for r in rows]
 
+    plt = _get_plt()
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.bar(labels, pcts, color="#4CAF50")
     ax.set_xlabel(xlabel)

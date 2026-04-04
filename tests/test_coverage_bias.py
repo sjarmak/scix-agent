@@ -1,11 +1,12 @@
 """Tests for coverage bias analysis script.
 
 Unit tests mock DB queries and verify report generation logic.
-No database required.
+No database required. Matplotlib is mocked so tests pass without it installed.
 """
 
 from __future__ import annotations
 
+import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +17,22 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+# Ensure matplotlib is available (mocked if not installed) before importing the script.
+# The script only imports matplotlib lazily in _get_plt(), but tests that call
+# generate_figures need a mock in place.
+try:
+    import matplotlib  # noqa: F401
+except ModuleNotFoundError:
+    _mpl_mod = types.ModuleType("matplotlib")
+    _mpl_mod.use = MagicMock()  # type: ignore[attr-defined]
+    _pyplot_mod = types.ModuleType("matplotlib.pyplot")
+    _mock_fig = MagicMock()
+    _mock_ax = MagicMock()
+    _pyplot_mod.subplots = MagicMock(return_value=(_mock_fig, _mock_ax))  # type: ignore[attr-defined]
+    _pyplot_mod.close = MagicMock()  # type: ignore[attr-defined]
+    sys.modules["matplotlib"] = _mpl_mod
+    sys.modules["matplotlib.pyplot"] = _pyplot_mod
 
 from coverage_bias_analysis import (
     DistributionRow,
@@ -312,6 +329,22 @@ class TestGenerateReport:
 
 
 class TestGenerateFigures:
+    @staticmethod
+    def _mock_plt(figures_dir: Path) -> MagicMock:
+        """Build a mock plt whose savefig creates real empty PNG files."""
+        mock_plt = MagicMock()
+        mock_fig = MagicMock()
+        mock_ax = MagicMock()
+        mock_plt.subplots.return_value = (mock_fig, mock_ax)
+
+        def _savefig(path: str | Path, **kwargs: object) -> None:
+            p = Path(path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(b"")
+
+        mock_fig.savefig.side_effect = _savefig
+        return mock_plt
+
     def test_creates_figure_files(
         self,
         tmp_path: Path,
@@ -321,13 +354,15 @@ class TestGenerateFigures:
         sample_journal_dist: list[DistributionRow],
     ) -> None:
         figures_dir = tmp_path / "figures"
-        paths = generate_figures(
-            sample_year_dist,
-            sample_arxiv_dist,
-            sample_citation_dist,
-            sample_journal_dist,
-            figures_dir,
-        )
+        mock_plt = self._mock_plt(figures_dir)
+        with patch("coverage_bias_analysis._get_plt", return_value=mock_plt):
+            paths = generate_figures(
+                sample_year_dist,
+                sample_arxiv_dist,
+                sample_citation_dist,
+                sample_journal_dist,
+                figures_dir,
+            )
         assert figures_dir.exists()
         # Should create 8 figures (2 per dimension: counts + pct)
         assert len(paths) == 8
@@ -346,7 +381,9 @@ class TestGenerateFigures:
         sample_year_dist: list[DistributionRow],
     ) -> None:
         figures_dir = tmp_path / "figures"
-        paths = generate_figures(sample_year_dist, [], [], [], figures_dir)
+        mock_plt = self._mock_plt(figures_dir)
+        with patch("coverage_bias_analysis._get_plt", return_value=mock_plt):
+            paths = generate_figures(sample_year_dist, [], [], [], figures_dir)
         # Only year charts should be generated
         assert len(paths) == 2
         assert "year_counts" in paths

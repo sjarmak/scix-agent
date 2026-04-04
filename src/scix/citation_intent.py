@@ -43,6 +43,7 @@ SCICITE_STRING_LABEL_MAP: dict[str, str] = {
     "background": "background",
     "method": "method",
     "result": "result_comparison",
+    "result_comparison": "result_comparison",
     # Also handle LABEL_N format from generic classifiers
     "LABEL_0": "background",
     "LABEL_1": "method",

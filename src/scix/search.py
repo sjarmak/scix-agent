@@ -1165,7 +1165,7 @@ def get_citation_context(
     t0 = time.perf_counter()
 
     sql = """
-        SELECT context_text, intent, char_offset
+        SELECT context_text, intent, char_offset, section_name
         FROM citation_contexts
         WHERE source_bibcode = %s AND target_bibcode = %s
     """
@@ -1181,6 +1181,7 @@ def get_citation_context(
             "context_text": row["context_text"],
             "intent": row["intent"],
             "char_offset": row["char_offset"],
+            "section_name": row["section_name"],
         }
         for row in rows
     ]

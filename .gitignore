@@ -22,6 +22,9 @@ uat_run.log
 !.env.example
 .beads-credential-key
 
+# Model weights & checkpoints
+models/
+
 # Python
 __pycache__/
 *.py[cod]

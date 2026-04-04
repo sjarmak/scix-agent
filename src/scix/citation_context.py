@@ -295,20 +295,22 @@ _CITCTX_STAGING_DDL = (
 )
 
 _CITCTX_COPY = (
-    "COPY _citctx_staging (source_bibcode, target_bibcode, context_text, char_offset, intent) "
+    "COPY _citctx_staging "
+    "(source_bibcode, target_bibcode, context_text, char_offset, section_name, intent) "
     "FROM STDIN"
 )
 
 _CITCTX_MERGE = (
-    "INSERT INTO citation_contexts (source_bibcode, target_bibcode, context_text, char_offset, intent) "
-    "SELECT source_bibcode, target_bibcode, context_text, char_offset, intent "
+    "INSERT INTO citation_contexts "
+    "(source_bibcode, target_bibcode, context_text, char_offset, section_name, intent) "
+    "SELECT source_bibcode, target_bibcode, context_text, char_offset, section_name, intent "
     "FROM _citctx_staging"
 )
 
 
 def _flush_contexts(
     conn: psycopg.Connection,
-    rows: list[tuple[str, str, str, int, str | None]],
+    rows: list[tuple[str, str, str, int, str | None, str | None]],
 ) -> int:
     """COPY citation context rows into the DB. Returns row count."""
     if not rows:
@@ -362,7 +364,7 @@ def run_pipeline(
         with conn.cursor(name="citctx_papers") as cur:
             cur.execute(query, params)
 
-            batch: list[tuple[str, str, str, int, str | None]] = []
+            batch: list[tuple[str, str, str, int, str | None, str | None]] = []
 
             for bibcode, body, raw_val in cur:
                 # Parse references from raw JSONB
@@ -388,6 +390,7 @@ def run_pipeline(
                             ctx.target_bibcode,
                             ctx.context_text,
                             ctx.char_offset,
+                            ctx.section_name,
                             ctx.intent,
                         )
                     )

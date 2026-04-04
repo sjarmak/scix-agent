@@ -6,7 +6,15 @@ import json
 
 import pytest
 
-from scix.field_mapping import COLUMN_ORDER, transform_record
+from scix.field_mapping import (
+    COLUMN_ORDER,
+    DIRECT_ARRAY_FIELDS,
+    DIRECT_FLOAT_FIELDS,
+    DIRECT_INT_FIELDS,
+    DIRECT_TEXT_FIELDS,
+    RENAMES,
+    transform_record,
+)
 
 # Column name -> index lookup for readable assertions.
 COL = {name: i for i, name in enumerate(COLUMN_ORDER)}
@@ -50,9 +58,43 @@ FULL_RECORD: dict = {
     "reference": ["1919ApJ....49..153H", "1959ApJ...130..364B", "2024AdSpR..74.1518J"],
     "citation": ["2024AdSpR..74.1518J"],
     "body": "Full text here...",
+    # --- New full-coverage fields (migration 012) ---
     "ack": "We thank the reviewer.",
+    "date": "2024-02-00",
+    "eid": "L15",
+    "entdate": "2024-02-11",
+    "first_author_norm": "Jha, B",
+    "page_range": "L15",
+    "pubnote": "5 pages, 3 figures",
+    "series": "ApJL",
+    "aff_id": ["60001234", "60001234"],
+    "alternate_title": ["Predicting Solar Cycle 25 Reversal"],
+    "author_norm": ["Jha, B", "Upton, L"],
+    "caption": ["Figure 1: Solar cycle phases"],
+    "comment": ["Accepted for publication"],
+    "data": ["SIMBAD:4", "ESO:13"],
+    "esources": ["PUB_PDF", "PUB_HTML"],
+    "facility": ["SDO", "GONG"],
+    "grant": ["NASA NNX12AB34G", "NSF AST-1234567"],
+    "grant_agencies": ["NASA", "NSF"],
+    "grant_id": ["NNX12AB34G", "AST-1234567"],
+    "isbn": [],
+    "issn": ["2041-8213"],
+    "keyword_norm": ["sunspot", "solar cycle"],
+    "keyword_schema": ["Unified Astronomy Thesaurus"],
+    "links_data": ['{"title":"", "type":"electr", "instances":""}'],
+    "nedid": ["MESSIER_031"],
+    "nedtype": ["G"],
+    "orcid_other": ["0000-0003-3191-4625"],
+    "simbid": ["1575544"],
+    "vizier": ["J/ApJ/962/L15"],
+    "author_count": 2,
+    "page_count": 5,
+    "citation_count_norm": 0.53,
+    "cite_read_boost": 0.42,
+    "classic_factor": 0.0,
+    # --- Fields that stay in raw JSONB ---
     "id": "26840679",
-    "grant": [{"agency": "NASA", "id": "123"}],
 }
 
 
@@ -148,7 +190,6 @@ class TestTransformRecord:
         raw_str = row[COL["raw"]]
         assert raw_str is not None
         raw = json.loads(raw_str)
-        assert raw["ack"] == "We thank the reviewer."
         assert raw["id"] == "26840679"
         assert "reference" in raw  # preserved in raw for provenance
         assert "citation" in raw
@@ -163,6 +204,13 @@ class TestTransformRecord:
         assert "year" not in raw
         assert "abstract" not in raw
         assert "body" not in raw
+        # New mapped fields should also NOT appear in raw
+        assert "ack" not in raw
+        assert "data" not in raw
+        assert "facility" not in raw
+        assert "grant" not in raw
+        assert "author_count" not in raw
+        assert "citation_count_norm" not in raw
 
     def test_raw_none_when_no_unmapped(self) -> None:
         row, _ = transform_record(MINIMAL_RECORD)
@@ -199,10 +247,10 @@ class TestTransformRecord:
         assert row[COL["authors"]] == ["Author, A."]
 
     def test_null_bytes_stripped_from_raw_jsonb(self) -> None:
-        rec = {**MINIMAL_RECORD, "ack": "Thanks\x00reviewer"}
+        rec = {**MINIMAL_RECORD, "some_unmapped_field": "Thanks\x00reviewer"}
         row, _ = transform_record(rec)
         raw = json.loads(row[COL["raw"]])
-        assert "\x00" not in raw["ack"]
+        assert "\x00" not in raw["some_unmapped_field"]
 
 
 class TestEdgeExtraction:
@@ -234,10 +282,123 @@ class TestEdgeExtraction:
         assert edges == []
 
 
+class TestNewFullCoverageFields:
+    """Tests for fields added in migration 012 (full ADS field coverage)."""
+
+    def test_new_text_fields(self) -> None:
+        row, _ = transform_record(FULL_RECORD)
+        assert row[COL["ack"]] == "We thank the reviewer."
+        assert row[COL["date"]] == "2024-02-00"
+        assert row[COL["eid"]] == "L15"
+        assert row[COL["entdate"]] == "2024-02-11"
+        assert row[COL["first_author_norm"]] == "Jha, B"
+        assert row[COL["page_range"]] == "L15"
+        assert row[COL["pubnote"]] == "5 pages, 3 figures"
+        assert row[COL["series"]] == "ApJL"
+
+    def test_new_array_fields(self) -> None:
+        row, _ = transform_record(FULL_RECORD)
+        assert row[COL["data"]] == ["SIMBAD:4", "ESO:13"]
+        assert row[COL["facility"]] == ["SDO", "GONG"]
+        assert row[COL["esources"]] == ["PUB_PDF", "PUB_HTML"]
+        assert row[COL["nedid"]] == ["MESSIER_031"]
+        assert row[COL["simbid"]] == ["1575544"]
+        assert row[COL["author_norm"]] == ["Jha, B", "Upton, L"]
+        assert row[COL["keyword_norm"]] == ["sunspot", "solar cycle"]
+        assert row[COL["vizier"]] == ["J/ApJ/962/L15"]
+
+    def test_new_integer_fields(self) -> None:
+        row, _ = transform_record(FULL_RECORD)
+        assert row[COL["author_count"]] == 2
+        assert row[COL["page_count"]] == 5
+
+    def test_new_float_fields(self) -> None:
+        row, _ = transform_record(FULL_RECORD)
+        assert row[COL["citation_count_norm"]] == pytest.approx(0.53)
+        assert row[COL["cite_read_boost"]] == pytest.approx(0.42)
+        assert row[COL["classic_factor"]] == pytest.approx(0.0)
+
+    def test_float_field_invalid_value(self) -> None:
+        rec = {**MINIMAL_RECORD, "citation_count_norm": "not_a_number"}
+        row, _ = transform_record(rec)
+        assert row[COL["citation_count_norm"]] is None
+
+    def test_float_field_missing(self) -> None:
+        row, _ = transform_record(MINIMAL_RECORD)
+        assert row[COL["citation_count_norm"]] is None
+        assert row[COL["cite_read_boost"]] is None
+        assert row[COL["classic_factor"]] is None
+
+    def test_grant_renamed_to_grant_facet(self) -> None:
+        row, _ = transform_record(FULL_RECORD)
+        assert row[COL["grant_facet"]] == ["NASA NNX12AB34G", "NSF AST-1234567"]
+
+    def test_grant_dict_elements_serialized(self) -> None:
+        """ADS API may return grant as list of dicts; these are JSON-serialized."""
+        rec = {**MINIMAL_RECORD, "grant": [{"agency": "NASA", "id": "123"}]}
+        row, _ = transform_record(rec)
+        grant_facet = row[COL["grant_facet"]]
+        assert len(grant_facet) == 1
+        # Dict elements are serialized to JSON strings for TEXT[] compatibility
+        parsed = json.loads(grant_facet[0])
+        assert parsed == {"agency": "NASA", "id": "123"}
+
+    def test_new_text_fields_none_when_missing(self) -> None:
+        row, _ = transform_record(MINIMAL_RECORD)
+        assert row[COL["ack"]] is None
+        assert row[COL["eid"]] is None
+        assert row[COL["facility"]] is None
+        assert row[COL["data"]] is None
+
+    def test_new_text_fields_null_bytes_stripped(self) -> None:
+        rec = {**MINIMAL_RECORD, "ack": "Thanks\x00reviewer", "series": "Ap\x00JL"}
+        row, _ = transform_record(rec)
+        assert row[COL["ack"]] == "Thanksreviewer"
+        assert row[COL["series"]] == "ApJL"
+
+    def test_new_array_fields_null_bytes_stripped(self) -> None:
+        rec = {**MINIMAL_RECORD, "data": ["SIMBAD\x00:4"]}
+        row, _ = transform_record(rec)
+        assert row[COL["data"]] == ["SIMBAD:4"]
+
+    def test_ack_not_in_raw(self) -> None:
+        """ack was previously unmapped and in raw; now it's a dedicated column."""
+        rec = {**MINIMAL_RECORD, "ack": "We thank the reviewer."}
+        row, _ = transform_record(rec)
+        assert row[COL["ack"]] == "We thank the reviewer."
+        # raw should be None since ack is the only extra field and it's now mapped
+        assert row[COL["raw"]] is None
+
+
+class TestFieldSetConsistency:
+    """Verify that field sets are internally consistent."""
+
+    def test_all_column_order_entries_are_mapped_or_special(self) -> None:
+        """Every column in COLUMN_ORDER must be either a direct field, a rename
+        target, a special-cased field (title, year), or 'raw'."""
+        direct_cols = (
+            DIRECT_TEXT_FIELDS | DIRECT_ARRAY_FIELDS | DIRECT_INT_FIELDS | DIRECT_FLOAT_FIELDS
+        )
+        rename_targets = set(RENAMES.values())
+        special = {"title", "year", "raw"}
+        all_covered = direct_cols | rename_targets | special
+        for col in COLUMN_ORDER:
+            assert col in all_covered, f"Column {col!r} not covered by any field set"
+
+    def test_no_overlap_between_field_sets(self) -> None:
+        """Field sets should be disjoint (no double-processing)."""
+        sets = [DIRECT_TEXT_FIELDS, DIRECT_ARRAY_FIELDS, DIRECT_INT_FIELDS, DIRECT_FLOAT_FIELDS]
+        for i, a in enumerate(sets):
+            for j, b in enumerate(sets):
+                if i < j:
+                    overlap = a & b
+                    assert not overlap, f"Overlap between sets {i} and {j}: {overlap}"
+
+
 class TestColumnOrder:
     def test_column_count_matches_schema(self) -> None:
-        # papers table has 34 columns (33 named + raw)
-        assert len(COLUMN_ORDER) == 34
+        # papers table: 33 original + 34 new full-coverage + raw = 68 columns
+        assert len(COLUMN_ORDER) == 68
 
     def test_bibcode_is_first(self) -> None:
         assert COLUMN_ORDER[0] == "bibcode"

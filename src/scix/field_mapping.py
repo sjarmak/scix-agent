@@ -14,7 +14,9 @@ def _sanitize_text(val: str | None) -> str | None:
 
 
 # Column order for COPY INTO papers. Must match the INSERT/COPY column list exactly.
+# Grouped: original columns first, then new full-coverage columns, raw JSONB last.
 COLUMN_ORDER: tuple[str, ...] = (
+    # --- Original columns (migrations 001 + 010) ---
     "bibcode",
     "title",
     "abstract",
@@ -48,6 +50,46 @@ COLUMN_ORDER: tuple[str, ...] = (
     "read_count",
     "reference_count",
     "body",
+    # --- New full-coverage columns (migration 012) ---
+    # Text fields
+    "ack",
+    "date",
+    "eid",
+    "entdate",
+    "first_author_norm",
+    "page_range",
+    "pubnote",
+    "series",
+    # Array fields
+    "aff_id",
+    "alternate_title",
+    "author_norm",
+    "caption",
+    "comment",
+    "data",
+    "esources",
+    "facility",
+    "grant_facet",
+    "grant_agencies",
+    "grant_id",
+    "isbn",
+    "issn",
+    "keyword_norm",
+    "keyword_schema",
+    "links_data",
+    "nedid",
+    "nedtype",
+    "orcid_other",
+    "simbid",
+    "vizier",
+    # Integer fields
+    "author_count",
+    "page_count",
+    # Real (float) fields
+    "citation_count_norm",
+    "cite_read_boost",
+    "classic_factor",
+    # --- Always last ---
     "raw",
 )
 
@@ -68,6 +110,15 @@ DIRECT_TEXT_FIELDS: frozenset[str] = frozenset(
         "pubdate",
         "entry_date",
         "indexstamp",
+        # New in migration 012
+        "ack",
+        "date",
+        "eid",
+        "entdate",
+        "first_author_norm",
+        "page_range",
+        "pubnote",
+        "series",
     }
 )
 
@@ -85,6 +136,27 @@ DIRECT_ARRAY_FIELDS: frozenset[str] = frozenset(
         "orcid_pub",
         "orcid_user",
         "property",
+        # New in migration 012
+        "aff_id",
+        "alternate_title",
+        "author_norm",
+        "caption",
+        "comment",
+        "data",
+        "esources",
+        "facility",
+        "grant_agencies",
+        "grant_id",
+        "isbn",
+        "issn",
+        "keyword_norm",
+        "keyword_schema",
+        "links_data",
+        "nedid",
+        "nedtype",
+        "orcid_other",
+        "simbid",
+        "vizier",
     }
 )
 
@@ -94,6 +166,18 @@ DIRECT_INT_FIELDS: frozenset[str] = frozenset(
         "citation_count",
         "read_count",
         "reference_count",
+        # New in migration 012
+        "author_count",
+        "page_count",
+    }
+)
+
+# JSONL fields that map directly as floats (REAL in SQL).
+DIRECT_FLOAT_FIELDS: frozenset[str] = frozenset(
+    {
+        "citation_count_norm",
+        "cite_read_boost",
+        "classic_factor",
     }
 )
 
@@ -102,6 +186,7 @@ RENAMES: dict[str, str] = {
     "author": "authors",
     "aff": "affiliations",
     "keyword": "keywords",
+    "grant": "grant_facet",  # ADS "grant" is list[str]; renamed to avoid SQL keyword
 }
 
 # All JSONL fields that have a dedicated SQL column (after rename).
@@ -112,6 +197,7 @@ _MAPPED_JSONL_FIELDS: frozenset[str] = (
     DIRECT_TEXT_FIELDS
     | DIRECT_ARRAY_FIELDS
     | DIRECT_INT_FIELDS
+    | DIRECT_FLOAT_FIELDS
     | frozenset(RENAMES.keys())
     | {"title", "year"}  # special-cased transforms
 )
@@ -154,11 +240,31 @@ def transform_record(rec: dict[str, Any]) -> tuple[tuple[Any, ...], list[tuple[s
             except (ValueError, TypeError):
                 row[field] = None
 
-    # Renamed array fields: author -> authors, aff -> affiliations, keyword -> keywords
+    # Direct float fields (REAL in SQL — normalized scores from ADS)
+    for field in DIRECT_FLOAT_FIELDS:
+        val = rec.get(field)
+        if val is not None:
+            try:
+                row[field] = float(val)
+            except (ValueError, TypeError):
+                row[field] = None
+
+    # Renamed fields: author -> authors, aff -> affiliations,
+    #                  keyword -> keywords, grant -> grant_facet
     for jsonl_name, sql_name in RENAMES.items():
         val = rec.get(jsonl_name)
         if isinstance(val, list):
-            row[sql_name] = [_sanitize_text(v) if isinstance(v, str) else v for v in val]
+            # Coerce non-string elements (e.g., grant dicts) to JSON strings
+            # so TEXT[] columns always receive strings.
+            sanitized: list[Any] = []
+            for v in val:
+                if isinstance(v, str):
+                    sanitized.append(_sanitize_text(v))
+                elif isinstance(v, dict):
+                    sanitized.append(json.dumps(v, ensure_ascii=False))
+                else:
+                    sanitized.append(v)
+            row[sql_name] = sanitized
         else:
             row[sql_name] = None
 

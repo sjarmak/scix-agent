@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""Coverage bias analysis: compare full-text vs abstract-only paper distributions.
+"""Coverage bias analysis for the SciX corpus.
 
-Queries the DB to compare distributions between full-text (body IS NOT NULL)
-and abstract-only papers across: arxiv_class, year, citation_count, and journal (pub).
+Examines the harvested ADS metadata corpus for biases and data quality issues:
+- Full-text (body) vs abstract-only distribution across multiple dimensions
+- Missing data rates per field
+- Citation network completeness (% of referenced papers in corpus)
+- Doctype and database (discipline) distribution
+- Overall corpus summary statistics
+
 Outputs a markdown report with tables and matplotlib figures.
 """
 
@@ -40,6 +45,45 @@ class DistributionRow:
     with_body: int
     without_body: int
     pct_with_body: float
+
+
+@dataclass(frozen=True)
+class FieldCompletenessRow:
+    """Missing data rate for a single column."""
+
+    field: str
+    total: int
+    non_null: int
+    null_count: int
+    pct_populated: float
+
+
+@dataclass(frozen=True)
+class CitationCompletenessResult:
+    """Citation network completeness statistics."""
+
+    total_edges: int
+    edges_target_in_corpus: int
+    edges_target_missing: int
+    pct_target_in_corpus: float
+    unique_targets: int
+    unique_targets_in_corpus: int
+    unique_targets_missing: int
+    pct_unique_in_corpus: float
+
+
+@dataclass(frozen=True)
+class CorpusSummary:
+    """Top-level corpus statistics."""
+
+    total_papers: int
+    total_with_body: int
+    total_citation_edges: int
+    total_embeddings: int
+    year_min: int | None
+    year_max: int | None
+    median_citation_count: float | None
+    median_reference_count: float | None
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +225,332 @@ def get_journal_distribution(conn: psycopg.Connection) -> list[DistributionRow]:
     ]
 
 
+def get_doctype_distribution(conn: psycopg.Connection) -> list[DistributionRow]:
+    """Get doctype distribution of full-text vs abstract-only papers."""
+    query = """
+        SELECT
+            doctype,
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE body IS NOT NULL) AS with_body,
+            COUNT(*) FILTER (WHERE body IS NULL) AS without_body
+        FROM papers
+        WHERE doctype IS NOT NULL
+        GROUP BY doctype
+        ORDER BY total DESC
+    """
+    with conn.cursor() as cur:
+        cur.execute(query)
+        rows = cur.fetchall()
+
+    return [
+        DistributionRow(
+            label=str(row[0]),
+            total=row[1],
+            with_body=row[2],
+            without_body=row[3],
+            pct_with_body=round(100.0 * row[2] / row[1], 2) if row[1] > 0 else 0.0,
+        )
+        for row in rows
+    ]
+
+
+def get_database_distribution(conn: psycopg.Connection) -> list[DistributionRow]:
+    """Get database (discipline) distribution of full-text vs abstract-only papers.
+
+    The ADS 'database' array field indicates which databases index the paper
+    (e.g. 'astronomy', 'physics', 'general'). A single paper can appear in
+    multiple databases, so we unnest and count independently.
+    """
+    query = """
+        SELECT
+            db,
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE body IS NOT NULL) AS with_body,
+            COUNT(*) FILTER (WHERE body IS NULL) AS without_body
+        FROM papers, LATERAL unnest(database) AS db
+        GROUP BY db
+        ORDER BY total DESC
+    """
+    with conn.cursor() as cur:
+        cur.execute(query)
+        rows = cur.fetchall()
+
+    return [
+        DistributionRow(
+            label=str(row[0]),
+            total=row[1],
+            with_body=row[2],
+            without_body=row[3],
+            pct_with_body=round(100.0 * row[2] / row[1], 2) if row[1] > 0 else 0.0,
+        )
+        for row in rows
+    ]
+
+
+def get_field_completeness(conn: psycopg.Connection) -> list[FieldCompletenessRow]:
+    """Get missing data rates for key columns in the papers table.
+
+    Checks both scalar columns (IS NULL) and array columns (IS NULL OR empty).
+    """
+    # Columns to check: (sql_column, is_array)
+    fields: list[tuple[str, bool]] = [
+        ("title", False),
+        ("abstract", False),
+        ("body", False),
+        ("year", False),
+        ("doctype", False),
+        ("pub", False),
+        ("first_author", False),
+        ("citation_count", False),
+        ("read_count", False),
+        ("reference_count", False),
+        ("pubdate", False),
+        ("lang", False),
+        ("copyright", False),
+        ("authors", True),
+        ("affiliations", True),
+        ("keywords", True),
+        ("arxiv_class", True),
+        ("database", True),
+        ("doi", True),
+        ("bibstem", True),
+        ("bibgroup", True),
+        ("orcid_pub", True),
+        ("orcid_user", True),
+    ]
+
+    # Build a single query that counts non-null for each field
+    select_parts = ["COUNT(*) AS total"]
+    for field_name, is_array in fields:
+        if is_array:
+            select_parts.append(
+                f"COUNT(*) FILTER (WHERE {field_name} IS NOT NULL "
+                f"AND array_length({field_name}, 1) > 0) AS {field_name}_populated"
+            )
+        else:
+            select_parts.append(
+                f"COUNT(*) FILTER (WHERE {field_name} IS NOT NULL) AS {field_name}_populated"
+            )
+
+    query = f"SELECT {', '.join(select_parts)} FROM papers"
+
+    with conn.cursor() as cur:
+        cur.execute(query)
+        row = cur.fetchone()
+
+    if row is None:
+        return []
+
+    total = row[0]
+    results: list[FieldCompletenessRow] = []
+    for i, (field_name, _) in enumerate(fields):
+        non_null = row[i + 1]
+        null_count = total - non_null
+        pct = round(100.0 * non_null / total, 2) if total > 0 else 0.0
+        results.append(
+            FieldCompletenessRow(
+                field=field_name,
+                total=total,
+                non_null=non_null,
+                null_count=null_count,
+                pct_populated=pct,
+            )
+        )
+
+    return results
+
+
+def get_citation_completeness(
+    conn: psycopg.Connection,
+    sample_size: int = 100_000,
+) -> CitationCompletenessResult:
+    """Measure citation network completeness.
+
+    Checks what fraction of cited papers (targets of citation edges) exist in
+    the papers table. Uses sampling for efficiency on large tables:
+    - Total edge count from pg_class estimate or exact count
+    - Random sample of edges to estimate target-in-corpus rate
+
+    Args:
+        conn: Database connection.
+        sample_size: Number of edges to sample for completeness estimation.
+            Set to 0 to force exact (slow) computation.
+    """
+    # Get total edge count
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM citation_edges")
+        row = cur.fetchone()
+    total_edges = row[0] if row is not None else 0
+
+    if total_edges == 0:
+        return CitationCompletenessResult(
+            total_edges=0,
+            edges_target_in_corpus=0,
+            edges_target_missing=0,
+            pct_target_in_corpus=0.0,
+            unique_targets=0,
+            unique_targets_in_corpus=0,
+            unique_targets_missing=0,
+            pct_unique_in_corpus=0.0,
+        )
+
+    # Sample-based estimation: take a random sample of edges and check targets
+    # TABLESAMPLE SYSTEM is block-level sampling -- very fast on large tables
+    if sample_size > 0 and total_edges > sample_size * 2:
+        # Estimate sample percentage to get approximately sample_size rows
+        sample_pct = min(100.0 * sample_size / total_edges * 1.2, 100.0)
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                WITH sample AS (
+                    SELECT target_bibcode
+                    FROM citation_edges TABLESAMPLE SYSTEM ({sample_pct})
+                    LIMIT {sample_size}
+                )
+                SELECT
+                    COUNT(*) AS sampled_edges,
+                    COUNT(*) FILTER (
+                        WHERE EXISTS (SELECT 1 FROM papers p WHERE p.bibcode = sample.target_bibcode)
+                    ) AS edges_in_corpus,
+                    COUNT(DISTINCT target_bibcode) AS unique_targets,
+                    COUNT(DISTINCT target_bibcode) FILTER (
+                        WHERE EXISTS (SELECT 1 FROM papers p WHERE p.bibcode = sample.target_bibcode)
+                    ) AS unique_in_corpus
+                FROM sample
+            """)
+            row = cur.fetchone()
+
+        if row is None or row[0] == 0:
+            return CitationCompletenessResult(
+                total_edges=total_edges,
+                edges_target_in_corpus=0,
+                edges_target_missing=total_edges,
+                pct_target_in_corpus=0.0,
+                unique_targets=0,
+                unique_targets_in_corpus=0,
+                unique_targets_missing=0,
+                pct_unique_in_corpus=0.0,
+            )
+
+        sampled = row[0]
+        sampled_in = row[1]
+        sampled_unique = row[2]
+        sampled_unique_in = row[3]
+
+        # Extrapolate from sample
+        pct_edges = round(100.0 * sampled_in / sampled, 2)
+        pct_unique = (
+            round(100.0 * sampled_unique_in / sampled_unique, 2) if sampled_unique > 0 else 0.0
+        )
+
+        edges_in_est = round(total_edges * sampled_in / sampled)
+        # Estimate unique targets from sample ratio
+        unique_est = round(total_edges * sampled_unique / sampled)
+        unique_in_est = (
+            round(unique_est * sampled_unique_in / sampled_unique) if sampled_unique > 0 else 0
+        )
+
+        return CitationCompletenessResult(
+            total_edges=total_edges,
+            edges_target_in_corpus=edges_in_est,
+            edges_target_missing=total_edges - edges_in_est,
+            pct_target_in_corpus=pct_edges,
+            unique_targets=unique_est,
+            unique_targets_in_corpus=unique_in_est,
+            unique_targets_missing=unique_est - unique_in_est,
+            pct_unique_in_corpus=pct_unique,
+        )
+
+    # Exact computation for small tables or when sample_size=0
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (
+                    WHERE EXISTS (SELECT 1 FROM papers p WHERE p.bibcode = ce.target_bibcode)
+                ) AS in_corpus,
+                COUNT(DISTINCT target_bibcode) AS unique_targets,
+                COUNT(DISTINCT target_bibcode) FILTER (
+                    WHERE EXISTS (SELECT 1 FROM papers p WHERE p.bibcode = ce.target_bibcode)
+                ) AS unique_in_corpus
+            FROM citation_edges ce
+        """)
+        row = cur.fetchone()
+
+    if row is None:
+        return CitationCompletenessResult(
+            total_edges=total_edges,
+            edges_target_in_corpus=0,
+            edges_target_missing=total_edges,
+            pct_target_in_corpus=0.0,
+            unique_targets=0,
+            unique_targets_in_corpus=0,
+            unique_targets_missing=0,
+            pct_unique_in_corpus=0.0,
+        )
+
+    return CitationCompletenessResult(
+        total_edges=row[0],
+        edges_target_in_corpus=row[1],
+        edges_target_missing=row[0] - row[1],
+        pct_target_in_corpus=round(100.0 * row[1] / row[0], 2) if row[0] > 0 else 0.0,
+        unique_targets=row[2],
+        unique_targets_in_corpus=row[3],
+        unique_targets_missing=row[2] - row[3],
+        pct_unique_in_corpus=round(100.0 * row[3] / row[2], 2) if row[2] > 0 else 0.0,
+    )
+
+
+def get_corpus_summary(conn: psycopg.Connection) -> CorpusSummary:
+    """Get top-level corpus statistics."""
+    query = """
+        SELECT
+            COUNT(*) AS total_papers,
+            COUNT(*) FILTER (WHERE body IS NOT NULL) AS total_with_body,
+            MIN(year) AS year_min,
+            MAX(year) AS year_max,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY citation_count)
+                FILTER (WHERE citation_count IS NOT NULL) AS median_citations,
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY reference_count)
+                FILTER (WHERE reference_count IS NOT NULL) AS median_references
+        FROM papers
+    """
+    with conn.cursor() as cur:
+        cur.execute(query)
+        row = cur.fetchone()
+
+    # Count edges and embeddings separately (may be large)
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM citation_edges")
+        edge_count = cur.fetchone()[0]  # type: ignore[index]
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM paper_embeddings")
+        embed_count = cur.fetchone()[0]  # type: ignore[index]
+
+    if row is None:
+        return CorpusSummary(
+            total_papers=0,
+            total_with_body=0,
+            total_citation_edges=0,
+            total_embeddings=0,
+            year_min=None,
+            year_max=None,
+            median_citation_count=None,
+            median_reference_count=None,
+        )
+
+    return CorpusSummary(
+        total_papers=row[0],
+        total_with_body=row[1],
+        total_citation_edges=edge_count,
+        total_embeddings=embed_count,
+        year_min=row[2],
+        year_max=row[3],
+        median_citation_count=float(row[4]) if row[4] is not None else None,
+        median_reference_count=float(row[5]) if row[5] is not None else None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Figure generation
 # ---------------------------------------------------------------------------
@@ -266,12 +636,47 @@ def _make_pct_chart(
     return filepath
 
 
+def _make_horizontal_bar(
+    labels: Sequence[str],
+    values: Sequence[float],
+    title: str,
+    xlabel: str,
+    filename: str,
+    figures_dir: Path,
+    color: str = "#4CAF50",
+    reference_line: float | None = None,
+) -> Path:
+    """Create a horizontal bar chart (useful for field completeness)."""
+    plt = _get_plt()
+    fig, ax = plt.subplots(figsize=(10, max(6, len(labels) * 0.4)))
+    y_pos = range(len(labels))
+    ax.barh(list(y_pos), list(values), color=color)
+    ax.set_yticks(list(y_pos))
+    ax.set_yticklabels(labels)
+    ax.set_xlabel(xlabel)
+    ax.set_title(title)
+    if reference_line is not None:
+        ax.axvline(x=reference_line, color="red", linestyle="--", label=f"{reference_line}%")
+        ax.legend()
+    ax.invert_yaxis()
+    fig.tight_layout()
+
+    filepath = figures_dir / filename
+    fig.savefig(filepath, dpi=150)
+    plt.close(fig)
+    logger.info("Saved figure: %s", filepath)
+    return filepath
+
+
 def generate_figures(
     year_dist: Sequence[DistributionRow],
     arxiv_dist: Sequence[DistributionRow],
     citation_dist: Sequence[DistributionRow],
     journal_dist: Sequence[DistributionRow],
     figures_dir: Path,
+    doctype_dist: Sequence[DistributionRow] | None = None,
+    database_dist: Sequence[DistributionRow] | None = None,
+    field_completeness: Sequence[FieldCompletenessRow] | None = None,
 ) -> dict[str, Path]:
     """Generate all charts and return a mapping of name to file path."""
     figures_dir.mkdir(parents=True, exist_ok=True)
@@ -345,6 +750,51 @@ def generate_figures(
             rotate_labels=True,
         )
 
+    if doctype_dist:
+        paths["doctype_counts"] = _make_bar_chart(
+            doctype_dist,
+            "Full Text vs Abstract Only by Document Type",
+            "Document Type",
+            "doctype_distribution.png",
+            figures_dir,
+            rotate_labels=True,
+        )
+        paths["doctype_pct"] = _make_pct_chart(
+            doctype_dist,
+            "% Full Text Coverage by Document Type",
+            "Document Type",
+            "doctype_pct.png",
+            figures_dir,
+            rotate_labels=True,
+        )
+
+    if database_dist:
+        paths["database_counts"] = _make_bar_chart(
+            database_dist,
+            "Full Text vs Abstract Only by Database (Discipline)",
+            "Database",
+            "database_distribution.png",
+            figures_dir,
+        )
+        paths["database_pct"] = _make_pct_chart(
+            database_dist,
+            "% Full Text Coverage by Database (Discipline)",
+            "Database",
+            "database_pct.png",
+            figures_dir,
+        )
+
+    if field_completeness:
+        paths["field_completeness"] = _make_horizontal_bar(
+            labels=[r.field for r in field_completeness],
+            values=[r.pct_populated for r in field_completeness],
+            title="Field Completeness (% Populated)",
+            xlabel="% of papers with non-null value",
+            filename="field_completeness.png",
+            figures_dir=figures_dir,
+            reference_line=80.0,
+        )
+
     return paths
 
 
@@ -366,6 +816,19 @@ def _format_table(rows: Sequence[DistributionRow], label_header: str) -> str:
     return "\n".join(lines)
 
 
+def _format_completeness_table(rows: Sequence[FieldCompletenessRow]) -> str:
+    """Format field completeness rows as a markdown table."""
+    lines = [
+        "| Field | Total | Populated | Missing | % Populated |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for r in rows:
+        lines.append(
+            f"| {r.field} | {r.total:,} | {r.non_null:,} | {r.null_count:,} | {r.pct_populated:.1f}% |"
+        )
+    return "\n".join(lines)
+
+
 def generate_report(
     year_dist: Sequence[DistributionRow],
     arxiv_dist: Sequence[DistributionRow],
@@ -373,8 +836,13 @@ def generate_report(
     journal_dist: Sequence[DistributionRow],
     output_path: Path | None = None,
     figures_dir: Path | None = None,
+    doctype_dist: Sequence[DistributionRow] | None = None,
+    database_dist: Sequence[DistributionRow] | None = None,
+    field_completeness: Sequence[FieldCompletenessRow] | None = None,
+    citation_completeness: CitationCompletenessResult | None = None,
+    corpus_summary: CorpusSummary | None = None,
 ) -> str:
-    """Generate a markdown report comparing full-text and abstract-only distributions.
+    """Generate a markdown report with corpus-wide coverage and bias analysis.
 
     Args:
         year_dist: Year-wise distribution data.
@@ -383,32 +851,108 @@ def generate_report(
         journal_dist: Journal distribution data.
         output_path: If provided, write the report to this file.
         figures_dir: If provided, generate charts in this directory.
+        doctype_dist: Document type distribution data.
+        database_dist: Database (discipline) distribution data.
+        field_completeness: Missing data rates per field.
+        citation_completeness: Citation network completeness stats.
+        corpus_summary: Top-level corpus statistics.
 
     Returns:
         The markdown report as a string.
     """
     sections: list[str] = []
 
-    sections.append("# Full-Text Coverage Bias Analysis")
+    sections.append("# SciX Corpus Coverage Bias Analysis")
     sections.append("")
     sections.append(
-        "This report compares the distribution of papers with full text "
-        "(body IS NOT NULL) vs abstract-only papers across multiple dimensions."
+        "This report analyzes the SciX corpus for coverage biases, data quality issues, "
+        "and completeness across multiple dimensions. It compares the distribution of "
+        "papers with full text (body IS NOT NULL) vs abstract-only papers and examines "
+        "field-level data quality."
     )
 
-    # Summary stats
-    total_papers = sum(r.total for r in year_dist) if year_dist else 0
-    total_with_body = sum(r.with_body for r in year_dist) if year_dist else 0
-    overall_pct = round(100.0 * total_with_body / total_papers, 1) if total_papers > 0 else 0.0
+    # Corpus summary
+    sections.append("")
+    sections.append("## Corpus Summary")
+    sections.append("")
+    if corpus_summary is not None:
+        pct_body = (
+            round(100.0 * corpus_summary.total_with_body / corpus_summary.total_papers, 1)
+            if corpus_summary.total_papers > 0
+            else 0.0
+        )
+        sections.append(f"- **Total papers**: {corpus_summary.total_papers:,}")
+        sections.append(f"- **With full text**: {corpus_summary.total_with_body:,} ({pct_body}%)")
+        sections.append(f"- **Citation edges**: {corpus_summary.total_citation_edges:,}")
+        sections.append(f"- **Embeddings**: {corpus_summary.total_embeddings:,}")
+        if corpus_summary.year_min is not None and corpus_summary.year_max is not None:
+            sections.append(
+                f"- **Year range**: {corpus_summary.year_min} -- {corpus_summary.year_max}"
+            )
+        if corpus_summary.median_citation_count is not None:
+            sections.append(
+                f"- **Median citation count**: {corpus_summary.median_citation_count:.0f}"
+            )
+        if corpus_summary.median_reference_count is not None:
+            sections.append(
+                f"- **Median reference count**: {corpus_summary.median_reference_count:.0f}"
+            )
+    else:
+        # Fallback: derive from year_dist
+        total_papers = sum(r.total for r in year_dist) if year_dist else 0
+        total_with_body = sum(r.with_body for r in year_dist) if year_dist else 0
+        overall_pct = round(100.0 * total_with_body / total_papers, 1) if total_papers > 0 else 0.0
+        sections.append(f"- **Total papers**: {total_papers:,}")
+        sections.append(f"- **With full text**: {total_with_body:,} ({overall_pct}%)")
+        sections.append(
+            f"- **Abstract only**: {total_papers - total_with_body:,} "
+            f"({100.0 - overall_pct:.1f}%)"
+        )
 
-    sections.append("")
-    sections.append("## Summary")
-    sections.append("")
-    sections.append(f"- **Total papers**: {total_papers:,}")
-    sections.append(f"- **With full text**: {total_with_body:,} ({overall_pct}%)")
-    sections.append(
-        f"- **Abstract only**: {total_papers - total_with_body:,} ({100.0 - overall_pct:.1f}%)"
-    )
+    # Field completeness
+    if field_completeness:
+        sections.append("")
+        sections.append("## Field Completeness (Missing Data Rates)")
+        sections.append("")
+        sections.append(
+            "Shows what percentage of papers have non-null (and non-empty for arrays) "
+            "values for each field."
+        )
+        sections.append("")
+        sections.append(_format_completeness_table(field_completeness))
+        if figures_dir:
+            sections.append("")
+            sections.append("![Field Completeness](figures/field_completeness.png)")
+
+    # Citation network completeness
+    if citation_completeness is not None:
+        sections.append("")
+        sections.append("## Citation Network Completeness")
+        sections.append("")
+        sections.append(
+            "Measures what fraction of cited papers (targets of citation edges) "
+            "exist in the corpus."
+        )
+        sections.append("")
+        cc = citation_completeness
+        sections.append(f"- **Total citation edges**: {cc.total_edges:,}")
+        sections.append(
+            f"- **Edges with target in corpus**: {cc.edges_target_in_corpus:,} "
+            f"({cc.pct_target_in_corpus:.1f}%)"
+        )
+        sections.append(
+            f"- **Edges with target missing**: {cc.edges_target_missing:,} "
+            f"({100.0 - cc.pct_target_in_corpus:.1f}%)"
+        )
+        sections.append(f"- **Unique cited papers**: {cc.unique_targets:,}")
+        sections.append(
+            f"- **Unique cited in corpus**: {cc.unique_targets_in_corpus:,} "
+            f"({cc.pct_unique_in_corpus:.1f}%)"
+        )
+        sections.append(
+            f"- **Unique cited missing**: {cc.unique_targets_missing:,} "
+            f"({100.0 - cc.pct_unique_in_corpus:.1f}%)"
+        )
 
     # Year distribution
     sections.append("")
@@ -431,6 +975,35 @@ def generate_report(
         sections.append("![arXiv Distribution](figures/arxiv_distribution.png)")
         sections.append("")
         sections.append("![arXiv Coverage %](figures/arxiv_pct.png)")
+
+    # Doctype distribution
+    if doctype_dist:
+        sections.append("")
+        sections.append("## Document Type Distribution")
+        sections.append("")
+        sections.append(_format_table(doctype_dist, "Doctype"))
+        if figures_dir:
+            sections.append("")
+            sections.append("![Doctype Distribution](figures/doctype_distribution.png)")
+            sections.append("")
+            sections.append("![Doctype Coverage %](figures/doctype_pct.png)")
+
+    # Database (discipline) distribution
+    if database_dist:
+        sections.append("")
+        sections.append("## Database (Discipline) Distribution")
+        sections.append("")
+        sections.append(
+            "The ADS `database` field indicates which databases index a paper "
+            "(e.g. astronomy, physics, general). Papers may appear in multiple databases."
+        )
+        sections.append("")
+        sections.append(_format_table(database_dist, "Database"))
+        if figures_dir:
+            sections.append("")
+            sections.append("![Database Distribution](figures/database_distribution.png)")
+            sections.append("")
+            sections.append("![Database Coverage %](figures/database_pct.png)")
 
     # Citation count distribution
     sections.append("")
@@ -490,6 +1063,9 @@ def run_analysis(
 
     conn = get_connection(dsn)
     try:
+        logger.info("Querying corpus summary...")
+        corpus_summary = get_corpus_summary(conn)
+
         logger.info("Querying year distribution...")
         year_dist = get_year_distribution(conn)
 
@@ -501,11 +1077,32 @@ def run_analysis(
 
         logger.info("Querying journal distribution...")
         journal_dist = get_journal_distribution(conn)
+
+        logger.info("Querying doctype distribution...")
+        doctype_dist = get_doctype_distribution(conn)
+
+        logger.info("Querying database (discipline) distribution...")
+        database_dist = get_database_distribution(conn)
+
+        logger.info("Querying field completeness...")
+        field_completeness = get_field_completeness(conn)
+
+        logger.info("Querying citation network completeness...")
+        citation_completeness = get_citation_completeness(conn)
     finally:
         conn.close()
 
     logger.info("Generating figures...")
-    generate_figures(year_dist, arxiv_dist, citation_dist, journal_dist, figures_dir)
+    generate_figures(
+        year_dist,
+        arxiv_dist,
+        citation_dist,
+        journal_dist,
+        figures_dir,
+        doctype_dist=doctype_dist,
+        database_dist=database_dist,
+        field_completeness=field_completeness,
+    )
 
     logger.info("Generating report...")
     report = generate_report(
@@ -515,6 +1112,11 @@ def run_analysis(
         journal_dist,
         output_path=report_path,
         figures_dir=figures_dir,
+        doctype_dist=doctype_dist,
+        database_dist=database_dist,
+        field_completeness=field_completeness,
+        citation_completeness=citation_completeness,
+        corpus_summary=corpus_summary,
     )
 
     logger.info("Analysis complete.")

@@ -35,11 +35,19 @@ except ModuleNotFoundError:
     sys.modules["matplotlib.pyplot"] = _pyplot_mod
 
 from coverage_bias_analysis import (
+    CitationCompletenessResult,
+    CorpusSummary,
     DistributionRow,
+    FieldCompletenessRow,
     generate_figures,
     generate_report,
     get_arxiv_distribution,
+    get_citation_completeness,
     get_citation_distribution,
+    get_corpus_summary,
+    get_database_distribution,
+    get_doctype_distribution,
+    get_field_completeness,
     get_journal_distribution,
     get_year_distribution,
 )
@@ -105,6 +113,82 @@ def sample_journal_dist() -> list[DistributionRow]:
         ),
         DistributionRow(label="A&A", total=400, with_body=60, without_body=340, pct_with_body=15.0),
     ]
+
+
+@pytest.fixture()
+def sample_doctype_dist() -> list[DistributionRow]:
+    return [
+        DistributionRow(
+            label="article", total=2000, with_body=600, without_body=1400, pct_with_body=30.0
+        ),
+        DistributionRow(
+            label="eprint", total=1000, with_body=400, without_body=600, pct_with_body=40.0
+        ),
+        DistributionRow(
+            label="catalog", total=100, with_body=0, without_body=100, pct_with_body=0.0
+        ),
+    ]
+
+
+@pytest.fixture()
+def sample_database_dist() -> list[DistributionRow]:
+    return [
+        DistributionRow(
+            label="astronomy", total=2500, with_body=700, without_body=1800, pct_with_body=28.0
+        ),
+        DistributionRow(
+            label="physics", total=1200, with_body=200, without_body=1000, pct_with_body=16.67
+        ),
+        DistributionRow(
+            label="general", total=300, with_body=10, without_body=290, pct_with_body=3.33
+        ),
+    ]
+
+
+@pytest.fixture()
+def sample_field_completeness() -> list[FieldCompletenessRow]:
+    return [
+        FieldCompletenessRow(
+            field="title", total=3000, non_null=2990, null_count=10, pct_populated=99.67
+        ),
+        FieldCompletenessRow(
+            field="abstract", total=3000, non_null=2700, null_count=300, pct_populated=90.0
+        ),
+        FieldCompletenessRow(
+            field="body", total=3000, non_null=600, null_count=2400, pct_populated=20.0
+        ),
+        FieldCompletenessRow(
+            field="keywords", total=3000, non_null=1500, null_count=1500, pct_populated=50.0
+        ),
+    ]
+
+
+@pytest.fixture()
+def sample_citation_completeness() -> CitationCompletenessResult:
+    return CitationCompletenessResult(
+        total_edges=50000,
+        edges_target_in_corpus=20000,
+        edges_target_missing=30000,
+        pct_target_in_corpus=40.0,
+        unique_targets=30000,
+        unique_targets_in_corpus=10000,
+        unique_targets_missing=20000,
+        pct_unique_in_corpus=33.33,
+    )
+
+
+@pytest.fixture()
+def sample_corpus_summary() -> CorpusSummary:
+    return CorpusSummary(
+        total_papers=3300,
+        total_with_body=770,
+        total_citation_edges=50000,
+        total_embeddings=3000,
+        year_min=2021,
+        year_max=2023,
+        median_citation_count=5.0,
+        median_reference_count=25.0,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +293,159 @@ class TestGetJournalDistribution:
         assert result == []
 
 
+class TestGetDoctypeDistribution:
+    def test_returns_distribution_rows(self) -> None:
+        conn = _mock_conn_with_rows([("article", 2000, 600, 1400), ("eprint", 1000, 400, 600)])
+        result = get_doctype_distribution(conn)
+        assert len(result) == 2
+        assert result[0].label == "article"
+        assert result[0].pct_with_body == 30.0
+
+    def test_empty_result(self) -> None:
+        conn = _mock_conn_with_rows([])
+        result = get_doctype_distribution(conn)
+        assert result == []
+
+
+class TestGetDatabaseDistribution:
+    def test_returns_distribution_rows(self) -> None:
+        conn = _mock_conn_with_rows([("astronomy", 2500, 700, 1800)])
+        result = get_database_distribution(conn)
+        assert len(result) == 1
+        assert result[0].label == "astronomy"
+        assert result[0].pct_with_body == 28.0
+
+    def test_empty_result(self) -> None:
+        conn = _mock_conn_with_rows([])
+        result = get_database_distribution(conn)
+        assert result == []
+
+
+class TestGetFieldCompleteness:
+    def test_returns_completeness_rows(self) -> None:
+        # The query returns a single row with total + one count per field (23 fields)
+        # total=1000, then 23 populated counts
+        populated_counts = [
+            990,  # title
+            900,  # abstract
+            200,  # body
+            980,  # year
+            970,  # doctype
+            960,  # pub
+            950,  # first_author
+            800,  # citation_count
+            700,  # read_count
+            600,  # reference_count
+            950,  # pubdate
+            300,  # lang
+            200,  # copyright
+            940,  # authors
+            500,  # affiliations
+            400,  # keywords
+            350,  # arxiv_class
+            900,  # database
+            600,  # doi
+            700,  # bibstem
+            100,  # bibgroup
+            150,  # orcid_pub
+            100,  # orcid_user
+        ]
+        row = (1000, *populated_counts)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = row
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        result = get_field_completeness(mock_conn)
+        assert len(result) == 23
+        assert result[0].field == "title"
+        assert result[0].total == 1000
+        assert result[0].non_null == 990
+        assert result[0].null_count == 10
+        assert result[0].pct_populated == 99.0
+
+    def test_empty_table(self) -> None:
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        result = get_field_completeness(mock_conn)
+        assert result == []
+
+
+class TestGetCitationCompleteness:
+    def test_returns_result_exact(self) -> None:
+        """Test exact computation path (small table / sample_size=0)."""
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        # First fetchone: total count; second: exact query with all 4 columns
+        mock_cursor.fetchone.side_effect = [
+            (100,),  # total edges (small enough for exact path)
+            (100, 40, 60, 20),  # exact: total, in_corpus, unique, unique_in
+        ]
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        result = get_citation_completeness(mock_conn, sample_size=0)
+        assert result.total_edges == 100
+        assert result.edges_target_in_corpus == 40
+        assert result.edges_target_missing == 60
+        assert result.pct_target_in_corpus == 40.0
+        assert result.unique_targets == 60
+        assert result.unique_targets_in_corpus == 20
+
+    def test_returns_result_sampled(self) -> None:
+        """Test sampling path (large table)."""
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        # First fetchone: total count; second: sample results
+        mock_cursor.fetchone.side_effect = [
+            (1_000_000,),  # total edges (large, triggers sampling)
+            (100000, 40000, 60000, 20000),  # sample: edges, in_corpus, unique, unique_in
+        ]
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        result = get_citation_completeness(mock_conn, sample_size=100_000)
+        assert result.total_edges == 1_000_000
+        assert result.pct_target_in_corpus == 40.0
+        assert result.pct_unique_in_corpus == 33.33
+
+    def test_empty_result(self) -> None:
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = (0,)
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        result = get_citation_completeness(mock_conn)
+        assert result.total_edges == 0
+        assert result.pct_target_in_corpus == 0.0
+
+
+class TestGetCorpusSummary:
+    def test_returns_summary(self) -> None:
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        # First call: main papers query
+        # Second call: edge count
+        # Third call: embedding count
+        mock_cursor.fetchone.side_effect = [
+            (5000, 1000, 2021, 2025, 5.0, 25.0),  # papers summary
+            (50000,),  # edge count
+            (4000,),  # embedding count
+        ]
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        result = get_corpus_summary(mock_conn)
+        assert result.total_papers == 5000
+        assert result.total_with_body == 1000
+        assert result.total_citation_edges == 50000
+        assert result.total_embeddings == 4000
+        assert result.year_min == 2021
+        assert result.year_max == 2025
+        assert result.median_citation_count == 5.0
+        assert result.median_reference_count == 25.0
+
+
 # ---------------------------------------------------------------------------
 # Report generation tests
 # ---------------------------------------------------------------------------
@@ -225,13 +462,13 @@ class TestGenerateReport:
         report = generate_report(
             sample_year_dist, sample_arxiv_dist, sample_citation_dist, sample_journal_dist
         )
-        assert "# Full-Text Coverage Bias Analysis" in report
+        assert "# SciX Corpus Coverage Bias Analysis" in report
         assert "## Year Distribution" in report
         assert "## arXiv Class Distribution" in report
         assert "## Citation Count Distribution" in report
         assert "## Journal Distribution" in report
 
-    def test_report_contains_summary_stats(
+    def test_report_contains_corpus_summary_from_year_dist(
         self,
         sample_year_dist: list[DistributionRow],
         sample_arxiv_dist: list[DistributionRow],
@@ -241,9 +478,29 @@ class TestGenerateReport:
         report = generate_report(
             sample_year_dist, sample_arxiv_dist, sample_citation_dist, sample_journal_dist
         )
-        assert "## Summary" in report
+        assert "## Corpus Summary" in report
         assert "3,300" in report  # total papers: 1000+1100+1200
         assert "770" in report  # with_body: 200+330+240
+
+    def test_report_with_corpus_summary_object(
+        self,
+        sample_year_dist: list[DistributionRow],
+        sample_arxiv_dist: list[DistributionRow],
+        sample_citation_dist: list[DistributionRow],
+        sample_journal_dist: list[DistributionRow],
+        sample_corpus_summary: CorpusSummary,
+    ) -> None:
+        report = generate_report(
+            sample_year_dist,
+            sample_arxiv_dist,
+            sample_citation_dist,
+            sample_journal_dist,
+            corpus_summary=sample_corpus_summary,
+        )
+        assert "3,300" in report
+        assert "50,000" in report  # citation edges
+        assert "3,000" in report  # embeddings
+        assert "2021 -- 2023" in report
 
     def test_report_contains_table_rows(
         self,
@@ -319,8 +576,69 @@ class TestGenerateReport:
 
     def test_empty_distributions(self) -> None:
         report = generate_report([], [], [], [])
-        assert "# Full-Text Coverage Bias Analysis" in report
+        assert "# SciX Corpus Coverage Bias Analysis" in report
         assert "**Total papers**: 0" in report
+
+    def test_report_with_doctype_and_database(
+        self,
+        sample_year_dist: list[DistributionRow],
+        sample_arxiv_dist: list[DistributionRow],
+        sample_citation_dist: list[DistributionRow],
+        sample_journal_dist: list[DistributionRow],
+        sample_doctype_dist: list[DistributionRow],
+        sample_database_dist: list[DistributionRow],
+    ) -> None:
+        report = generate_report(
+            sample_year_dist,
+            sample_arxiv_dist,
+            sample_citation_dist,
+            sample_journal_dist,
+            doctype_dist=sample_doctype_dist,
+            database_dist=sample_database_dist,
+        )
+        assert "## Document Type Distribution" in report
+        assert "| article |" in report
+        assert "## Database (Discipline) Distribution" in report
+        assert "| astronomy |" in report
+
+    def test_report_with_field_completeness(
+        self,
+        sample_year_dist: list[DistributionRow],
+        sample_arxiv_dist: list[DistributionRow],
+        sample_citation_dist: list[DistributionRow],
+        sample_journal_dist: list[DistributionRow],
+        sample_field_completeness: list[FieldCompletenessRow],
+    ) -> None:
+        report = generate_report(
+            sample_year_dist,
+            sample_arxiv_dist,
+            sample_citation_dist,
+            sample_journal_dist,
+            field_completeness=sample_field_completeness,
+        )
+        assert "## Field Completeness" in report
+        assert "| title |" in report
+        assert "| abstract |" in report
+        assert "99.7%" in report  # title pct_populated
+
+    def test_report_with_citation_completeness(
+        self,
+        sample_year_dist: list[DistributionRow],
+        sample_arxiv_dist: list[DistributionRow],
+        sample_citation_dist: list[DistributionRow],
+        sample_journal_dist: list[DistributionRow],
+        sample_citation_completeness: CitationCompletenessResult,
+    ) -> None:
+        report = generate_report(
+            sample_year_dist,
+            sample_arxiv_dist,
+            sample_citation_dist,
+            sample_journal_dist,
+            citation_completeness=sample_citation_completeness,
+        )
+        assert "## Citation Network Completeness" in report
+        assert "50,000" in report  # total edges
+        assert "40.0%" in report  # pct in corpus
 
 
 # ---------------------------------------------------------------------------
@@ -369,6 +687,36 @@ class TestGenerateFigures:
         for path in paths.values():
             assert path.exists()
             assert path.suffix == ".png"
+
+    def test_creates_all_figures_with_new_dimensions(
+        self,
+        tmp_path: Path,
+        sample_year_dist: list[DistributionRow],
+        sample_arxiv_dist: list[DistributionRow],
+        sample_citation_dist: list[DistributionRow],
+        sample_journal_dist: list[DistributionRow],
+        sample_doctype_dist: list[DistributionRow],
+        sample_database_dist: list[DistributionRow],
+        sample_field_completeness: list[FieldCompletenessRow],
+    ) -> None:
+        figures_dir = tmp_path / "figures"
+        mock_plt = self._mock_plt(figures_dir)
+        with patch("coverage_bias_analysis._get_plt", return_value=mock_plt):
+            paths = generate_figures(
+                sample_year_dist,
+                sample_arxiv_dist,
+                sample_citation_dist,
+                sample_journal_dist,
+                figures_dir,
+                doctype_dist=sample_doctype_dist,
+                database_dist=sample_database_dist,
+                field_completeness=sample_field_completeness,
+            )
+        # 8 original + 2 doctype + 2 database + 1 field_completeness = 13
+        assert len(paths) == 13
+        assert "doctype_counts" in paths
+        assert "database_pct" in paths
+        assert "field_completeness" in paths
 
     def test_empty_distributions_no_figures(self, tmp_path: Path) -> None:
         figures_dir = tmp_path / "figures"

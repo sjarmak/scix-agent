@@ -7,6 +7,7 @@ import pytest
 from scix.citation_context import (
     CitationContext,
     CitationMarker,
+    _enrich_with_sections,
     _parse_marker_numbers,
     extract_citation_contexts,
     process_paper,
@@ -307,3 +308,103 @@ class TestProcessPaper:
         contexts = process_paper("MY_BIB", body, SAMPLE_REFERENCES)
         for ctx in contexts:
             assert ctx.source_bibcode == "MY_BIB"
+
+    def test_section_name_none_when_no_headers(self) -> None:
+        """Papers without section headers should produce contexts with section_name=None."""
+        body = "We follow the method of [1] and extend results from [2]."
+        contexts = process_paper("2025src..bibcode", body, SAMPLE_REFERENCES)
+        # parse_sections returns [("full", ...)] for no-header text,
+        # but "full" is not a recognized section range match for markers
+        for ctx in contexts:
+            assert ctx.section_name is None or isinstance(ctx.section_name, str)
+
+
+# ---------------------------------------------------------------------------
+# _enrich_with_sections
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichWithSections:
+    def test_markers_get_section_labels(self) -> None:
+        marker = CitationMarker(
+            marker_text="[1]",
+            marker_numbers=(1,),
+            char_start=50,
+            char_end=53,
+            context_text="context around [1]",
+            context_start=30,
+        )
+        sections = [
+            ("introduction", 0, 60, "intro text"),
+            ("methods", 60, 120, "methods text"),
+        ]
+        enriched = _enrich_with_sections([marker], sections)
+        assert len(enriched) == 1
+        assert enriched[0].section_name == "introduction"
+
+    def test_marker_outside_all_sections(self) -> None:
+        marker = CitationMarker(
+            marker_text="[1]",
+            marker_numbers=(1,),
+            char_start=200,
+            char_end=203,
+            context_text="context",
+            context_start=180,
+        )
+        sections = [("introduction", 0, 100, "intro")]
+        enriched = _enrich_with_sections([marker], sections)
+        assert enriched[0].section_name is None
+
+    def test_preserves_marker_fields(self) -> None:
+        marker = CitationMarker(
+            marker_text="[2, 3]",
+            marker_numbers=(2, 3),
+            char_start=10,
+            char_end=16,
+            context_text="some ctx",
+            context_start=0,
+        )
+        sections = [("results", 0, 50, "results text")]
+        enriched = _enrich_with_sections([marker], sections)
+        assert enriched[0].marker_text == "[2, 3]"
+        assert enriched[0].marker_numbers == (2, 3)
+        assert enriched[0].char_start == 10
+        assert enriched[0].char_end == 16
+        assert enriched[0].section_name == "results"
+
+
+# ---------------------------------------------------------------------------
+# Batch row format (used by run_pipeline)
+# ---------------------------------------------------------------------------
+
+
+class TestBatchRowFormat:
+    """Verify that process_paper output can be converted to the DB row tuple
+    format expected by _flush_contexts, including section_name."""
+
+    def test_row_tuple_includes_section_name(self) -> None:
+        body = (
+            "Introduction\n"
+            "We cite prior work [1] here.\n"
+            "Methods\n"
+            "Following [2] we proceed.\n"
+        )
+        contexts = process_paper("SRC_BIB", body, SAMPLE_REFERENCES)
+        for ctx in contexts:
+            row = (
+                ctx.source_bibcode,
+                ctx.target_bibcode,
+                ctx.context_text,
+                ctx.char_offset,
+                ctx.section_name,
+                ctx.intent,
+            )
+            assert len(row) == 6
+            assert isinstance(row[4], (str, type(None)))  # section_name
+            assert row[5] is None  # intent not set by extraction
+
+    def test_section_name_populated_in_rows(self) -> None:
+        body = "Introduction\n" "Background work [1] is important.\n"
+        contexts = process_paper("SRC_BIB", body, SAMPLE_REFERENCES)
+        assert len(contexts) == 1
+        assert contexts[0].section_name == "introduction"

@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS citation_contexts (
     target_bibcode TEXT NOT NULL,
     context_text TEXT NOT NULL,
     char_offset INTEGER,
+    section_name TEXT,
     intent TEXT
 );
 

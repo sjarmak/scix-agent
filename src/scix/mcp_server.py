@@ -109,6 +109,9 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "entity_search": float(os.environ.get("SCIX_TIMEOUT_ENTITY_SEARCH", "10")),
     "entity_profile": float(os.environ.get("SCIX_TIMEOUT_ENTITY_PROFILE", "5")),
     "find_gaps": float(os.environ.get("SCIX_TIMEOUT_FIND_GAPS", "15")),
+    "get_citation_context": float(os.environ.get("SCIX_TIMEOUT_CITATION_CONTEXT", "5")),
+    "read_paper_section": float(os.environ.get("SCIX_TIMEOUT_READ_SECTION", "5")),
+    "search_within_paper": float(os.environ.get("SCIX_TIMEOUT_SEARCH_WITHIN", "10")),
 }
 
 
@@ -678,6 +681,29 @@ def create_server():
                 },
             ),
             Tool(
+                name="get_citation_context",
+                description=(
+                    "Get the citation context text and intent label for why a source "
+                    "paper cites a target paper. Returns the surrounding text where the "
+                    "citation appears, along with the classified intent (e.g., 'background', "
+                    "'method', 'result'). Returns empty result for pairs without context."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "source_bibcode": {
+                            "type": "string",
+                            "description": "Bibcode of the citing paper",
+                        },
+                        "target_bibcode": {
+                            "type": "string",
+                            "description": "Bibcode of the cited paper",
+                        },
+                    },
+                    "required": ["source_bibcode", "target_bibcode"],
+                },
+            ),
+            Tool(
                 name="health_check",
                 description=(
                     "Check server health: database connectivity, model cache status, "
@@ -686,6 +712,65 @@ def create_server():
                 inputSchema={
                     "type": "object",
                     "properties": {},
+                },
+            ),
+            Tool(
+                name="read_paper_section",
+                description=(
+                    "Read a section of a paper's full-text body. "
+                    "Uses section_parser to split the body into IMRaD sections. "
+                    "Falls back to abstract if no body text is available. "
+                    "Supports pagination via char_offset and limit."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "bibcode": {
+                            "type": "string",
+                            "description": "ADS bibcode of the paper",
+                        },
+                        "section": {
+                            "type": "string",
+                            "default": "full",
+                            "description": (
+                                "Section name: 'full', 'introduction', 'methods', "
+                                "'results', 'discussion', 'conclusions', etc."
+                            ),
+                        },
+                        "char_offset": {
+                            "type": "integer",
+                            "default": 0,
+                            "description": "Character offset for pagination",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "default": 5000,
+                            "description": "Maximum characters to return",
+                        },
+                    },
+                    "required": ["bibcode"],
+                },
+            ),
+            Tool(
+                name="search_within_paper",
+                description=(
+                    "Search within a paper's full-text body for matching passages. "
+                    "Uses PostgreSQL ts_headline to return fragments with context "
+                    "around matching terms. Requires the paper to have body text."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "bibcode": {
+                            "type": "string",
+                            "description": "ADS bibcode of the paper",
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": "Search terms to find within the paper",
+                        },
+                    },
+                    "required": ["bibcode", "query"],
                 },
             ),
         ]
@@ -998,6 +1083,32 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
     elif name == "clear_working_set":
         removed = _session_state.clear_working_set()
         result_json = json.dumps({"removed": removed}, indent=2)
+
+    elif name == "get_citation_context":
+        result = search.get_citation_context(
+            conn,
+            args["source_bibcode"],
+            args["target_bibcode"],
+        )
+        result_json = _result_to_json(result)
+
+    elif name == "read_paper_section":
+        result = search.read_paper_section(
+            conn,
+            args["bibcode"],
+            section=args.get("section", "full"),
+            char_offset=args.get("char_offset", 0),
+            limit=args.get("limit", 5000),
+        )
+        result_json = _result_to_json(result)
+
+    elif name == "search_within_paper":
+        result = search.search_within_paper(
+            conn,
+            args["bibcode"],
+            args["query"],
+        )
+        result_json = _result_to_json(result)
 
     elif name == "health_check":
         status: dict[str, Any] = {"pool": "no_pool", "model_cached": False, "db": "unknown"}

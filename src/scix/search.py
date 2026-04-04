@@ -1144,3 +1144,272 @@ def concept_search(
             "include_subtopics": include_subtopics,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Citation context queries
+# ---------------------------------------------------------------------------
+
+
+def get_citation_context(
+    conn: psycopg.Connection,
+    source_bibcode: str,
+    target_bibcode: str,
+) -> SearchResult:
+    """Get citation context(s) for a source-target bibcode pair.
+
+    Returns the context text, intent label, and character offset for each
+    in-text citation mention where source cites target. Returns an empty
+    result (not an error) when no context exists for the pair.
+    """
+    t0 = time.perf_counter()
+
+    sql = """
+        SELECT context_text, intent, char_offset
+        FROM citation_contexts
+        WHERE source_bibcode = %s AND target_bibcode = %s
+    """
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(sql, (source_bibcode, target_bibcode))
+        rows = cur.fetchall()
+
+    query_ms = _elapsed_ms(t0)
+
+    contexts = [
+        {
+            "context_text": row["context_text"],
+            "intent": row["intent"],
+            "char_offset": row["char_offset"],
+        }
+        for row in rows
+    ]
+
+    return SearchResult(
+        papers=contexts,
+        total=len(contexts),
+        timing_ms={"query_ms": query_ms},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Paper section reading (body + section_parser)
+# ---------------------------------------------------------------------------
+
+
+def read_paper_section(
+    conn: psycopg.Connection,
+    bibcode: str,
+    *,
+    section: str = "full",
+    char_offset: int = 0,
+    limit: int = 5000,
+) -> SearchResult:
+    """Read a section of a paper's full-text body with pagination.
+
+    Parameters
+    ----------
+    conn : psycopg.Connection
+    bibcode : str
+        ADS bibcode.
+    section : str
+        Section name (e.g. 'introduction', 'methods', 'full') or 'full' for
+        the entire body. Defaults to 'full'.
+    char_offset : int
+        Character offset for pagination within the section text.
+    limit : int
+        Maximum characters to return (default 5000).
+
+    Returns
+    -------
+    SearchResult
+        papers list contains a single dict with section_text, section_name,
+        has_body, char_offset, total_chars, and bibcode.
+    """
+    from scix.section_parser import parse_sections
+
+    t0 = time.perf_counter()
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT body, abstract, title FROM papers WHERE bibcode = %s",
+            (bibcode,),
+        )
+        row = cur.fetchone()
+
+    query_ms = _elapsed_ms(t0)
+
+    if row is None:
+        return SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"query_ms": query_ms},
+            metadata={"error": f"Paper not found: {bibcode}"},
+        )
+
+    body = row.get("body")
+    abstract = row.get("abstract") or ""
+    title = row.get("title") or ""
+    has_body = body is not None and len(body) > 0
+
+    if not has_body:
+        # Fallback to abstract
+        section_text = abstract[char_offset : char_offset + limit]
+        return SearchResult(
+            papers=[
+                {
+                    "bibcode": bibcode,
+                    "title": title,
+                    "section_name": "abstract",
+                    "section_text": section_text,
+                    "has_body": False,
+                    "char_offset": char_offset,
+                    "total_chars": len(abstract),
+                }
+            ],
+            total=1,
+            timing_ms={"query_ms": query_ms},
+            metadata={"has_body": False},
+        )
+
+    # Parse sections from body
+    sections = parse_sections(body)
+    section_lower = section.lower()
+
+    if section_lower == "full":
+        text = body
+        section_name = "full"
+    else:
+        # Find the requested section
+        matched = [s for s in sections if s[0] == section_lower]
+        if matched:
+            section_name = matched[0][0]
+            text = matched[0][3]
+        else:
+            # Section not found — list available sections
+            available = [s[0] for s in sections]
+            return SearchResult(
+                papers=[],
+                total=0,
+                timing_ms={"query_ms": query_ms},
+                metadata={
+                    "error": f"Section '{section}' not found",
+                    "available_sections": available,
+                    "has_body": True,
+                },
+            )
+
+    total_chars = len(text)
+    section_text = text[char_offset : char_offset + limit]
+
+    return SearchResult(
+        papers=[
+            {
+                "bibcode": bibcode,
+                "title": title,
+                "section_name": section_name,
+                "section_text": section_text,
+                "has_body": True,
+                "char_offset": char_offset,
+                "total_chars": total_chars,
+            }
+        ],
+        total=1,
+        timing_ms={"query_ms": query_ms},
+        metadata={
+            "has_body": True,
+            "available_sections": [s[0] for s in sections],
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Search within paper (ts_headline on body column)
+# ---------------------------------------------------------------------------
+
+
+def search_within_paper(
+    conn: psycopg.Connection,
+    bibcode: str,
+    query: str,
+) -> SearchResult:
+    """Search within a paper's body text using PostgreSQL ts_headline.
+
+    Parameters
+    ----------
+    conn : psycopg.Connection
+    bibcode : str
+        ADS bibcode.
+    query : str
+        Search terms to find within the paper body.
+
+    Returns
+    -------
+    SearchResult
+        papers list contains a single dict with bibcode, headline (matching
+        passages with context), and has_body flag.
+    """
+    t0 = time.perf_counter()
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT bibcode, title, body,
+                   ts_headline(
+                       'english',
+                       body,
+                       plainto_tsquery('english', %s),
+                       'MaxWords=60, MinWords=20, MaxFragments=5'
+                   ) AS headline
+            FROM papers
+            WHERE bibcode = %s AND body IS NOT NULL AND body != ''
+            """,
+            (query, bibcode),
+        )
+        row = cur.fetchone()
+
+    query_ms = _elapsed_ms(t0)
+
+    if row is None:
+        # Check if paper exists but has no body
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "SELECT bibcode, title FROM papers WHERE bibcode = %s",
+                (bibcode,),
+            )
+            paper_row = cur.fetchone()
+
+        if paper_row is None:
+            return SearchResult(
+                papers=[],
+                total=0,
+                timing_ms={"query_ms": query_ms},
+                metadata={"error": f"Paper not found: {bibcode}"},
+            )
+        else:
+            return SearchResult(
+                papers=[],
+                total=0,
+                timing_ms={"query_ms": query_ms},
+                metadata={
+                    "error": "Paper has no body text for searching",
+                    "has_body": False,
+                    "bibcode": bibcode,
+                },
+            )
+
+    headline = row["headline"] or ""
+
+    return SearchResult(
+        papers=[
+            {
+                "bibcode": row["bibcode"],
+                "title": row["title"],
+                "headline": headline,
+                "has_body": True,
+            }
+        ],
+        total=1,
+        timing_ms={"query_ms": query_ms},
+        metadata={"has_body": True},
+    )

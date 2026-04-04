@@ -12,6 +12,7 @@ def _sanitize_text(val: str | None) -> str | None:
         return None
     return val.replace("\x00", "")
 
+
 # Column order for COPY INTO papers. Must match the INSERT/COPY column list exactly.
 COLUMN_ORDER: tuple[str, ...] = (
     "bibcode",
@@ -46,25 +47,55 @@ COLUMN_ORDER: tuple[str, ...] = (
     "citation_count",
     "read_count",
     "reference_count",
+    "body",
     "raw",
 )
 
 # JSONL fields that map directly to SQL columns (same name, same type).
-DIRECT_TEXT_FIELDS: frozenset[str] = frozenset({
-    "bibcode", "abstract", "doctype", "pub", "pub_raw", "volume", "issue",
-    "first_author", "copyright", "lang", "pubdate", "entry_date", "indexstamp",
-})
+DIRECT_TEXT_FIELDS: frozenset[str] = frozenset(
+    {
+        "bibcode",
+        "abstract",
+        "body",
+        "doctype",
+        "pub",
+        "pub_raw",
+        "volume",
+        "issue",
+        "first_author",
+        "copyright",
+        "lang",
+        "pubdate",
+        "entry_date",
+        "indexstamp",
+    }
+)
 
 # JSONL fields that map directly as arrays (same name).
-DIRECT_ARRAY_FIELDS: frozenset[str] = frozenset({
-    "page", "arxiv_class", "database", "doi", "identifier",
-    "alternate_bibcode", "bibstem", "bibgroup", "orcid_pub", "orcid_user", "property",
-})
+DIRECT_ARRAY_FIELDS: frozenset[str] = frozenset(
+    {
+        "page",
+        "arxiv_class",
+        "database",
+        "doi",
+        "identifier",
+        "alternate_bibcode",
+        "bibstem",
+        "bibgroup",
+        "orcid_pub",
+        "orcid_user",
+        "property",
+    }
+)
 
 # JSONL fields that map directly as integers.
-DIRECT_INT_FIELDS: frozenset[str] = frozenset({
-    "citation_count", "read_count", "reference_count",
-})
+DIRECT_INT_FIELDS: frozenset[str] = frozenset(
+    {
+        "citation_count",
+        "read_count",
+        "reference_count",
+    }
+)
 
 # JSONL field -> SQL column renames.
 RENAMES: dict[str, str] = {

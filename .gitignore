@@ -1,3 +1,6 @@
+# Briefing docs (not for repo)
+BRIEFING.md
+
 # Data files (large, not in repo)
 *.jsonl
 *.jsonl.gz

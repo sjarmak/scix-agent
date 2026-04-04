@@ -1,0 +1,184 @@
+[
+  {
+    "id": "section-parser",
+    "name": "Section-aware text parsing utility",
+    "description": "Regex-based section splitter for astronomy papers. Splits body text into (section_name, start_char, end_char, text) tuples for standard IMRaD sections (Introduction, Methods/Observations, Results, Discussion, Conclusions). Pure Python utility with no DB dependencies.",
+    "deps": [],
+    "tier": "small",
+    "acceptance": [
+      "File src/scix/section_parser.py exists and exports a parse_sections() function",
+      "parse_sections() returns list of tuples: (section_name, start_char, end_char, text)",
+      "Handles standard section headers: Introduction, Methods, Observations, Results, Discussion, Conclusions",
+      "Returns single ('full', 0, len, text) tuple for papers without recognizable section headers",
+      "Tests in tests/test_section_parser.py cover: standard IMRaD paper, no-section paper, mixed case headers, numbered sections (e.g. '1. Introduction'), subsections",
+      "Running 'python -m pytest tests/test_section_parser.py -v' passes with 0 failures"
+    ],
+    "layer": 0,
+    "scope": ["src/scix/section_parser.py", "tests/test_section_parser.py"],
+    "status": "landed",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "citation-context-schema",
+    "name": "Citation contexts migration",
+    "description": "SQL migration 011 creating the citation_contexts table with columns: id (serial PK), source_bibcode (text, not null), target_bibcode (text, not null), context_text (text, not null), char_offset (integer), intent (text, nullable for later classification). Includes indexes on (source_bibcode, target_bibcode) and on target_bibcode. No FK constraints (same pattern as citation_edges).",
+    "deps": [],
+    "tier": "trivial",
+    "acceptance": [
+      "File migrations/011_citation_contexts.sql exists",
+      "Migration creates citation_contexts table with columns: id serial PK, source_bibcode text NOT NULL, target_bibcode text NOT NULL, context_text text NOT NULL, char_offset integer, intent text",
+      "Migration creates composite index on (source_bibcode, target_bibcode)",
+      "Migration creates index on target_bibcode",
+      "Migration is wrapped in BEGIN/COMMIT",
+      "Running 'python -c \"import pathlib; sql=pathlib.Path(\\\"migrations/011_citation_contexts.sql\\\").read_text(); assert \\\"citation_contexts\\\" in sql; assert \\\"BEGIN\\\" in sql; assert \\\"COMMIT\\\" in sql; print(\\\"OK\\\")\"' prints OK"
+    ],
+    "layer": 0,
+    "scope": ["migrations/011_citation_contexts.sql"],
+    "status": "landed",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "coverage-bias-analysis",
+    "name": "Coverage bias analysis script and report",
+    "description": "Python script scripts/coverage_bias_analysis.py that queries the DB to compare distributions between full-text (body IS NOT NULL) and abstract-only papers across: arxiv_class, year, citation_count, and journal (pub). Outputs a markdown report to docs/full_text_coverage_analysis.md with tables showing distribution comparisons. Uses matplotlib for chart generation saved as PNGs in docs/figures/. Script should be runnable standalone but also importable for testing.",
+    "deps": [],
+    "tier": "medium",
+    "acceptance": [
+      "File scripts/coverage_bias_analysis.py exists and is executable",
+      "Script imports cleanly: python -c 'import importlib.util; spec=importlib.util.spec_from_file_location(\"m\",\"scripts/coverage_bias_analysis.py\"); mod=importlib.util.module_from_spec(spec)'",
+      "Script has functions: get_year_distribution(), get_arxiv_distribution(), get_citation_distribution(), get_journal_distribution(), generate_report()",
+      "generate_report() produces markdown with distribution comparison tables",
+      "Tests in tests/test_coverage_bias.py mock DB queries and verify report generation",
+      "Running 'python -m pytest tests/test_coverage_bias.py -v' passes with 0 failures"
+    ],
+    "layer": 0,
+    "scope": [
+      "scripts/coverage_bias_analysis.py",
+      "tests/test_coverage_bias.py",
+      "docs/full_text_coverage_analysis.md"
+    ],
+    "status": "landed",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "citation-context-pipeline",
+    "name": "Citation context extraction pipeline",
+    "description": "Pipeline in src/scix/citation_context.py that: (1) extracts ~250-word context windows around inline citation markers [N] in body text, (2) resolves numbered [N] markers to target bibcodes via the paper's reference[] array (stored in raw JSONB -> 'reference' key), (3) stores results in citation_contexts table. Includes batch processing with COPY for performance. Uses the section_parser for context enrichment (noting which section a citation appears in).",
+    "deps": ["section-parser", "citation-context-schema"],
+    "tier": "medium",
+    "acceptance": [
+      "File src/scix/citation_context.py exists and exports: extract_citation_contexts(), resolve_citation_markers(), process_paper(), run_pipeline()",
+      "extract_citation_contexts() finds [N] patterns in text and returns ~250-word context windows with char offsets",
+      "resolve_citation_markers() maps [N] to bibcodes using a reference list (position N-1 in array)",
+      "process_paper() combines extraction and resolution for a single paper",
+      "run_pipeline() processes papers from DB in batches, writing to citation_contexts table",
+      "Tests in tests/test_citation_context.py cover: single [1] marker, multiple [1,2,3] markers, author-year style (graceful skip), edge cases (marker at start/end of text, N > len(references))",
+      "Running 'python -m pytest tests/test_citation_context.py -v' passes with 0 failures"
+    ],
+    "layer": 1,
+    "scope": ["src/scix/citation_context.py", "tests/test_citation_context.py"],
+    "status": "landed",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "mcp-paper-tools",
+    "name": "read_paper_section and search_within_paper MCP tools",
+    "description": "Add two new MCP tools to src/scix/mcp_server.py: (1) read_paper_section(bibcode, section, char_offset=0, limit=5000) - returns section text using section_parser, with has_body flag, falls back to abstract; (2) search_within_paper(bibcode, query) - uses PostgreSQL ts_headline on the body column to find matching passages with 200-char context. Also add corresponding functions to src/scix/search.py. Register tools in list_tools() and _dispatch_tool().",
+    "deps": ["section-parser"],
+    "tier": "medium",
+    "acceptance": [
+      "search.py exports read_paper_section() and search_within_paper() functions",
+      "read_paper_section() returns SearchResult with paper section text, has_body flag, and pagination support",
+      "search_within_paper() returns SearchResult with matching passages using ts_headline",
+      "mcp_server.py registers both tools in list_tools() with correct inputSchema",
+      "mcp_server.py dispatches both tools in _dispatch_tool()",
+      "Tests cover: section retrieval for paper with body, fallback to abstract for paper without body, pagination, search_within_paper with matching/non-matching queries",
+      "Running 'python -m pytest tests/test_mcp_paper_tools.py -v' passes with 0 failures"
+    ],
+    "layer": 1,
+    "scope": [
+      "src/scix/search.py",
+      "src/scix/mcp_server.py",
+      "tests/test_mcp_paper_tools.py"
+    ],
+    "status": "landed",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "citation-intent-classifier",
+    "name": "Citation intent classification pipeline",
+    "description": "Pipeline in src/scix/citation_intent.py that classifies citation contexts into 3 classes: background, method, result_comparison. Supports two backends: (1) local SciBERT/transformer model fine-tuned on SciCite dataset, (2) LLM classification via Anthropic API as fallback. Updates the intent column in citation_contexts table. Includes training script for the SciBERT model.",
+    "deps": ["citation-context-pipeline"],
+    "tier": "medium",
+    "acceptance": [
+      "File src/scix/citation_intent.py exists and exports: classify_intent(), classify_batch(), IntentClassifier protocol, SciBertClassifier class, LLMClassifier class",
+      "classify_intent() accepts context_text and returns one of: 'background', 'method', 'result_comparison'",
+      "classify_batch() processes multiple contexts efficiently (batched model inference or batched API calls)",
+      "SciBertClassifier wraps a transformers pipeline for local inference",
+      "LLMClassifier provides Anthropic API fallback classification",
+      "File scripts/train_citation_intent.py exists with training loop for SciCite dataset",
+      "Tests in tests/test_citation_intent.py mock the model and test classification logic, label validation, batch processing",
+      "Running 'python -m pytest tests/test_citation_intent.py -v' passes with 0 failures"
+    ],
+    "layer": 2,
+    "scope": [
+      "src/scix/citation_intent.py",
+      "scripts/train_citation_intent.py",
+      "tests/test_citation_intent.py"
+    ],
+    "status": "landed",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "mcp-citation-context-tool",
+    "name": "get_citation_context MCP tool",
+    "description": "Add get_citation_context(source_bibcode, target_bibcode) MCP tool to mcp_server.py. Returns the context text and intent label for why source cites target from the citation_contexts table. Returns null gracefully for pairs without context. Add corresponding function to search.py.",
+    "deps": ["citation-context-schema"],
+    "tier": "small",
+    "acceptance": [
+      "search.py exports get_citation_context() function that queries citation_contexts table",
+      "get_citation_context() returns SearchResult with context_text, intent, char_offset for matching pairs",
+      "Returns empty result (not error) for pairs without context",
+      "mcp_server.py registers get_citation_context tool in list_tools() with source_bibcode and target_bibcode as required params",
+      "mcp_server.py dispatches get_citation_context in _dispatch_tool()",
+      "Tests cover: existing citation pair returns context, non-existent pair returns empty, multiple contexts for same pair",
+      "Running 'python -m pytest tests/test_mcp_citation_context.py -v' passes with 0 failures"
+    ],
+    "layer": 1,
+    "scope": [
+      "src/scix/search.py",
+      "src/scix/mcp_server.py",
+      "tests/test_mcp_citation_context.py"
+    ],
+    "status": "landed",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  }
+]

@@ -160,6 +160,56 @@ class TestRelationshipDirection:
         assert (UAT_3, UAT_2) not in rels
 
 
+class TestDanglingRelationshipFiltering:
+    """Verify that relationships referencing unknown concepts are filtered out.
+
+    The UAT SKOS file can contain broader references to concept URIs that
+    have no corresponding <skos:Concept> element (e.g. deprecated stubs
+    without a prefLabel).  These must be excluded during parsing to avoid
+    FK violations when loading into the database.
+    """
+
+    SKOS_WITH_DANGLING = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:skos="http://www.w3.org/2004/02/skos/core#">
+  <skos:Concept rdf:about="http://astrothesaurus.org/uat/100">
+    <skos:prefLabel>Root</skos:prefLabel>
+  </skos:Concept>
+  <skos:Concept rdf:about="http://astrothesaurus.org/uat/200">
+    <skos:prefLabel>Child</skos:prefLabel>
+    <skos:broader rdf:resource="http://astrothesaurus.org/uat/100"/>
+    <skos:broader rdf:resource="http://astrothesaurus.org/uat/999"/>
+  </skos:Concept>
+</rdf:RDF>
+"""
+
+    @pytest.fixture()
+    def dangling_file(self, tmp_path: Path) -> Path:
+        p = tmp_path / "dangling.rdf"
+        p.write_text(self.SKOS_WITH_DANGLING, encoding="utf-8")
+        return p
+
+    def test_dangling_parent_excluded(self, dangling_file: Path) -> None:
+        concepts, relationships = parse_skos(dangling_file)
+        concept_ids = {c.concept_id for c in concepts}
+        # Concept 999 has no element in the file, so it should not be a concept
+        assert "http://astrothesaurus.org/uat/999" not in concept_ids
+        # Only the valid relationship (100 -> 200) should survive
+        assert len(relationships) == 1
+        assert relationships[0].parent_id == "http://astrothesaurus.org/uat/100"
+        assert relationships[0].child_id == "http://astrothesaurus.org/uat/200"
+
+    def test_valid_relationship_preserved(self, dangling_file: Path) -> None:
+        concepts, relationships = parse_skos(dangling_file)
+        rels = {(r.parent_id, r.child_id) for r in relationships}
+        assert ("http://astrothesaurus.org/uat/100", "http://astrothesaurus.org/uat/200") in rels
+
+    def test_concept_count_excludes_phantom(self, dangling_file: Path) -> None:
+        concepts, _ = parse_skos(dangling_file)
+        assert len(concepts) == 2
+
+
 class TestPgTextArray:
     """Verify PostgreSQL text array literal formatting."""
 

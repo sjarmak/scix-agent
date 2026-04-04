@@ -197,14 +197,25 @@ def parse_skos(path: Path) -> tuple[list[UATConcept], list[UATRelationship]]:
                     children_map.setdefault(parent_uri, []).append(about)
 
     # Build relationships from broader (child -> parent means parent -> child edge)
+    # Filter to only include relationships where both endpoints were parsed as
+    # concepts.  The SKOS file can reference broader parents that lack a
+    # prefLabel (deprecated/stub entries) and therefore aren't in raw_concepts.
+    # Including those would cause FK violations when loading into the database.
     relationships: list[UATRelationship] = []
     seen_rels: set[tuple[str, str]] = set()
+    skipped_rels = 0
     for child_id, parent_ids in broader_map.items():
         for parent_id in parent_ids:
+            if parent_id not in raw_concepts or child_id not in raw_concepts:
+                skipped_rels += 1
+                continue
             pair = (parent_id, child_id)
             if pair not in seen_rels:
                 seen_rels.add(pair)
                 relationships.append(UATRelationship(parent_id=parent_id, child_id=child_id))
+
+    if skipped_rels:
+        logger.warning("Skipped %d relationships referencing unknown concepts", skipped_rels)
 
     # Compute levels via BFS from root concepts (no broader parent)
     all_concept_ids = set(raw_concepts.keys())
@@ -270,7 +281,10 @@ _REL_STAGING_CREATE = "CREATE TEMP TABLE _uat_rel_staging (parent_id TEXT, child
 
 _REL_MERGE_SQL = """
     INSERT INTO uat_relationships (parent_id, child_id)
-    SELECT DISTINCT parent_id, child_id FROM _uat_rel_staging
+    SELECT DISTINCT s.parent_id, s.child_id
+    FROM _uat_rel_staging s
+    WHERE EXISTS (SELECT 1 FROM uat_concepts c WHERE c.concept_id = s.parent_id)
+      AND EXISTS (SELECT 1 FROM uat_concepts c WHERE c.concept_id = s.child_id)
     ON CONFLICT DO NOTHING
 """
 

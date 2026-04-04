@@ -349,7 +349,8 @@ def run_pipeline(
     int
         Total number of citation context rows inserted.
     """
-    conn = get_connection(dsn)
+    read_conn = get_connection(dsn)
+    write_conn = get_connection(dsn)
     total_inserted = 0
     papers_processed = 0
     t_start = time.monotonic()
@@ -361,7 +362,7 @@ def run_pipeline(
             query += " LIMIT %s"
             params.append(limit)
 
-        with conn.cursor(name="citctx_papers") as cur:
+        with read_conn.cursor(name="citctx_papers") as cur:
             cur.execute(query, params)
 
             batch: list[tuple[str, str, str, int, str | None, str | None]] = []
@@ -396,7 +397,7 @@ def run_pipeline(
                     )
 
                     if len(batch) >= batch_size:
-                        inserted = _flush_contexts(conn, batch)
+                        inserted = _flush_contexts(write_conn, batch)
                         total_inserted += inserted
                         batch.clear()
 
@@ -413,7 +414,7 @@ def run_pipeline(
 
             # Flush remaining
             if batch:
-                inserted = _flush_contexts(conn, batch)
+                inserted = _flush_contexts(write_conn, batch)
                 total_inserted += inserted
 
         elapsed = time.monotonic() - t_start
@@ -425,6 +426,7 @@ def run_pipeline(
         )
 
     finally:
-        conn.close()
+        read_conn.close()
+        write_conn.close()
 
     return total_inserted

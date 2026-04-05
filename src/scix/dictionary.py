@@ -15,6 +15,27 @@ from psycopg.rows import dict_row
 
 logger = logging.getLogger(__name__)
 
+ALLOWED_ENTITY_TYPES: frozenset[str] = frozenset(
+    {
+        "instrument",
+        "dataset",
+        "software",
+        "method",
+        "mission",
+        "observable",
+        "target",
+    }
+)
+
+
+def _validate_entity_type(entity_type: str) -> None:
+    """Raise ValueError if *entity_type* is not in ALLOWED_ENTITY_TYPES."""
+    if entity_type not in ALLOWED_ENTITY_TYPES:
+        raise ValueError(
+            f"Invalid entity_type {entity_type!r}. "
+            f"Must be one of: {', '.join(sorted(ALLOWED_ENTITY_TYPES))}"
+        )
+
 
 def upsert_entry(
     conn: psycopg.Connection,
@@ -25,6 +46,7 @@ def upsert_entry(
     external_id: str | None = None,
     aliases: list[str] | None = None,
     metadata: dict[str, Any] | None = None,
+    discipline: str | None = None,
 ) -> dict[str, Any]:
     """Insert or update a single entity dictionary entry.
 
@@ -34,17 +56,25 @@ def upsert_entry(
     Args:
         conn: Database connection.
         canonical_name: The canonical name of the entity.
-        entity_type: Entity type (e.g. 'software', 'instrument', 'mission').
+        entity_type: Entity type — must be one of ALLOWED_ENTITY_TYPES.
         source: Source of the entry (e.g. 'manual', 'wikidata', 'ads').
         external_id: Optional external identifier (e.g. Wikidata QID).
         aliases: Optional list of alternate names.
         metadata: Optional JSONB metadata dict.
+        discipline: Optional discipline tag (requires migration 014).
 
     Returns:
         Dict with the upserted row's fields.
+
+    Raises:
+        ValueError: If *entity_type* is not in ALLOWED_ENTITY_TYPES.
     """
+    _validate_entity_type(entity_type)
+
     resolved_aliases = aliases if aliases is not None else []
     resolved_metadata = metadata if metadata is not None else {}
+    if discipline is not None:
+        resolved_metadata = {**resolved_metadata, "_discipline": discipline}
 
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
@@ -136,53 +166,74 @@ def lookup(
 def bulk_load(
     conn: psycopg.Connection,
     entries: list[dict[str, Any]],
+    *,
+    discipline: str | None = None,
 ) -> int:
     """Batch-insert entity dictionary entries with ON CONFLICT DO UPDATE.
 
     Each entry dict should have keys: canonical_name, entity_type, source.
     Optional keys: external_id, aliases, metadata.
 
+    Uses ``executemany()`` for batch performance instead of per-row INSERT.
+
     Args:
         conn: Database connection.
         entries: List of entry dicts.
+        discipline: Optional discipline tag applied to every entry
+            (stored in metadata as ``_discipline`` until migration 014).
 
     Returns:
         Number of rows upserted.
+
+    Raises:
+        ValueError: If any entry has an entity_type not in ALLOWED_ENTITY_TYPES.
     """
     if not entries:
         return 0
 
-    total = 0
-    with conn.cursor() as cur:
-        for entry in entries:
-            canonical_name = entry["canonical_name"]
-            entity_type = entry["entity_type"]
-            source = entry["source"]
-            external_id = entry.get("external_id")
-            aliases = entry.get("aliases", [])
-            metadata = entry.get("metadata", {})
-
-            cur.execute(
-                """
-                INSERT INTO entity_dictionary
-                    (canonical_name, entity_type, source, external_id, aliases, metadata)
-                VALUES (%(canonical_name)s, %(entity_type)s, %(source)s,
-                        %(external_id)s, %(aliases)s, %(metadata)s)
-                ON CONFLICT (canonical_name, entity_type, source) DO UPDATE SET
-                    external_id = EXCLUDED.external_id,
-                    aliases = EXCLUDED.aliases,
-                    metadata = EXCLUDED.metadata
-                """,
-                {
-                    "canonical_name": canonical_name,
-                    "entity_type": entity_type,
-                    "source": source,
-                    "external_id": external_id,
-                    "aliases": aliases,
-                    "metadata": json.dumps(metadata),
-                },
+    # Validate all entity types up-front before touching the database.
+    for i, entry in enumerate(entries):
+        entity_type = entry.get("entity_type", "")
+        if entity_type not in ALLOWED_ENTITY_TYPES:
+            raise ValueError(
+                f"Invalid entity_type {entity_type!r} at index {i}. "
+                f"Must be one of: {', '.join(sorted(ALLOWED_ENTITY_TYPES))}"
             )
-            total += cur.rowcount
+
+    # Build parameter list for executemany.
+    params_list: list[dict[str, Any]] = []
+    for entry in entries:
+        meta = dict(entry.get("metadata", {}))
+        if discipline is not None:
+            meta["_discipline"] = discipline
+        params_list.append(
+            {
+                "canonical_name": entry["canonical_name"],
+                "entity_type": entry["entity_type"],
+                "source": entry["source"],
+                "external_id": entry.get("external_id"),
+                "aliases": entry.get("aliases", []),
+                "metadata": json.dumps(meta),
+            }
+        )
+
+    sql = """
+        INSERT INTO entity_dictionary
+            (canonical_name, entity_type, source, external_id, aliases, metadata)
+        VALUES (%(canonical_name)s, %(entity_type)s, %(source)s,
+                %(external_id)s, %(aliases)s, %(metadata)s)
+        ON CONFLICT (canonical_name, entity_type, source) DO UPDATE SET
+            external_id = EXCLUDED.external_id,
+            aliases = EXCLUDED.aliases,
+            metadata = EXCLUDED.metadata
+    """
+
+    with conn.cursor() as cur:
+        cur.executemany(sql, params_list)
+        # executemany sets rowcount to the count affected by the *last* statement
+        # in psycopg 3; use len(params_list) as the authoritative count since
+        # every row either inserts or updates.
+        total = len(params_list)
 
     conn.commit()
     logger.info("Bulk loaded %d entity dictionary entries", total)

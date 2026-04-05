@@ -7,11 +7,19 @@ database with migration 013 applied.
 
 from __future__ import annotations
 
+import time
+
 import psycopg
 import pytest
 from helpers import DSN
 
-from scix.dictionary import bulk_load, get_stats, lookup, upsert_entry
+from scix.dictionary import (
+    ALLOWED_ENTITY_TYPES,
+    bulk_load,
+    get_stats,
+    lookup,
+    upsert_entry,
+)
 
 # ---------------------------------------------------------------------------
 # Database fixtures
@@ -274,3 +282,131 @@ class TestGetStats:
         stats = get_stats(db_conn)
         assert "software" in stats["by_type"]
         assert stats["by_type"]["software"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — no database required
+# ---------------------------------------------------------------------------
+
+
+class TestAllowedEntityTypes:
+    """ALLOWED_ENTITY_TYPES frozenset contains the expected values."""
+
+    def test_is_frozenset(self) -> None:
+        assert isinstance(ALLOWED_ENTITY_TYPES, frozenset)
+
+    def test_expected_values(self) -> None:
+        expected = {
+            "instrument",
+            "dataset",
+            "software",
+            "method",
+            "mission",
+            "observable",
+            "target",
+        }
+        assert ALLOWED_ENTITY_TYPES == expected
+
+    def test_immutable(self) -> None:
+        with pytest.raises(AttributeError):
+            ALLOWED_ENTITY_TYPES.add("bogus")  # type: ignore[attr-defined]
+
+
+@pytest.mark.integration
+class TestEntityTypeValidation:
+    """upsert_entry and bulk_load reject invalid entity types."""
+
+    def test_upsert_entry_rejects_invalid_type(self, db_conn: psycopg.Connection) -> None:
+        with pytest.raises(ValueError, match="Invalid entity_type 'bogus'"):
+            upsert_entry(
+                db_conn,
+                canonical_name="X",
+                entity_type="bogus",
+                source="test",
+            )
+
+    def test_upsert_entry_accepts_all_valid_types(self, db_conn: psycopg.Connection) -> None:
+        for etype in sorted(ALLOWED_ENTITY_TYPES):
+            result = upsert_entry(
+                db_conn,
+                canonical_name=f"Valid-{etype}",
+                entity_type=etype,
+                source="test",
+            )
+            assert result["entity_type"] == etype
+
+    def test_bulk_load_rejects_invalid_type(self, db_conn: psycopg.Connection) -> None:
+        entries = [
+            {"canonical_name": "Good", "entity_type": "software", "source": "test-bulk"},
+            {"canonical_name": "Bad", "entity_type": "unknown", "source": "test-bulk"},
+        ]
+        with pytest.raises(ValueError, match="Invalid entity_type 'unknown' at index 1"):
+            bulk_load(db_conn, entries)
+
+    def test_bulk_load_rejects_before_db_write(self, db_conn: psycopg.Connection) -> None:
+        """Validation happens up-front; no partial writes on failure."""
+        entries = [
+            {"canonical_name": "NeverWritten", "entity_type": "invalid", "source": "test-bulk"},
+        ]
+        with pytest.raises(ValueError):
+            bulk_load(db_conn, entries)
+        # Confirm nothing was written
+        result = lookup(db_conn, "NeverWritten")
+        assert result is None
+
+
+@pytest.mark.integration
+class TestDisciplineParameter:
+    """upsert_entry and bulk_load store discipline in metadata."""
+
+    def test_upsert_entry_with_discipline(self, db_conn: psycopg.Connection) -> None:
+        result = upsert_entry(
+            db_conn,
+            canonical_name="DisciplineTest",
+            entity_type="instrument",
+            source="test",
+            discipline="astronomy",
+        )
+        assert result["metadata"]["_discipline"] == "astronomy"
+
+    def test_upsert_entry_without_discipline(self, db_conn: psycopg.Connection) -> None:
+        result = upsert_entry(
+            db_conn,
+            canonical_name="NoDiscipline",
+            entity_type="instrument",
+            source="test",
+        )
+        assert "_discipline" not in result["metadata"]
+
+    def test_bulk_load_with_discipline(self, db_conn: psycopg.Connection) -> None:
+        entries = [
+            {"canonical_name": "BulkDisc1", "entity_type": "software", "source": "test-bulk"},
+            {"canonical_name": "BulkDisc2", "entity_type": "mission", "source": "test-bulk"},
+        ]
+        bulk_load(db_conn, entries, discipline="physics")
+        r1 = lookup(db_conn, "BulkDisc1")
+        r2 = lookup(db_conn, "BulkDisc2")
+        assert r1 is not None and r1["metadata"]["_discipline"] == "physics"
+        assert r2 is not None and r2["metadata"]["_discipline"] == "physics"
+
+
+@pytest.mark.integration
+class TestBulkLoadPerformance:
+    """bulk_load of 10K synthetic entries completes in < 5s."""
+
+    def test_10k_entries_under_5_seconds(self, db_conn: psycopg.Connection) -> None:
+        types = sorted(ALLOWED_ENTITY_TYPES)
+        entries = [
+            {
+                "canonical_name": f"perf-entity-{i}",
+                "entity_type": types[i % len(types)],
+                "source": "test-bulk",
+                "aliases": [f"alias-{i}"],
+            }
+            for i in range(10_000)
+        ]
+        start = time.monotonic()
+        count = bulk_load(db_conn, entries)
+        elapsed = time.monotonic() - start
+        assert count == 10_000
+        assert elapsed < 5.0, f"bulk_load took {elapsed:.2f}s, expected < 5s"

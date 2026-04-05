@@ -22,6 +22,13 @@ from scix.db import get_connection
 
 logger = logging.getLogger(__name__)
 
+
+class BudgetExceededError(Exception):
+    """Raised when cumulative extraction cost reaches the budget threshold."""
+
+    pass
+
+
 EXTRACTION_VERSION = "v1"
 EXTRACTION_TYPES = ("methods", "datasets", "instruments", "materials")
 
@@ -144,6 +151,9 @@ class ExtractionRow:
     extraction_type: str
     extraction_version: str
     payload: dict[str, Any]
+    source: str = "llm"
+    confidence_tier: str = "medium"
+    extraction_model: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -703,11 +713,15 @@ def load_results_to_db(
                 cur.execute(
                     """
                     INSERT INTO extractions
-                        (bibcode, extraction_type, extraction_version, payload)
-                    VALUES (%s, %s, %s, %s)
+                        (bibcode, extraction_type, extraction_version, payload,
+                         source, confidence_tier, extraction_model)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (bibcode, extraction_type, extraction_version)
                     DO UPDATE SET
                         payload = EXCLUDED.payload,
+                        source = EXCLUDED.source,
+                        confidence_tier = EXCLUDED.confidence_tier,
+                        extraction_model = EXCLUDED.extraction_model,
                         created_at = NOW()
                     """,
                     (
@@ -715,6 +729,9 @@ def load_results_to_db(
                         row.extraction_type,
                         row.extraction_version,
                         json.dumps(row.payload),
+                        row.source,
+                        row.confidence_tier,
+                        row.extraction_model,
                     ),
                 )
         conn.commit()
@@ -844,7 +861,7 @@ def run_extraction_pipeline(
                 _save_checkpoint(
                     output_dir, extraction_version, processed_bibcodes, cumulative_cost_usd
                 )
-                raise ValueError(msg)
+                raise BudgetExceededError(msg)
 
             logger.info(
                 "Processing batch %d (%d papers, cumulative cost: $%.4f)",
@@ -898,7 +915,7 @@ def run_extraction_pipeline(
                 _save_checkpoint(
                     output_dir, extraction_version, processed_bibcodes, cumulative_cost_usd
                 )
-                raise ValueError(msg)
+                raise BudgetExceededError(msg)
 
         logger.info(
             "Extraction pipeline complete: %d total rows loaded",

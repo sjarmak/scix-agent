@@ -21,7 +21,11 @@ from scix.extract import (
     ExtractionRow,
     _SYSTEM_PROMPT,
     _TOOL_SCHEMA,
+    _checkpoint_path,
+    _get_existing_bibcodes,
+    _load_checkpoint,
     _parse_extraction_rows,
+    _save_checkpoint,
     build_extraction_prompt,
     load_results_to_db,
     save_results_jsonl,
@@ -77,8 +81,15 @@ class TestBuildExtractionPrompt:
         result = build_extraction_prompt("My Title", "My abstract about stars.")
         last_msg = result["messages"][-1]
         assert last_msg["role"] == "user"
-        assert "My Title" in last_msg["content"]
-        assert "My abstract about stars." in last_msg["content"]
+        # Content may be a list of blocks (tool_result + text) or a string
+        content = last_msg["content"]
+        if isinstance(content, list):
+            text_parts = [b.get("text", "") for b in content if isinstance(b, dict)]
+            joined = " ".join(text_parts)
+        else:
+            joined = content
+        assert "My Title" in joined
+        assert "My abstract about stars." in joined
 
     def test_few_shot_covers_multiple_subfields(self) -> None:
         """Few-shot examples should cover different astronomy subfields."""
@@ -339,9 +350,11 @@ class TestSubmitBatch:
             ExtractionRequest("bib1", "Title 1", "Abstract " * 20),
             ExtractionRequest("bib2", "Title 2", "Abstract " * 20),
         ]
-        batch_id = submit_batch(mock_client, reqs)
+        batch_id, id_to_bibcode = submit_batch(mock_client, reqs)
 
         assert batch_id == "batch_abc"
+        assert isinstance(id_to_bibcode, dict)
+        assert "bib1" in id_to_bibcode.values()
         create_call = mock_client.messages.batches.create.call_args
         assert len(create_call.kwargs["requests"]) == 2
         assert create_call.kwargs["requests"][0]["custom_id"] == "bib1"
@@ -368,3 +381,357 @@ class TestDataStructures:
         assert "datasets" in EXTRACTION_TYPES
         assert "instruments" in EXTRACTION_TYPES
         assert "materials" in EXTRACTION_TYPES
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestCheckpoint:
+    def test_checkpoint_path_includes_version(self, tmp_path: Path) -> None:
+        path = _checkpoint_path(str(tmp_path), "v1")
+        assert path.name == ".checkpoint_v1.json"
+        assert path.parent == tmp_path
+
+    def test_load_checkpoint_returns_defaults_when_missing(self, tmp_path: Path) -> None:
+        cp = _load_checkpoint(str(tmp_path), "v1")
+        assert cp["version"] == "v1"
+        assert cp["processed_bibcodes"] == set()
+        assert cp["cumulative_cost_usd"] == 0.0
+
+    def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
+        bibcodes = {"bib_A", "bib_B", "bib_C"}
+        _save_checkpoint(str(tmp_path), "v1", bibcodes, 1.23)
+
+        cp = _load_checkpoint(str(tmp_path), "v1")
+        assert cp["version"] == "v1"
+        assert cp["processed_bibcodes"] == bibcodes
+        assert abs(cp["cumulative_cost_usd"] - 1.23) < 1e-6
+
+    def test_save_creates_parent_dirs(self, tmp_path: Path) -> None:
+        nested = tmp_path / "a" / "b" / "c"
+        _save_checkpoint(str(nested), "v2", set(), 0.0)
+        assert _checkpoint_path(str(nested), "v2").exists()
+
+    def test_checkpoint_overwrites_on_update(self, tmp_path: Path) -> None:
+        _save_checkpoint(str(tmp_path), "v1", {"bib_1"}, 0.5)
+        _save_checkpoint(str(tmp_path), "v1", {"bib_1", "bib_2"}, 1.0)
+
+        cp = _load_checkpoint(str(tmp_path), "v1")
+        assert cp["processed_bibcodes"] == {"bib_1", "bib_2"}
+        assert abs(cp["cumulative_cost_usd"] - 1.0) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# DB idempotency tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetExistingBibcodes:
+    def test_returns_set_of_bibcodes(self) -> None:
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_cur.fetchall.return_value = [("bib_1",), ("bib_2",)]
+
+        result = _get_existing_bibcodes(mock_conn, "v1")
+
+        assert result == {"bib_1", "bib_2"}
+        sql = mock_cur.execute.call_args[0][0]
+        assert "extractions" in sql
+        assert "extraction_version" in sql
+
+    def test_returns_empty_set_when_no_results(self) -> None:
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_cur.fetchall.return_value = []
+
+        result = _get_existing_bibcodes(mock_conn, "v1")
+        assert result == set()
+
+
+# ---------------------------------------------------------------------------
+# Pipeline checkpointing + idempotency + budget integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineCheckpointing:
+    """Tests for checkpoint resume, idempotency, and budget accumulator."""
+
+    def _make_mock_batch_result(self, bibcode: str) -> MagicMock:
+        """Create a mock batch result for a single bibcode."""
+        result = MagicMock()
+        result.custom_id = bibcode
+        result.result = MagicMock()
+        result.result.model_dump.return_value = {
+            "type": "succeeded",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "extract_entities",
+                        "input": {
+                            "methods": ["PCA"],
+                            "datasets": [],
+                            "instruments": [],
+                            "materials": [],
+                        },
+                    }
+                ]
+            },
+        }
+        return result
+
+    def _setup_pipeline_mocks(
+        self,
+        cohort_bibcodes: list[str],
+        existing_db_bibcodes: list[str] | None = None,
+    ) -> tuple[MagicMock, MagicMock, MagicMock]:
+        """Set up mocks for the pipeline: anthropic client, DB conn, cohort."""
+        mock_anthropic = MagicMock()
+        mock_client = MagicMock()
+        mock_anthropic.Anthropic.return_value = mock_client
+
+        # Batch create returns a batch object
+        mock_client.messages.batches.create.return_value = MagicMock(id="batch_001")
+        # Batch retrieve returns ended status
+        mock_client.messages.batches.retrieve.return_value = MagicMock(processing_status="ended")
+
+        # Batch results returns mock results for each bibcode in the request
+        def results_side_effect(batch_id: str) -> list[MagicMock]:
+            # Return results for all cohort bibcodes not in existing_db
+            return [self._make_mock_batch_result(b) for b in cohort_bibcodes]
+
+        mock_client.messages.batches.results.side_effect = results_side_effect
+
+        # Mock DB connection
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        # select_pilot_cohort query
+        mock_cur.fetchall.return_value = [
+            (bib, f"Title {bib}", "Abstract text " * 20) for bib in cohort_bibcodes
+        ]
+
+        return mock_anthropic, mock_client, mock_conn
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"})
+    @patch("scix.extract.get_connection")
+    @patch("scix.extract._get_existing_bibcodes")
+    def test_checkpoint_skips_processed_bibcodes(
+        self, mock_get_existing: MagicMock, mock_get_conn: MagicMock, tmp_path: Path
+    ) -> None:
+        """Pipeline should skip bibcodes found in checkpoint file."""
+        output_dir = str(tmp_path / "extractions")
+
+        # Pre-seed checkpoint with bib_1 already processed
+        _save_checkpoint(output_dir, "v1", {"bib_1"}, 0.001)
+
+        mock_anthropic, mock_client, mock_conn = self._setup_pipeline_mocks(
+            ["bib_1", "bib_2", "bib_3"]
+        )
+        mock_get_conn.return_value = mock_conn
+        mock_get_existing.return_value = set()
+
+        # Make results return only bib_2, bib_3 (since bib_1 is skipped)
+        mock_client.messages.batches.results.side_effect = lambda bid: [
+            self._make_mock_batch_result(b) for b in ["bib_2", "bib_3"]
+        ]
+
+        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+            from scix.extract import run_extraction_pipeline
+
+            result = run_extraction_pipeline(
+                dsn="test",
+                pilot_size=10,
+                model="claude-haiku-4-5-20251001",
+                output_dir=output_dir,
+                extraction_version="v1",
+                batch_size=100,
+                poll_interval=0,
+                budget_usd=100.0,
+            )
+
+        # Should have submitted a batch (bib_2 and bib_3 only)
+        create_call = mock_client.messages.batches.create.call_args
+        submitted_ids = [r["custom_id"] for r in create_call.kwargs["requests"]]
+        assert "bib_1" not in submitted_ids
+        assert len(submitted_ids) == 2
+
+        # Checkpoint should now contain all 3
+        cp = _load_checkpoint(output_dir, "v1")
+        assert "bib_1" in cp["processed_bibcodes"]
+        assert "bib_2" in cp["processed_bibcodes"]
+        assert "bib_3" in cp["processed_bibcodes"]
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"})
+    @patch("scix.extract.get_connection")
+    @patch("scix.extract._get_existing_bibcodes")
+    def test_db_idempotency_skips_existing(
+        self, mock_get_existing: MagicMock, mock_get_conn: MagicMock, tmp_path: Path
+    ) -> None:
+        """Pipeline should skip bibcodes already in DB for current version."""
+        output_dir = str(tmp_path / "extractions")
+
+        mock_anthropic, mock_client, mock_conn = self._setup_pipeline_mocks(["bib_1", "bib_2"])
+        mock_get_conn.return_value = mock_conn
+        # bib_1 already exists in DB
+        mock_get_existing.return_value = {"bib_1"}
+
+        mock_client.messages.batches.results.side_effect = lambda bid: [
+            self._make_mock_batch_result("bib_2")
+        ]
+
+        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+            from scix.extract import run_extraction_pipeline
+
+            run_extraction_pipeline(
+                dsn="test",
+                pilot_size=10,
+                model="claude-haiku-4-5-20251001",
+                output_dir=output_dir,
+                extraction_version="v1",
+                batch_size=100,
+                poll_interval=0,
+                budget_usd=100.0,
+            )
+
+        # Only bib_2 should have been submitted
+        create_call = mock_client.messages.batches.create.call_args
+        submitted_ids = [r["custom_id"] for r in create_call.kwargs["requests"]]
+        assert "bib_1" not in submitted_ids
+        assert "bib_2" in submitted_ids
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"})
+    @patch("scix.extract.get_connection")
+    @patch("scix.extract._get_existing_bibcodes")
+    def test_duplicate_submission_no_duplicates(
+        self, mock_get_existing: MagicMock, mock_get_conn: MagicMock, tmp_path: Path
+    ) -> None:
+        """Submitting the same cohort twice should not create duplicate extractions."""
+        output_dir = str(tmp_path / "extractions")
+
+        mock_anthropic, mock_client, mock_conn = self._setup_pipeline_mocks(["bib_1"])
+        mock_get_conn.return_value = mock_conn
+        mock_get_existing.return_value = set()
+
+        mock_client.messages.batches.results.side_effect = lambda bid: [
+            self._make_mock_batch_result("bib_1")
+        ]
+
+        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+            from scix.extract import run_extraction_pipeline
+
+            # First run
+            run_extraction_pipeline(
+                dsn="test",
+                pilot_size=10,
+                model="claude-haiku-4-5-20251001",
+                output_dir=output_dir,
+                extraction_version="v1",
+                batch_size=100,
+                poll_interval=0,
+                budget_usd=100.0,
+            )
+
+        assert mock_client.messages.batches.create.call_count == 1
+
+        # Second run — bib_1 is now in checkpoint
+        mock_client.messages.batches.create.reset_mock()
+        mock_get_conn.return_value = mock_conn
+
+        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+            from scix.extract import run_extraction_pipeline
+
+            result = run_extraction_pipeline(
+                dsn="test",
+                pilot_size=10,
+                model="claude-haiku-4-5-20251001",
+                output_dir=output_dir,
+                extraction_version="v1",
+                batch_size=100,
+                poll_interval=0,
+                budget_usd=100.0,
+            )
+
+        # Second run should not have submitted any batch
+        mock_client.messages.batches.create.assert_not_called()
+        assert result == 0
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"})
+    @patch("scix.extract.get_connection")
+    @patch("scix.extract._get_existing_bibcodes")
+    def test_budget_halt_at_80_percent(
+        self, mock_get_existing: MagicMock, mock_get_conn: MagicMock, tmp_path: Path
+    ) -> None:
+        """Pipeline halts with 'budget' message when cumulative cost reaches 80%."""
+        output_dir = str(tmp_path / "extractions")
+
+        # Pre-seed checkpoint with cost already at 80% of budget
+        # With budget_usd=1.0, 80% = 0.80
+        _save_checkpoint(output_dir, "v1", set(), 0.85)
+
+        mock_anthropic, mock_client, mock_conn = self._setup_pipeline_mocks(["bib_1"])
+        mock_get_conn.return_value = mock_conn
+        mock_get_existing.return_value = set()
+
+        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+            from scix.extract import run_extraction_pipeline
+
+            with pytest.raises(ValueError, match="budget"):
+                run_extraction_pipeline(
+                    dsn="test",
+                    pilot_size=10,
+                    model="claude-haiku-4-5-20251001",
+                    output_dir=output_dir,
+                    extraction_version="v1",
+                    batch_size=100,
+                    poll_interval=0,
+                    budget_usd=1.0,
+                )
+
+        # No batch should have been submitted
+        mock_client.messages.batches.create.assert_not_called()
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"})
+    @patch("scix.extract.get_connection")
+    @patch("scix.extract._get_existing_bibcodes")
+    def test_cost_accumulates_across_batches(
+        self, mock_get_existing: MagicMock, mock_get_conn: MagicMock, tmp_path: Path
+    ) -> None:
+        """Cumulative cost should increase after each batch and persist in checkpoint."""
+        output_dir = str(tmp_path / "extractions")
+
+        mock_anthropic, mock_client, mock_conn = self._setup_pipeline_mocks(["bib_1", "bib_2"])
+        mock_get_conn.return_value = mock_conn
+        mock_get_existing.return_value = set()
+
+        mock_client.messages.batches.results.side_effect = lambda bid: [
+            self._make_mock_batch_result("bib_1"),
+            self._make_mock_batch_result("bib_2"),
+        ]
+
+        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+            from scix.extract import run_extraction_pipeline
+
+            run_extraction_pipeline(
+                dsn="test",
+                pilot_size=10,
+                model="claude-haiku-4-5-20251001",
+                output_dir=output_dir,
+                extraction_version="v1",
+                batch_size=100,
+                poll_interval=0,
+                budget_usd=100.0,
+            )
+
+        cp = _load_checkpoint(output_dir, "v1")
+        assert cp["cumulative_cost_usd"] > 0.0
+        assert "bib_1" in cp["processed_bibcodes"]
+        assert "bib_2" in cp["processed_bibcodes"]

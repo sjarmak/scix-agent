@@ -49,6 +49,80 @@ def _decode_bibcode(custom_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Checkpoint helpers
+# ---------------------------------------------------------------------------
+
+
+def _checkpoint_path(output_dir: str, version: str) -> Path:
+    """Return the path to the checkpoint file for a given version."""
+    return Path(output_dir) / f".checkpoint_{version}.json"
+
+
+def _load_checkpoint(output_dir: str, version: str) -> dict[str, Any]:
+    """Load checkpoint state from disk.
+
+    Returns a dict with 'processed_bibcodes' (set) and 'cumulative_cost_usd' (float).
+    If no checkpoint exists, returns empty defaults.
+    """
+    path = _checkpoint_path(output_dir, version)
+    if not path.exists():
+        return {"version": version, "processed_bibcodes": set(), "cumulative_cost_usd": 0.0}
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return {
+        "version": data.get("version", version),
+        "processed_bibcodes": set(data.get("processed_bibcodes", [])),
+        "cumulative_cost_usd": float(data.get("cumulative_cost_usd", 0.0)),
+    }
+
+
+def _save_checkpoint(
+    output_dir: str,
+    version: str,
+    processed_bibcodes: set[str],
+    cumulative_cost_usd: float,
+) -> Path:
+    """Persist checkpoint state to disk.
+
+    Writes a JSON file with the current set of processed bibcodes and
+    cumulative cost. Creates parent directories if needed.
+    """
+    path = _checkpoint_path(output_dir, version)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {
+        "version": version,
+        "processed_bibcodes": sorted(processed_bibcodes),
+        "cumulative_cost_usd": cumulative_cost_usd,
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    logger.debug(
+        "Checkpoint saved: %d bibcodes, $%.4f cumulative",
+        len(processed_bibcodes),
+        cumulative_cost_usd,
+    )
+    return path
+
+
+# ---------------------------------------------------------------------------
+# DB idempotency helpers
+# ---------------------------------------------------------------------------
+
+
+def _get_existing_bibcodes(
+    conn: psycopg.Connection,
+    extraction_version: str,
+) -> set[str]:
+    """Return bibcodes that already have extractions for the given version."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT bibcode FROM extractions WHERE extraction_version = %s",
+            (extraction_version,),
+        )
+        return {row[0] for row in cur.fetchall()}
+
+
+# ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
 
@@ -710,33 +784,73 @@ def run_extraction_pipeline(
             logger.info("No papers found for extraction")
             return 0
 
-        # 2. Budget check
+        # 2. Load checkpoint and filter already-processed bibcodes
+        checkpoint = _load_checkpoint(output_dir, extraction_version)
+        processed_bibcodes: set[str] = checkpoint["processed_bibcodes"]
+        cumulative_cost_usd: float = checkpoint["cumulative_cost_usd"]
+
+        # Query DB for bibcodes that already have extractions (idempotency)
+        existing_in_db = _get_existing_bibcodes(conn, extraction_version)
+        skip_bibcodes = processed_bibcodes | existing_in_db
+
+        original_count = len(cohort)
+        cohort = [r for r in cohort if r.bibcode not in skip_bibcodes]
+        skipped = original_count - len(cohort)
+        if skipped > 0:
+            logger.info(
+                "Skipped %d already-processed bibcodes (%d from checkpoint, %d from DB)",
+                skipped,
+                len(processed_bibcodes),
+                len(existing_in_db),
+            )
+
+        if not cohort:
+            logger.info("All papers already processed — nothing to do")
+            return 0
+
+        # 3. Budget check on remaining cohort
         est = estimate_cost(len(cohort), model)
         logger.info(
-            "Estimated cost: $%.2f for %d papers with %s (budget: $%.2f)",
+            "Estimated cost: $%.2f for %d papers with %s (budget: $%.2f, cumulative: $%.2f)",
             est,
             len(cohort),
             model,
             budget_usd,
+            cumulative_cost_usd,
         )
-        if est > budget_usd:
+        if est + cumulative_cost_usd > budget_usd:
             raise ValueError(
-                f"Estimated cost ${est:.2f} exceeds budget ${budget_usd:.2f}. "
+                f"Estimated cost ${est:.2f} + cumulative ${cumulative_cost_usd:.2f} "
+                f"exceeds budget ${budget_usd:.2f}. "
                 f"Reduce pilot_size, switch to a cheaper model, or raise budget_usd."
             )
 
         total_loaded = 0
         output_path = Path(output_dir)
+        budget_threshold = 0.8 * budget_usd
 
-        # 3. Process in batches
+        # 4. Process in batches
         for batch_start in range(0, len(cohort), batch_size):
             batch_reqs = cohort[batch_start : batch_start + batch_size]
             batch_num = batch_start // batch_size + 1
 
+            # Check cumulative cost against 80% budget threshold before submitting
+            if cumulative_cost_usd >= budget_threshold:
+                msg = (
+                    f"Cumulative cost ${cumulative_cost_usd:.2f} has reached 80% of "
+                    f"budget ${budget_usd:.2f}. Halting extraction pipeline."
+                )
+                logger.warning(msg)
+                _save_checkpoint(
+                    output_dir, extraction_version, processed_bibcodes, cumulative_cost_usd
+                )
+                raise ValueError(msg)
+
             logger.info(
-                "Processing batch %d (%d papers)",
+                "Processing batch %d (%d papers, cumulative cost: $%.4f)",
                 batch_num,
                 len(batch_reqs),
+                cumulative_cost_usd,
             )
 
             # Submit
@@ -757,6 +871,34 @@ def run_extraction_pipeline(
                 extraction_version=extraction_version,
             )
             total_loaded += loaded
+
+            # Update checkpoint: mark batch bibcodes as processed, accumulate cost
+            batch_bibcodes = {r.bibcode for r in batch_reqs}
+            processed_bibcodes |= batch_bibcodes
+            batch_cost = estimate_cost(len(batch_reqs), model)
+            cumulative_cost_usd += batch_cost
+            _save_checkpoint(
+                output_dir, extraction_version, processed_bibcodes, cumulative_cost_usd
+            )
+
+            logger.info(
+                "Batch %d complete: %d rows loaded, cumulative cost: $%.4f",
+                batch_num,
+                loaded,
+                cumulative_cost_usd,
+            )
+
+            # Post-batch budget check
+            if cumulative_cost_usd >= budget_threshold:
+                msg = (
+                    f"Cumulative cost ${cumulative_cost_usd:.2f} has reached 80% of "
+                    f"budget ${budget_usd:.2f}. Halting extraction pipeline."
+                )
+                logger.warning(msg)
+                _save_checkpoint(
+                    output_dir, extraction_version, processed_bibcodes, cumulative_cost_usd
+                )
+                raise ValueError(msg)
 
         logger.info(
             "Extraction pipeline complete: %d total rows loaded",

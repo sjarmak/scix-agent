@@ -22,6 +22,13 @@ from scix.db import get_connection
 
 logger = logging.getLogger(__name__)
 
+
+class BudgetExceededError(Exception):
+    """Raised when cumulative extraction cost reaches the budget threshold."""
+
+    pass
+
+
 EXTRACTION_VERSION = "v1"
 EXTRACTION_TYPES = ("methods", "datasets", "instruments", "materials")
 
@@ -844,7 +851,7 @@ def run_extraction_pipeline(
                 _save_checkpoint(
                     output_dir, extraction_version, processed_bibcodes, cumulative_cost_usd
                 )
-                raise ValueError(msg)
+                raise BudgetExceededError(msg)
 
             logger.info(
                 "Processing batch %d (%d papers, cumulative cost: $%.4f)",
@@ -898,7 +905,7 @@ def run_extraction_pipeline(
                 _save_checkpoint(
                     output_dir, extraction_version, processed_bibcodes, cumulative_cost_usd
                 )
-                raise ValueError(msg)
+                raise BudgetExceededError(msg)
 
         logger.info(
             "Extraction pipeline complete: %d total rows loaded",

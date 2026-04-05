@@ -18,8 +18,10 @@ from scix.mcp_server import _log_query
 class TestMigrationDDL:
     """Verify the migration file contains the expected schema."""
 
+    MIGRATION_FILE = "migrations/016_query_log.sql"
+
     def test_migration_file_creates_query_log_table(self) -> None:
-        with open("migrations/013_query_log.sql") as f:
+        with open(self.MIGRATION_FILE) as f:
             sql = f.read()
         assert "CREATE TABLE" in sql
         assert "query_log" in sql
@@ -35,7 +37,7 @@ class TestMigrationDDL:
             assert col in sql, f"Missing column: {col}"
 
     def test_migration_has_indexes(self) -> None:
-        with open("migrations/013_query_log.sql") as f:
+        with open(self.MIGRATION_FILE) as f:
             sql = f.read()
         assert "idx_query_log_tool_name" in sql
         assert "idx_query_log_created_at" in sql

@@ -17,6 +17,7 @@ import pytest
 from scix.extract import (
     EXTRACTION_TYPES,
     EXTRACTION_VERSION,
+    BudgetExceededError,
     ExtractionRequest,
     ExtractionRow,
     _SYSTEM_PROMPT,
@@ -684,7 +685,7 @@ class TestPipelineCheckpointing:
         with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
             from scix.extract import run_extraction_pipeline
 
-            with pytest.raises(ValueError, match="budget"):
+            with pytest.raises(BudgetExceededError, match="budget"):
                 run_extraction_pipeline(
                     dsn="test",
                     pilot_size=10,

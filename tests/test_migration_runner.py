@@ -44,13 +44,14 @@ class TestMigrationFileIntegrity:
         assert "version INT PRIMARY KEY" in content or "version INT" in content
 
     def test_all_migrations_contiguous(self) -> None:
-        """Versions 1-19 should all be present with no gaps."""
+        """All migration versions should be present with no gaps."""
         versions = set()
         for f in self._migration_files():
             match = re.match(r"^(\d+)_", f.name)
             if match:
                 versions.add(int(match.group(1)))
-        expected = set(range(1, 21))
+        max_version = max(versions)
+        expected = set(range(1, max_version + 1))
         assert versions == expected, f"Missing: {expected - versions}, Extra: {versions - expected}"
 
     def test_016_is_query_log(self) -> None:

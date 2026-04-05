@@ -50,7 +50,7 @@ class TestMigrationFileIntegrity:
             match = re.match(r"^(\d+)_", f.name)
             if match:
                 versions.add(int(match.group(1)))
-        expected = set(range(1, 20))
+        expected = set(range(1, 21))
         assert versions == expected, f"Missing: {expected - versions}, Extra: {versions - expected}"
 
     def test_016_is_query_log(self) -> None:

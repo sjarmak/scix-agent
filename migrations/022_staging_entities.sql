@@ -6,42 +6,12 @@
 
 BEGIN;
 
--- ---------------------------------------------------------------------------
--- 1. Public entity tables (promote targets)
--- ---------------------------------------------------------------------------
-
-CREATE TABLE IF NOT EXISTS public.entities (
-    id SERIAL PRIMARY KEY,
-    canonical_name TEXT NOT NULL,
-    entity_type TEXT NOT NULL,
-    discipline TEXT,
-    source TEXT NOT NULL,
-    properties JSONB DEFAULT '{}',
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE (canonical_name, entity_type, source)
-);
-
-CREATE INDEX IF NOT EXISTS idx_entities_type ON public.entities(entity_type);
-CREATE INDEX IF NOT EXISTS idx_entities_source ON public.entities(source);
-
-CREATE TABLE IF NOT EXISTS public.entity_identifiers (
-    entity_id INT NOT NULL REFERENCES public.entities(id),
-    id_scheme TEXT NOT NULL,
-    external_id TEXT NOT NULL,
-    is_primary BOOLEAN DEFAULT false,
-    PRIMARY KEY (id_scheme, external_id)
-);
-
-CREATE TABLE IF NOT EXISTS public.entity_aliases (
-    entity_id INT NOT NULL REFERENCES public.entities(id),
-    alias TEXT NOT NULL,
-    alias_source TEXT,
-    PRIMARY KEY (entity_id, alias)
-);
+-- Public entity tables (entities, entity_identifiers, entity_aliases) are
+-- created by migration 021_entity_graph.sql. This migration only adds
+-- their staging counterparts and the promote function.
 
 -- ---------------------------------------------------------------------------
--- 2. Staging entity tables (no FK enforcement)
+-- 1. Staging entity tables (no FK enforcement)
 -- ---------------------------------------------------------------------------
 
 CREATE SCHEMA IF NOT EXISTS staging;

@@ -28,6 +28,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scix.db import get_connection
 from scix.dictionary import bulk_load
+from scix.harvest_utils import (
+    HarvestRunLog,
+    upsert_entity,
+    upsert_entity_alias,
+    upsert_entity_identifier,
+)
 from scix.http_client import ResilientClient
 
 logger = logging.getLogger(__name__)
@@ -365,62 +371,6 @@ def parse_pds4_products(
     return entries
 
 
-def _start_harvest_run(
-    conn: "psycopg.Connection",
-    product_types: tuple[str, ...],
-) -> int:
-    """Insert a harvest_runs row with status='running'. Returns the run id."""
-    import psycopg
-
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO harvest_runs (source, status, config)
-            VALUES ('pds4', 'running', %(config)s)
-            RETURNING id
-            """,
-            {"config": json.dumps({"product_types": list(product_types)})},
-        )
-        run_id: int = cur.fetchone()[0]
-    conn.commit()
-    return run_id
-
-
-def _finish_harvest_run(
-    conn: "psycopg.Connection",
-    run_id: int,
-    *,
-    records_fetched: int,
-    records_upserted: int,
-    counts: dict[str, int],
-    status: str = "completed",
-    error_message: str | None = None,
-) -> None:
-    """Update a harvest_runs row with final status."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE harvest_runs
-            SET finished_at = now(),
-                status = %(status)s,
-                records_fetched = %(records_fetched)s,
-                records_upserted = %(records_upserted)s,
-                counts = %(counts)s,
-                error_message = %(error_message)s
-            WHERE id = %(run_id)s
-            """,
-            {
-                "run_id": run_id,
-                "status": status,
-                "records_fetched": records_fetched,
-                "records_upserted": records_upserted,
-                "counts": json.dumps(counts),
-                "error_message": error_message,
-            },
-        )
-    conn.commit()
-
-
 def _write_entity_graph(
     conn: "psycopg.Connection",
     entries: list[dict[str, Any]],
@@ -432,58 +382,32 @@ def _write_entity_graph(
     """
     count = 0
     for entry in entries:
-        with conn.cursor() as cur:
-            # Upsert entity
-            cur.execute(
-                """
-                INSERT INTO entities
-                    (canonical_name, entity_type, discipline, source,
-                     harvest_run_id, properties)
-                VALUES (%(canonical_name)s, %(entity_type)s, 'planetary_science',
-                        'pds4', %(harvest_run_id)s, %(properties)s)
-                ON CONFLICT (canonical_name, entity_type, source) DO UPDATE SET
-                    discipline = EXCLUDED.discipline,
-                    harvest_run_id = EXCLUDED.harvest_run_id,
-                    properties = EXCLUDED.properties,
-                    updated_at = NOW()
-                RETURNING id
-                """,
-                {
-                    "canonical_name": entry["canonical_name"],
-                    "entity_type": entry["entity_type"],
-                    "harvest_run_id": harvest_run_id,
-                    "properties": json.dumps(entry.get("metadata", {})),
-                },
+        entity_id = upsert_entity(
+            conn,
+            canonical_name=entry["canonical_name"],
+            entity_type=entry["entity_type"],
+            source="pds4",
+            discipline="planetary_science",
+            harvest_run_id=harvest_run_id,
+            properties=entry.get("metadata", {}),
+        )
+
+        if entry.get("external_id"):
+            upsert_entity_identifier(
+                conn,
+                entity_id=entity_id,
+                id_scheme="pds_urn",
+                external_id=entry["external_id"],
+                is_primary=True,
             )
-            entity_id: int = cur.fetchone()[0]
 
-            # Upsert PDS URN identifier
-            if entry.get("external_id"):
-                cur.execute(
-                    """
-                    INSERT INTO entity_identifiers
-                        (entity_id, id_scheme, external_id, is_primary)
-                    VALUES (%(entity_id)s, 'pds_urn', %(external_id)s, true)
-                    ON CONFLICT (id_scheme, external_id) DO UPDATE SET
-                        entity_id = EXCLUDED.entity_id,
-                        is_primary = EXCLUDED.is_primary
-                    """,
-                    {
-                        "entity_id": entity_id,
-                        "external_id": entry["external_id"],
-                    },
-                )
-
-            # Upsert aliases
-            for alias in entry.get("aliases", []):
-                cur.execute(
-                    """
-                    INSERT INTO entity_aliases (entity_id, alias, alias_source)
-                    VALUES (%(entity_id)s, %(alias)s, 'pds4')
-                    ON CONFLICT (entity_id, alias) DO NOTHING
-                    """,
-                    {"entity_id": entity_id, "alias": alias},
-                )
+        for alias in entry.get("aliases", []):
+            upsert_entity_alias(
+                conn,
+                entity_id=entity_id,
+                alias=alias,
+                alias_source="pds4",
+            )
 
         count += 1
 
@@ -665,40 +589,27 @@ def run_harvest(
         return counts
 
     conn = get_connection(dsn)
-    run_id: int | None = None
+    run_log = HarvestRunLog(conn, "pds4")
     try:
-        # Log harvest run start
-        run_id = _start_harvest_run(conn, product_types)
+        run_log.start(config={"product_types": list(product_types)})
 
         # Backward-compatible: write to entity_dictionary
         records_upserted = bulk_load(conn, all_entries, discipline="planetary_science")
 
         # Write to entity graph tables
-        _write_entity_graph(conn, all_entries, run_id)
-        rel_count = _write_relationships(conn, all_entries, run_id)
+        _write_entity_graph(conn, all_entries, run_log.run_id)
+        rel_count = _write_relationships(conn, all_entries, run_log.run_id)
 
-        # Finalize harvest run
-        _finish_harvest_run(
-            conn,
-            run_id,
+        run_log.complete(
             records_fetched=records_fetched,
             records_upserted=records_upserted,
             counts=counts,
         )
     except Exception as exc:
-        if run_id is not None:
-            try:
-                _finish_harvest_run(
-                    conn,
-                    run_id,
-                    records_fetched=records_fetched,
-                    records_upserted=0,
-                    counts=counts,
-                    status="failed",
-                    error_message=str(exc),
-                )
-            except Exception:
-                logger.exception("Failed to update harvest_run on error")
+        try:
+            run_log.fail(str(exc))
+        except Exception:
+            logger.exception("Failed to update harvest_run on error")
         raise
     finally:
         conn.close()

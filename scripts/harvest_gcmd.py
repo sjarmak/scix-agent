@@ -33,6 +33,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scix.db import get_connection
 from scix.dictionary import bulk_load
+from scix.harvest_utils import (
+    HarvestRunLog,
+    upsert_entity,
+    upsert_entity_alias,
+    upsert_entity_identifier,
+)
 from scix.http_client import ResilientClient
 
 logger = logging.getLogger(__name__)
@@ -417,81 +423,6 @@ def harvest_all(
 # ---------------------------------------------------------------------------
 
 
-def _create_harvest_run(
-    conn: Any,
-    schemes: list[str] | None,
-) -> int:
-    """Insert a harvest_runs row with status='running'. Returns the run id."""
-    config_json = json.dumps({"schemes": schemes})
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO harvest_runs (source, status, config)
-            VALUES ('gcmd', 'running', %(config)s)
-            RETURNING id
-            """,
-            {"config": config_json},
-        )
-        run_id: int = cur.fetchone()[0]
-    conn.commit()
-    return run_id
-
-
-def _complete_harvest_run(
-    conn: Any,
-    run_id: int,
-    *,
-    records_fetched: int,
-    records_upserted: int,
-    counts: dict[str, int],
-) -> None:
-    """Update a harvest_runs row to status='completed'."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE harvest_runs
-            SET status = 'completed',
-                finished_at = now(),
-                records_fetched = %(fetched)s,
-                records_upserted = %(upserted)s,
-                counts = %(counts)s
-            WHERE id = %(id)s
-            """,
-            {
-                "id": run_id,
-                "fetched": records_fetched,
-                "upserted": records_upserted,
-                "counts": json.dumps(counts),
-            },
-        )
-    conn.commit()
-
-
-def _fail_harvest_run(
-    conn: Any,
-    run_id: int,
-    error_message: str,
-) -> None:
-    """Update a harvest_runs row to status='failed'."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE harvest_runs
-            SET status = 'failed',
-                finished_at = now(),
-                error_message = %(msg)s
-            WHERE id = %(id)s
-            """,
-            {"id": run_id, "msg": error_message},
-        )
-    conn.commit()
-
-
-# ---------------------------------------------------------------------------
-# Entity graph writes
-# ---------------------------------------------------------------------------
-
-
 def _write_entity_graph(
     conn: Any,
     entries: list[dict[str, Any]],
@@ -503,13 +434,7 @@ def _write_entity_graph(
     """
     count = 0
     for entry in entries:
-        canonical_name = entry["canonical_name"]
-        entity_type = entry["entity_type"]
-        source = entry["source"]
-        external_id = entry.get("external_id")
-        aliases = entry.get("aliases", [])
         metadata = entry.get("metadata", {})
-
         properties = {
             "gcmd_scheme": metadata.get("gcmd_scheme", ""),
             "gcmd_hierarchy": metadata.get("gcmd_hierarchy", ""),
@@ -519,53 +444,32 @@ def _write_entity_graph(
         if "long_name" in metadata:
             properties["long_name"] = metadata["long_name"]
 
-        with conn.cursor() as cur:
-            # Upsert into entities
-            cur.execute(
-                """
-                INSERT INTO entities
-                    (canonical_name, entity_type, discipline, source, harvest_run_id, properties)
-                VALUES (%(name)s, %(type)s, 'earth_science', %(source)s, %(run_id)s, %(props)s)
-                ON CONFLICT (canonical_name, entity_type, source) DO UPDATE SET
-                    discipline = 'earth_science',
-                    harvest_run_id = %(run_id)s,
-                    properties = %(props)s,
-                    updated_at = now()
-                RETURNING id
-                """,
-                {
-                    "name": canonical_name,
-                    "type": entity_type,
-                    "source": source,
-                    "run_id": harvest_run_id,
-                    "props": json.dumps(properties),
-                },
+        entity_id = upsert_entity(
+            conn,
+            canonical_name=entry["canonical_name"],
+            entity_type=entry["entity_type"],
+            source=entry["source"],
+            discipline="earth_science",
+            harvest_run_id=harvest_run_id,
+            properties=properties,
+        )
+
+        if entry.get("external_id"):
+            upsert_entity_identifier(
+                conn,
+                entity_id=entity_id,
+                id_scheme="gcmd_uuid",
+                external_id=entry["external_id"],
+                is_primary=True,
             )
-            entity_id = cur.fetchone()[0]
 
-            # Upsert entity_identifiers with id_scheme='gcmd_uuid'
-            if external_id:
-                cur.execute(
-                    """
-                    INSERT INTO entity_identifiers (entity_id, id_scheme, external_id, is_primary)
-                    VALUES (%(eid)s, 'gcmd_uuid', %(ext_id)s, true)
-                    ON CONFLICT (id_scheme, external_id) DO UPDATE SET
-                        entity_id = %(eid)s,
-                        is_primary = true
-                    """,
-                    {"eid": entity_id, "ext_id": external_id},
-                )
-
-            # Upsert entity_aliases
-            for alias in aliases:
-                cur.execute(
-                    """
-                    INSERT INTO entity_aliases (entity_id, alias, alias_source)
-                    VALUES (%(eid)s, %(alias)s, 'gcmd')
-                    ON CONFLICT (entity_id, alias) DO NOTHING
-                    """,
-                    {"eid": entity_id, "alias": alias},
-                )
+        for alias in entry.get("aliases", []):
+            upsert_entity_alias(
+                conn,
+                entity_id=entity_id,
+                alias=alias,
+                alias_source="gcmd",
+            )
 
         count += 1
 
@@ -612,16 +516,15 @@ def run_harvest(
         return len(entries)
 
     conn = get_connection(dsn)
-    harvest_run_id: int | None = None
+    run_log = HarvestRunLog(conn, "gcmd")
     try:
-        # Create harvest run record
-        harvest_run_id = _create_harvest_run(conn, schemes)
+        run_log.start(config={"schemes": schemes})
 
         # Backward-compatible: write to entity_dictionary
         dict_count = bulk_load(conn, entries, discipline="earth_science")
 
         # Write to entity graph tables
-        graph_count = _write_entity_graph(conn, entries, harvest_run_id)
+        graph_count = _write_entity_graph(conn, entries, run_log.run_id)
 
         # Build per-type counts for harvest_runs.counts
         type_counts = {}
@@ -629,20 +532,16 @@ def run_harvest(
             et = entry["entity_type"]
             type_counts[et] = type_counts.get(et, 0) + 1
 
-        # Complete harvest run
-        _complete_harvest_run(
-            conn,
-            harvest_run_id,
+        run_log.complete(
             records_fetched=len(entries),
             records_upserted=graph_count,
             counts=type_counts,
         )
     except Exception as exc:
-        if harvest_run_id is not None:
-            try:
-                _fail_harvest_run(conn, harvest_run_id, str(exc))
-            except Exception:
-                logger.warning("Failed to update harvest_run status to 'failed'")
+        try:
+            run_log.fail(str(exc))
+        except Exception:
+            logger.warning("Failed to update harvest_run status to 'failed'")
         raise
     finally:
         conn.close()

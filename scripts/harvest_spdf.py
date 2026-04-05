@@ -33,6 +33,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scix.db import get_connection
 from scix.dictionary import bulk_load
+from scix.harvest_utils import (
+    HarvestRunLog,
+    upsert_entity,
+    upsert_entity_identifier,
+    upsert_entity_relationship,
+)
 from scix.http_client import ResilientClient
 
 logger = logging.getLogger(__name__)
@@ -291,195 +297,6 @@ def parse_datasets(
 # ---------------------------------------------------------------------------
 
 
-def _create_harvest_run(conn: Any, config: dict[str, Any] | None = None) -> int:
-    """Create a harvest_runs row with status='running'.
-
-    Args:
-        conn: Database connection.
-        config: Optional config JSONB.
-
-    Returns:
-        The harvest_run id.
-    """
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO harvest_runs (source, status, config)
-            VALUES (%s, 'running', %s)
-            RETURNING id
-            """,
-            (SOURCE, json.dumps(config or {})),
-        )
-        run_id: int = cur.fetchone()[0]
-    conn.commit()
-    return run_id
-
-
-def _complete_harvest_run(
-    conn: Any,
-    run_id: int,
-    *,
-    records_fetched: int,
-    records_upserted: int,
-    counts: dict[str, int],
-) -> None:
-    """Mark a harvest_run as completed with counts.
-
-    Args:
-        conn: Database connection.
-        run_id: The harvest_run id.
-        records_fetched: Total records fetched from API.
-        records_upserted: Total records written to DB.
-        counts: Breakdown of counts by type.
-    """
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE harvest_runs
-            SET finished_at = now(),
-                status = 'completed',
-                records_fetched = %s,
-                records_upserted = %s,
-                counts = %s
-            WHERE id = %s
-            """,
-            (records_fetched, records_upserted, json.dumps(counts), run_id),
-        )
-    conn.commit()
-
-
-def _fail_harvest_run(conn: Any, run_id: int, error_message: str) -> None:
-    """Mark a harvest_run as failed.
-
-    Args:
-        conn: Database connection.
-        run_id: The harvest_run id.
-        error_message: Error description.
-    """
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            UPDATE harvest_runs
-            SET finished_at = now(),
-                status = 'failed',
-                error_message = %s
-            WHERE id = %s
-            """,
-            (error_message, run_id),
-        )
-    conn.commit()
-
-
-def _upsert_entity(
-    conn: Any,
-    *,
-    canonical_name: str,
-    entity_type: str,
-    source: str,
-    discipline: str,
-    harvest_run_id: int,
-    properties: dict[str, Any] | None = None,
-) -> int:
-    """Upsert an entity and return its id.
-
-    Args:
-        conn: Database connection.
-        canonical_name: Entity canonical name.
-        entity_type: Entity type string.
-        source: Source identifier.
-        discipline: Discipline tag.
-        harvest_run_id: Associated harvest run.
-        properties: Optional JSONB properties.
-
-    Returns:
-        The entity id.
-    """
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO entities (canonical_name, entity_type, discipline, source,
-                                  harvest_run_id, properties)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT (canonical_name, entity_type, source) DO UPDATE SET
-                discipline = EXCLUDED.discipline,
-                harvest_run_id = EXCLUDED.harvest_run_id,
-                properties = EXCLUDED.properties,
-                updated_at = NOW()
-            RETURNING id
-            """,
-            (
-                canonical_name,
-                entity_type,
-                discipline,
-                source,
-                harvest_run_id,
-                json.dumps(properties or {}),
-            ),
-        )
-        return cur.fetchone()[0]
-
-
-def _upsert_entity_identifier(
-    conn: Any,
-    *,
-    entity_id: int,
-    id_scheme: str,
-    external_id: str,
-    is_primary: bool = False,
-) -> None:
-    """Upsert an entity identifier.
-
-    Args:
-        conn: Database connection.
-        entity_id: The entity's id.
-        id_scheme: Identifier scheme (e.g. 'spase_resource_id').
-        external_id: The external identifier value.
-        is_primary: Whether this is the primary identifier.
-    """
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO entity_identifiers (entity_id, id_scheme, external_id, is_primary)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (id_scheme, external_id) DO UPDATE SET
-                entity_id = EXCLUDED.entity_id,
-                is_primary = EXCLUDED.is_primary
-            """,
-            (entity_id, id_scheme, external_id, is_primary),
-        )
-
-
-def _upsert_entity_relationship(
-    conn: Any,
-    *,
-    subject_entity_id: int,
-    predicate: str,
-    object_entity_id: int,
-    source: str,
-    harvest_run_id: int,
-) -> None:
-    """Upsert an entity relationship.
-
-    Args:
-        conn: Database connection.
-        subject_entity_id: Subject entity id.
-        predicate: Relationship predicate.
-        object_entity_id: Object entity id.
-        source: Source identifier.
-        harvest_run_id: Associated harvest run.
-    """
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO entity_relationships
-                (subject_entity_id, predicate, object_entity_id, source, harvest_run_id)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (subject_entity_id, predicate, object_entity_id) DO NOTHING
-            """,
-            (subject_entity_id, predicate, object_entity_id, source, harvest_run_id),
-        )
-
-
 def _upsert_dataset(
     conn: Any,
     *,
@@ -585,13 +402,14 @@ def store_harvest(
         Dict of counts by category.
     """
     total_fetched = len(observatories) + len(instruments) + len(datasets)
-    run_id = _create_harvest_run(conn, config={"source_url": CDAWEB_BASE})
+    run_log = HarvestRunLog(conn, SOURCE)
+    run_id = run_log.start(config={"source_url": CDAWEB_BASE})
 
     try:
         # --- Observatories ---
         obs_name_to_id: dict[str, int] = {}
         for obs in observatories:
-            eid = _upsert_entity(
+            eid = upsert_entity(
                 conn,
                 canonical_name=obs["name"],
                 entity_type="observatory",
@@ -603,7 +421,7 @@ def store_harvest(
             obs_name_to_id[obs["name"]] = eid
 
             if "spase_resource_id" in obs:
-                _upsert_entity_identifier(
+                upsert_entity_identifier(
                     conn,
                     entity_id=eid,
                     id_scheme="spase_resource_id",
@@ -620,7 +438,7 @@ def store_harvest(
         inst_observatory_map: dict[str, set[str]] = {}
 
         for inst in instruments:
-            eid = _upsert_entity(
+            eid = upsert_entity(
                 conn,
                 canonical_name=inst["name"],
                 entity_type="instrument",
@@ -632,7 +450,7 @@ def store_harvest(
             inst_name_to_id[inst["name"]] = eid
 
             if "spase_resource_id" in inst:
-                _upsert_entity_identifier(
+                upsert_entity_identifier(
                     conn,
                     entity_id=eid,
                     id_scheme="spase_resource_id",
@@ -721,7 +539,7 @@ def store_harvest(
                                         obs_inst_pairs.add((inst_eid, obs_eid))
 
         for inst_eid, obs_eid in obs_inst_pairs:
-            _upsert_entity_relationship(
+            upsert_entity_relationship(
                 conn,
                 subject_entity_id=inst_eid,
                 predicate="at_observatory",
@@ -745,9 +563,7 @@ def store_harvest(
             "instrument_observatory_links": len(obs_inst_pairs),
         }
 
-        _complete_harvest_run(
-            conn,
-            run_id,
+        run_log.complete(
             records_fetched=total_fetched,
             records_upserted=total_upserted,
             counts=counts,
@@ -756,7 +572,7 @@ def store_harvest(
         return counts
 
     except Exception:
-        _fail_harvest_run(conn, run_id, error_message=str(sys.exc_info()[1]))
+        run_log.fail(str(sys.exc_info()[1]))
         raise
 
 

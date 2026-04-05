@@ -397,7 +397,7 @@ class TestFetchPds4Page:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
 
-        result = fetch_pds4_page("investigation", start=0, limit=10)
+        result = fetch_pds4_page("investigation", limit=10)
         assert result["summary"]["hits"] == 1
         assert len(result["data"]) == 1
 
@@ -448,13 +448,20 @@ class TestDownloadPds4Context:
 
     @patch("harvest_pds4.fetch_pds4_page")
     def test_handles_pagination(self, mock_fetch: MagicMock) -> None:
-        """Two pages of results should be concatenated."""
-        page1 = _make_api_response(SAMPLE_INVESTIGATIONS[:2], total_hits=3)
+        """Two pages of results should be concatenated via cursor pagination."""
+        # Page 1: 2 products with sort values, total_hits=3
+        page1_products = [
+            {**p, "sort": [f"sort_val_{i}"]} for i, p in enumerate(SAMPLE_INVESTIGATIONS[:2])
+        ]
+        page1 = _make_api_response(page1_products, total_hits=3)
         page2 = _make_api_response(SAMPLE_INVESTIGATIONS[2:], total_hits=3)
         mock_fetch.side_effect = [page1, page2]
 
         result = download_pds4_context(("investigation",))
         assert len(result["investigation"]) == 3
+        # Second call should use search_after from last product's sort values
+        _, kwargs = mock_fetch.call_args_list[1]
+        assert kwargs.get("search_after") == ["sort_val_1"]
 
     @patch("harvest_pds4.fetch_pds4_page")
     def test_single_type_filter(self, mock_fetch: MagicMock) -> None:

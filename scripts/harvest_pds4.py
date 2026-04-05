@@ -59,7 +59,7 @@ REQUEST_FIELDS: tuple[str, ...] = (
     "pds:Target.pds:description",
 )
 
-PAGE_SIZE = 500
+PAGE_SIZE = 2000
 MAX_RETRIES = 3
 
 # Regex to extract parenthesised abbreviations from titles
@@ -149,16 +149,20 @@ def extract_aliases(title: str, properties: dict[str, Any]) -> list[str]:
 def fetch_pds4_page(
     context_type: str,
     *,
-    start: int = 0,
     limit: int = PAGE_SIZE,
+    search_after: list[str] | None = None,
 ) -> dict[str, Any]:
     """Fetch a single page of PDS4 context products from the Registry API.
+
+    Uses cursor-based pagination via the ``search-after`` query parameter.
+    The PDS Registry API does not support offset-based ``start`` parameters.
 
     Args:
         context_type: One of ``PRODUCT_TYPE_MAP`` keys (investigation,
             instrument, target).
-        start: Pagination offset.
-        limit: Page size.
+        limit: Page size (default 2000, large enough for most collections).
+        search_after: Sort values from the last product of the previous page,
+            used for cursor-based pagination. None for the first page.
 
     Returns:
         Parsed JSON response dict with ``summary`` and ``data`` keys.
@@ -171,12 +175,13 @@ def fetch_pds4_page(
         f"pds:Identification_Area.pds:logical_identifier like "
         f'"urn:nasa:pds:context:{urn_segment}:*"'
     )
-    params = {
+    params: dict[str, str] = {
         "q": q,
-        "start": str(start),
         "limit": str(limit),
         "fields": ",".join(REQUEST_FIELDS),
     }
+    if search_after is not None:
+        params["search-after"] = ",".join(search_after)
     url = f"{PDS_API_BASE}?{urllib.parse.urlencode(params, safe=':*,.')}"
 
     for attempt in range(1, MAX_RETRIES + 1):
@@ -234,26 +239,17 @@ def download_pds4_context(
             )
 
         products: list[dict[str, Any]] = []
-        start = 0
+        search_after: list[str] | None = None
 
-        # First page to get total hits
-        page = fetch_pds4_page(ptype, start=start, limit=PAGE_SIZE)
-        total_hits = page.get("summary", {}).get("hits", 0)
-        products.extend(page.get("data", []))
-        logger.info(
-            "PDS4 %s: %d total hits, fetched %d",
-            ptype,
-            total_hits,
-            len(products),
-        )
-
-        # Fetch remaining pages
-        while len(products) < total_hits:
-            start = len(products)
-            page = fetch_pds4_page(ptype, start=start, limit=PAGE_SIZE)
+        # Fetch pages using cursor-based pagination
+        while True:
+            page = fetch_pds4_page(ptype, limit=PAGE_SIZE, search_after=search_after)
+            total_hits = page.get("summary", {}).get("hits", 0)
             batch = page.get("data", [])
+
             if not batch:
                 break
+
             products.extend(batch)
             logger.info(
                 "PDS4 %s: fetched %d / %d",
@@ -261,6 +257,27 @@ def download_pds4_context(
                 len(products),
                 total_hits,
             )
+
+            # If we got all results, we are done
+            if len(products) >= total_hits:
+                break
+
+            # Extract sort values from the last product for cursor pagination
+            last_product = batch[-1]
+            sort_values = last_product.get("sort", None)
+            if sort_values is None:
+                # Fallback: use the product id as sort cursor
+                last_id = last_product.get("id", "")
+                if last_id:
+                    search_after = [last_id]
+                else:
+                    logger.warning(
+                        "PDS4 %s: no sort values in response, stopping pagination",
+                        ptype,
+                    )
+                    break
+            else:
+                search_after = [str(v) for v in sort_values]
 
         results[ptype] = products
         logger.info("PDS4 %s: downloaded %d products total", ptype, len(products))

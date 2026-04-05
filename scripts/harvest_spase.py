@@ -22,14 +22,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import csv
-import io
 import logging
 import re
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -37,10 +33,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scix.db import get_connection
 from scix.dictionary import bulk_load
+from scix.harvest_utils import (
+    HarvestRunLog,
+    upsert_entity,
+    upsert_entity_alias,
+    upsert_entity_identifier,
+)
+from scix.http_client import ResilientClient
 
 logger = logging.getLogger(__name__)
 
-SPASE_VERSION = "2.7.0"
+SPASE_VERSION = "2.7.1"
 BASE_URL = (
     "https://raw.githubusercontent.com/spase-group/spase-base-model"
     f"/master/spase-base-{SPASE_VERSION}"
@@ -86,6 +89,26 @@ REGION_SUB_LISTS: frozenset[str] = frozenset(
 )
 
 
+# ---------------------------------------------------------------------------
+# Module-level client (lazy init)
+# ---------------------------------------------------------------------------
+
+_client: ResilientClient | None = None
+
+
+def _get_client() -> ResilientClient:
+    """Return a shared ResilientClient instance."""
+    global _client
+    if _client is None:
+        _client = ResilientClient(
+            user_agent="scix-experiments/1.0",
+            max_retries=3,
+            backoff_base=2.0,
+            rate_limit=10.0,
+        )
+    return _client
+
+
 def camel_case_split(term: str) -> str:
     """Split a PascalCase/camelCase term into space-separated words.
 
@@ -109,52 +132,20 @@ def camel_case_split(term: str) -> str:
     return result
 
 
-def download_tab_file(url: str) -> str:
-    """Download a tab-delimited file from GitHub with retry.
+def _download_tab_file(url: str) -> str:
+    """Download a tab-delimited file from GitHub using ResilientClient.
 
     Args:
         url: URL of the tab file.
 
     Returns:
         Raw text content of the file.
-
-    Raises:
-        urllib.error.URLError: If the download fails after retries.
     """
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "scix-experiments/1.0"},
-            )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = resp.read().decode("utf-8")
-
-            logger.info("Downloaded %s: %d bytes", url.split("/")[-1], len(data))
-            return data
-
-        except (urllib.error.URLError, OSError) as exc:
-            if attempt < max_retries:
-                wait = 2**attempt
-                logger.warning(
-                    "Download attempt %d/%d failed: %s — retrying in %ds",
-                    attempt,
-                    max_retries,
-                    exc,
-                    wait,
-                )
-                time.sleep(wait)
-            else:
-                logger.error(
-                    "Failed to download %s after %d attempts: %s",
-                    url,
-                    max_retries,
-                    exc,
-                )
-                raise
-
-    raise RuntimeError("download_tab_file: unexpected exit from retry loop")
+    client = _get_client()
+    response = client.get(url)
+    data = response.text
+    logger.info("Downloaded %s: %d bytes", url.split("/")[-1], len(data))
+    return data
 
 
 def parse_tab_file(content: str) -> list[dict[str, str]]:
@@ -415,8 +406,8 @@ def download_and_parse(
     Returns:
         List of entity dictionary entry dicts.
     """
-    member_text = download_tab_file(MEMBER_URL)
-    dictionary_text = download_tab_file(DICTIONARY_URL)
+    member_text = _download_tab_file(MEMBER_URL)
+    dictionary_text = _download_tab_file(DICTIONARY_URL)
 
     member_rows = parse_tab_file(member_text)
     dictionary_rows = parse_tab_file(dictionary_text)
@@ -443,6 +434,57 @@ def download_and_parse(
     return entries
 
 
+def _write_entity_graph(
+    conn: Any,
+    entries: list[dict[str, Any]],
+    harvest_run_id: int,
+) -> int:
+    """Write entries to entities, entity_identifiers, and entity_aliases tables.
+
+    Returns the number of entities upserted.
+    """
+    count = 0
+    for entry in entries:
+        metadata = entry.get("metadata", {})
+        properties: dict[str, Any] = {
+            "spase_list": metadata.get("spase_list", ""),
+        }
+        if "description" in metadata:
+            properties["description"] = metadata["description"]
+
+        entity_id = upsert_entity(
+            conn,
+            canonical_name=entry["canonical_name"],
+            entity_type=entry["entity_type"],
+            source=entry["source"],
+            discipline=DISCIPLINE,
+            harvest_run_id=harvest_run_id,
+            properties=properties,
+        )
+
+        if entry.get("external_id"):
+            upsert_entity_identifier(
+                conn,
+                entity_id=entity_id,
+                id_scheme="spase_resource_id",
+                external_id=entry["external_id"],
+                is_primary=True,
+            )
+
+        for alias in entry.get("aliases", []):
+            upsert_entity_alias(
+                conn,
+                entity_id=entity_id,
+                alias=alias,
+                alias_source="spase",
+            )
+
+        count += 1
+
+    conn.commit()
+    return count
+
+
 def run_harvest(
     dsn: str | None = None,
     vocabulary: str = "all",
@@ -450,7 +492,7 @@ def run_harvest(
     """Run the full SPASE vocabulary harvest pipeline.
 
     Downloads vocabulary files, parses entries, and loads them into
-    entity_dictionary with discipline='heliophysics'.
+    entity_dictionary and entity graph tables. Logs harvest run to harvest_runs.
 
     Args:
         dsn: Database connection string. Uses SCIX_DSN or default if None.
@@ -464,18 +506,43 @@ def run_harvest(
     entries = download_and_parse(vocabulary=vocabulary)
 
     conn = get_connection(dsn)
+    run_log = HarvestRunLog(conn, "spase")
     try:
-        count = bulk_load(conn, entries, discipline=DISCIPLINE)
+        run_log.start(config={"vocabulary": vocabulary})
+
+        # Backward-compatible: write to entity_dictionary
+        dict_count = bulk_load(conn, entries, discipline=DISCIPLINE)
+
+        # Write to entity graph tables
+        graph_count = _write_entity_graph(conn, entries, run_log.run_id)
+
+        # Build per-type counts for harvest_runs.counts
+        type_counts: dict[str, int] = {}
+        for entry in entries:
+            et = entry["entity_type"]
+            type_counts[et] = type_counts.get(et, 0) + 1
+
+        run_log.complete(
+            records_fetched=len(entries),
+            records_upserted=graph_count,
+            counts=type_counts,
+        )
+    except Exception as exc:
+        try:
+            run_log.fail(str(exc))
+        except Exception:
+            logger.warning("Failed to update harvest_run status to 'failed'")
+        raise
     finally:
         conn.close()
 
     elapsed = time.monotonic() - t0
     logger.info(
         "SPASE harvest complete: %d entries loaded in %.1fs",
-        count,
+        dict_count,
         elapsed,
     )
-    return count
+    return dict_count
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -13,9 +13,7 @@ import argparse
 import logging
 import sys
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
@@ -24,8 +22,30 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scix.db import get_connection
 from scix.dictionary import bulk_load
+from scix.harvest_utils import HarvestRunLog
+from scix.http_client import ResilientClient
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level client (lazy init)
+# ---------------------------------------------------------------------------
+
+_client: ResilientClient | None = None
+
+
+def _get_client() -> ResilientClient:
+    """Return a shared ResilientClient instance."""
+    global _client
+    if _client is None:
+        _client = ResilientClient(
+            user_agent="scix-experiments/1.0",
+            max_retries=3,
+            backoff_base=2.0,
+            rate_limit=10.0,
+        )
+    return _client
+
 
 TAP_SYNC_URL = "http://tapvizier.cds.unistra.fr/TAPVizieR/tap/sync"
 
@@ -45,8 +65,8 @@ def query_tap_vizier(
 ) -> bytes:
     """Query TAPVizieR sync endpoint and return raw VOTable XML bytes.
 
-    Posts an ADQL query to the TAP sync endpoint with retry and exponential
-    backoff.
+    Uses ResilientClient with built-in retry and exponential backoff.
+    Sends the ADQL query as GET parameters.
 
     Args:
         url: TAPVizieR sync endpoint URL.
@@ -54,56 +74,23 @@ def query_tap_vizier(
 
     Returns:
         Raw VOTable XML response bytes.
-
-    Raises:
-        urllib.error.URLError: If the request fails after retries.
     """
-    params = urllib.parse.urlencode(
-        {
-            "REQUEST": "doQuery",
-            "LANG": "ADQL",
-            "FORMAT": "votable",
-            "MAXREC": "200000",
-            "QUERY": query,
-        }
-    ).encode("utf-8")
-
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        try:
-            req = urllib.request.Request(
-                url,
-                data=params,
-                headers={"User-Agent": "scix-experiments/1.0"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                data = resp.read()
-
-            logger.info("TAP query returned %d bytes", len(data))
-            return data
-
-        except (urllib.error.URLError, OSError) as exc:
-            if attempt < max_retries:
-                wait = 2**attempt
-                logger.warning(
-                    "TAP query attempt %d/%d failed: %s — retrying in %ds",
-                    attempt,
-                    max_retries,
-                    exc,
-                    wait,
-                )
-                time.sleep(wait)
-            else:
-                logger.error(
-                    "Failed to query TAPVizieR after %d attempts: %s",
-                    max_retries,
-                    exc,
-                )
-                raise
-
-    # Unreachable, but satisfies type checker
-    raise RuntimeError("query_tap_vizier: unexpected exit from retry loop")
+    client = _get_client()
+    params = {
+        "REQUEST": "doQuery",
+        "LANG": "ADQL",
+        "FORMAT": "votable",
+        "MAXREC": "200000",
+        "QUERY": query,
+    }
+    response = client.get(url, params=params)
+    # response may be requests.Response or CachedResponse
+    if hasattr(response, "content"):
+        data = response.content
+    else:
+        data = response.text.encode("utf-8")
+    logger.info("TAP query returned %d bytes", len(data))
+    return data
 
 
 def parse_votable_catalogs(xml_bytes: bytes) -> list[dict[str, str]]:
@@ -234,7 +221,8 @@ def run_harvest(dsn: str | None = None) -> int:
     """Run the full VizieR catalog harvest pipeline.
 
     Queries TAPVizieR, parses the VOTable response, builds dictionary
-    entries, and loads them into entity_dictionary.
+    entries, and loads them into entity_dictionary. Logs harvest run
+    to harvest_runs.
 
     Args:
         dsn: Database connection string. Uses SCIX_DSN or default if None.
@@ -249,8 +237,20 @@ def run_harvest(dsn: str | None = None) -> int:
     entries = build_dictionary_entries(catalogs)
 
     conn = get_connection(dsn)
+    run_log = HarvestRunLog(conn, "vizier")
     try:
+        run_log.start()
         count = bulk_load(conn, entries)
+        run_log.complete(
+            records_fetched=len(entries),
+            records_upserted=count,
+        )
+    except Exception as exc:
+        try:
+            run_log.fail(str(exc))
+        except Exception:
+            logger.warning("Failed to update harvest_run status to 'failed'")
+        raise
     finally:
         conn.close()
 

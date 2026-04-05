@@ -13,8 +13,6 @@ import json
 import logging
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -22,61 +20,49 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scix.db import get_connection
 from scix.dictionary import bulk_load
+from scix.harvest_utils import HarvestRunLog
+from scix.http_client import ResilientClient
 
 logger = logging.getLogger(__name__)
 
 ASCL_URL = "https://ascl.net/code/json"
 
+# ---------------------------------------------------------------------------
+# Module-level client (lazy init)
+# ---------------------------------------------------------------------------
+
+_client: ResilientClient | None = None
+
+
+def _get_client() -> ResilientClient:
+    """Return a shared ResilientClient instance."""
+    global _client
+    if _client is None:
+        _client = ResilientClient(
+            user_agent="scix-experiments/1.0",
+            max_retries=3,
+            backoff_base=2.0,
+            rate_limit=10.0,
+        )
+    return _client
+
 
 def download_ascl_catalog(url: str = ASCL_URL) -> list[dict[str, Any]]:
     """Download the ASCL JSON catalog and return parsed entries.
 
-    Uses urllib.request with retry and exponential backoff.
+    Uses ResilientClient with built-in retry and exponential backoff.
 
     Args:
         url: URL of the ASCL JSON endpoint.
 
     Returns:
         List of raw ASCL entry dicts.
-
-    Raises:
-        urllib.error.URLError: If the download fails after retries.
     """
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "scix-experiments/1.0"},
-            )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = resp.read()
-
-            entries = json.loads(data)
-            logger.info("Downloaded ASCL catalog: %d entries", len(entries))
-            return entries
-
-        except (urllib.error.URLError, OSError) as exc:
-            if attempt < max_retries:
-                wait = 2**attempt
-                logger.warning(
-                    "Download attempt %d/%d failed: %s — retrying in %ds",
-                    attempt,
-                    max_retries,
-                    exc,
-                    wait,
-                )
-                time.sleep(wait)
-            else:
-                logger.error(
-                    "Failed to download ASCL catalog after %d attempts: %s",
-                    max_retries,
-                    exc,
-                )
-                raise
-
-    # Unreachable, but satisfies type checker
-    raise RuntimeError("download_ascl_catalog: unexpected exit from retry loop")
+    client = _get_client()
+    response = client.get(url)
+    entries = response.json()
+    logger.info("Downloaded ASCL catalog: %d entries", len(entries))
+    return entries
 
 
 def parse_ascl_entries(raw_entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -140,6 +126,7 @@ def run_harvest(dsn: str | None = None) -> int:
     """Run the full ASCL harvest pipeline.
 
     Downloads the catalog, parses entries, and loads them into entity_dictionary.
+    Logs harvest run to harvest_runs.
 
     Args:
         dsn: Database connection string. Uses SCIX_DSN or default if None.
@@ -153,8 +140,20 @@ def run_harvest(dsn: str | None = None) -> int:
     entries = parse_ascl_entries(raw_entries)
 
     conn = get_connection(dsn)
+    run_log = HarvestRunLog(conn, "ascl")
     try:
+        run_log.start()
         count = bulk_load(conn, entries)
+        run_log.complete(
+            records_fetched=len(entries),
+            records_upserted=count,
+        )
+    except Exception as exc:
+        try:
+            run_log.fail(str(exc))
+        except Exception:
+            logger.warning("Failed to update harvest_run status to 'failed'")
+        raise
     finally:
         conn.close()
 

@@ -14,8 +14,6 @@ import argparse
 import logging
 import sys
 import time
-import urllib.error
-import urllib.request
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -24,6 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scix.db import get_connection
 from scix.dictionary import bulk_load
+from scix.harvest_utils import HarvestRunLog
+from scix.http_client import ResilientClient
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +130,26 @@ class _FacilityTableParser(HTMLParser):
             self.current_cell += data
 
 
+# ---------------------------------------------------------------------------
+# Module-level client (lazy init)
+# ---------------------------------------------------------------------------
+
+_client: ResilientClient | None = None
+
+
+def _get_client() -> ResilientClient:
+    """Return a shared ResilientClient instance."""
+    global _client
+    if _client is None:
+        _client = ResilientClient(
+            user_agent="scix-experiments/1.0",
+            max_retries=3,
+            backoff_base=2.0,
+            rate_limit=10.0,
+        )
+    return _client
+
+
 def _classify_header(header: str) -> str | None:
     """Map a table header string to a normalized metadata key.
 
@@ -145,52 +165,19 @@ def _classify_header(header: str) -> str | None:
 def download_aas_facilities(url: str = AAS_FACILITIES_URL) -> str:
     """Download the AAS Facility Keywords HTML page.
 
-    Uses urllib.request with retry and exponential backoff.
+    Uses ResilientClient with built-in retry and exponential backoff.
 
     Args:
         url: URL of the AAS facility keywords page.
 
     Returns:
         Raw HTML string.
-
-    Raises:
-        urllib.error.URLError: If the download fails after retries.
     """
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "scix-experiments/1.0"},
-            )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = resp.read()
-
-            html = data.decode("utf-8", errors="replace")
-            logger.info("Downloaded AAS facility keywords: %d bytes", len(data))
-            return html
-
-        except (urllib.error.URLError, OSError) as exc:
-            if attempt < max_retries:
-                wait = 2**attempt
-                logger.warning(
-                    "Download attempt %d/%d failed: %s — retrying in %ds",
-                    attempt,
-                    max_retries,
-                    exc,
-                    wait,
-                )
-                time.sleep(wait)
-            else:
-                logger.error(
-                    "Failed to download AAS facility keywords after %d attempts: %s",
-                    max_retries,
-                    exc,
-                )
-                raise
-
-    # Unreachable, but satisfies type checker
-    raise RuntimeError("download_aas_facilities: unexpected exit from retry loop")
+    client = _get_client()
+    response = client.get(url)
+    html = response.text
+    logger.info("Downloaded AAS facility keywords: %d chars", len(html))
+    return html
 
 
 def parse_aas_facilities(html: str) -> list[dict[str, Any]]:
@@ -292,6 +279,7 @@ def run_harvest(dsn: str | None = None, url: str = AAS_FACILITIES_URL) -> int:
     """Run the full AAS facility keywords harvest pipeline.
 
     Downloads the page, parses entries, and loads them into entity_dictionary.
+    Logs harvest run to harvest_runs.
 
     Args:
         dsn: Database connection string. Uses SCIX_DSN or default if None.
@@ -306,8 +294,20 @@ def run_harvest(dsn: str | None = None, url: str = AAS_FACILITIES_URL) -> int:
     entries = parse_aas_facilities(html)
 
     conn = get_connection(dsn)
+    run_log = HarvestRunLog(conn, "aas")
     try:
+        run_log.start()
         count = bulk_load(conn, entries)
+        run_log.complete(
+            records_fetched=len(entries),
+            records_upserted=count,
+        )
+    except Exception as exc:
+        try:
+            run_log.fail(str(exc))
+        except Exception:
+            logger.warning("Failed to update harvest_run status to 'failed'")
+        raise
     finally:
         conn.close()
 

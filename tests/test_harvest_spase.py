@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -20,6 +20,8 @@ from harvest_spase import (
     REGION_SUB_LISTS,
     REGION_TOP_LIST,
     SOURCE,
+    SPASE_VERSION,
+    _write_entity_graph,
     camel_case_split,
     download_and_parse,
     parse_instrument_entries,
@@ -378,39 +380,65 @@ class TestParseRegionEntries:
 
 
 # ---------------------------------------------------------------------------
+# Helper to mock ResilientClient downloads
+# ---------------------------------------------------------------------------
+
+
+def _mock_client_for_tabs() -> MagicMock:
+    """Create a mock ResilientClient that returns sample tab data."""
+    mock_client = MagicMock()
+    member_response = MagicMock()
+    member_response.text = SAMPLE_MEMBER_TAB
+    dict_response = MagicMock()
+    dict_response.text = SAMPLE_DICTIONARY_TAB
+    mock_client.get.side_effect = [member_response, dict_response]
+    return mock_client
+
+
+# ---------------------------------------------------------------------------
+# Tests for SPASE_VERSION
+# ---------------------------------------------------------------------------
+
+
+class TestSpaseVersion:
+    def test_version_is_2_7_1(self) -> None:
+        assert SPASE_VERSION == "2.7.1"
+
+
+# ---------------------------------------------------------------------------
 # Tests for download_and_parse (with mocked downloads)
 # ---------------------------------------------------------------------------
 
 
 class TestDownloadAndParse:
-    @patch("harvest_spase.download_tab_file")
-    def test_all_vocabularies(self, mock_download: MagicMock) -> None:
-        mock_download.side_effect = [SAMPLE_MEMBER_TAB, SAMPLE_DICTIONARY_TAB]
+    @patch("harvest_spase._get_client")
+    def test_all_vocabularies(self, mock_get_client: MagicMock) -> None:
+        mock_get_client.return_value = _mock_client_for_tabs()
         entries = download_and_parse(vocabulary="all")
         # Should have measurement + instrument + region entries
         types = {e["entity_type"] for e in entries}
         assert "observable" in types
         assert "instrument" in types
 
-    @patch("harvest_spase.download_tab_file")
-    def test_measurement_only(self, mock_download: MagicMock) -> None:
-        mock_download.side_effect = [SAMPLE_MEMBER_TAB, SAMPLE_DICTIONARY_TAB]
+    @patch("harvest_spase._get_client")
+    def test_measurement_only(self, mock_get_client: MagicMock) -> None:
+        mock_get_client.return_value = _mock_client_for_tabs()
         entries = download_and_parse(vocabulary="measurement")
         for entry in entries:
             assert entry["entity_type"] == "observable"
         # No instrument entries
         assert all(e["metadata"]["spase_list"] != "InstrumentType" for e in entries)
 
-    @patch("harvest_spase.download_tab_file")
-    def test_instrument_only(self, mock_download: MagicMock) -> None:
-        mock_download.side_effect = [SAMPLE_MEMBER_TAB, SAMPLE_DICTIONARY_TAB]
+    @patch("harvest_spase._get_client")
+    def test_instrument_only(self, mock_get_client: MagicMock) -> None:
+        mock_get_client.return_value = _mock_client_for_tabs()
         entries = download_and_parse(vocabulary="instrument")
         for entry in entries:
             assert entry["entity_type"] == "instrument"
 
-    @patch("harvest_spase.download_tab_file")
-    def test_region_only(self, mock_download: MagicMock) -> None:
-        mock_download.side_effect = [SAMPLE_MEMBER_TAB, SAMPLE_DICTIONARY_TAB]
+    @patch("harvest_spase._get_client")
+    def test_region_only(self, mock_get_client: MagicMock) -> None:
+        mock_get_client.return_value = _mock_client_for_tabs()
         entries = download_and_parse(vocabulary="region")
         for entry in entries:
             assert entry["entity_type"] == "observable"
@@ -423,23 +451,204 @@ class TestDownloadAndParse:
 
 
 class TestMain:
-    @patch("harvest_spase.download_tab_file")
-    def test_help(self, mock_download: MagicMock) -> None:
+    def test_help(self) -> None:
         with pytest.raises(SystemExit) as exc_info:
             main(["--help"])
         assert exc_info.value.code == 0
 
-    @patch("harvest_spase.download_tab_file")
-    def test_dry_run(self, mock_download: MagicMock) -> None:
-        mock_download.side_effect = [SAMPLE_MEMBER_TAB, SAMPLE_DICTIONARY_TAB]
+    @patch("harvest_spase._get_client")
+    def test_dry_run(self, mock_get_client: MagicMock) -> None:
+        mock_get_client.return_value = _mock_client_for_tabs()
         result = main(["--dry-run"])
         assert result == 0
 
-    @patch("harvest_spase.download_tab_file")
-    def test_dry_run_vocabulary_filter(self, mock_download: MagicMock) -> None:
-        mock_download.side_effect = [SAMPLE_MEMBER_TAB, SAMPLE_DICTIONARY_TAB]
+    @patch("harvest_spase._get_client")
+    def test_dry_run_vocabulary_filter(self, mock_get_client: MagicMock) -> None:
+        mock_get_client.return_value = _mock_client_for_tabs()
         result = main(["--dry-run", "--vocabulary", "instrument"])
         assert result == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests for _write_entity_graph
+# ---------------------------------------------------------------------------
+
+
+class TestWriteEntityGraph:
+    def test_calls_upsert_entity_for_each_entry(self) -> None:
+        mock_conn = MagicMock()
+        entries = [
+            _make_entry("MagneticField", "observable", spase_list="MeasurementType"),
+            _make_entry("Magnetometer", "instrument", spase_list="InstrumentType"),
+        ]
+        with (
+            patch("harvest_spase.upsert_entity", return_value=1) as mock_upsert,
+            patch("harvest_spase.upsert_entity_identifier") as mock_ident,
+            patch("harvest_spase.upsert_entity_alias") as mock_alias,
+        ):
+            count = _write_entity_graph(mock_conn, entries, harvest_run_id=42)
+
+        assert count == 2
+        assert mock_upsert.call_count == 2
+        mock_conn.commit.assert_called_once()
+
+    def test_upsert_entity_identifier_uses_spase_resource_id(self) -> None:
+        mock_conn = MagicMock()
+        entries = [
+            _make_entry("MagneticField", "observable", spase_list="MeasurementType"),
+        ]
+        with (
+            patch("harvest_spase.upsert_entity", return_value=7) as mock_upsert,
+            patch("harvest_spase.upsert_entity_identifier") as mock_ident,
+            patch("harvest_spase.upsert_entity_alias"),
+        ):
+            _write_entity_graph(mock_conn, entries, harvest_run_id=42)
+
+        mock_ident.assert_called_once_with(
+            mock_conn,
+            entity_id=7,
+            id_scheme="spase_resource_id",
+            external_id="spase:MeasurementType:MagneticField",
+            is_primary=True,
+        )
+
+    def test_upsert_entity_alias_called_for_aliases(self) -> None:
+        mock_conn = MagicMock()
+        entries = [
+            _make_entry("MagneticField", "observable", spase_list="MeasurementType"),
+        ]
+        with (
+            patch("harvest_spase.upsert_entity", return_value=7),
+            patch("harvest_spase.upsert_entity_identifier"),
+            patch("harvest_spase.upsert_entity_alias") as mock_alias,
+        ):
+            _write_entity_graph(mock_conn, entries, harvest_run_id=42)
+
+        # MagneticField -> alias "Magnetic Field"
+        mock_alias.assert_called_once_with(
+            mock_conn,
+            entity_id=7,
+            alias="Magnetic Field",
+            alias_source="spase",
+        )
+
+    def test_no_alias_for_single_word(self) -> None:
+        mock_conn = MagicMock()
+        entries = [
+            _make_entry("Dust", "observable", spase_list="MeasurementType"),
+        ]
+        with (
+            patch("harvest_spase.upsert_entity", return_value=1),
+            patch("harvest_spase.upsert_entity_identifier"),
+            patch("harvest_spase.upsert_entity_alias") as mock_alias,
+        ):
+            _write_entity_graph(mock_conn, entries, harvest_run_id=42)
+
+        mock_alias.assert_not_called()
+
+    def test_entity_properties_include_spase_list(self) -> None:
+        mock_conn = MagicMock()
+        entries = [
+            _make_entry(
+                "MagneticField",
+                "observable",
+                spase_list="MeasurementType",
+                definition="A field produced by magnets.",
+            ),
+        ]
+        with (
+            patch("harvest_spase.upsert_entity", return_value=1) as mock_upsert,
+            patch("harvest_spase.upsert_entity_identifier"),
+            patch("harvest_spase.upsert_entity_alias"),
+        ):
+            _write_entity_graph(mock_conn, entries, harvest_run_id=42)
+
+        call_kwargs = mock_upsert.call_args
+        props = call_kwargs.kwargs["properties"]
+        assert props["spase_list"] == "MeasurementType"
+        assert props["description"] == "A field produced by magnets."
+
+
+# ---------------------------------------------------------------------------
+# Tests for run_harvest with HarvestRunLog lifecycle
+# ---------------------------------------------------------------------------
+
+
+class TestRunHarvestLifecycle:
+    @patch("harvest_spase._get_client")
+    @patch("harvest_spase.get_connection")
+    @patch("harvest_spase.bulk_load", return_value=5)
+    @patch("harvest_spase._write_entity_graph", return_value=5)
+    @patch("harvest_spase.HarvestRunLog")
+    def test_harvest_run_log_lifecycle(
+        self,
+        MockRunLog: MagicMock,
+        mock_write_graph: MagicMock,
+        mock_bulk: MagicMock,
+        mock_get_conn: MagicMock,
+        mock_get_client: MagicMock,
+    ) -> None:
+        mock_get_client.return_value = _mock_client_for_tabs()
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+
+        mock_run_log = MagicMock()
+        mock_run_log.run_id = 99
+        MockRunLog.return_value = mock_run_log
+
+        from harvest_spase import run_harvest
+
+        count = run_harvest(dsn="test_dsn", vocabulary="all")
+
+        # HarvestRunLog created with source='spase'
+        MockRunLog.assert_called_once_with(mock_conn, "spase")
+        mock_run_log.start.assert_called_once()
+        mock_run_log.complete.assert_called_once()
+        # bulk_load called for backward compat
+        mock_bulk.assert_called_once()
+        # entity graph written
+        mock_write_graph.assert_called_once()
+
+    @patch("harvest_spase._get_client")
+    @patch("harvest_spase.get_connection")
+    @patch("harvest_spase.bulk_load", side_effect=RuntimeError("db error"))
+    @patch("harvest_spase.HarvestRunLog")
+    def test_harvest_run_log_fail_on_error(
+        self,
+        MockRunLog: MagicMock,
+        mock_bulk: MagicMock,
+        mock_get_conn: MagicMock,
+        mock_get_client: MagicMock,
+    ) -> None:
+        mock_get_client.return_value = _mock_client_for_tabs()
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+
+        mock_run_log = MagicMock()
+        mock_run_log.run_id = 99
+        MockRunLog.return_value = mock_run_log
+
+        from harvest_spase import run_harvest
+
+        with pytest.raises(RuntimeError, match="db error"):
+            run_harvest(dsn="test_dsn", vocabulary="all")
+
+        mock_run_log.fail.assert_called_once_with("db error")
+
+
+# ---------------------------------------------------------------------------
+# Tests for no urllib usage
+# ---------------------------------------------------------------------------
+
+
+class TestNoUrllib:
+    def test_no_urllib_imports(self) -> None:
+        """Verify harvest_spase does not import urllib."""
+        import harvest_spase
+        import inspect
+
+        source = inspect.getsource(harvest_spase)
+        assert "urllib" not in source
 
 
 # ---------------------------------------------------------------------------
@@ -458,10 +667,10 @@ class TestLiveDataCounts:
 
     @pytest.fixture(autouse=True)
     def _download(self) -> None:
-        from harvest_spase import download_tab_file, MEMBER_URL, DICTIONARY_URL
+        from harvest_spase import _download_tab_file, MEMBER_URL, DICTIONARY_URL
 
-        member_text = download_tab_file(MEMBER_URL)
-        dictionary_text = download_tab_file(DICTIONARY_URL)
+        member_text = _download_tab_file(MEMBER_URL)
+        dictionary_text = _download_tab_file(DICTIONARY_URL)
         self.member_rows = parse_tab_file(member_text)
         dict_rows = parse_tab_file(dictionary_text)
         self.definitions = _build_definition_map(dict_rows)

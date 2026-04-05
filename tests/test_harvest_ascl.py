@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import json
 import sys
-from io import BytesIO
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -59,13 +59,11 @@ SAMPLE_ASCL_ENTRIES: list[dict[str, Any]] = [
 ]
 
 
-def _make_urlopen_response(entries: list[dict[str, Any]]) -> MagicMock:
-    """Create a mock urllib response that returns JSON-encoded entries."""
-    data = json.dumps(entries).encode("utf-8")
+def _make_client_response(entries: list[dict[str, Any]]) -> MagicMock:
+    """Create a mock ResilientClient response that returns JSON entries."""
     mock_resp = MagicMock()
-    mock_resp.read.return_value = data
-    mock_resp.__enter__ = lambda self: self
-    mock_resp.__exit__ = MagicMock(return_value=False)
+    mock_resp.json.return_value = entries
+    mock_resp.text = json.dumps(entries)
     return mock_resp
 
 
@@ -176,34 +174,23 @@ class TestParseAsclEntries:
 class TestDownloadAsclCatalog:
     """Unit tests for download_ascl_catalog with mocked HTTP."""
 
-    @patch("harvest_ascl.urllib.request.urlopen")
-    def test_returns_parsed_json(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _make_urlopen_response(SAMPLE_ASCL_ENTRIES)
+    @patch("harvest_ascl._get_client")
+    def test_returns_parsed_json(self, mock_get_client: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client.get.return_value = _make_client_response(SAMPLE_ASCL_ENTRIES)
+        mock_get_client.return_value = mock_client
         result = download_ascl_catalog()
         assert len(result) == 5
         assert result[0]["title"] == "Astropy"
 
-    @patch("harvest_ascl.urllib.request.urlopen")
-    def test_retries_on_failure(self, mock_urlopen: MagicMock) -> None:
-        """First call fails, second succeeds."""
-        mock_urlopen.side_effect = [
-            urllib.error.URLError("temporary failure"),
-            _make_urlopen_response(SAMPLE_ASCL_ENTRIES),
-        ]
-        with patch("harvest_ascl.time.sleep"):
-            result = download_ascl_catalog()
-        assert len(result) == 5
+    @patch("harvest_ascl._get_client")
+    def test_raises_on_request_error(self, mock_get_client: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client.get.side_effect = requests.RequestException("persistent failure")
+        mock_get_client.return_value = mock_client
+        with pytest.raises(requests.RequestException):
+            download_ascl_catalog()
 
-    @patch("harvest_ascl.urllib.request.urlopen")
-    def test_raises_after_max_retries(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.side_effect = urllib.error.URLError("persistent failure")
-        with patch("harvest_ascl.time.sleep"):
-            with pytest.raises(urllib.error.URLError):
-                download_ascl_catalog()
-
-
-# Need to import urllib.error for the test above
-import urllib.error  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Unit tests: run_harvest (end-to-end with mocks)
@@ -213,6 +200,7 @@ import urllib.error  # noqa: E402
 class TestRunHarvest:
     """Unit tests for run_harvest with mocked download and DB."""
 
+    @patch("harvest_ascl.HarvestRunLog")
     @patch("harvest_ascl.get_connection")
     @patch("harvest_ascl.bulk_load")
     @patch("harvest_ascl.download_ascl_catalog")
@@ -221,11 +209,16 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
     ) -> None:
         mock_download.return_value = SAMPLE_ASCL_ENTRIES
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 5
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
 
         count = run_harvest(dsn="dbname=test")
 
@@ -238,6 +231,7 @@ class TestRunHarvest:
         assert all(e["entity_type"] == "software" for e in loaded_entries)
         assert all(e["source"] == "ascl" for e in loaded_entries)
 
+    @patch("harvest_ascl.HarvestRunLog")
     @patch("harvest_ascl.get_connection")
     @patch("harvest_ascl.bulk_load")
     @patch("harvest_ascl.download_ascl_catalog")
@@ -246,16 +240,22 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
     ) -> None:
         mock_download.return_value = SAMPLE_ASCL_ENTRIES
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 5
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
 
         run_harvest()
 
         mock_conn.close.assert_called_once()
 
+    @patch("harvest_ascl.HarvestRunLog")
     @patch("harvest_ascl.get_connection")
     @patch("harvest_ascl.bulk_load")
     @patch("harvest_ascl.download_ascl_catalog")
@@ -264,17 +264,23 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
     ) -> None:
         mock_download.return_value = SAMPLE_ASCL_ENTRIES
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.side_effect = RuntimeError("DB error")
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
 
         with pytest.raises(RuntimeError):
             run_harvest()
 
         mock_conn.close.assert_called_once()
 
+    @patch("harvest_ascl.HarvestRunLog")
     @patch("harvest_ascl.get_connection")
     @patch("harvest_ascl.bulk_load")
     @patch("harvest_ascl.download_ascl_catalog")
@@ -283,12 +289,17 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
     ) -> None:
         """Verify that an astropy-like entry has the correct structure."""
         mock_download.return_value = SAMPLE_ASCL_ENTRIES
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 5
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
 
         run_harvest()
 
@@ -297,6 +308,36 @@ class TestRunHarvest:
         assert astropy["external_id"] == "1304.002"
         assert astropy["metadata"]["bibcode"] == "2013A&A...558A..33A"
         assert "astropy" in astropy["aliases"]
+
+    @patch("harvest_ascl.HarvestRunLog")
+    @patch("harvest_ascl.get_connection")
+    @patch("harvest_ascl.bulk_load")
+    @patch("harvest_ascl.download_ascl_catalog")
+    def test_run_harvest_creates_harvest_run(
+        self,
+        mock_download: MagicMock,
+        mock_bulk_load: MagicMock,
+        mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
+    ) -> None:
+        """Verify harvest_runs record is created and completed."""
+        mock_download.return_value = SAMPLE_ASCL_ENTRIES
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_bulk_load.return_value = 5
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
+
+        run_harvest()
+
+        mock_run_log_cls.assert_called_once_with(mock_conn, "ascl")
+        mock_run_log.start.assert_called_once()
+        mock_run_log.complete.assert_called_once()
+        _, kwargs = mock_run_log.complete.call_args
+        assert kwargs["records_fetched"] == 5
+        assert kwargs["records_upserted"] == 5
 
 
 # ---------------------------------------------------------------------------

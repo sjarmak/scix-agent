@@ -20,6 +20,7 @@ import pytest
 from helpers import DSN
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from harvest_pwc_methods import download_methods, load_methods, parse_methods, run_pipeline
 
@@ -200,12 +201,12 @@ class TestDownloadMethods:
         dest = tmp_path / "sub" / "methods.json.gz"
         fake_data = gzip.compress(json.dumps([]).encode())
 
+        mock_client = MagicMock()
         mock_resp = MagicMock()
-        mock_resp.read.return_value = fake_data
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.content = fake_data
+        mock_client.get.return_value = mock_resp
 
-        with patch("harvest_pwc_methods.urllib.request.urlopen", return_value=mock_resp):
+        with patch("harvest_pwc_methods._get_client", return_value=mock_client):
             result = download_methods(dest=dest)
 
         assert result == dest
@@ -221,23 +222,65 @@ class TestDownloadMethods:
 class TestRunPipeline:
     """Unit tests for the full pipeline with mocked DB."""
 
-    def test_pipeline_with_local_file(self, tmp_path: Path) -> None:
+    @patch("harvest_pwc_methods.HarvestRunLog")
+    @patch("harvest_pwc_methods.get_connection")
+    @patch("harvest_pwc_methods.bulk_load")
+    def test_pipeline_with_local_file(
+        self,
+        mock_bulk_load: MagicMock,
+        mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
         """Pipeline parses local file and calls bulk_load."""
         methods = [_make_method(name=f"M{i}", full_name=f"Method {i}") for i in range(5)]
         data_path = _write_methods_gzip(methods, tmp_path / "methods.json.gz")
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_bulk_load.return_value = 5
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
 
-        with patch("harvest_pwc_methods.load_methods", return_value=5) as mock_load:
-            count = run_pipeline(data_path=data_path, dsn="fake")
+        count = run_pipeline(data_path=data_path, dsn="fake")
 
         assert count == 5
-        mock_load.assert_called_once()
-        loaded_entries = mock_load.call_args[0][0]
+        mock_bulk_load.assert_called_once()
+        loaded_entries = mock_bulk_load.call_args[0][1]
         assert len(loaded_entries) == 5
 
     def test_pipeline_file_not_found(self, tmp_path: Path) -> None:
         """Pipeline raises FileNotFoundError for missing file."""
         with pytest.raises(FileNotFoundError):
             run_pipeline(data_path=tmp_path / "nonexistent.json.gz")
+
+    @patch("harvest_pwc_methods.HarvestRunLog")
+    @patch("harvest_pwc_methods.get_connection")
+    @patch("harvest_pwc_methods.bulk_load")
+    def test_pipeline_creates_harvest_run(
+        self,
+        mock_bulk_load: MagicMock,
+        mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Verify harvest_runs record is created and completed."""
+        methods = [_make_method(name=f"M{i}", full_name=f"Method {i}") for i in range(5)]
+        data_path = _write_methods_gzip(methods, tmp_path / "methods.json.gz")
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_bulk_load.return_value = 5
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
+
+        run_pipeline(data_path=data_path, dsn="fake")
+
+        mock_run_log_cls.assert_called_once_with(mock_conn, "pwc")
+        mock_run_log.start.assert_called_once()
+        mock_run_log.complete.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

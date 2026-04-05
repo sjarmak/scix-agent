@@ -8,12 +8,12 @@ require a running scix database with migration 013 applied.
 from __future__ import annotations
 
 import sys
-import urllib.error
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -116,12 +116,11 @@ SAMPLE_VOTABLE_MISSING_DESC = b"""\
 """
 
 
-def _make_urlopen_response(data: bytes) -> MagicMock:
-    """Create a mock urllib response that returns the given bytes."""
+def _make_client_response(data: bytes) -> MagicMock:
+    """Create a mock ResilientClient response that returns the given bytes."""
     mock_resp = MagicMock()
-    mock_resp.read.return_value = data
-    mock_resp.__enter__ = lambda self: self
-    mock_resp.__exit__ = MagicMock(return_value=False)
+    mock_resp.content = data
+    mock_resp.text = data.decode("utf-8", errors="replace")
     return mock_resp
 
 
@@ -260,38 +259,37 @@ class TestBuildDictionaryEntries:
 class TestQueryTapVizier:
     """Unit tests for TAP query with mocked HTTP."""
 
-    @patch("harvest_vizier.urllib.request.urlopen")
-    def test_returns_response_bytes(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _make_urlopen_response(SAMPLE_VOTABLE_XML)
+    @patch("harvest_vizier._get_client")
+    def test_returns_response_bytes(self, mock_get_client: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client.get.return_value = _make_client_response(SAMPLE_VOTABLE_XML)
+        mock_get_client.return_value = mock_client
         result = query_tap_vizier()
         assert result == SAMPLE_VOTABLE_XML
 
-    @patch("harvest_vizier.urllib.request.urlopen")
-    def test_retries_on_failure(self, mock_urlopen: MagicMock) -> None:
-        """First call fails, second succeeds."""
-        mock_urlopen.side_effect = [
-            urllib.error.URLError("temporary failure"),
-            _make_urlopen_response(SAMPLE_VOTABLE_XML),
-        ]
-        with patch("harvest_vizier.time.sleep"):
-            result = query_tap_vizier()
-        assert result == SAMPLE_VOTABLE_XML
+    @patch("harvest_vizier._get_client")
+    def test_raises_on_request_error(self, mock_get_client: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client.get.side_effect = requests.RequestException("persistent failure")
+        mock_get_client.return_value = mock_client
+        with pytest.raises(requests.RequestException):
+            query_tap_vizier()
 
-    @patch("harvest_vizier.urllib.request.urlopen")
-    def test_raises_after_max_retries(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.side_effect = urllib.error.URLError("persistent failure")
-        with patch("harvest_vizier.time.sleep"):
-            with pytest.raises(urllib.error.URLError):
-                query_tap_vizier()
-
-    @patch("harvest_vizier.urllib.request.urlopen")
-    def test_sends_post_request(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.return_value = _make_urlopen_response(SAMPLE_VOTABLE_XML)
+    @patch("harvest_vizier._get_client")
+    def test_sends_query_params(self, mock_get_client: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client.get.return_value = _make_client_response(SAMPLE_VOTABLE_XML)
+        mock_get_client.return_value = mock_client
         query_tap_vizier()
-        call_args = mock_urlopen.call_args
-        request_obj = call_args[0][0]
-        assert request_obj.get_method() == "POST"
-        assert request_obj.data is not None
+        call_args = mock_client.get.call_args
+        params = (
+            call_args[1].get("params") or call_args[0][1]
+            if len(call_args[0]) > 1
+            else call_args[1].get("params")
+        )
+        assert params is not None
+        assert params["REQUEST"] == "doQuery"
+        assert params["LANG"] == "ADQL"
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +300,7 @@ class TestQueryTapVizier:
 class TestRunHarvest:
     """Unit tests for run_harvest with mocked download and DB."""
 
+    @patch("harvest_vizier.HarvestRunLog")
     @patch("harvest_vizier.get_connection")
     @patch("harvest_vizier.bulk_load")
     @patch("harvest_vizier.query_tap_vizier")
@@ -310,11 +309,16 @@ class TestRunHarvest:
         mock_query: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
     ) -> None:
         mock_query.return_value = SAMPLE_VOTABLE_XML
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 5
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
 
         count = run_harvest(dsn="dbname=test")
 
@@ -326,6 +330,7 @@ class TestRunHarvest:
         assert all(e["entity_type"] == "dataset" for e in loaded_entries)
         assert all(e["source"] == "vizier" for e in loaded_entries)
 
+    @patch("harvest_vizier.HarvestRunLog")
     @patch("harvest_vizier.get_connection")
     @patch("harvest_vizier.bulk_load")
     @patch("harvest_vizier.query_tap_vizier")
@@ -334,16 +339,22 @@ class TestRunHarvest:
         mock_query: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
     ) -> None:
         mock_query.return_value = SAMPLE_VOTABLE_XML
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 5
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
 
         run_harvest()
 
         mock_conn.close.assert_called_once()
 
+    @patch("harvest_vizier.HarvestRunLog")
     @patch("harvest_vizier.get_connection")
     @patch("harvest_vizier.bulk_load")
     @patch("harvest_vizier.query_tap_vizier")
@@ -352,17 +363,23 @@ class TestRunHarvest:
         mock_query: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
     ) -> None:
         mock_query.return_value = SAMPLE_VOTABLE_XML
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.side_effect = RuntimeError("DB error")
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
 
         with pytest.raises(RuntimeError):
             run_harvest()
 
         mock_conn.close.assert_called_once()
 
+    @patch("harvest_vizier.HarvestRunLog")
     @patch("harvest_vizier.get_connection")
     @patch("harvest_vizier.bulk_load")
     @patch("harvest_vizier.query_tap_vizier")
@@ -371,12 +388,17 @@ class TestRunHarvest:
         mock_query: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
     ) -> None:
         """Verify that a 2MASS-like entry has the correct structure."""
         mock_query.return_value = SAMPLE_VOTABLE_XML
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 5
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
 
         run_harvest()
 
@@ -386,6 +408,36 @@ class TestRunHarvest:
         assert two_mass["entity_type"] == "dataset"
         assert two_mass["source"] == "vizier"
         assert two_mass["metadata"]["utype"] == "catalog:main"
+
+    @patch("harvest_vizier.HarvestRunLog")
+    @patch("harvest_vizier.get_connection")
+    @patch("harvest_vizier.bulk_load")
+    @patch("harvest_vizier.query_tap_vizier")
+    def test_run_harvest_creates_harvest_run(
+        self,
+        mock_query: MagicMock,
+        mock_bulk_load: MagicMock,
+        mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
+    ) -> None:
+        """Verify harvest_runs record is created and completed."""
+        mock_query.return_value = SAMPLE_VOTABLE_XML
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_bulk_load.return_value = 5
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
+
+        run_harvest()
+
+        mock_run_log_cls.assert_called_once_with(mock_conn, "vizier")
+        mock_run_log.start.assert_called_once()
+        mock_run_log.complete.assert_called_once()
+        _, kwargs = mock_run_log.complete.call_args
+        assert kwargs["records_fetched"] == 5
+        assert kwargs["records_upserted"] == 5
 
 
 # ---------------------------------------------------------------------------

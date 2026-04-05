@@ -13,7 +13,6 @@ import argparse
 import logging
 import sys
 import time
-import urllib.parse
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any

@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import json
 import sys
-import urllib.error
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -321,55 +321,39 @@ class TestDownloadConcepts:
         result = download_concepts(dest=existing)
         assert result == existing
 
-    @patch("harvest_astromlab.urllib.request.urlopen")
-    def test_fetches_when_missing(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
+    @patch("harvest_astromlab._get_client")
+    def test_fetches_when_missing(self, mock_get_client: MagicMock, tmp_path: Path) -> None:
         dest = tmp_path / "concepts.csv"
+        mock_client = MagicMock()
         mock_resp = MagicMock()
-        mock_resp.read.return_value = SAMPLE_CSV.encode("utf-8")
-        mock_resp.__enter__ = lambda self: self
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
+        mock_resp.content = SAMPLE_CSV.encode("utf-8")
+        mock_client.get.return_value = mock_resp
+        mock_get_client.return_value = mock_client
 
         result = download_concepts(dest=dest)
         assert result == dest
         assert dest.exists()
         assert dest.read_text(encoding="utf-8") == SAMPLE_CSV
 
-    @patch("harvest_astromlab.urllib.request.urlopen")
-    def test_retries_on_failure(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
+    @patch("harvest_astromlab._get_client")
+    def test_raises_on_request_error(self, mock_get_client: MagicMock, tmp_path: Path) -> None:
         dest = tmp_path / "concepts.csv"
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = SAMPLE_CSV.encode("utf-8")
-        mock_resp.__enter__ = lambda self: self
-        mock_resp.__exit__ = MagicMock(return_value=False)
-
-        mock_urlopen.side_effect = [
-            urllib.error.URLError("temporary failure"),
-            mock_resp,
-        ]
-        with patch("harvest_astromlab.time.sleep"):
-            result = download_concepts(dest=dest)
-        assert result == dest
-        assert dest.exists()
-
-    @patch("harvest_astromlab.urllib.request.urlopen")
-    def test_raises_after_max_retries(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
-        dest = tmp_path / "concepts.csv"
-        mock_urlopen.side_effect = urllib.error.URLError("persistent failure")
-        with patch("harvest_astromlab.time.sleep"):
-            with pytest.raises(urllib.error.URLError):
-                download_concepts(dest=dest)
+        mock_client = MagicMock()
+        mock_client.get.side_effect = requests.RequestException("persistent failure")
+        mock_get_client.return_value = mock_client
+        with pytest.raises(requests.RequestException):
+            download_concepts(dest=dest)
 
     def test_skip_empty_file(self, tmp_path: Path) -> None:
         """An empty file (0 bytes) should NOT be treated as existing."""
         existing = tmp_path / "concepts.csv"
         existing.write_text("", encoding="utf-8")
-        with patch("harvest_astromlab.urllib.request.urlopen") as mock_urlopen:
+        with patch("harvest_astromlab._get_client") as mock_get_client:
+            mock_client = MagicMock()
             mock_resp = MagicMock()
-            mock_resp.read.return_value = SAMPLE_CSV.encode("utf-8")
-            mock_resp.__enter__ = lambda self: self
-            mock_resp.__exit__ = MagicMock(return_value=False)
-            mock_urlopen.return_value = mock_resp
+            mock_resp.content = SAMPLE_CSV.encode("utf-8")
+            mock_client.get.return_value = mock_resp
+            mock_get_client.return_value = mock_client
             result = download_concepts(dest=existing)
         assert result == existing
         assert existing.stat().st_size > 0
@@ -383,12 +367,14 @@ class TestDownloadConcepts:
 class TestRunPipeline:
     """Unit tests for run_pipeline with mocked download and DB."""
 
+    @patch("harvest_astromlab.HarvestRunLog")
     @patch("harvest_astromlab.get_connection")
     @patch("harvest_astromlab.bulk_load")
     def test_pipeline_with_local_file(
         self,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
         tmp_path: Path,
     ) -> None:
         csv_file = tmp_path / "concepts.csv"
@@ -396,6 +382,10 @@ class TestRunPipeline:
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 8
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
 
         count = run_pipeline(data_path=csv_file, dsn="dbname=test")
 
@@ -406,12 +396,14 @@ class TestRunPipeline:
         assert all(e["source"] == "astromlab" for e in loaded_entries)
         mock_conn.close.assert_called_once()
 
+    @patch("harvest_astromlab.HarvestRunLog")
     @patch("harvest_astromlab.get_connection")
     @patch("harvest_astromlab.bulk_load")
     def test_pipeline_closes_connection_on_error(
         self,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
         tmp_path: Path,
     ) -> None:
         csv_file = tmp_path / "concepts.csv"
@@ -419,39 +411,37 @@ class TestRunPipeline:
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.side_effect = RuntimeError("DB error")
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
 
         with pytest.raises(RuntimeError):
             run_pipeline(data_path=csv_file, dsn="dbname=test")
 
         mock_conn.close.assert_called_once()
 
-    @patch("harvest_astromlab.get_connection")
-    @patch("harvest_astromlab.bulk_load")
-    def test_pipeline_returns_zero_for_empty_file(
-        self,
-        mock_bulk_load: MagicMock,
-        mock_get_conn: MagicMock,
-        tmp_path: Path,
-    ) -> None:
+    def test_pipeline_returns_zero_for_empty_file(self, tmp_path: Path) -> None:
         empty_file = tmp_path / "empty.csv"
         empty_file.write_text("", encoding="utf-8")
 
         count = run_pipeline(data_path=empty_file, dsn="dbname=test")
 
         assert count == 0
-        mock_bulk_load.assert_not_called()
 
     def test_pipeline_raises_for_missing_file(self, tmp_path: Path) -> None:
         missing = tmp_path / "nonexistent.csv"
         with pytest.raises(FileNotFoundError):
             run_pipeline(data_path=missing, dsn="dbname=test")
 
+    @patch("harvest_astromlab.HarvestRunLog")
     @patch("harvest_astromlab.get_connection")
     @patch("harvest_astromlab.bulk_load")
     def test_pipeline_entity_types_are_correct(
         self,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
         tmp_path: Path,
     ) -> None:
         csv_file = tmp_path / "concepts.csv"
@@ -459,6 +449,10 @@ class TestRunPipeline:
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 8
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
 
         run_pipeline(data_path=csv_file, dsn="dbname=test")
 
@@ -470,3 +464,33 @@ class TestRunPipeline:
         assert by_name["Markov Chain Monte Carlo"]["entity_type"] == "method"
         assert by_name["VLA"]["entity_type"] == "instrument"
         assert by_name["2MASS"]["entity_type"] == "dataset"
+
+    @patch("harvest_astromlab.HarvestRunLog")
+    @patch("harvest_astromlab.get_connection")
+    @patch("harvest_astromlab.bulk_load")
+    def test_pipeline_creates_harvest_run(
+        self,
+        mock_bulk_load: MagicMock,
+        mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Verify harvest_runs record is created and completed."""
+        csv_file = tmp_path / "concepts.csv"
+        csv_file.write_text(SAMPLE_CSV, encoding="utf-8")
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_bulk_load.return_value = 8
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
+
+        run_pipeline(data_path=csv_file, dsn="dbname=test")
+
+        mock_run_log_cls.assert_called_once_with(mock_conn, "astromlab")
+        mock_run_log.start.assert_called_once()
+        mock_run_log.complete.assert_called_once()
+        _, kwargs = mock_run_log.complete.call_args
+        assert kwargs["records_fetched"] == 8
+        assert kwargs["records_upserted"] == 8

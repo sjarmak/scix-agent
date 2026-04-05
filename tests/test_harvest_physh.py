@@ -9,12 +9,12 @@ from __future__ import annotations
 import gzip
 import json
 import sys
-import urllib.error
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -244,55 +244,39 @@ class TestDownloadPhysh:
         assert "@graph" in result
         assert len(result["@graph"]) == len(SAMPLE_JSONLD["@graph"])
 
-    @patch("harvest_physh.urllib.request.urlopen")
-    def test_downloads_and_decompresses(self, mock_urlopen: MagicMock) -> None:
+    @patch("harvest_physh._get_client")
+    def test_downloads_and_decompresses(self, mock_get_client: MagicMock) -> None:
         raw = json.dumps(SAMPLE_JSONLD).encode("utf-8")
         compressed = gzip.compress(raw)
+        mock_client = MagicMock()
         mock_resp = MagicMock()
-        mock_resp.read.return_value = compressed
-        mock_resp.__enter__ = lambda self: self
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
+        mock_resp.content = compressed
+        mock_client.get.return_value = mock_resp
+        mock_get_client.return_value = mock_client
 
         result = download_physh()
         assert "@graph" in result
 
-    @patch("harvest_physh.urllib.request.urlopen")
-    def test_caches_after_download(self, mock_urlopen: MagicMock, tmp_path: Path) -> None:
+    @patch("harvest_physh._get_client")
+    def test_caches_after_download(self, mock_get_client: MagicMock, tmp_path: Path) -> None:
         raw = json.dumps(SAMPLE_JSONLD).encode("utf-8")
         compressed = gzip.compress(raw)
+        mock_client = MagicMock()
         mock_resp = MagicMock()
-        mock_resp.read.return_value = compressed
-        mock_resp.__enter__ = lambda self: self
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
+        mock_resp.content = compressed
+        mock_client.get.return_value = mock_resp
+        mock_get_client.return_value = mock_client
 
         download_physh(cache_dir=tmp_path)
         assert (tmp_path / "physh.json.gz").exists()
 
-    @patch("harvest_physh.urllib.request.urlopen")
-    def test_retries_on_failure(self, mock_urlopen: MagicMock) -> None:
-        raw = json.dumps(SAMPLE_JSONLD).encode("utf-8")
-        compressed = gzip.compress(raw)
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = compressed
-        mock_resp.__enter__ = lambda self: self
-        mock_resp.__exit__ = MagicMock(return_value=False)
-
-        mock_urlopen.side_effect = [
-            urllib.error.URLError("temporary failure"),
-            mock_resp,
-        ]
-        with patch("harvest_physh.time.sleep"):
-            result = download_physh()
-        assert "@graph" in result
-
-    @patch("harvest_physh.urllib.request.urlopen")
-    def test_raises_after_max_retries(self, mock_urlopen: MagicMock) -> None:
-        mock_urlopen.side_effect = urllib.error.URLError("persistent failure")
-        with patch("harvest_physh.time.sleep"):
-            with pytest.raises(urllib.error.URLError):
-                download_physh()
+    @patch("harvest_physh._get_client")
+    def test_raises_on_request_error(self, mock_get_client: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_client.get.side_effect = requests.RequestException("persistent failure")
+        mock_get_client.return_value = mock_client
+        with pytest.raises(requests.RequestException):
+            download_physh()
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +287,7 @@ class TestDownloadPhysh:
 class TestRunHarvest:
     """Unit tests for run_harvest with mocked download and DB."""
 
+    @patch("harvest_physh.HarvestRunLog")
     @patch("harvest_physh.get_connection")
     @patch("harvest_physh.bulk_load")
     @patch("harvest_physh.download_physh")
@@ -311,11 +296,16 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
     ) -> None:
         mock_download.return_value = SAMPLE_JSONLD
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 7
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
 
         count = run_harvest(dsn="dbname=test")
 
@@ -327,6 +317,7 @@ class TestRunHarvest:
         assert all(e["entity_type"] == "method" for e in loaded_entries)
         assert all(e["source"] == "physh" for e in loaded_entries)
 
+    @patch("harvest_physh.HarvestRunLog")
     @patch("harvest_physh.get_connection")
     @patch("harvest_physh.bulk_load")
     @patch("harvest_physh.download_physh")
@@ -335,16 +326,22 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
     ) -> None:
         mock_download.return_value = SAMPLE_JSONLD
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 7
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
 
         run_harvest()
 
         mock_conn.close.assert_called_once()
 
+    @patch("harvest_physh.HarvestRunLog")
     @patch("harvest_physh.get_connection")
     @patch("harvest_physh.bulk_load")
     @patch("harvest_physh.download_physh")
@@ -353,13 +350,48 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
     ) -> None:
         mock_download.return_value = SAMPLE_JSONLD
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.side_effect = RuntimeError("DB error")
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
 
         with pytest.raises(RuntimeError):
             run_harvest()
 
         mock_conn.close.assert_called_once()
+
+    @patch("harvest_physh.HarvestRunLog")
+    @patch("harvest_physh.get_connection")
+    @patch("harvest_physh.bulk_load")
+    @patch("harvest_physh.download_physh")
+    def test_run_harvest_creates_harvest_run(
+        self,
+        mock_download: MagicMock,
+        mock_bulk_load: MagicMock,
+        mock_get_conn: MagicMock,
+        mock_run_log_cls: MagicMock,
+    ) -> None:
+        """Verify harvest_runs record is created and completed."""
+        mock_download.return_value = SAMPLE_JSONLD
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_bulk_load.return_value = 7
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
+
+        run_harvest()
+
+        mock_run_log_cls.assert_called_once_with(mock_conn, "physh")
+        mock_run_log.start.assert_called_once()
+        mock_run_log.complete.assert_called_once()
+        _, kwargs = mock_run_log.complete.call_args
+        assert kwargs["records_fetched"] == 7
+        assert kwargs["records_upserted"] == 7

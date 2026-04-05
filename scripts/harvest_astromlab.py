@@ -16,8 +16,6 @@ import json
 import logging
 import sys
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scix.db import get_connection
 from scix.dictionary import bulk_load
+from scix.harvest_utils import HarvestRunLog
+from scix.http_client import ResilientClient
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,27 @@ ASTROMLAB_CONCEPTS_URL = (
 )
 
 _DEFAULT_DEST = Path("data/astromlab_concepts.csv")
+
+# ---------------------------------------------------------------------------
+# Module-level client (lazy init)
+# ---------------------------------------------------------------------------
+
+_client: ResilientClient | None = None
+
+
+def _get_client() -> ResilientClient:
+    """Return a shared ResilientClient instance."""
+    global _client
+    if _client is None:
+        _client = ResilientClient(
+            user_agent="scix-experiments/1.0",
+            max_retries=3,
+            backoff_base=2.0,
+            rate_limit=10.0,
+            timeout=120.0,
+        )
+    return _client
+
 
 # ---------------------------------------------------------------------------
 # Category -> entity_type mapping
@@ -100,6 +121,7 @@ def download_concepts(
     """Download the AstroMLab concept vocabulary from GitHub.
 
     Skips download if the destination file already exists and is non-empty.
+    Uses ResilientClient with built-in retry and exponential backoff.
 
     Args:
         dest: Path to save the downloaded file. Defaults to data/astromlab_concepts.csv.
@@ -107,9 +129,6 @@ def download_concepts(
 
     Returns:
         Path to the downloaded (or existing) file.
-
-    Raises:
-        urllib.error.URLError: If the download fails after retries.
     """
     if dest is None:
         dest = _DEFAULT_DEST
@@ -121,40 +140,17 @@ def download_concepts(
     dest.parent.mkdir(parents=True, exist_ok=True)
     logger.info("Downloading AstroMLab concepts from %s", url)
 
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "scix-experiments/1.0"},
-            )
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                data = resp.read()
+    client = _get_client()
+    response = client.get(url)
+    # response may be requests.Response or CachedResponse
+    if hasattr(response, "content"):
+        data = response.content
+    else:
+        data = response.text.encode("utf-8")
 
-            dest.write_bytes(data)
-            logger.info("Downloaded AstroMLab concepts: %d bytes -> %s", len(data), dest)
-            return dest
-
-        except (urllib.error.URLError, OSError) as exc:
-            if attempt < max_retries:
-                wait = 2**attempt
-                logger.warning(
-                    "Download attempt %d/%d failed: %s — retrying in %ds",
-                    attempt,
-                    max_retries,
-                    exc,
-                    wait,
-                )
-                time.sleep(wait)
-            else:
-                logger.error(
-                    "Failed to download AstroMLab concepts after %d attempts: %s",
-                    max_retries,
-                    exc,
-                )
-                raise
-
-    raise RuntimeError("download_concepts: unexpected exit from retry loop")
+    dest.write_bytes(data)
+    logger.info("Downloaded AstroMLab concepts: %d bytes -> %s", len(data), dest)
+    return dest
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +386,7 @@ def run_pipeline(
         1. Download concepts file (if not provided)
         2. Parse concept entries
         3. Load into entity_dictionary
+    Logs harvest run to harvest_runs.
 
     Args:
         data_path: Path to a local concepts file. Downloads if None.
@@ -412,7 +409,24 @@ def run_pipeline(
         logger.warning("No concept entries parsed — nothing to load")
         return 0
 
-    count = load_concepts(entries, dsn=dsn)
+    conn = get_connection(dsn)
+    run_log = HarvestRunLog(conn, "astromlab")
+    try:
+        run_log.start()
+        count = bulk_load(conn, entries)
+        run_log.complete(
+            records_fetched=len(entries),
+            records_upserted=count,
+        )
+        logger.info("Loaded %d AstroMLab concept entries into entity_dictionary", count)
+    except Exception as exc:
+        try:
+            run_log.fail(str(exc))
+        except Exception:
+            logger.warning("Failed to update harvest_run status to 'failed'")
+        raise
+    finally:
+        conn.close()
 
     elapsed = time.monotonic() - t0
     logger.info(

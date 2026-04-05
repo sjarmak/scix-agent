@@ -15,8 +15,6 @@ import json
 import logging
 import sys
 import time
-import urllib.error
-import urllib.request
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -25,11 +23,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scix.db import get_connection
 from scix.dictionary import bulk_load
+from scix.harvest_utils import HarvestRunLog
+from scix.http_client import ResilientClient
 
 logger = logging.getLogger(__name__)
 
 PHYSH_URL = "https://raw.githubusercontent.com/physh-org/PhySH/master/physh.json.gz"
 TECHNIQUES_FACET_ID = "https://doi.org/10.29172/fa2a6718-de5c-4c05-bf00-f169a55234d5"
+
+# ---------------------------------------------------------------------------
+# Module-level client (lazy init)
+# ---------------------------------------------------------------------------
+
+_client: ResilientClient | None = None
+
+
+def _get_client() -> ResilientClient:
+    """Return a shared ResilientClient instance."""
+    global _client
+    if _client is None:
+        _client = ResilientClient(
+            user_agent="scix-experiments/1.0",
+            max_retries=3,
+            backoff_base=2.0,
+            rate_limit=10.0,
+        )
+    return _client
+
 
 # Sub-facet UUIDs under Techniques
 _TECHNIQUE_SUBFACET_IDS = frozenset(
@@ -49,7 +69,8 @@ def download_physh(
     """Download and decompress the PhySH JSON-LD vocabulary.
 
     If *cache_dir* is provided and the file already exists there, reads from
-    cache instead of downloading.
+    cache instead of downloading. Uses ResilientClient with built-in retry
+    and exponential backoff.
 
     Args:
         url: URL of physh.json.gz on GitHub.
@@ -57,9 +78,6 @@ def download_physh(
 
     Returns:
         Parsed JSON-LD dict.
-
-    Raises:
-        urllib.error.URLError: If the download fails after retries.
     """
     cache_path: Path | None = None
     if cache_dir is not None:
@@ -69,41 +87,15 @@ def download_physh(
             with gzip.open(cache_path, "rt", encoding="utf-8") as f:
                 return json.load(f)
 
-    max_retries = 3
-    data: bytes | None = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "scix-experiments/1.0"},
-            )
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = resp.read()
+    client = _get_client()
+    response = client.get(url)
+    # response may be requests.Response or CachedResponse
+    if hasattr(response, "content"):
+        data = response.content
+    else:
+        data = response.text.encode("utf-8")
 
-            logger.info("Downloaded PhySH vocabulary: %d bytes", len(data))
-            break
-
-        except (urllib.error.URLError, OSError) as exc:
-            if attempt < max_retries:
-                wait = 2**attempt
-                logger.warning(
-                    "Download attempt %d/%d failed: %s — retrying in %ds",
-                    attempt,
-                    max_retries,
-                    exc,
-                    wait,
-                )
-                time.sleep(wait)
-            else:
-                logger.error(
-                    "Failed to download PhySH vocabulary after %d attempts: %s",
-                    max_retries,
-                    exc,
-                )
-                raise
-
-    if data is None:
-        raise RuntimeError("download_physh: unexpected exit from retry loop")
+    logger.info("Downloaded PhySH vocabulary: %d bytes", len(data))
 
     # Cache the raw gzipped data if cache_dir provided
     if cache_path is not None:
@@ -331,7 +323,7 @@ def run_harvest(
     """Run the full PhySH techniques harvest pipeline.
 
     Downloads the vocabulary, parses technique concepts, and loads them
-    into entity_dictionary.
+    into entity_dictionary. Logs harvest run to harvest_runs.
 
     Args:
         dsn: Database connection string. Uses SCIX_DSN or default if None.
@@ -346,8 +338,20 @@ def run_harvest(
     entries = parse_physh_techniques(jsonld)
 
     conn = get_connection(dsn)
+    run_log = HarvestRunLog(conn, "physh")
     try:
+        run_log.start()
         count = bulk_load(conn, entries)
+        run_log.complete(
+            records_fetched=len(entries),
+            records_upserted=count,
+        )
+    except Exception as exc:
+        try:
+            run_log.fail(str(exc))
+        except Exception:
+            logger.warning("Failed to update harvest_run status to 'failed'")
+        raise
     finally:
         conn.close()
 

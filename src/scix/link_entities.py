@@ -18,6 +18,8 @@ from typing import Any
 
 import psycopg
 
+from scix.harvest_utils import LINK_TYPE_MENTIONS
+
 logger = logging.getLogger(__name__)
 
 # Payload keys that map to entity types in the extractions table.
@@ -136,32 +138,33 @@ def link_entities_batch(
     """
     resolver = _CachingResolver(conn)
 
-    # Get all bibcodes with this extraction_type
+    # Get bibcodes to process, excluding already-linked ones if resuming
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT DISTINCT bibcode FROM extractions WHERE extraction_type = %s",
-            (extraction_type,),
-        )
-        all_bibcodes = [row[0] for row in cur.fetchall()]
+        if resume:
+            cur.execute(
+                """
+                SELECT DISTINCT e.bibcode
+                FROM extractions e
+                WHERE e.extraction_type = %s
+                  AND NOT EXISTS (
+                      SELECT 1 FROM document_entities de WHERE de.bibcode = e.bibcode
+                  )
+                """,
+                (extraction_type,),
+            )
+        else:
+            cur.execute(
+                "SELECT DISTINCT bibcode FROM extractions WHERE extraction_type = %s",
+                (extraction_type,),
+            )
+        bibcodes = [row[0] for row in cur.fetchall()]
 
-    if not all_bibcodes:
-        logger.info("No extractions found for type %s", extraction_type)
+    if not bibcodes:
+        logger.info("No extractions to process for type %s", extraction_type)
         return {"bibcodes_processed": 0, "links_created": 0, "skipped_no_match": 0}
 
-    # Filter already-linked bibcodes if resuming
     if resume:
-        with conn.cursor() as cur:
-            cur.execute("SELECT DISTINCT bibcode FROM document_entities")
-            linked = {row[0] for row in cur.fetchall()}
-        bibcodes = [b for b in all_bibcodes if b not in linked]
-        logger.info(
-            "Resume: %d of %d bibcodes already linked, %d remaining",
-            len(all_bibcodes) - len(bibcodes),
-            len(all_bibcodes),
-            len(bibcodes),
-        )
-    else:
-        bibcodes = all_bibcodes
+        logger.info("Resume: %d bibcodes remaining to link", len(bibcodes))
 
     total_links = 0
     total_skipped = 0
@@ -185,56 +188,51 @@ def link_entities_batch(
         batch_links = 0
         batch_skipped = 0
 
-        if not dry_run:
-            with conn.cursor() as cur:
-                for bibcode, ext_type, payload_raw in rows:
-                    payload = (
-                        payload_raw if isinstance(payload_raw, dict) else json.loads(payload_raw)
+        # Resolve all mentions and collect insert params
+        insert_params: list[tuple[str, int, str, float, str, str]] = []
+        for bibcode, ext_type, payload_raw in rows:
+            payload = payload_raw if isinstance(payload_raw, dict) else json.loads(payload_raw)
+            mentions = _extract_mentions_from_payload(payload, ext_type)
+
+            for mention_text, payload_key in mentions:
+                match = resolver.resolve(mention_text)
+                if match is None:
+                    batch_skipped += 1
+                    continue
+
+                evidence = json.dumps(
+                    {
+                        "mention": mention_text,
+                        "extraction_type": extraction_type,
+                        "payload_key": payload_key,
+                    }
+                )
+                insert_params.append(
+                    (
+                        bibcode,
+                        match.entity_id,
+                        LINK_TYPE_MENTIONS,
+                        match.confidence,
+                        match.match_method,
+                        evidence,
                     )
-                    mentions = _extract_mentions_from_payload(payload, ext_type)
+                )
 
-                    for mention_text, payload_key in mentions:
-                        match = resolver.resolve(mention_text)
-                        if match is None:
-                            batch_skipped += 1
-                            continue
+        batch_links = len(insert_params)
 
-                        evidence = {
-                            "mention": mention_text,
-                            "extraction_type": extraction_type,
-                            "payload_key": payload_key,
-                        }
-                        cur.execute(
-                            """
-                            INSERT INTO document_entities
-                                (bibcode, entity_id, link_type, confidence,
-                                 match_method, evidence)
-                            VALUES (%s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (bibcode, entity_id, link_type) DO NOTHING
-                            """,
-                            (
-                                bibcode,
-                                match.entity_id,
-                                "mentions",
-                                match.confidence,
-                                match.match_method,
-                                json.dumps(evidence),
-                            ),
-                        )
-                        batch_links += 1
-
+        if not dry_run and insert_params:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    INSERT INTO document_entities
+                        (bibcode, entity_id, link_type, confidence,
+                         match_method, evidence)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (bibcode, entity_id, link_type) DO NOTHING
+                    """,
+                    insert_params,
+                )
             conn.commit()
-        else:
-            # Dry run: just count
-            for bibcode, ext_type, payload_raw in rows:
-                payload = payload_raw if isinstance(payload_raw, dict) else json.loads(payload_raw)
-                mentions = _extract_mentions_from_payload(payload, ext_type)
-                for mention_text, _payload_key in mentions:
-                    match = resolver.resolve(mention_text)
-                    if match is None:
-                        batch_skipped += 1
-                    else:
-                        batch_links += 1
 
         total_links += batch_links
         total_skipped += batch_skipped

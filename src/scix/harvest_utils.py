@@ -16,6 +16,28 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Shared constants — relationship predicates and link types
+# ---------------------------------------------------------------------------
+
+PREDICATE_PART_OF_MISSION = "part_of_mission"
+PREDICATE_OBSERVES_TARGET = "observes_target"
+PREDICATE_AT_OBSERVATORY = "at_observatory"
+PREDICATE_BROADER_THAN = "broader_than"
+PREDICATE_NARROWER_THAN = "narrower_than"
+PREDICATE_SAME_AS = "same_as"
+PREDICATE_DERIVED_FROM = "derived_from"
+
+LINK_TYPE_MENTIONS = "mentions"
+LINK_TYPE_USES_INSTRUMENT = "uses_instrument"
+LINK_TYPE_OBSERVES_TARGET = "observes_target"
+LINK_TYPE_ANALYZES_DATASET = "analyzes_dataset"
+
+HARVEST_STATUS_RUNNING = "running"
+HARVEST_STATUS_COMPLETED = "completed"
+HARVEST_STATUS_FAILED = "failed"
+
+
+# ---------------------------------------------------------------------------
 # Harvest run lifecycle
 # ---------------------------------------------------------------------------
 

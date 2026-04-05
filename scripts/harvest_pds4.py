@@ -29,6 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from scix.db import get_connection
 from scix.dictionary import bulk_load
 from scix.harvest_utils import (
+    PREDICATE_OBSERVES_TARGET,
+    PREDICATE_PART_OF_MISSION,
     HarvestRunLog,
     upsert_entity,
     upsert_entity_alias,
@@ -474,13 +476,14 @@ def _write_relationships(
                             INSERT INTO entity_relationships
                                 (subject_entity_id, predicate, object_entity_id,
                                  source, harvest_run_id)
-                            VALUES (%(subject)s, 'part_of_mission', %(object)s,
+                            VALUES (%(subject)s, %(predicate)s, %(object)s,
                                     'pds4', %(run_id)s)
                             ON CONFLICT (subject_entity_id, predicate, object_entity_id)
                             DO NOTHING
                             """,
                             {
                                 "subject": entity_id,
+                                "predicate": PREDICATE_PART_OF_MISSION,
                                 "object": mission_id,
                                 "run_id": harvest_run_id,
                             },
@@ -496,13 +499,14 @@ def _write_relationships(
                             INSERT INTO entity_relationships
                                 (subject_entity_id, predicate, object_entity_id,
                                  source, harvest_run_id)
-                            VALUES (%(subject)s, 'part_of_mission', %(object)s,
+                            VALUES (%(subject)s, %(predicate)s, %(object)s,
                                     'pds4', %(run_id)s)
                             ON CONFLICT (subject_entity_id, predicate, object_entity_id)
                             DO NOTHING
                             """,
                             {
                                 "subject": entity_id,
+                                "predicate": PREDICATE_PART_OF_MISSION,
                                 "object": mission_id,
                                 "run_id": harvest_run_id,
                             },
@@ -519,13 +523,14 @@ def _write_relationships(
                             INSERT INTO entity_relationships
                                 (subject_entity_id, predicate, object_entity_id,
                                  source, harvest_run_id)
-                            VALUES (%(subject)s, 'observes_target', %(object)s,
+                            VALUES (%(subject)s, %(predicate)s, %(object)s,
                                     'pds4', %(run_id)s)
                             ON CONFLICT (subject_entity_id, predicate, object_entity_id)
                             DO NOTHING
                             """,
                             {
                                 "subject": entity_id,
+                                "predicate": PREDICATE_OBSERVES_TARGET,
                                 "object": target_id,
                                 "run_id": harvest_run_id,
                             },

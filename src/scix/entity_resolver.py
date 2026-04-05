@@ -209,10 +209,13 @@ class EntityResolver:
         with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
-                SELECT id, canonical_name, entity_type, source, discipline,
-                       similarity(lower(canonical_name), lower(%(mention)s)) AS sim
-                FROM entities
-                WHERE similarity(lower(canonical_name), lower(%(mention)s)) > %(threshold)s
+                SELECT id, canonical_name, entity_type, source, discipline, sim
+                FROM (
+                    SELECT id, canonical_name, entity_type, source, discipline,
+                           similarity(lower(canonical_name), lower(%(mention)s)) AS sim
+                    FROM entities
+                ) sub
+                WHERE sim > %(threshold)s
                 """,
                 {"mention": mention, "threshold": threshold},
             )

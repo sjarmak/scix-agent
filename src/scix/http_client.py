@@ -226,6 +226,7 @@ class ResilientClient:
         # Set User-Agent header
         headers = kwargs.pop("headers", {}) or {}
         headers.setdefault("User-Agent", self.user_agent)
+        timeout = kwargs.pop("timeout", self.timeout)
 
         last_exc: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
@@ -234,7 +235,7 @@ class ResilientClient:
                     url,
                     params=params,
                     headers=headers,
-                    timeout=kwargs.pop("timeout", self.timeout) if attempt == 1 else self.timeout,
+                    timeout=timeout,
                     **kwargs,
                 )
 

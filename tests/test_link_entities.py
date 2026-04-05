@@ -149,34 +149,32 @@ def _mock_conn_for_linking(
 ) -> MagicMock:
     """Build a mock connection for link_entities_batch tests.
 
-    The mock needs to handle multiple cursor() context manager calls with
-    different query results.
+    The new flow is:
+    1. Single query for bibcodes (with NOT EXISTS when resume=True)
+    2. Batch payload query
+    3. Entity cache build (entities + aliases in same cursor)
+    4. executemany for inserts
     """
     conn = MagicMock()
     linked_bibcodes = linked_bibcodes or []
     entities = entities or []
     aliases = aliases or []
 
-    # Track which query is being executed
+    # Compute unlinked bibcodes (what the NOT EXISTS query returns)
+    all_bibcodes = list({r[0] for r in extraction_rows})
+    unlinked = [b for b in all_bibcodes if b not in linked_bibcodes]
+
     call_results: list[list] = []
 
-    # Call 1: SELECT DISTINCT bibcode FROM extractions
-    distinct_bibcodes = list({(r[0],) for r in extraction_rows})
-    call_results.append(distinct_bibcodes)
+    # Call 1: SELECT DISTINCT bibcode (with NOT EXISTS filtering)
+    call_results.append([(b,) for b in unlinked])
 
-    # Call 2: SELECT DISTINCT bibcode FROM document_entities (resume)
-    call_results.append([(b,) for b in linked_bibcodes])
+    # Call 2: SELECT bibcode, extraction_type, payload (batch)
+    call_results.append([r for r in extraction_rows if r[0] in unlinked])
 
-    # Call 3: SELECT bibcode, extraction_type, payload FROM extractions (batch)
-    call_results.append(extraction_rows)
-
-    # Call 4: entities cache build — SELECT id, canonical_name FROM entities
-    # Call 5: aliases cache build — SELECT entity_id, alias FROM entity_aliases
-    # These happen inside the same cursor context
+    # Call 3+4: Entity cache build (entities then aliases)
     call_results.append(entities)
     call_results.append(aliases)
-
-    # Call 6: INSERT cursor (for actual inserts) — no fetchall needed
 
     cursor_mock = MagicMock()
     cursor_mock.fetchall = MagicMock(side_effect=call_results)
@@ -255,31 +253,21 @@ class TestLinkEntitiesBatch:
 
     def test_commit_called_per_batch(self) -> None:
         # Two bibcodes, batch_size=1 -> should get 2 commits
-        extraction_rows = [
-            ("2024A", "entity_extraction_v3", {"instruments": ["ALMA"]}),
-            ("2024B", "entity_extraction_v3", {"instruments": ["ALMA"]}),
-        ]
-
         conn = MagicMock()
         cursor_mock = MagicMock()
 
-        # We need to handle multiple cursor contexts with different results
         call_idx = {"i": 0}
         results_sequence = [
-            # Call 1: distinct bibcodes
+            # Call 1: SELECT DISTINCT bibcode (with NOT EXISTS)
             [("2024A",), ("2024B",)],
-            # Call 2: linked bibcodes (resume)
-            [],
             # Batch 1: extraction payload for 2024A
             [("2024A", "entity_extraction_v3", {"instruments": ["ALMA"]})],
             # EntityResolver cache: entities
             [(10, "ALMA")],
             # EntityResolver cache: aliases
             [],
-            # Batch 1 insert cursor (no fetchall)
             # Batch 2: extraction payload for 2024B
             [("2024B", "entity_extraction_v3", {"instruments": ["ALMA"]})],
-            # Batch 2 insert cursor (no fetchall)
         ]
 
         def fetchall_side_effect() -> list:
@@ -307,7 +295,7 @@ class TestLinkEntitiesBatch:
         assert conn.commit.call_count == 2
 
     def test_on_conflict_do_nothing_in_sql(self) -> None:
-        """Verify the INSERT uses ON CONFLICT DO NOTHING."""
+        """Verify the INSERT uses ON CONFLICT DO NOTHING via executemany."""
         extraction_rows = [
             ("2024ApJ...1A", "entity_extraction_v3", {"instruments": ["ALMA"]}),
         ]
@@ -324,13 +312,11 @@ class TestLinkEntitiesBatch:
             extraction_type="entity_extraction_v3",
         )
 
-        # Find the INSERT call
+        # executemany is used for batch inserts
         cursor = conn.cursor.return_value.__enter__.return_value
-        insert_calls = [
-            c for c in cursor.execute.call_args_list if "INSERT INTO document_entities" in str(c)
-        ]
-        assert len(insert_calls) > 0
-        sql_text = str(insert_calls[0])
+        assert cursor.executemany.call_count > 0
+        sql_text = cursor.executemany.call_args[0][0]
+        assert "INSERT INTO document_entities" in sql_text
         assert "ON CONFLICT" in sql_text
         assert "DO NOTHING" in sql_text
 
@@ -354,7 +340,9 @@ class TestLinkEntitiesBatch:
 
         assert result["links_created"] == 1
         assert result["bibcodes_processed"] == 1
-        # No commit in dry run
+        # No executemany or commit in dry run
+        cursor = conn.cursor.return_value.__enter__.return_value
+        cursor.executemany.assert_not_called()
         conn.commit.assert_not_called()
 
     def test_empty_extractions(self) -> None:
@@ -393,13 +381,12 @@ class TestLinkEntitiesBatch:
         )
 
         cursor = conn.cursor.return_value.__enter__.return_value
-        insert_calls = [
-            c for c in cursor.execute.call_args_list if "INSERT INTO document_entities" in str(c)
-        ]
-        assert len(insert_calls) > 0
-        # The evidence JSON should be the 6th positional arg
-        args = insert_calls[0][0][1]  # second arg to execute (params tuple)
-        evidence = json.loads(args[5])
+        assert cursor.executemany.call_count > 0
+        # executemany args: (sql, params_list)
+        params_list = cursor.executemany.call_args[0][1]
+        assert len(params_list) > 0
+        # Each param tuple: (bibcode, entity_id, link_type, confidence, match_method, evidence_json)
+        evidence = json.loads(params_list[0][5])
         assert evidence["mention"] == "ALMA"
         assert evidence["extraction_type"] == "entity_extraction_v3"
         assert evidence["payload_key"] == "instruments"

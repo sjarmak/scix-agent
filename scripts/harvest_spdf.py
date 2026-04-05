@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from scix.db import get_connection
 from scix.dictionary import bulk_load
 from scix.harvest_utils import (
+    PREDICATE_AT_OBSERVATORY,
     HarvestRunLog,
     upsert_entity,
     upsert_entity_identifier,
@@ -458,6 +459,14 @@ def store_harvest(
                     is_primary=True,
                 )
 
+        # Pre-index instruments by type for O(1) lookup in dataset/relationship linking
+        inst_type_to_eids: dict[str, list[int]] = {}
+        for inst in instruments:
+            itype = inst.get("instrument_type", "")
+            eid = inst_name_to_id.get(inst["name"])
+            if eid is not None:
+                inst_type_to_eids.setdefault(itype, []).append(eid)
+
         conn.commit()
         logger.info("Stored %d instruments", len(inst_name_to_id))
 
@@ -494,21 +503,15 @@ def store_harvest(
             # The canonical_id field already stores the CDAWeb dataset ID.
 
             # Link datasets to instruments via dataset_entities
-            # CDAWeb datasets reference instrument types, not individual instruments.
-            # We match by instrument_type name against our instruments.
             for inst_type in ds.get("instrument_types", []):
-                # Find instruments of this type
-                for inst in instruments:
-                    if inst.get("instrument_type") == inst_type:
-                        inst_eid = inst_name_to_id.get(inst["name"])
-                        if inst_eid is not None:
-                            _upsert_dataset_entity(
-                                conn,
-                                dataset_id=ds_id,
-                                entity_id=inst_eid,
-                                relationship="from_instrument",
-                            )
-                            relationship_count += 1
+                for inst_eid in inst_type_to_eids.get(inst_type, []):
+                    _upsert_dataset_entity(
+                        conn,
+                        dataset_id=ds_id,
+                        entity_id=inst_eid,
+                        relationship="from_instrument",
+                    )
+                    relationship_count += 1
 
         conn.commit()
         logger.info(
@@ -518,31 +521,27 @@ def store_harvest(
         )
 
         # --- Instrument -> Observatory relationships ---
-        # CDAWeb datasets associate observatory groups with instruments indirectly.
-        # Build associations from dataset metadata: if a dataset references both
-        # an observatory group and instrument type, those instruments are at those
-        # observatories.
+        # Build pre-indexed lookup: observatory group -> list of entity IDs
+        obs_group_to_eids: dict[str, list[int]] = {}
+        for obs in observatories:
+            group = obs.get("group", "")
+            eid = obs_name_to_id.get(obs["name"])
+            if eid is not None:
+                obs_group_to_eids.setdefault(group, []).append(eid)
+
         obs_inst_pairs: set[tuple[int, int]] = set()
         for ds in datasets:
             for obs_group in ds.get("observatory_groups", []):
                 for inst_type in ds.get("instrument_types", []):
-                    # Match observatory by group name
-                    for obs in observatories:
-                        if obs.get("group") == obs_group:
-                            obs_eid = obs_name_to_id.get(obs["name"])
-                            if obs_eid is None:
-                                continue
-                            for inst in instruments:
-                                if inst.get("instrument_type") == inst_type:
-                                    inst_eid = inst_name_to_id.get(inst["name"])
-                                    if inst_eid is not None:
-                                        obs_inst_pairs.add((inst_eid, obs_eid))
+                    for obs_eid in obs_group_to_eids.get(obs_group, []):
+                        for inst_eid in inst_type_to_eids.get(inst_type, []):
+                            obs_inst_pairs.add((inst_eid, obs_eid))
 
         for inst_eid, obs_eid in obs_inst_pairs:
             upsert_entity_relationship(
                 conn,
                 subject_entity_id=inst_eid,
-                predicate="at_observatory",
+                predicate=PREDICATE_AT_OBSERVATORY,
                 object_entity_id=obs_eid,
                 source=SOURCE,
                 harvest_run_id=run_id,

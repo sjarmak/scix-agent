@@ -1,0 +1,9 @@
+{
+  "status": "done",
+  "prd_path": "docs/prd/prd_external_data_integration.md",
+  "max_passes": 3,
+  "max_parallel": 5,
+  "current_pass": 1,
+  "integration_branch": "prd-build/external-data-integration",
+  "started_at": "2026-04-05T18:00:00Z"
+}

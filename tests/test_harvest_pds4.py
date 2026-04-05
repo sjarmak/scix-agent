@@ -943,7 +943,7 @@ class TestEntityRelationships:
             if len(c[0]) > 1
             and isinstance(c[0][1], dict)
             and c[0][1].get("subject") in (200, 201)
-            and "'part_of_mission'" in c[0][0]
+            and c[0][1].get("predicate") == "part_of_mission"
         ]
         assert len(part_of_calls) >= 2  # CIRS and ISS-NAC both link to Cassini
 
@@ -980,7 +980,9 @@ class TestEntityRelationships:
         observes_calls = [
             c
             for c in execute_calls
-            if len(c[0]) > 1 and isinstance(c[0][1], dict) and "'observes_target'" in c[0][0]
+            if len(c[0]) > 1
+            and isinstance(c[0][1], dict)
+            and c[0][1].get("predicate") == "observes_target"
         ]
         # Cassini observes Saturn and Titan (2), MER observes Mars (1) = 3
         assert len(observes_calls) >= 3

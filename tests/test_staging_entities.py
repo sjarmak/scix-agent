@@ -46,14 +46,10 @@ class TestStagingEntitiesSQL:
     def test_defines_staging_entity_aliases_table(self, sql: str) -> None:
         assert "CREATE TABLE IF NOT EXISTS staging.entity_aliases" in sql
 
-    def test_defines_public_entities_table(self, sql: str) -> None:
-        assert "CREATE TABLE IF NOT EXISTS public.entities" in sql
-
-    def test_defines_public_entity_identifiers_table(self, sql: str) -> None:
-        assert "CREATE TABLE IF NOT EXISTS public.entity_identifiers" in sql
-
-    def test_defines_public_entity_aliases_table(self, sql: str) -> None:
-        assert "CREATE TABLE IF NOT EXISTS public.entity_aliases" in sql
+    def test_public_tables_created_by_021(self, sql: str) -> None:
+        """Public tables (entities, entity_identifiers, entity_aliases) are
+        created by migration 021, NOT 022. Verify 022 documents this."""
+        assert "021_entity_graph.sql" in sql or "021" in sql
 
     # -- Promote function -----------------------------------------------------
 

@@ -654,8 +654,7 @@ class TestRunHarvest:
     """Tests for run_harvest with mocked download and DB."""
 
     @patch("harvest_gcmd._write_entity_graph")
-    @patch("harvest_gcmd._complete_harvest_run")
-    @patch("harvest_gcmd._create_harvest_run")
+    @patch("harvest_gcmd.HarvestRunLog")
     @patch("harvest_gcmd.get_connection")
     @patch("harvest_gcmd.bulk_load")
     @patch("harvest_gcmd.download_github_scheme")
@@ -664,15 +663,17 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_create_run: MagicMock,
-        mock_complete_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
     ) -> None:
         mock_download.return_value = SAMPLE_INSTRUMENTS
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 8
-        mock_create_run.return_value = 1
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
         mock_write_graph.return_value = 8
 
         count = run_harvest(dsn="dbname=test", schemes=["instruments"])
@@ -684,8 +685,7 @@ class TestRunHarvest:
         assert kwargs.get("discipline") == "earth_science"
 
     @patch("harvest_gcmd._write_entity_graph")
-    @patch("harvest_gcmd._complete_harvest_run")
-    @patch("harvest_gcmd._create_harvest_run")
+    @patch("harvest_gcmd.HarvestRunLog")
     @patch("harvest_gcmd.get_connection")
     @patch("harvest_gcmd.bulk_load")
     @patch("harvest_gcmd.download_github_scheme")
@@ -694,23 +694,24 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_create_run: MagicMock,
-        mock_complete_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
     ) -> None:
         mock_download.return_value = SAMPLE_INSTRUMENTS
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 8
-        mock_create_run.return_value = 1
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
         mock_write_graph.return_value = 8
 
         run_harvest(schemes=["instruments"])
         mock_conn.close.assert_called_once()
 
     @patch("harvest_gcmd._write_entity_graph")
-    @patch("harvest_gcmd._complete_harvest_run")
-    @patch("harvest_gcmd._create_harvest_run")
+    @patch("harvest_gcmd.HarvestRunLog")
     @patch("harvest_gcmd.get_connection")
     @patch("harvest_gcmd.bulk_load")
     @patch("harvest_gcmd.download_github_scheme")
@@ -719,15 +720,17 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_create_run: MagicMock,
-        mock_complete_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
     ) -> None:
         mock_download.return_value = SAMPLE_INSTRUMENTS
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.side_effect = RuntimeError("DB error")
-        mock_create_run.return_value = 1
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
 
         with pytest.raises(RuntimeError):
             run_harvest(schemes=["instruments"])
@@ -743,8 +746,7 @@ class TestRunHarvest:
         assert count == 8
 
     @patch("harvest_gcmd._write_entity_graph")
-    @patch("harvest_gcmd._complete_harvest_run")
-    @patch("harvest_gcmd._create_harvest_run")
+    @patch("harvest_gcmd.HarvestRunLog")
     @patch("harvest_gcmd.get_connection")
     @patch("harvest_gcmd.bulk_load")
     @patch("harvest_gcmd.download_github_scheme")
@@ -753,8 +755,7 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_create_run: MagicMock,
-        mock_complete_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
     ) -> None:
         """Verify harvest_runs record is created and completed."""
@@ -762,20 +763,23 @@ class TestRunHarvest:
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 8
-        mock_create_run.return_value = 42
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 42
+        mock_run_log.run_id = 42
+        mock_run_log_cls.return_value = mock_run_log
         mock_write_graph.return_value = 8
 
         run_harvest(schemes=["instruments"])
 
-        mock_create_run.assert_called_once_with(mock_conn, ["instruments"])
-        mock_complete_run.assert_called_once()
-        _, kwargs = mock_complete_run.call_args
+        mock_run_log_cls.assert_called_once_with(mock_conn, "gcmd")
+        mock_run_log.start.assert_called_once()
+        mock_run_log.complete.assert_called_once()
+        _, kwargs = mock_run_log.complete.call_args
         assert kwargs["records_fetched"] == 8
         assert kwargs["records_upserted"] == 8
 
     @patch("harvest_gcmd._write_entity_graph")
-    @patch("harvest_gcmd._complete_harvest_run")
-    @patch("harvest_gcmd._create_harvest_run")
+    @patch("harvest_gcmd.HarvestRunLog")
     @patch("harvest_gcmd.get_connection")
     @patch("harvest_gcmd.bulk_load")
     @patch("harvest_gcmd.download_github_scheme")
@@ -784,8 +788,7 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_create_run: MagicMock,
-        mock_complete_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
     ) -> None:
         """Verify entity graph tables are written after bulk_load."""
@@ -793,7 +796,10 @@ class TestRunHarvest:
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 8
-        mock_create_run.return_value = 1
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
         mock_write_graph.return_value = 8
 
         run_harvest(schemes=["instruments"])
@@ -833,15 +839,16 @@ class TestWriteEntityGraph:
         count = _write_entity_graph(mock_conn, entries, harvest_run_id=1)
 
         assert count == 8
-        # Verify execute calls include discipline='earth_science'
+        # Verify execute calls include source='gcmd' (positional params via upsert_entity)
         cursor = mock_conn.cursor.return_value
         calls = cursor.execute.call_args_list
-        # First call for each entry is the entities INSERT
         entity_inserts = [c for c in calls if "INTO entities" in str(c)]
         assert len(entity_inserts) == 8
         for call_obj in entity_inserts:
             params = call_obj[0][1]
-            assert params["source"] == "gcmd"
+            # upsert_entity uses positional tuple:
+            # (canonical_name, entity_type, discipline, source, harvest_run_id, properties)
+            assert params[3] == "gcmd"  # source
 
     def test_writes_entity_identifiers_gcmd_uuid(self) -> None:
         from harvest_gcmd import _write_entity_graph
@@ -856,10 +863,11 @@ class TestWriteEntityGraph:
         id_inserts = [c for c in calls if "entity_identifiers" in str(c)]
         assert len(id_inserts) == 8  # All 8 entries have external_id
         for call_obj in id_inserts:
-            sql = call_obj[0][0]
             params = call_obj[0][1]
-            assert "'gcmd_uuid'" in sql
-            assert params["ext_id"] is not None
+            # upsert_entity_identifier uses positional tuple:
+            # (entity_id, id_scheme, external_id, is_primary)
+            assert params[1] == "gcmd_uuid"
+            assert params[2] is not None  # external_id
 
     def test_writes_entity_aliases(self) -> None:
         from harvest_gcmd import _write_entity_graph
@@ -890,7 +898,8 @@ class TestWriteEntityGraph:
         entity_inserts = [c for c in calls if "INTO entities" in str(c)]
         for call_obj in entity_inserts:
             params = call_obj[0][1]
-            props = json.loads(params["props"])
+            # upsert_entity uses positional tuple; properties JSON is at index 5
+            props = json.loads(params[5])
             assert "gcmd_scheme" in props
             assert "gcmd_hierarchy" in props
             assert props["gcmd_scheme"] == "instruments"
@@ -905,8 +914,7 @@ class TestDisciplineMetadata:
     """Verify discipline is passed to bulk_load for all schemes."""
 
     @patch("harvest_gcmd._write_entity_graph")
-    @patch("harvest_gcmd._complete_harvest_run")
-    @patch("harvest_gcmd._create_harvest_run")
+    @patch("harvest_gcmd.HarvestRunLog")
     @patch("harvest_gcmd.get_connection")
     @patch("harvest_gcmd.bulk_load")
     @patch("harvest_gcmd.download_kms_scheme")
@@ -917,8 +925,7 @@ class TestDisciplineMetadata:
         mock_kms: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_create_run: MagicMock,
-        mock_complete_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
     ) -> None:
         mock_github.return_value = SAMPLE_INSTRUMENTS
@@ -926,7 +933,10 @@ class TestDisciplineMetadata:
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 9
-        mock_create_run.return_value = 1
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
         mock_write_graph.return_value = 9
 
         run_harvest(schemes=["instruments", "providers"])
@@ -1007,8 +1017,7 @@ class TestHarvestRunsTracking:
     """Verify harvest_runs records are created and updated."""
 
     @patch("harvest_gcmd._write_entity_graph")
-    @patch("harvest_gcmd._complete_harvest_run")
-    @patch("harvest_gcmd._create_harvest_run")
+    @patch("harvest_gcmd.HarvestRunLog")
     @patch("harvest_gcmd.get_connection")
     @patch("harvest_gcmd.bulk_load")
     @patch("harvest_gcmd.download_github_scheme")
@@ -1017,31 +1026,29 @@ class TestHarvestRunsTracking:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_create_run: MagicMock,
-        mock_complete_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
     ) -> None:
         mock_download.return_value = SAMPLE_INSTRUMENTS
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 8
-        mock_create_run.return_value = 7
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 7
+        mock_run_log.run_id = 7
+        mock_run_log_cls.return_value = mock_run_log
         mock_write_graph.return_value = 8
 
         run_harvest(schemes=["instruments"])
 
-        mock_complete_run.assert_called_once()
-        call_args = mock_complete_run.call_args
-        assert call_args[0][0] is mock_conn
-        assert call_args[0][1] == 7  # run_id
-        assert call_args[1]["records_fetched"] == 8
-        assert call_args[1]["records_upserted"] == 8
-        assert "instrument" in call_args[1]["counts"]
+        mock_run_log.complete.assert_called_once()
+        _, kwargs = mock_run_log.complete.call_args
+        assert kwargs["records_fetched"] == 8
+        assert kwargs["records_upserted"] == 8
+        assert "instrument" in kwargs["counts"]
 
-    @patch("harvest_gcmd._fail_harvest_run")
     @patch("harvest_gcmd._write_entity_graph")
-    @patch("harvest_gcmd._complete_harvest_run")
-    @patch("harvest_gcmd._create_harvest_run")
+    @patch("harvest_gcmd.HarvestRunLog")
     @patch("harvest_gcmd.get_connection")
     @patch("harvest_gcmd.bulk_load")
     @patch("harvest_gcmd.download_github_scheme")
@@ -1050,28 +1057,28 @@ class TestHarvestRunsTracking:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_create_run: MagicMock,
-        mock_complete_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
-        mock_fail_run: MagicMock,
     ) -> None:
         mock_download.return_value = SAMPLE_INSTRUMENTS
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.side_effect = RuntimeError("DB error")
-        mock_create_run.return_value = 7
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 7
+        mock_run_log.run_id = 7
+        mock_run_log_cls.return_value = mock_run_log
 
         with pytest.raises(RuntimeError):
             run_harvest(schemes=["instruments"])
 
-        mock_fail_run.assert_called_once()
-        assert mock_fail_run.call_args[0][1] == 7  # run_id
-        assert "DB error" in mock_fail_run.call_args[0][2]
+        mock_run_log.fail.assert_called_once()
+        assert "DB error" in mock_run_log.fail.call_args[0][0]
 
     def test_dry_run_does_not_create_harvest_run(self) -> None:
         """Dry run should not touch the database at all."""
         with patch("harvest_gcmd.download_github_scheme") as mock_dl:
             mock_dl.return_value = SAMPLE_INSTRUMENTS
-            with patch("harvest_gcmd._create_harvest_run") as mock_create:
+            with patch("harvest_gcmd.HarvestRunLog") as mock_run_log_cls:
                 run_harvest(schemes=["instruments"], dry_run=True)
-                mock_create.assert_not_called()
+                mock_run_log_cls.assert_not_called()

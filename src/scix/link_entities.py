@@ -3,6 +3,10 @@
 Reads extracted mentions from the extractions table, resolves them against
 the entities and entity_aliases tables, and writes results to document_entities.
 Processes in configurable chunks with per-batch commits for resumability.
+
+Uses a caching resolver that bulk-loads all entities and aliases once for O(1)
+per-mention lookups. For interactive/per-query resolution with fuzzy and
+discipline support, see entity_resolver.EntityResolver.
 """
 
 from __future__ import annotations
@@ -32,11 +36,12 @@ class ResolverMatch:
     match_method: str
 
 
-class EntityResolver:
-    """Resolve mention strings to entity IDs via canonical name and alias lookup.
+class _CachingResolver:
+    """Resolve mention strings to entity IDs via bulk-loaded cache.
 
-    Caches the full entity+alias mapping on first use so subsequent lookups
-    are pure dict hits (no per-mention queries).
+    Loads the full entity+alias mapping on first use so subsequent lookups
+    are pure dict hits (no per-mention queries). Used by the batch linking
+    pipeline for performance.
     """
 
     def __init__(self, conn: psycopg.Connection) -> None:
@@ -46,7 +51,6 @@ class EntityResolver:
     def _build_cache(self) -> dict[str, ResolverMatch]:
         cache: dict[str, ResolverMatch] = {}
         with self._conn.cursor() as cur:
-            # Canonical names — highest confidence
             cur.execute("SELECT id, canonical_name FROM entities")
             for row in cur.fetchall():
                 entity_id, name = row
@@ -57,7 +61,6 @@ class EntityResolver:
                         confidence=1.0,
                         match_method="canonical_exact",
                     )
-            # Aliases — slightly lower confidence, don't overwrite canonical
             cur.execute("SELECT entity_id, alias FROM entity_aliases")
             for row in cur.fetchall():
                 entity_id, alias = row
@@ -71,14 +74,14 @@ class EntityResolver:
         return cache
 
     def resolve(self, mention: str) -> ResolverMatch | None:
-        """Resolve a mention string to an entity.
-
-        Returns the best match or None if no match found.
-        """
         if self._cache is None:
             self._cache = self._build_cache()
         key = mention.strip().lower()
         return self._cache.get(key)
+
+
+# Backward-compatible alias used by tests
+EntityResolver = _CachingResolver
 
 
 def _extract_mentions_from_payload(
@@ -131,7 +134,7 @@ def link_entities_batch(
     Returns:
         Summary dict with bibcodes_processed, links_created, skipped_no_match.
     """
-    resolver = EntityResolver(conn)
+    resolver = _CachingResolver(conn)
 
     # Get all bibcodes with this extraction_type
     with conn.cursor() as cur:

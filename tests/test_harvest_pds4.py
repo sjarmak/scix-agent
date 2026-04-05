@@ -525,8 +525,7 @@ class TestRunHarvest:
 
     @patch("harvest_pds4._write_relationships")
     @patch("harvest_pds4._write_entity_graph")
-    @patch("harvest_pds4._finish_harvest_run")
-    @patch("harvest_pds4._start_harvest_run")
+    @patch("harvest_pds4.HarvestRunLog")
     @patch("harvest_pds4.get_connection")
     @patch("harvest_pds4.bulk_load")
     @patch("harvest_pds4.download_pds4_context")
@@ -535,8 +534,7 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_start_run: MagicMock,
-        mock_finish_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
         mock_write_rels: MagicMock,
     ) -> None:
@@ -548,7 +546,10 @@ class TestRunHarvest:
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 9
-        mock_start_run.return_value = 42
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 42
+        mock_run_log.run_id = 42
+        mock_run_log_cls.return_value = mock_run_log
         mock_write_graph.return_value = 9
         mock_write_rels.return_value = 0
 
@@ -578,8 +579,7 @@ class TestRunHarvest:
 
     @patch("harvest_pds4._write_relationships")
     @patch("harvest_pds4._write_entity_graph")
-    @patch("harvest_pds4._finish_harvest_run")
-    @patch("harvest_pds4._start_harvest_run")
+    @patch("harvest_pds4.HarvestRunLog")
     @patch("harvest_pds4.get_connection")
     @patch("harvest_pds4.bulk_load")
     @patch("harvest_pds4.download_pds4_context")
@@ -588,8 +588,7 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_start_run: MagicMock,
-        mock_finish_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
         mock_write_rels: MagicMock,
     ) -> None:
@@ -597,7 +596,10 @@ class TestRunHarvest:
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 3
-        mock_start_run.return_value = 1
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
         mock_write_graph.return_value = 3
         mock_write_rels.return_value = 0
 
@@ -607,8 +609,7 @@ class TestRunHarvest:
 
     @patch("harvest_pds4._write_relationships")
     @patch("harvest_pds4._write_entity_graph")
-    @patch("harvest_pds4._finish_harvest_run")
-    @patch("harvest_pds4._start_harvest_run")
+    @patch("harvest_pds4.HarvestRunLog")
     @patch("harvest_pds4.get_connection")
     @patch("harvest_pds4.bulk_load")
     @patch("harvest_pds4.download_pds4_context")
@@ -617,15 +618,17 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_start_run: MagicMock,
-        mock_finish_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
         mock_write_rels: MagicMock,
     ) -> None:
         mock_download.return_value = {"investigation": SAMPLE_INVESTIGATIONS}
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
-        mock_start_run.return_value = 1
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
         mock_bulk_load.side_effect = RuntimeError("DB error")
 
         with pytest.raises(RuntimeError):
@@ -635,8 +638,7 @@ class TestRunHarvest:
 
     @patch("harvest_pds4._write_relationships")
     @patch("harvest_pds4._write_entity_graph")
-    @patch("harvest_pds4._finish_harvest_run")
-    @patch("harvest_pds4._start_harvest_run")
+    @patch("harvest_pds4.HarvestRunLog")
     @patch("harvest_pds4.get_connection")
     @patch("harvest_pds4.bulk_load")
     @patch("harvest_pds4.download_pds4_context")
@@ -645,8 +647,7 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_start_run: MagicMock,
-        mock_finish_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
         mock_write_rels: MagicMock,
     ) -> None:
@@ -656,24 +657,27 @@ class TestRunHarvest:
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 3
-        mock_start_run.return_value = 99
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 99
+        mock_run_log.run_id = 99
+        mock_run_log_cls.return_value = mock_run_log
         mock_write_graph.return_value = 3
         mock_write_rels.return_value = 0
 
         run_harvest(product_types=("investigation",))
 
         # harvest_run started
-        mock_start_run.assert_called_once_with(mock_conn, ("investigation",))
-        # harvest_run finished with correct status
-        mock_finish_run.assert_called_once()
-        finish_kwargs = mock_finish_run.call_args[1]
+        mock_run_log_cls.assert_called_once_with(mock_conn, "pds4")
+        mock_run_log.start.assert_called_once()
+        # harvest_run completed with correct counts
+        mock_run_log.complete.assert_called_once()
+        _, finish_kwargs = mock_run_log.complete.call_args
         assert finish_kwargs["records_upserted"] == 3
         assert finish_kwargs["counts"]["mission"] == 3
 
     @patch("harvest_pds4._write_relationships")
     @patch("harvest_pds4._write_entity_graph")
-    @patch("harvest_pds4._finish_harvest_run")
-    @patch("harvest_pds4._start_harvest_run")
+    @patch("harvest_pds4.HarvestRunLog")
     @patch("harvest_pds4.get_connection")
     @patch("harvest_pds4.bulk_load")
     @patch("harvest_pds4.download_pds4_context")
@@ -682,8 +686,7 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_start_run: MagicMock,
-        mock_finish_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
         mock_write_rels: MagicMock,
     ) -> None:
@@ -694,7 +697,10 @@ class TestRunHarvest:
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 5
-        mock_start_run.return_value = 10
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 10
+        mock_run_log.run_id = 10
+        mock_run_log_cls.return_value = mock_run_log
         mock_write_graph.return_value = 5
         mock_write_rels.return_value = 2
 
@@ -709,8 +715,7 @@ class TestRunHarvest:
 
     @patch("harvest_pds4._write_relationships")
     @patch("harvest_pds4._write_entity_graph")
-    @patch("harvest_pds4._finish_harvest_run")
-    @patch("harvest_pds4._start_harvest_run")
+    @patch("harvest_pds4.HarvestRunLog")
     @patch("harvest_pds4.get_connection")
     @patch("harvest_pds4.bulk_load")
     @patch("harvest_pds4.download_pds4_context")
@@ -719,8 +724,7 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_start_run: MagicMock,
-        mock_finish_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
         mock_write_rels: MagicMock,
     ) -> None:
@@ -729,7 +733,10 @@ class TestRunHarvest:
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 4
-        mock_start_run.return_value = 1
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
         mock_write_graph.return_value = 4
         mock_write_rels.return_value = 0
 
@@ -741,8 +748,7 @@ class TestRunHarvest:
 
     @patch("harvest_pds4._write_relationships")
     @patch("harvest_pds4._write_entity_graph")
-    @patch("harvest_pds4._finish_harvest_run")
-    @patch("harvest_pds4._start_harvest_run")
+    @patch("harvest_pds4.HarvestRunLog")
     @patch("harvest_pds4.get_connection")
     @patch("harvest_pds4.bulk_load")
     @patch("harvest_pds4.download_pds4_context")
@@ -751,8 +757,7 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_start_run: MagicMock,
-        mock_finish_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
         mock_write_rels: MagicMock,
     ) -> None:
@@ -760,17 +765,17 @@ class TestRunHarvest:
         mock_download.return_value = {"investigation": SAMPLE_INVESTIGATIONS}
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
-        mock_start_run.return_value = 5
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 5
+        mock_run_log.run_id = 5
+        mock_run_log_cls.return_value = mock_run_log
         mock_bulk_load.side_effect = RuntimeError("DB error")
 
         with pytest.raises(RuntimeError):
             run_harvest(product_types=("investigation",))
 
-        # Should call _finish_harvest_run with status='failed'
-        assert mock_finish_run.call_count == 1
-        finish_kwargs = mock_finish_run.call_args[1]
-        assert finish_kwargs["status"] == "failed"
-        assert "DB error" in finish_kwargs["error_message"]
+        mock_run_log.fail.assert_called_once()
+        assert "DB error" in mock_run_log.fail.call_args[0][0]
 
 
 # ---------------------------------------------------------------------------
@@ -829,15 +834,17 @@ class TestEntityGraph:
         count = _write_entity_graph(mock_conn, entries, harvest_run_id=1)
 
         assert count == 1
-        # Should have executed SQL with 'planetary_science' discipline
+        # Should have executed SQL inserting into entities
         calls = mock_cursor.execute.call_args_list
-        entity_insert = calls[0]
-        sql = entity_insert[0][0]
-        assert "entities" in sql
-        assert "'planetary_science'" in sql
-        params = entity_insert[0][1]
-        assert params["canonical_name"] == "Cassini-Huygens"
-        assert params["entity_type"] == "mission"
+        entity_inserts = [c for c in calls if "INTO entities" in str(c)]
+        assert len(entity_inserts) == 1
+        # upsert_entity uses positional params:
+        # (canonical_name, entity_type, discipline, source, harvest_run_id, properties)
+        params = entity_inserts[0][0][1]
+        assert params[0] == "Cassini-Huygens"  # canonical_name
+        assert params[1] == "mission"  # entity_type
+        assert params[2] == "planetary_science"  # discipline
+        assert params[3] == "pds4"  # source
 
     def test_write_entity_graph_inserts_pds_urn_identifier(self) -> None:
         """_write_entity_graph should INSERT PDS URN into entity_identifiers."""
@@ -852,14 +859,14 @@ class TestEntityGraph:
         _write_entity_graph(mock_conn, entries, harvest_run_id=1)
 
         calls = mock_cursor.execute.call_args_list
-        # Second call should be entity_identifiers insert
-        id_insert = calls[1]
-        sql = id_insert[0][0]
-        assert "entity_identifiers" in sql
-        assert "'pds_urn'" in sql
-        params = id_insert[0][1]
-        assert params["external_id"].startswith("urn:nasa:pds:context:investigation:")
-        assert params["entity_id"] == 1
+        id_inserts = [c for c in calls if "entity_identifiers" in str(c)]
+        assert len(id_inserts) >= 1
+        # upsert_entity_identifier uses positional params:
+        # (entity_id, id_scheme, external_id, is_primary)
+        params = id_inserts[0][0][1]
+        assert params[0] == 1  # entity_id
+        assert params[1] == "pds_urn"  # id_scheme
+        assert params[2].startswith("urn:nasa:pds:context:investigation:")  # external_id
 
     def test_write_entity_graph_inserts_aliases(self) -> None:
         """_write_entity_graph should INSERT aliases into entity_aliases."""
@@ -877,11 +884,13 @@ class TestEntityGraph:
         _write_entity_graph(mock_conn, entries, harvest_run_id=1)
 
         calls = mock_cursor.execute.call_args_list
-        alias_calls = [c for c in calls if "entity_aliases" in c[0][0]]
+        alias_calls = [c for c in calls if "entity_aliases" in str(c)]
         assert len(alias_calls) >= 1
-        alias_params = alias_calls[0][0][1]
-        assert alias_params["alias"] == "MER"
-        assert alias_params["entity_id"] == 2
+        # upsert_entity_alias uses positional params:
+        # (entity_id, alias, alias_source)
+        params = alias_calls[0][0][1]
+        assert params[0] == 2  # entity_id
+        assert params[1] == "MER"  # alias
 
 
 # ---------------------------------------------------------------------------
@@ -1032,8 +1041,7 @@ class TestHarvestRuns:
 
     @patch("harvest_pds4._write_relationships")
     @patch("harvest_pds4._write_entity_graph")
-    @patch("harvest_pds4._finish_harvest_run")
-    @patch("harvest_pds4._start_harvest_run")
+    @patch("harvest_pds4.HarvestRunLog")
     @patch("harvest_pds4.get_connection")
     @patch("harvest_pds4.bulk_load")
     @patch("harvest_pds4.download_pds4_context")
@@ -1042,8 +1050,7 @@ class TestHarvestRuns:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_start_run: MagicMock,
-        mock_finish_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
         mock_write_rels: MagicMock,
     ) -> None:
@@ -1052,27 +1059,28 @@ class TestHarvestRuns:
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 3
-        mock_start_run.return_value = 7
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 7
+        mock_run_log.run_id = 7
+        mock_run_log_cls.return_value = mock_run_log
         mock_write_graph.return_value = 3
         mock_write_rels.return_value = 0
 
         run_harvest(product_types=("investigation",))
 
-        # _start_harvest_run called with source implied as 'pds4'
-        mock_start_run.assert_called_once()
-        # _finish_harvest_run called with completed status
-        mock_finish_run.assert_called_once()
-        finish_args = mock_finish_run.call_args
-        assert finish_args[0][1] == 7  # run_id
-        finish_kwargs = finish_args[1]
+        # HarvestRunLog created with source='pds4'
+        mock_run_log_cls.assert_called_once_with(mock_conn, "pds4")
+        mock_run_log.start.assert_called_once()
+        # complete called with correct counts
+        mock_run_log.complete.assert_called_once()
+        _, finish_kwargs = mock_run_log.complete.call_args
         assert finish_kwargs["records_fetched"] == 3
         assert finish_kwargs["records_upserted"] == 3
         assert "mission" in finish_kwargs["counts"]
 
     @patch("harvest_pds4._write_relationships")
     @patch("harvest_pds4._write_entity_graph")
-    @patch("harvest_pds4._finish_harvest_run")
-    @patch("harvest_pds4._start_harvest_run")
+    @patch("harvest_pds4.HarvestRunLog")
     @patch("harvest_pds4.get_connection")
     @patch("harvest_pds4.bulk_load")
     @patch("harvest_pds4.download_pds4_context")
@@ -1081,8 +1089,7 @@ class TestHarvestRuns:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
-        mock_start_run: MagicMock,
-        mock_finish_run: MagicMock,
+        mock_run_log_cls: MagicMock,
         mock_write_graph: MagicMock,
         mock_write_rels: MagicMock,
     ) -> None:
@@ -1095,13 +1102,16 @@ class TestHarvestRuns:
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 9
-        mock_start_run.return_value = 1
+        mock_run_log = MagicMock()
+        mock_run_log.start.return_value = 1
+        mock_run_log.run_id = 1
+        mock_run_log_cls.return_value = mock_run_log
         mock_write_graph.return_value = 9
         mock_write_rels.return_value = 5
 
         run_harvest()
 
-        finish_kwargs = mock_finish_run.call_args[1]
+        _, finish_kwargs = mock_run_log.complete.call_args
         assert finish_kwargs["records_fetched"] == 9  # 3+2+4 raw products
         assert finish_kwargs["records_upserted"] == 9
         assert finish_kwargs["counts"]["mission"] == 3

@@ -23,10 +23,12 @@ from enrich_wikidata_multi import (
     MAX_BATCH_SIZE,
     MIN_DELAY,
     apply_enrichments,
+    apply_enrichments_entities,
     build_batch_sparql_query,
     cache_path,
     chunk_list,
     execute_sparql,
+    fetch_entities_from_graph,
     load_cache,
     merge_aliases,
     parse_batch_results,
@@ -753,3 +755,289 @@ class TestCli:
         assert "--source" in result.stdout
         assert "--entity-type" in result.stdout
         assert "--no-cache" in result.stdout
+        assert "--entity-source" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Tests: fetch_entities_from_graph
+# ---------------------------------------------------------------------------
+
+
+class TestFetchEntitiesFromGraph:
+    """Tests for querying the entities table."""
+
+    def test_returns_entities_rows(self) -> None:
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = [
+            {"id": 1, "canonical_name": "MODIS", "entity_type": "instrument", "source": "gcmd"},
+            {"id": 2, "canonical_name": "AIRS", "entity_type": "instrument", "source": "gcmd"},
+        ]
+        mock_cursor.__enter__ = lambda self: self
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+
+        result = fetch_entities_from_graph(mock_conn, "gcmd", "instrument")
+
+        assert len(result) == 2
+        assert result[0]["canonical_name"] == "MODIS"
+        assert result[0]["id"] == 1
+        assert result[1]["canonical_name"] == "AIRS"
+
+    def test_passes_correct_params(self) -> None:
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = []
+        mock_cursor.__enter__ = lambda self: self
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+
+        fetch_entities_from_graph(mock_conn, "pds4", "mission")
+
+        executed_sql = mock_cursor.execute.call_args[0][0]
+        assert "entities" in executed_sql
+        params = mock_cursor.execute.call_args[0][1]
+        assert params["source"] == "pds4"
+        assert params["entity_type"] == "mission"
+
+    def test_returns_empty_for_no_rows(self) -> None:
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = []
+        mock_cursor.__enter__ = lambda self: self
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+
+        result = fetch_entities_from_graph(mock_conn, "gcmd", "instrument")
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Tests: apply_enrichments_entities
+# ---------------------------------------------------------------------------
+
+
+class TestApplyEnrichmentsEntities:
+    """Tests for entity graph enrichment logic."""
+
+    @patch("enrich_wikidata_multi.upsert_entity_alias")
+    @patch("enrich_wikidata_multi.upsert_entity_identifier")
+    def test_creates_identifier_and_aliases(
+        self,
+        mock_upsert_id: MagicMock,
+        mock_upsert_alias: MagicMock,
+    ) -> None:
+        entries = [
+            {"id": 42, "canonical_name": "MODIS", "entity_type": "instrument", "source": "gcmd"},
+        ]
+        matches = {"MODIS": ("Q186447", ["Moderate Resolution Imaging Spectroradiometer"])}
+        mock_conn = MagicMock()
+
+        enriched = apply_enrichments_entities(mock_conn, entries, matches)
+
+        assert enriched == 1
+        mock_upsert_id.assert_called_once_with(
+            mock_conn,
+            entity_id=42,
+            id_scheme="wikidata",
+            external_id="Q186447",
+            is_primary=False,
+        )
+        mock_upsert_alias.assert_called_once_with(
+            mock_conn,
+            entity_id=42,
+            alias="Moderate Resolution Imaging Spectroradiometer",
+            alias_source="wikidata",
+        )
+        mock_conn.commit.assert_called_once()
+
+    @patch("enrich_wikidata_multi.upsert_entity_alias")
+    @patch("enrich_wikidata_multi.upsert_entity_identifier")
+    def test_skips_non_matching_entries(
+        self,
+        mock_upsert_id: MagicMock,
+        mock_upsert_alias: MagicMock,
+    ) -> None:
+        entries = [
+            {"id": 99, "canonical_name": "Unknown", "entity_type": "instrument", "source": "gcmd"},
+        ]
+        matches: dict[str, tuple[str, list[str]]] = {}
+        mock_conn = MagicMock()
+
+        enriched = apply_enrichments_entities(mock_conn, entries, matches)
+
+        assert enriched == 0
+        mock_upsert_id.assert_not_called()
+        mock_upsert_alias.assert_not_called()
+
+    @patch("enrich_wikidata_multi.upsert_entity_alias")
+    @patch("enrich_wikidata_multi.upsert_entity_identifier")
+    def test_dry_run_skips_db_writes(
+        self,
+        mock_upsert_id: MagicMock,
+        mock_upsert_alias: MagicMock,
+    ) -> None:
+        entries = [
+            {"id": 42, "canonical_name": "MODIS", "entity_type": "instrument", "source": "gcmd"},
+        ]
+        matches = {"MODIS": ("Q186447", ["Alias1"])}
+        mock_conn = MagicMock()
+
+        enriched = apply_enrichments_entities(mock_conn, entries, matches, dry_run=True)
+
+        assert enriched == 1
+        mock_upsert_id.assert_not_called()
+        mock_upsert_alias.assert_not_called()
+        mock_conn.commit.assert_not_called()
+
+    @patch("enrich_wikidata_multi.upsert_entity_alias")
+    @patch("enrich_wikidata_multi.upsert_entity_identifier")
+    def test_multiple_aliases_upserted(
+        self,
+        mock_upsert_id: MagicMock,
+        mock_upsert_alias: MagicMock,
+    ) -> None:
+        entries = [
+            {"id": 10, "canonical_name": "MRO", "entity_type": "mission", "source": "pds4"},
+        ]
+        matches = {"MRO": ("Q54321", ["Mars Reconnaissance Orbiter", "Mars Recon"])}
+        mock_conn = MagicMock()
+
+        apply_enrichments_entities(mock_conn, entries, matches)
+
+        assert mock_upsert_alias.call_count == 2
+        alias_calls = [c.kwargs["alias"] for c in mock_upsert_alias.call_args_list]
+        assert "Mars Reconnaissance Orbiter" in alias_calls
+        assert "Mars Recon" in alias_calls
+
+    @patch("enrich_wikidata_multi.upsert_entity_alias")
+    @patch("enrich_wikidata_multi.upsert_entity_identifier")
+    def test_no_aliases_still_creates_identifier(
+        self,
+        mock_upsert_id: MagicMock,
+        mock_upsert_alias: MagicMock,
+    ) -> None:
+        entries = [
+            {"id": 5, "canonical_name": "TestItem", "entity_type": "target", "source": "pds4"},
+        ]
+        matches = {"TestItem": ("Q999", [])}
+        mock_conn = MagicMock()
+
+        enriched = apply_enrichments_entities(mock_conn, entries, matches)
+
+        assert enriched == 1
+        mock_upsert_id.assert_called_once()
+        mock_upsert_alias.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests: run_enrich with entity_source="entities"
+# ---------------------------------------------------------------------------
+
+
+class TestRunEnrichEntitiesMode:
+    """Tests for the enrichment pipeline in entities table mode."""
+
+    @patch("enrich_wikidata_multi.apply_enrichments_entities", return_value=3)
+    @patch("enrich_wikidata_multi.execute_sparql")
+    @patch("enrich_wikidata_multi.fetch_entities_from_graph")
+    @patch("enrich_wikidata_multi.get_connection")
+    @patch("enrich_wikidata_multi.time.sleep")
+    def test_uses_entities_table_fetch(
+        self,
+        mock_sleep: MagicMock,
+        mock_get_conn: MagicMock,
+        mock_fetch_graph: MagicMock,
+        mock_sparql: MagicMock,
+        mock_apply_entities: MagicMock,
+    ) -> None:
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_fetch_graph.return_value = [
+            {"id": 1, "canonical_name": "MODIS", "entity_type": "instrument", "source": "gcmd"},
+            {"id": 2, "canonical_name": "AIRS", "entity_type": "instrument", "source": "gcmd"},
+        ]
+        mock_sparql.return_value = SAMPLE_EMPTY_RESPONSE
+
+        total, enriched = run_enrich(
+            dsn="dbname=test",
+            source_filter="gcmd",
+            entity_type_filter="instrument",
+            use_cache=False,
+            entity_source="entities",
+        )
+
+        assert total == 2
+        assert enriched == 3
+        mock_fetch_graph.assert_called_once()
+        mock_apply_entities.assert_called_once()
+
+    @patch("enrich_wikidata_multi.apply_enrichments_entities", return_value=0)
+    @patch("enrich_wikidata_multi.apply_enrichments", return_value=0)
+    @patch("enrich_wikidata_multi.execute_sparql")
+    @patch("enrich_wikidata_multi.fetch_entries")
+    @patch("enrich_wikidata_multi.get_connection")
+    @patch("enrich_wikidata_multi.time.sleep")
+    def test_dictionary_mode_unchanged(
+        self,
+        mock_sleep: MagicMock,
+        mock_get_conn: MagicMock,
+        mock_fetch_dict: MagicMock,
+        mock_sparql: MagicMock,
+        mock_apply_dict: MagicMock,
+        mock_apply_entities: MagicMock,
+    ) -> None:
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_fetch_dict.return_value = [
+            {
+                "canonical_name": "MODIS",
+                "entity_type": "instrument",
+                "source": "gcmd",
+                "aliases": [],
+                "metadata": {},
+            },
+        ]
+        mock_sparql.return_value = SAMPLE_EMPTY_RESPONSE
+
+        run_enrich(
+            dsn="dbname=test",
+            source_filter="gcmd",
+            entity_type_filter="instrument",
+            use_cache=False,
+            entity_source="dictionary",
+        )
+
+        mock_fetch_dict.assert_called_once()
+        mock_apply_dict.assert_called_once()
+        mock_apply_entities.assert_not_called()
+
+    @patch("enrich_wikidata_multi.apply_enrichments_entities", return_value=0)
+    @patch("enrich_wikidata_multi.execute_sparql")
+    @patch("enrich_wikidata_multi.fetch_entities_from_graph")
+    @patch("enrich_wikidata_multi.get_connection")
+    @patch("enrich_wikidata_multi.time.sleep")
+    def test_entities_mode_closes_connection(
+        self,
+        mock_sleep: MagicMock,
+        mock_get_conn: MagicMock,
+        mock_fetch_graph: MagicMock,
+        mock_sparql: MagicMock,
+        mock_apply_entities: MagicMock,
+    ) -> None:
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_fetch_graph.return_value = []
+
+        run_enrich(
+            dsn="dbname=test",
+            source_filter="gcmd",
+            entity_type_filter="instrument",
+            use_cache=False,
+            entity_source="entities",
+        )
+
+        mock_conn.close.assert_called_once()

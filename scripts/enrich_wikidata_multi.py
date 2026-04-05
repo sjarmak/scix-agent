@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scix.db import get_connection
 from scix.dictionary import upsert_entry
+from scix.harvest_utils import upsert_entity_alias, upsert_entity_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -324,6 +325,36 @@ def fetch_entries(
         return [dict(row) for row in cur.fetchall()]
 
 
+def fetch_entities_from_graph(
+    conn: Any,
+    source: str,
+    entity_type: str,
+) -> list[dict[str, Any]]:
+    """Fetch entities from the entities table for a given source and entity_type.
+
+    Args:
+        conn: Database connection (psycopg).
+        source: Source filter (e.g. 'gcmd', 'pds4').
+        entity_type: Entity type filter.
+
+    Returns:
+        List of row dicts with id, canonical_name, entity_type, source.
+    """
+    from psycopg.rows import dict_row
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT id, canonical_name, entity_type, source
+            FROM entities
+            WHERE source = %(source)s AND entity_type = %(entity_type)s
+            ORDER BY canonical_name
+            """,
+            {"source": source, "entity_type": entity_type},
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+
 def apply_enrichments(
     conn: Any,
     entries: list[dict[str, Any]],
@@ -386,6 +417,71 @@ def apply_enrichments(
     return enriched
 
 
+def apply_enrichments_entities(
+    conn: Any,
+    entries: list[dict[str, Any]],
+    matches: dict[str, tuple[str, list[str]]],
+    *,
+    dry_run: bool = False,
+) -> int:
+    """Apply Wikidata enrichments to matching entities via entity_identifiers/entity_aliases.
+
+    Args:
+        conn: Database connection.
+        entries: List of entities row dicts (must include 'id' and 'canonical_name').
+        matches: Mapping of canonical_name -> (qid, wikidata_aliases).
+        dry_run: If True, log changes but do not write to DB.
+
+    Returns:
+        Number of entities enriched.
+    """
+    enriched = 0
+
+    for entry in entries:
+        name = entry["canonical_name"]
+        if name not in matches:
+            continue
+
+        qid, new_aliases = matches[name]
+        entity_id = entry["id"]
+
+        if dry_run:
+            logger.info(
+                "[DRY RUN] Would enrich entity '%s' (id=%d) with QID=%s, %d aliases",
+                name,
+                entity_id,
+                qid,
+                len(new_aliases),
+            )
+        else:
+            upsert_entity_identifier(
+                conn,
+                entity_id=entity_id,
+                id_scheme="wikidata",
+                external_id=qid,
+                is_primary=False,
+            )
+            for alias in new_aliases:
+                upsert_entity_alias(
+                    conn,
+                    entity_id=entity_id,
+                    alias=alias,
+                    alias_source="wikidata",
+                )
+            conn.commit()
+            logger.info(
+                "Enriched entity '%s' (id=%d) with QID=%s, %d aliases",
+                name,
+                entity_id,
+                qid,
+                len(new_aliases),
+            )
+
+        enriched += 1
+
+    return enriched
+
+
 # ---------------------------------------------------------------------------
 # Batching helpers
 # ---------------------------------------------------------------------------
@@ -420,6 +516,7 @@ def run_enrich(
     dry_run: bool = False,
     use_cache: bool = True,
     cache_dir: Path = DEFAULT_CACHE_DIR,
+    entity_source: str = "dictionary",
 ) -> tuple[int, int]:
     """Run the Wikidata enrichment pipeline for multi-discipline entities.
 
@@ -433,6 +530,8 @@ def run_enrich(
         dry_run: If True, skip DB writes.
         use_cache: If True, read/write SPARQL cache files.
         cache_dir: Directory for cache files.
+        entity_source: Source table to read from: "dictionary" (entity_dictionary)
+            or "entities" (entity graph entities table).
 
     Returns:
         Tuple of (total_processed, total_enriched).
@@ -440,6 +539,7 @@ def run_enrich(
     # Enforce constraints
     batch_size = min(batch_size, MAX_BATCH_SIZE)
     delay = max(delay, MIN_DELAY)
+    use_entities_table = entity_source == "entities"
 
     t0 = time.monotonic()
 
@@ -460,9 +560,18 @@ def run_enrich(
 
     try:
         for config in configs:
-            logger.info("Processing %s (%s/%s)", config.label, config.source, config.entity_type)
+            logger.info(
+                "Processing %s (%s/%s) [source: %s]",
+                config.label,
+                config.source,
+                config.entity_type,
+                entity_source,
+            )
 
-            entries = fetch_entries(conn, config.source, config.entity_type)
+            if use_entities_table:
+                entries = fetch_entities_from_graph(conn, config.source, config.entity_type)
+            else:
+                entries = fetch_entries(conn, config.source, config.entity_type)
             if not entries:
                 logger.info("No entries found for %s/%s", config.source, config.entity_type)
                 continue
@@ -518,7 +627,10 @@ def run_enrich(
                     len(batch_names),
                 )
 
-            enriched = apply_enrichments(conn, entries, all_matches, dry_run=dry_run)
+            if use_entities_table:
+                enriched = apply_enrichments_entities(conn, entries, all_matches, dry_run=dry_run)
+            else:
+                enriched = apply_enrichments(conn, entries, all_matches, dry_run=dry_run)
             total_processed += len(entries)
             total_enriched += enriched
 
@@ -601,6 +713,16 @@ def main() -> None:
         help=f"Cache directory (default: {DEFAULT_CACHE_DIR})",
     )
     parser.add_argument(
+        "--entity-source",
+        default="dictionary",
+        choices=["dictionary", "entities"],
+        help=(
+            "Which table to read entities from: 'dictionary' uses entity_dictionary "
+            "(default), 'entities' uses the entity graph entities table and writes "
+            "QIDs to entity_identifiers"
+        ),
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -622,6 +744,7 @@ def main() -> None:
         dry_run=args.dry_run,
         use_cache=not args.no_cache,
         cache_dir=args.cache_dir,
+        entity_source=args.entity_source,
     )
     print(f"Enriched {enriched}/{total} multi-discipline entries with Wikidata data")
 

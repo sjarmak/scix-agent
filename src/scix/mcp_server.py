@@ -123,6 +123,30 @@ def _set_timeout(conn: psycopg.Connection, tool_name: str) -> None:
         cur.execute(f"SET LOCAL statement_timeout = {timeout_ms}")
 
 
+def _log_query(
+    conn: psycopg.Connection,
+    tool_name: str,
+    params: dict[str, Any],
+    latency_ms: float,
+    success: bool,
+    error_msg: str | None = None,
+) -> None:
+    """Write a row to query_log. Best-effort: failures are logged, not raised."""
+    try:
+        params_json = json.dumps(params, default=str)
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO query_log (tool_name, params_json, latency_ms, success, error_msg)
+                VALUES (%s, %s::jsonb, %s, %s, %s)
+                """,
+                (tool_name, params_json, latency_ms, success, error_msg),
+            )
+        conn.commit()
+    except Exception:
+        logger.warning("Failed to log query for tool=%s", tool_name, exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -779,7 +803,19 @@ def create_server():
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         with _get_conn() as conn:
             _set_timeout(conn, name)
-            result_json = _dispatch_tool(conn, name, arguments)
+            t0 = time.monotonic()
+            success = True
+            error_msg: str | None = None
+            try:
+                result_json = _dispatch_tool(conn, name, arguments)
+            except Exception as exc:
+                success = False
+                error_msg = str(exc)
+                result_json = json.dumps({"error": error_msg})
+                raise
+            finally:
+                latency_ms = (time.monotonic() - t0) * 1000
+                _log_query(conn, name, arguments, latency_ms, success, error_msg)
             return [TextContent(type="text", text=result_json)]
 
     return server

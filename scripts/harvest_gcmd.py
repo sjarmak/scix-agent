@@ -13,6 +13,9 @@ Parses 5 schemes into entity_dictionary entries:
   - Projects → entity_type='mission'
 
 All entries get source='gcmd', discipline='earth_science'.
+
+Also writes to the entity graph tables (entities, entity_identifiers,
+entity_aliases) and logs harvest runs to harvest_runs.
 """
 
 from __future__ import annotations
@@ -22,8 +25,7 @@ import json
 import logging
 import sys
 import time
-import urllib.error
-import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -31,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scix.db import get_connection
 from scix.dictionary import bulk_load
+from scix.http_client import ResilientClient
 
 logger = logging.getLogger(__name__)
 
@@ -96,54 +99,28 @@ SCHEME_CONFIGS: dict[str, SchemeConfig] = {
 
 
 # ---------------------------------------------------------------------------
-# Download helpers
+# Module-level client (lazy init)
 # ---------------------------------------------------------------------------
 
+_client: ResilientClient | None = None
 
-def _fetch_url(url: str, timeout: int = 60) -> bytes:
-    """Download a URL with retry and exponential backoff.
 
-    Args:
-        url: URL to fetch.
-        timeout: Request timeout in seconds.
+def _get_client() -> ResilientClient:
+    """Return a shared ResilientClient instance."""
+    global _client
+    if _client is None:
+        _client = ResilientClient(
+            user_agent="scix-experiments/1.0",
+            max_retries=3,
+            backoff_base=2.0,
+            rate_limit=10.0,
+        )
+    return _client
 
-    Returns:
-        Raw response bytes.
 
-    Raises:
-        urllib.error.URLError: If the download fails after retries.
-    """
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "scix-experiments/1.0"},
-            )
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = resp.read()
-            return data
-        except (urllib.error.URLError, OSError) as exc:
-            if attempt < max_retries:
-                wait = 2**attempt
-                logger.warning(
-                    "Download attempt %d/%d failed (%s): %s — retrying in %ds",
-                    attempt,
-                    max_retries,
-                    url,
-                    exc,
-                    wait,
-                )
-                time.sleep(wait)
-            else:
-                logger.error(
-                    "Failed to download %s after %d attempts: %s",
-                    url,
-                    max_retries,
-                    exc,
-                )
-                raise
-    raise RuntimeError("_fetch_url: unexpected exit from retry loop")
+# ---------------------------------------------------------------------------
+# Download helpers
+# ---------------------------------------------------------------------------
 
 
 def download_github_scheme(url: str) -> list[dict[str, Any]]:
@@ -155,8 +132,9 @@ def download_github_scheme(url: str) -> list[dict[str, Any]]:
     Returns:
         Parsed JSON (list of root nodes).
     """
-    data = _fetch_url(url)
-    result = json.loads(data)
+    client = _get_client()
+    response = client.get(url)
+    result = response.json()
     logger.info("Downloaded GitHub scheme from %s: %d root nodes", url, len(result))
     return result
 
@@ -171,14 +149,15 @@ def download_kms_scheme(base_url: str, page_size: int = 2000) -> list[dict[str, 
     Returns:
         Combined list of all concept dicts.
     """
+    client = _get_client()
     all_concepts: list[dict[str, Any]] = []
     page_num = 1
 
     while True:
         sep = "&" if "?" in base_url else "?"
         url = f"{base_url}{sep}page_size={page_size}&page_num={page_num}"
-        data = _fetch_url(url)
-        payload = json.loads(data)
+        response = client.get(url)
+        payload = response.json()
 
         concepts = payload.get("concepts", [])
         all_concepts.extend(concepts)
@@ -433,6 +412,172 @@ def harvest_all(
     return all_entries
 
 
+# ---------------------------------------------------------------------------
+# Harvest run tracking
+# ---------------------------------------------------------------------------
+
+
+def _create_harvest_run(
+    conn: Any,
+    schemes: list[str] | None,
+) -> int:
+    """Insert a harvest_runs row with status='running'. Returns the run id."""
+    config_json = json.dumps({"schemes": schemes})
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO harvest_runs (source, status, config)
+            VALUES ('gcmd', 'running', %(config)s)
+            RETURNING id
+            """,
+            {"config": config_json},
+        )
+        run_id: int = cur.fetchone()[0]
+    conn.commit()
+    return run_id
+
+
+def _complete_harvest_run(
+    conn: Any,
+    run_id: int,
+    *,
+    records_fetched: int,
+    records_upserted: int,
+    counts: dict[str, int],
+) -> None:
+    """Update a harvest_runs row to status='completed'."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE harvest_runs
+            SET status = 'completed',
+                finished_at = now(),
+                records_fetched = %(fetched)s,
+                records_upserted = %(upserted)s,
+                counts = %(counts)s
+            WHERE id = %(id)s
+            """,
+            {
+                "id": run_id,
+                "fetched": records_fetched,
+                "upserted": records_upserted,
+                "counts": json.dumps(counts),
+            },
+        )
+    conn.commit()
+
+
+def _fail_harvest_run(
+    conn: Any,
+    run_id: int,
+    error_message: str,
+) -> None:
+    """Update a harvest_runs row to status='failed'."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE harvest_runs
+            SET status = 'failed',
+                finished_at = now(),
+                error_message = %(msg)s
+            WHERE id = %(id)s
+            """,
+            {"id": run_id, "msg": error_message},
+        )
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Entity graph writes
+# ---------------------------------------------------------------------------
+
+
+def _write_entity_graph(
+    conn: Any,
+    entries: list[dict[str, Any]],
+    harvest_run_id: int,
+) -> int:
+    """Write entries to entities, entity_identifiers, and entity_aliases tables.
+
+    Returns the number of entities upserted.
+    """
+    count = 0
+    for entry in entries:
+        canonical_name = entry["canonical_name"]
+        entity_type = entry["entity_type"]
+        source = entry["source"]
+        external_id = entry.get("external_id")
+        aliases = entry.get("aliases", [])
+        metadata = entry.get("metadata", {})
+
+        properties = {
+            "gcmd_scheme": metadata.get("gcmd_scheme", ""),
+            "gcmd_hierarchy": metadata.get("gcmd_hierarchy", ""),
+        }
+        if "short_name" in metadata:
+            properties["short_name"] = metadata["short_name"]
+        if "long_name" in metadata:
+            properties["long_name"] = metadata["long_name"]
+
+        with conn.cursor() as cur:
+            # Upsert into entities
+            cur.execute(
+                """
+                INSERT INTO entities
+                    (canonical_name, entity_type, discipline, source, harvest_run_id, properties)
+                VALUES (%(name)s, %(type)s, 'earth_science', %(source)s, %(run_id)s, %(props)s)
+                ON CONFLICT (canonical_name, entity_type, source) DO UPDATE SET
+                    discipline = 'earth_science',
+                    harvest_run_id = %(run_id)s,
+                    properties = %(props)s,
+                    updated_at = now()
+                RETURNING id
+                """,
+                {
+                    "name": canonical_name,
+                    "type": entity_type,
+                    "source": source,
+                    "run_id": harvest_run_id,
+                    "props": json.dumps(properties),
+                },
+            )
+            entity_id = cur.fetchone()[0]
+
+            # Upsert entity_identifiers with id_scheme='gcmd_uuid'
+            if external_id:
+                cur.execute(
+                    """
+                    INSERT INTO entity_identifiers (entity_id, id_scheme, external_id, is_primary)
+                    VALUES (%(eid)s, 'gcmd_uuid', %(ext_id)s, true)
+                    ON CONFLICT (id_scheme, external_id) DO UPDATE SET
+                        entity_id = %(eid)s,
+                        is_primary = true
+                    """,
+                    {"eid": entity_id, "ext_id": external_id},
+                )
+
+            # Upsert entity_aliases
+            for alias in aliases:
+                cur.execute(
+                    """
+                    INSERT INTO entity_aliases (entity_id, alias, alias_source)
+                    VALUES (%(eid)s, %(alias)s, 'gcmd')
+                    ON CONFLICT (entity_id, alias) DO NOTHING
+                    """,
+                    {"eid": entity_id, "alias": alias},
+                )
+
+        count += 1
+
+    conn.commit()
+    return count
+
+
+# ---------------------------------------------------------------------------
+# Main harvest pipeline
+# ---------------------------------------------------------------------------
+
+
 def run_harvest(
     dsn: str | None = None,
     schemes: list[str] | None = None,
@@ -440,7 +585,8 @@ def run_harvest(
 ) -> int:
     """Run the full GCMD harvest pipeline.
 
-    Downloads schemes, parses entries, and loads them into entity_dictionary.
+    Downloads schemes, parses entries, and loads them into entity_dictionary
+    and entity graph tables. Logs harvest run to harvest_runs.
 
     Args:
         dsn: Database connection string. Uses SCIX_DSN or default if None.
@@ -466,18 +612,48 @@ def run_harvest(
         return len(entries)
 
     conn = get_connection(dsn)
+    harvest_run_id: int | None = None
     try:
-        count = bulk_load(conn, entries, discipline="earth_science")
+        # Create harvest run record
+        harvest_run_id = _create_harvest_run(conn, schemes)
+
+        # Backward-compatible: write to entity_dictionary
+        dict_count = bulk_load(conn, entries, discipline="earth_science")
+
+        # Write to entity graph tables
+        graph_count = _write_entity_graph(conn, entries, harvest_run_id)
+
+        # Build per-type counts for harvest_runs.counts
+        type_counts = {}
+        for entry in entries:
+            et = entry["entity_type"]
+            type_counts[et] = type_counts.get(et, 0) + 1
+
+        # Complete harvest run
+        _complete_harvest_run(
+            conn,
+            harvest_run_id,
+            records_fetched=len(entries),
+            records_upserted=graph_count,
+            counts=type_counts,
+        )
+    except Exception as exc:
+        if harvest_run_id is not None:
+            try:
+                _fail_harvest_run(conn, harvest_run_id, str(exc))
+            except Exception:
+                logger.warning("Failed to update harvest_run status to 'failed'")
+        raise
     finally:
         conn.close()
 
     elapsed = time.monotonic() - t0
     logger.info(
         "GCMD harvest complete: %d entries loaded in %.1fs",
-        count,
+        dict_count,
         elapsed,
     )
-    return count
+    return dict_count
 
 
 def main() -> None:

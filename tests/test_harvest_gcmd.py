@@ -498,73 +498,66 @@ class TestParseKmsProjects:
 
 
 # ---------------------------------------------------------------------------
-# Tests: download_github_scheme
+# Tests: download_github_scheme (uses ResilientClient)
 # ---------------------------------------------------------------------------
 
 
 class TestDownloadGithubScheme:
-    """Download from GitHub with mocked HTTP."""
+    """Download from GitHub with mocked ResilientClient."""
 
-    @patch("harvest_gcmd.urllib.request.urlopen")
-    def test_downloads_and_parses(self, mock_urlopen: MagicMock) -> None:
-        raw = json.dumps(SAMPLE_INSTRUMENTS).encode("utf-8")
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = raw
-        mock_resp.__enter__ = lambda self: self
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
+    @patch("harvest_gcmd._get_client")
+    def test_downloads_and_parses(self, mock_get_client: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.json.return_value = SAMPLE_INSTRUMENTS
+        mock_client.get.return_value = mock_response
+        mock_get_client.return_value = mock_client
 
         result = download_github_scheme("https://example.com/test.json")
         assert len(result) == 1
         assert result[0]["label"] == "Instruments"
+        mock_client.get.assert_called_once_with("https://example.com/test.json")
 
-    @patch("harvest_gcmd.urllib.request.urlopen")
-    def test_retries_on_failure(self, mock_urlopen: MagicMock) -> None:
-        import urllib.error
+    @patch("harvest_gcmd._get_client")
+    def test_uses_resilient_client(self, mock_get_client: MagicMock) -> None:
+        """Verify ResilientClient is used instead of raw requests/urllib."""
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.json.return_value = SAMPLE_INSTRUMENTS
+        mock_client.get.return_value = mock_response
+        mock_get_client.return_value = mock_client
 
-        raw = json.dumps(SAMPLE_INSTRUMENTS).encode("utf-8")
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = raw
-        mock_resp.__enter__ = lambda self: self
-        mock_resp.__exit__ = MagicMock(return_value=False)
-
-        mock_urlopen.side_effect = [
-            urllib.error.URLError("temporary failure"),
-            mock_resp,
-        ]
-        with patch("harvest_gcmd.time.sleep"):
-            result = download_github_scheme("https://example.com/test.json")
-        assert len(result) == 1
+        download_github_scheme("https://example.com/test.json")
+        mock_client.get.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
-# Tests: download_kms_scheme
+# Tests: download_kms_scheme (uses ResilientClient)
 # ---------------------------------------------------------------------------
 
 
 class TestDownloadKmsScheme:
-    """Download from KMS API with mocked HTTP and pagination."""
+    """Download from KMS API with mocked ResilientClient and pagination."""
 
-    @patch("harvest_gcmd.urllib.request.urlopen")
-    def test_single_page(self, mock_urlopen: MagicMock) -> None:
+    @patch("harvest_gcmd._get_client")
+    def test_single_page(self, mock_get_client: MagicMock) -> None:
         payload = {
             "hits": 3,
             "page_num": 1,
             "page_size": 2000,
             "concepts": SAMPLE_KMS_PROVIDERS,
         }
-        raw = json.dumps(payload).encode("utf-8")
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = raw
-        mock_resp.__enter__ = lambda self: self
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = mock_resp
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.json.return_value = payload
+        mock_client.get.return_value = mock_response
+        mock_get_client.return_value = mock_client
 
         result = download_kms_scheme("https://example.com/kms?format=json")
         assert len(result) == 3
 
-    @patch("harvest_gcmd.urllib.request.urlopen")
-    def test_multi_page(self, mock_urlopen: MagicMock) -> None:
+    @patch("harvest_gcmd._get_client")
+    def test_multi_page(self, mock_get_client: MagicMock) -> None:
         page1 = {
             "hits": 4,
             "page_num": 1,
@@ -578,17 +571,29 @@ class TestDownloadKmsScheme:
             "concepts": SAMPLE_KMS_PROVIDERS[2:] + SAMPLE_KMS_PROJECTS[:1],
         }
 
-        def make_resp(payload: dict) -> MagicMock:
-            raw = json.dumps(payload).encode("utf-8")
-            resp = MagicMock()
-            resp.read.return_value = raw
-            resp.__enter__ = lambda self: self
-            resp.__exit__ = MagicMock(return_value=False)
-            return resp
+        mock_client = MagicMock()
+        resp1 = MagicMock()
+        resp1.json.return_value = page1
+        resp2 = MagicMock()
+        resp2.json.return_value = page2
+        mock_client.get.side_effect = [resp1, resp2]
+        mock_get_client.return_value = mock_client
 
-        mock_urlopen.side_effect = [make_resp(page1), make_resp(page2)]
         result = download_kms_scheme("https://example.com/kms?format=json", page_size=2)
         assert len(result) == 4
+
+    @patch("harvest_gcmd._get_client")
+    def test_uses_resilient_client(self, mock_get_client: MagicMock) -> None:
+        """Verify ResilientClient is used for KMS downloads."""
+        payload = {"hits": 0, "concepts": []}
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.json.return_value = payload
+        mock_client.get.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        download_kms_scheme("https://example.com/kms?format=json")
+        mock_client.get.assert_called()
 
 
 # ---------------------------------------------------------------------------
@@ -648,6 +653,9 @@ class TestHarvestAll:
 class TestRunHarvest:
     """Tests for run_harvest with mocked download and DB."""
 
+    @patch("harvest_gcmd._write_entity_graph")
+    @patch("harvest_gcmd._complete_harvest_run")
+    @patch("harvest_gcmd._create_harvest_run")
     @patch("harvest_gcmd.get_connection")
     @patch("harvest_gcmd.bulk_load")
     @patch("harvest_gcmd.download_github_scheme")
@@ -656,11 +664,16 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_create_run: MagicMock,
+        mock_complete_run: MagicMock,
+        mock_write_graph: MagicMock,
     ) -> None:
         mock_download.return_value = SAMPLE_INSTRUMENTS
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 8
+        mock_create_run.return_value = 1
+        mock_write_graph.return_value = 8
 
         count = run_harvest(dsn="dbname=test", schemes=["instruments"])
 
@@ -670,6 +683,9 @@ class TestRunHarvest:
         _, kwargs = mock_bulk_load.call_args
         assert kwargs.get("discipline") == "earth_science"
 
+    @patch("harvest_gcmd._write_entity_graph")
+    @patch("harvest_gcmd._complete_harvest_run")
+    @patch("harvest_gcmd._create_harvest_run")
     @patch("harvest_gcmd.get_connection")
     @patch("harvest_gcmd.bulk_load")
     @patch("harvest_gcmd.download_github_scheme")
@@ -678,15 +694,23 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_create_run: MagicMock,
+        mock_complete_run: MagicMock,
+        mock_write_graph: MagicMock,
     ) -> None:
         mock_download.return_value = SAMPLE_INSTRUMENTS
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 8
+        mock_create_run.return_value = 1
+        mock_write_graph.return_value = 8
 
         run_harvest(schemes=["instruments"])
         mock_conn.close.assert_called_once()
 
+    @patch("harvest_gcmd._write_entity_graph")
+    @patch("harvest_gcmd._complete_harvest_run")
+    @patch("harvest_gcmd._create_harvest_run")
     @patch("harvest_gcmd.get_connection")
     @patch("harvest_gcmd.bulk_load")
     @patch("harvest_gcmd.download_github_scheme")
@@ -695,11 +719,15 @@ class TestRunHarvest:
         mock_download: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_create_run: MagicMock,
+        mock_complete_run: MagicMock,
+        mock_write_graph: MagicMock,
     ) -> None:
         mock_download.return_value = SAMPLE_INSTRUMENTS
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.side_effect = RuntimeError("DB error")
+        mock_create_run.return_value = 1
 
         with pytest.raises(RuntimeError):
             run_harvest(schemes=["instruments"])
@@ -714,6 +742,159 @@ class TestRunHarvest:
         count = run_harvest(schemes=["instruments"], dry_run=True)
         assert count == 8
 
+    @patch("harvest_gcmd._write_entity_graph")
+    @patch("harvest_gcmd._complete_harvest_run")
+    @patch("harvest_gcmd._create_harvest_run")
+    @patch("harvest_gcmd.get_connection")
+    @patch("harvest_gcmd.bulk_load")
+    @patch("harvest_gcmd.download_github_scheme")
+    def test_run_harvest_creates_harvest_run(
+        self,
+        mock_download: MagicMock,
+        mock_bulk_load: MagicMock,
+        mock_get_conn: MagicMock,
+        mock_create_run: MagicMock,
+        mock_complete_run: MagicMock,
+        mock_write_graph: MagicMock,
+    ) -> None:
+        """Verify harvest_runs record is created and completed."""
+        mock_download.return_value = SAMPLE_INSTRUMENTS
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_bulk_load.return_value = 8
+        mock_create_run.return_value = 42
+        mock_write_graph.return_value = 8
+
+        run_harvest(schemes=["instruments"])
+
+        mock_create_run.assert_called_once_with(mock_conn, ["instruments"])
+        mock_complete_run.assert_called_once()
+        _, kwargs = mock_complete_run.call_args
+        assert kwargs["records_fetched"] == 8
+        assert kwargs["records_upserted"] == 8
+
+    @patch("harvest_gcmd._write_entity_graph")
+    @patch("harvest_gcmd._complete_harvest_run")
+    @patch("harvest_gcmd._create_harvest_run")
+    @patch("harvest_gcmd.get_connection")
+    @patch("harvest_gcmd.bulk_load")
+    @patch("harvest_gcmd.download_github_scheme")
+    def test_run_harvest_writes_entity_graph(
+        self,
+        mock_download: MagicMock,
+        mock_bulk_load: MagicMock,
+        mock_get_conn: MagicMock,
+        mock_create_run: MagicMock,
+        mock_complete_run: MagicMock,
+        mock_write_graph: MagicMock,
+    ) -> None:
+        """Verify entity graph tables are written after bulk_load."""
+        mock_download.return_value = SAMPLE_INSTRUMENTS
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_bulk_load.return_value = 8
+        mock_create_run.return_value = 1
+        mock_write_graph.return_value = 8
+
+        run_harvest(schemes=["instruments"])
+
+        mock_write_graph.assert_called_once()
+        args = mock_write_graph.call_args[0]
+        assert args[0] is mock_conn  # conn
+        assert len(args[1]) == 8  # entries
+        assert args[2] == 1  # harvest_run_id
+
+
+# ---------------------------------------------------------------------------
+# Tests: _write_entity_graph
+# ---------------------------------------------------------------------------
+
+
+class TestWriteEntityGraph:
+    """Tests for _write_entity_graph with mocked DB cursor."""
+
+    def _make_mock_conn(self) -> MagicMock:
+        """Create a mock connection with a cursor that returns entity IDs."""
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        # fetchone returns entity_id for each INSERT INTO entities
+        mock_cursor.fetchone.return_value = (100,)
+        mock_cursor.__enter__ = lambda self: self
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+        mock_conn.cursor.return_value = mock_cursor
+        return mock_conn
+
+    def test_writes_entities_with_discipline(self) -> None:
+        from harvest_gcmd import _write_entity_graph
+
+        entries = parse_github_scheme(SAMPLE_INSTRUMENTS, SCHEME_CONFIGS["instruments"])
+        mock_conn = self._make_mock_conn()
+
+        count = _write_entity_graph(mock_conn, entries, harvest_run_id=1)
+
+        assert count == 8
+        # Verify execute calls include discipline='earth_science'
+        cursor = mock_conn.cursor.return_value
+        calls = cursor.execute.call_args_list
+        # First call for each entry is the entities INSERT
+        entity_inserts = [c for c in calls if "INTO entities" in str(c)]
+        assert len(entity_inserts) == 8
+        for call_obj in entity_inserts:
+            params = call_obj[0][1]
+            assert params["source"] == "gcmd"
+
+    def test_writes_entity_identifiers_gcmd_uuid(self) -> None:
+        from harvest_gcmd import _write_entity_graph
+
+        entries = parse_github_scheme(SAMPLE_INSTRUMENTS, SCHEME_CONFIGS["instruments"])
+        mock_conn = self._make_mock_conn()
+
+        _write_entity_graph(mock_conn, entries, harvest_run_id=1)
+
+        cursor = mock_conn.cursor.return_value
+        calls = cursor.execute.call_args_list
+        id_inserts = [c for c in calls if "entity_identifiers" in str(c)]
+        assert len(id_inserts) == 8  # All 8 entries have external_id
+        for call_obj in id_inserts:
+            sql = call_obj[0][0]
+            params = call_obj[0][1]
+            assert "'gcmd_uuid'" in sql
+            assert params["ext_id"] is not None
+
+    def test_writes_entity_aliases(self) -> None:
+        from harvest_gcmd import _write_entity_graph
+
+        # Use duplicates fixture — each entry gets an alias
+        entries = parse_github_scheme(
+            SAMPLE_SCIENCEKEYWORDS_DUPES, SCHEME_CONFIGS["sciencekeywords"]
+        )
+        mock_conn = self._make_mock_conn()
+
+        _write_entity_graph(mock_conn, entries, harvest_run_id=1)
+
+        cursor = mock_conn.cursor.return_value
+        calls = cursor.execute.call_args_list
+        alias_inserts = [c for c in calls if "entity_aliases" in str(c)]
+        assert len(alias_inserts) == 2  # Two "TEMPERATURE" aliases
+
+    def test_properties_contain_gcmd_scheme_and_hierarchy(self) -> None:
+        from harvest_gcmd import _write_entity_graph
+
+        entries = parse_github_scheme(SAMPLE_INSTRUMENTS, SCHEME_CONFIGS["instruments"])
+        mock_conn = self._make_mock_conn()
+
+        _write_entity_graph(mock_conn, entries, harvest_run_id=1)
+
+        cursor = mock_conn.cursor.return_value
+        calls = cursor.execute.call_args_list
+        entity_inserts = [c for c in calls if "INTO entities" in str(c)]
+        for call_obj in entity_inserts:
+            params = call_obj[0][1]
+            props = json.loads(params["props"])
+            assert "gcmd_scheme" in props
+            assert "gcmd_hierarchy" in props
+            assert props["gcmd_scheme"] == "instruments"
+
 
 # ---------------------------------------------------------------------------
 # Tests: all entries have discipline='earth_science' metadata key
@@ -723,6 +904,9 @@ class TestRunHarvest:
 class TestDisciplineMetadata:
     """Verify discipline is passed to bulk_load for all schemes."""
 
+    @patch("harvest_gcmd._write_entity_graph")
+    @patch("harvest_gcmd._complete_harvest_run")
+    @patch("harvest_gcmd._create_harvest_run")
     @patch("harvest_gcmd.get_connection")
     @patch("harvest_gcmd.bulk_load")
     @patch("harvest_gcmd.download_kms_scheme")
@@ -733,12 +917,17 @@ class TestDisciplineMetadata:
         mock_kms: MagicMock,
         mock_bulk_load: MagicMock,
         mock_get_conn: MagicMock,
+        mock_create_run: MagicMock,
+        mock_complete_run: MagicMock,
+        mock_write_graph: MagicMock,
     ) -> None:
         mock_github.return_value = SAMPLE_INSTRUMENTS
         mock_kms.return_value = SAMPLE_KMS_PROVIDERS
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 9
+        mock_create_run.return_value = 1
+        mock_write_graph.return_value = 9
 
         run_harvest(schemes=["instruments", "providers"])
 
@@ -784,3 +973,105 @@ class TestSchemeConfigs:
         cfg = SCHEME_CONFIGS["projects"]
         assert cfg.entity_type == "mission"
         assert cfg.source_kind == "kms"
+
+
+# ---------------------------------------------------------------------------
+# Tests: ResilientClient usage verification
+# ---------------------------------------------------------------------------
+
+
+class TestResilientClientUsage:
+    """Verify that ResilientClient is used instead of urllib/raw requests."""
+
+    def test_no_urllib_import_in_harvester(self) -> None:
+        """The harvester should not use urllib for HTTP requests."""
+        import harvest_gcmd
+
+        source = Path(harvest_gcmd.__file__).read_text()
+        assert "urllib.request" not in source
+        assert "urllib.error" not in source
+
+    def test_resilient_client_imported(self) -> None:
+        """The harvester should import ResilientClient."""
+        import harvest_gcmd
+
+        assert hasattr(harvest_gcmd, "ResilientClient")
+
+
+# ---------------------------------------------------------------------------
+# Tests: harvest_runs tracking
+# ---------------------------------------------------------------------------
+
+
+class TestHarvestRunsTracking:
+    """Verify harvest_runs records are created and updated."""
+
+    @patch("harvest_gcmd._write_entity_graph")
+    @patch("harvest_gcmd._complete_harvest_run")
+    @patch("harvest_gcmd._create_harvest_run")
+    @patch("harvest_gcmd.get_connection")
+    @patch("harvest_gcmd.bulk_load")
+    @patch("harvest_gcmd.download_github_scheme")
+    def test_harvest_run_completed_with_counts(
+        self,
+        mock_download: MagicMock,
+        mock_bulk_load: MagicMock,
+        mock_get_conn: MagicMock,
+        mock_create_run: MagicMock,
+        mock_complete_run: MagicMock,
+        mock_write_graph: MagicMock,
+    ) -> None:
+        mock_download.return_value = SAMPLE_INSTRUMENTS
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_bulk_load.return_value = 8
+        mock_create_run.return_value = 7
+        mock_write_graph.return_value = 8
+
+        run_harvest(schemes=["instruments"])
+
+        mock_complete_run.assert_called_once()
+        call_args = mock_complete_run.call_args
+        assert call_args[0][0] is mock_conn
+        assert call_args[0][1] == 7  # run_id
+        assert call_args[1]["records_fetched"] == 8
+        assert call_args[1]["records_upserted"] == 8
+        assert "instrument" in call_args[1]["counts"]
+
+    @patch("harvest_gcmd._fail_harvest_run")
+    @patch("harvest_gcmd._write_entity_graph")
+    @patch("harvest_gcmd._complete_harvest_run")
+    @patch("harvest_gcmd._create_harvest_run")
+    @patch("harvest_gcmd.get_connection")
+    @patch("harvest_gcmd.bulk_load")
+    @patch("harvest_gcmd.download_github_scheme")
+    def test_harvest_run_failed_on_error(
+        self,
+        mock_download: MagicMock,
+        mock_bulk_load: MagicMock,
+        mock_get_conn: MagicMock,
+        mock_create_run: MagicMock,
+        mock_complete_run: MagicMock,
+        mock_write_graph: MagicMock,
+        mock_fail_run: MagicMock,
+    ) -> None:
+        mock_download.return_value = SAMPLE_INSTRUMENTS
+        mock_conn = MagicMock()
+        mock_get_conn.return_value = mock_conn
+        mock_bulk_load.side_effect = RuntimeError("DB error")
+        mock_create_run.return_value = 7
+
+        with pytest.raises(RuntimeError):
+            run_harvest(schemes=["instruments"])
+
+        mock_fail_run.assert_called_once()
+        assert mock_fail_run.call_args[0][1] == 7  # run_id
+        assert "DB error" in mock_fail_run.call_args[0][2]
+
+    def test_dry_run_does_not_create_harvest_run(self) -> None:
+        """Dry run should not touch the database at all."""
+        with patch("harvest_gcmd.download_github_scheme") as mock_dl:
+            mock_dl.return_value = SAMPLE_INSTRUMENTS
+            with patch("harvest_gcmd._create_harvest_run") as mock_create:
+                run_harvest(schemes=["instruments"], dry_run=True)
+                mock_create.assert_not_called()

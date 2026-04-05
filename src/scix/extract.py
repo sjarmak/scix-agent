@@ -151,6 +151,9 @@ class ExtractionRow:
     extraction_type: str
     extraction_version: str
     payload: dict[str, Any]
+    source: str = "llm"
+    confidence_tier: str = "medium"
+    extraction_model: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -710,11 +713,15 @@ def load_results_to_db(
                 cur.execute(
                     """
                     INSERT INTO extractions
-                        (bibcode, extraction_type, extraction_version, payload)
-                    VALUES (%s, %s, %s, %s)
+                        (bibcode, extraction_type, extraction_version, payload,
+                         source, confidence_tier, extraction_model)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (bibcode, extraction_type, extraction_version)
                     DO UPDATE SET
                         payload = EXCLUDED.payload,
+                        source = EXCLUDED.source,
+                        confidence_tier = EXCLUDED.confidence_tier,
+                        extraction_model = EXCLUDED.extraction_model,
                         created_at = NOW()
                     """,
                     (
@@ -722,6 +729,9 @@ def load_results_to_db(
                         row.extraction_type,
                         row.extraction_version,
                         json.dumps(row.payload),
+                        row.source,
+                        row.confidence_tier,
+                        row.extraction_model,
                     ),
                 )
         conn.commit()

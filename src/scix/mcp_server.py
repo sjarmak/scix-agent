@@ -594,6 +594,20 @@ def create_server():
                             "type": "string",
                             "description": "Entity name to search for",
                         },
+                        "source": {
+                            "type": "string",
+                            "description": (
+                                "Filter by extraction source. "
+                                "Valid values: 'metadata', 'ner', 'llm', 'openalex', 'citation_propagation'"
+                            ),
+                        },
+                        "confidence_tier": {
+                            "type": "string",
+                            "description": (
+                                "Filter by confidence tier. "
+                                "Valid values: 'high', 'medium', 'low'"
+                            ),
+                        },
                         "limit": {"type": "integer", "default": 20},
                     },
                     "required": ["entity_type", "entity_name"],
@@ -797,6 +811,25 @@ def create_server():
                     "required": ["bibcode", "query"],
                 },
             ),
+            Tool(
+                name="get_openalex_topics",
+                description=(
+                    "Get OpenAlex topic labels for a paper identified by bibcode. "
+                    "Returns topic names with scores, subfields, fields, and domains. "
+                    "Requires the paper to have been linked to OpenAlex first "
+                    "(via scripts/link_openalex.py)."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "bibcode": {
+                            "type": "string",
+                            "description": "ADS bibcode of the paper",
+                        },
+                    },
+                    "required": ["bibcode"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -959,18 +992,45 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
             return result_json
         # Use JSONB containment (@>) which leverages the GIN index
         containment = json.dumps({entity_type: [entity_name]})
-        with conn.cursor() as cur:
-            cur.execute(
-                """
+        source_filter = args.get("source")
+        confidence_filter = args.get("confidence_tier")
+
+        _VALID_SOURCES = {"metadata", "ner", "llm", "openalex", "citation_propagation"}
+        _VALID_TIERS = {"high", "medium", "low"}
+        if source_filter and source_filter not in _VALID_SOURCES:
+            return json.dumps(
+                {
+                    "error": f"Invalid source '{source_filter}'. Must be one of {sorted(_VALID_SOURCES)}"
+                }
+            )
+        if confidence_filter and confidence_filter not in _VALID_TIERS:
+            return json.dumps(
+                {
+                    "error": f"Invalid confidence_tier '{confidence_filter}'. Must be one of {sorted(_VALID_TIERS)}"
+                }
+            )
+
+        query = """
                 SELECT e.bibcode, e.extraction_type, e.extraction_version, e.payload,
-                       p.title
+                       p.title, e.source, e.confidence_tier, e.extraction_model
                 FROM extractions e
                 JOIN papers p ON p.bibcode = e.bibcode
                 WHERE e.payload @> %s::jsonb
-                LIMIT %s
-                """,
-                (containment, limit),
-            )
+        """
+        params: list[Any] = [containment]
+
+        if source_filter:
+            query += " AND e.source = %s"
+            params.append(source_filter)
+        if confidence_filter:
+            query += " AND e.confidence_tier = %s"
+            params.append(confidence_filter)
+
+        query += " LIMIT %s"
+        params.append(limit)
+
+        with conn.cursor() as cur:
+            cur.execute(query, params)
             rows = cur.fetchall()
         papers = [
             {
@@ -979,6 +1039,9 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
                 "extraction_version": row[2],
                 "payload": row[3],
                 "title": row[4],
+                "source": row[5],
+                "confidence_tier": row[6],
+                "extraction_model": row[7],
             }
             for row in rows
         ]
@@ -1145,6 +1208,38 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
             args["query"],
         )
         result_json = _result_to_json(result)
+
+    elif name == "get_openalex_topics":
+        bibcode = args["bibcode"]
+        if not bibcode or not bibcode.strip():
+            return json.dumps({"error": "bibcode must be a non-empty string"})
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT openalex_id, openalex_topics FROM papers WHERE bibcode = %s",
+                (bibcode,),
+            )
+            row = cur.fetchone()
+        if row is None:
+            result_json = json.dumps({"error": f"Paper not found: {bibcode}"})
+        elif row[0] is None:
+            result_json = json.dumps(
+                {
+                    "bibcode": bibcode,
+                    "openalex_id": None,
+                    "topics": [],
+                    "message": "Paper has not been linked to OpenAlex yet.",
+                }
+            )
+        else:
+            result_json = json.dumps(
+                {
+                    "bibcode": bibcode,
+                    "openalex_id": row[0],
+                    "topics": row[1] if row[1] else [],
+                },
+                indent=2,
+                default=str,
+            )
 
     elif name == "health_check":
         status: dict[str, Any] = {"pool": "no_pool", "model_cached": False, "db": "unknown"}

@@ -830,6 +830,27 @@ def create_server():
                     "required": ["bibcode"],
                 },
             ),
+            Tool(
+                name="document_context",
+                description=(
+                    "Get full document context for a paper in a single query: "
+                    "title, abstract, year, citation/reference counts, and all "
+                    "linked entities (with entity_id, name, type, link_type, "
+                    "confidence). Replaces the separate get_paper + entity_search "
+                    "workflow by reading from the agent_document_context "
+                    "materialized view."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "bibcode": {
+                            "type": "string",
+                            "description": "ADS bibcode of the paper",
+                        },
+                    },
+                    "required": ["bibcode"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -1240,6 +1261,13 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
                 indent=2,
                 default=str,
             )
+
+    elif name == "document_context":
+        bibcode = args.get("bibcode", "")
+        if not bibcode or not bibcode.strip():
+            return json.dumps({"error": "bibcode must be a non-empty string"})
+        result = search.get_document_context(conn, bibcode)
+        result_json = _result_to_json(result)
 
     elif name == "health_check":
         status: dict[str, Any] = {"pool": "no_pool", "model_cached": False, "db": "unknown"}

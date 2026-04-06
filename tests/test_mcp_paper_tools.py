@@ -8,7 +8,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scix.mcp_server import _dispatch_tool
-from scix.search import SearchResult, read_paper_section, search_within_paper
+from scix.search import (
+    SearchResult,
+    get_document_context,
+    read_paper_section,
+    search_within_paper,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -301,3 +306,162 @@ class TestDispatchPaperTools:
             "2024ApJ...001A",
             "dark matter",
         )
+
+
+# ---------------------------------------------------------------------------
+# get_document_context — unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetDocumentContext:
+    """Tests for search.get_document_context() — queries agent_document_context matview."""
+
+    def _make_conn_with_row(self, row: dict | None) -> MagicMock:
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = row
+        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+        mock_conn.cursor.return_value = mock_cursor
+        return mock_conn
+
+    def test_existing_paper_returns_context(self) -> None:
+        """Known bibcode returns paper metadata + linked entities."""
+        row = {
+            "bibcode": "2019Natur.568...55L",
+            "title": "Bennu surface composition",
+            "abstract": "OSIRIS-REx observations of asteroid Bennu...",
+            "year": 2019,
+            "citation_count": 427,
+            "reference_count": 31,
+            "linked_entities": [
+                {
+                    "entity_id": 42,
+                    "name": "OSIRIS-REx",
+                    "type": "mission",
+                    "link_type": "extraction",
+                    "confidence": 0.95,
+                },
+                {
+                    "entity_id": 99,
+                    "name": "Bennu",
+                    "type": "object",
+                    "link_type": "extraction",
+                    "confidence": 0.99,
+                },
+            ],
+        }
+        conn = self._make_conn_with_row(row)
+
+        result = get_document_context(conn, "2019Natur.568...55L")
+
+        assert isinstance(result, SearchResult)
+        assert result.total == 1
+        assert len(result.papers) == 1
+        paper = result.papers[0]
+        assert paper["bibcode"] == "2019Natur.568...55L"
+        assert paper["title"] == "Bennu surface composition"
+        assert paper["citation_count"] == 427
+        assert paper["reference_count"] == 31
+        assert len(paper["linked_entities"]) == 2
+        assert paper["linked_entities"][0]["name"] == "OSIRIS-REx"
+        assert "query_ms" in result.timing_ms
+
+    def test_paper_with_no_linked_entities(self) -> None:
+        """Paper with empty linked_entities returns empty list, not error."""
+        row = {
+            "bibcode": "2024ApJ...001A",
+            "title": "Test Paper",
+            "abstract": "Abstract",
+            "year": 2024,
+            "citation_count": 0,
+            "reference_count": 0,
+            "linked_entities": [],
+        }
+        conn = self._make_conn_with_row(row)
+
+        result = get_document_context(conn, "2024ApJ...001A")
+
+        assert result.total == 1
+        assert result.papers[0]["linked_entities"] == []
+
+    def test_nonexistent_bibcode_returns_empty(self) -> None:
+        """Unknown bibcode returns empty result with error metadata, not exception."""
+        conn = self._make_conn_with_row(None)
+
+        result = get_document_context(conn, "9999XXX...000Z")
+
+        assert result.total == 0
+        assert result.papers == []
+        assert "error" in result.metadata
+        assert "9999XXX...000Z" in result.metadata["error"]
+
+    def test_query_uses_matview(self) -> None:
+        """Query targets the agent_document_context matview, not papers table."""
+        conn = self._make_conn_with_row(None)
+
+        get_document_context(conn, "2024ApJ...001A")
+
+        cur = conn.cursor.return_value
+        sql = cur.execute.call_args[0][0]
+        assert "agent_document_context" in sql
+        params = cur.execute.call_args[0][1]
+        assert params == ("2024ApJ...001A",)
+
+
+class TestDispatchDocumentContext:
+    """Tests for MCP _dispatch_tool routing to get_document_context."""
+
+    @patch("scix.search.get_document_context")
+    def test_dispatch_routes_to_search(self, mock_fn: MagicMock) -> None:
+        mock_fn.return_value = SearchResult(
+            papers=[
+                {
+                    "bibcode": "2024ApJ...001A",
+                    "title": "Test",
+                    "abstract": "Abstract",
+                    "year": 2024,
+                    "citation_count": 5,
+                    "reference_count": 10,
+                    "linked_entities": [],
+                }
+            ],
+            total=1,
+            timing_ms={"query_ms": 1.5},
+        )
+        mock_conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(
+                mock_conn,
+                "document_context",
+                {"bibcode": "2024ApJ...001A"},
+            )
+        )
+        assert result["total"] == 1
+        assert result["papers"][0]["bibcode"] == "2024ApJ...001A"
+        mock_fn.assert_called_once_with(mock_conn, "2024ApJ...001A")
+
+    def test_empty_bibcode_returns_error(self) -> None:
+        """Empty bibcode is rejected with a clear error before any DB call."""
+        mock_conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(
+                mock_conn,
+                "document_context",
+                {"bibcode": ""},
+            )
+        )
+        assert "error" in result
+        assert "bibcode" in result["error"].lower()
+
+    def test_whitespace_bibcode_returns_error(self) -> None:
+        """Whitespace-only bibcode is also rejected."""
+        mock_conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(
+                mock_conn,
+                "document_context",
+                {"bibcode": "   "},
+            )
+        )
+        assert "error" in result

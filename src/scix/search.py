@@ -1147,6 +1147,54 @@ def concept_search(
 
 
 # ---------------------------------------------------------------------------
+# Agent context queries (materialized views)
+# ---------------------------------------------------------------------------
+
+
+def get_document_context(
+    conn: psycopg.Connection,
+    bibcode: str,
+) -> SearchResult:
+    """Get full document context for a paper from the agent_document_context matview.
+
+    Returns paper metadata (bibcode, title, abstract, year, citation_count,
+    reference_count) plus all linked entities as a JSONB array. Replaces the
+    separate get_paper + entity_search workflow with a single query against
+    the precomputed materialized view.
+
+    Returns an empty SearchResult with an error in metadata when the bibcode
+    is not found, rather than raising an exception.
+    """
+    t0 = time.perf_counter()
+
+    sql = """
+        SELECT bibcode, title, abstract, year, citation_count, reference_count, linked_entities
+        FROM agent_document_context
+        WHERE bibcode = %s
+    """
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(sql, (bibcode,))
+        row = cur.fetchone()
+
+    query_ms = _elapsed_ms(t0)
+
+    if row is None:
+        return SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"query_ms": query_ms},
+            metadata={"error": f"Paper not found in document context: {bibcode}"},
+        )
+
+    return SearchResult(
+        papers=[dict(row)],
+        total=1,
+        timing_ms={"query_ms": query_ms},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Citation context queries
 # ---------------------------------------------------------------------------
 

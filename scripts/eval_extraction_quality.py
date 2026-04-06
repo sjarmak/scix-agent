@@ -75,7 +75,7 @@ def sample_papers(conn: psycopg.Connection, n: int = 50) -> list[str]:
     """
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT DISTINCT bibcode FROM extractions ORDER BY RANDOM() LIMIT %s",
+            "SELECT bibcode FROM (SELECT DISTINCT bibcode FROM extractions) sub ORDER BY RANDOM() LIMIT %s",
             (n,),
         )
         bibcodes = [row[0] for row in cur.fetchall()]

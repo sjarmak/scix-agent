@@ -116,22 +116,29 @@ def parse_sbdb_response(data: dict[str, Any]) -> dict[str, Any]:
 def fetch_sbdb_record(
     client: ResilientClient,
     designation: str,
+    spk_id: str | None = None,
 ) -> dict[str, Any] | None:
-    """Fetch SBDB data for a single small body by designation.
+    """Fetch SBDB data for a single small body by SPK-ID or designation.
 
     Args:
         client: ResilientClient instance.
         designation: Object name/designation (e.g. 'Ceres', '433').
+        spk_id: Optional SPK-ID to use instead of designation.
 
     Returns:
         Parsed enrichment dict, or None on failure.
     """
-    params = {
-        "des": designation,
+    params: dict[str, str] = {
         "phys-par": "true",
         "discovery": "true",
         "ca-data": "false",
     }
+    # Use sstr (search string) instead of des — SBDB rejects name-only
+    # designations like 'Bennu' via des= but accepts them via sstr=
+    if spk_id:
+        params["spk"] = spk_id
+    else:
+        params["sstr"] = designation
     try:
         response = client.get(SBDB_API_BASE, params=params)
         data = response.json()
@@ -223,30 +230,37 @@ def save_cursor(conn: Any, run_id: int, entity_id: int) -> None:
 def fetch_ssodnet_entities(
     conn: Any,
     after_id: int | None = None,
-) -> list[tuple[int, str]]:
+) -> list[tuple[int, str, str | None]]:
     """Fetch ssodnet entities to enrich, ordered by id.
+
+    Also fetches SPK-ID from entity_identifiers so SBDB can be queried
+    by SPK-ID (SBDB rejects name-only designations like 'Bennu').
 
     Args:
         conn: Database connection.
         after_id: If set, only return entities with id > after_id (for resumption).
 
     Returns:
-        List of (entity_id, canonical_name) tuples.
+        List of (entity_id, canonical_name, spk_id_or_none) tuples.
     """
     if after_id is not None:
         query = """
-            SELECT id, canonical_name
-            FROM entities
-            WHERE source = %s AND id > %s
-            ORDER BY id
+            SELECT e.id, e.canonical_name, ei.external_id AS spk_id
+            FROM entities e
+            LEFT JOIN entity_identifiers ei
+                ON ei.entity_id = e.id AND ei.id_scheme = 'sbdb_spkid'
+            WHERE e.source = %s AND e.id > %s
+            ORDER BY e.id
         """
         params: tuple[Any, ...] = (ENRICHES_SOURCE, after_id)
     else:
         query = """
-            SELECT id, canonical_name
-            FROM entities
-            WHERE source = %s
-            ORDER BY id
+            SELECT e.id, e.canonical_name, ei.external_id AS spk_id
+            FROM entities e
+            LEFT JOIN entity_identifiers ei
+                ON ei.entity_id = e.id AND ei.id_scheme = 'sbdb_spkid'
+            WHERE e.source = %s
+            ORDER BY e.id
         """
         params = (ENRICHES_SOURCE,)
 
@@ -337,8 +351,8 @@ def run_harvest(
     if dry_run:
         # In dry-run mode, still query the API but skip DB writes
         enriched = 0
-        for entity_id, canonical_name in entities:
-            result = fetch_sbdb_record(client, canonical_name)
+        for entity_id, canonical_name, spk_id in entities:
+            result = fetch_sbdb_record(client, canonical_name, spk_id=spk_id)
             if result is not None:
                 enriched += 1
                 logger.info(
@@ -365,9 +379,9 @@ def run_harvest(
         fetched = 0
         errors = 0
 
-        for entity_id, canonical_name in entities:
+        for entity_id, canonical_name, spk_id in entities:
             fetched += 1
-            result = fetch_sbdb_record(client, canonical_name)
+            result = fetch_sbdb_record(client, canonical_name, spk_id=spk_id)
 
             if result is not None:
                 update_entity_properties(conn, entity_id, result)

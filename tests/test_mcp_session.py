@@ -53,6 +53,9 @@ class TestEntitySearch:
                 "v1",
                 {"entities": ["dark matter"]},
                 "Dark Matter Paper",
+                "ner",
+                "high",
+                "scibert",
             ),
         ]
         conn = _make_conn(rows)
@@ -260,8 +263,8 @@ class TestInWorkingSetAnnotation:
     def test_entity_search_annotates_results(self) -> None:
         mcp_server._session_state.add_to_working_set(bibcode="2024ApJ...001A", source_tool="test")
         rows = [
-            ("2024ApJ...001A", "entities", "v1", {}, "Paper A"),
-            ("2024ApJ...002B", "entities", "v1", {}, "Paper B"),
+            ("2024ApJ...001A", "entities", "v1", {}, "Paper A", "ner", "high", "scibert"),
+            ("2024ApJ...002B", "entities", "v1", {}, "Paper B", "ner", "high", "scibert"),
         ]
         conn = _make_conn(rows)
         result_json = mcp_server._dispatch_tool(

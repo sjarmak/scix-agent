@@ -169,9 +169,9 @@ def test_fetch_sbdb_record_success() -> None:
     assert result is not None
     assert result["orbital_class"] == "Main-belt Asteroid"
     mock_client.get.assert_called_once()
-    # Verify params include designation
+    # Verify params include designation via sstr (SBDB rejects name-only via des=)
     call_kwargs = mock_client.get.call_args
-    assert call_kwargs[1]["params"]["des"] == "Ceres"
+    assert call_kwargs[1]["params"]["sstr"] == "Ceres"
 
 
 def test_fetch_sbdb_record_error_code() -> None:
@@ -216,11 +216,11 @@ def test_fetch_ssodnet_entities_no_cursor() -> None:
     mock_cursor = MagicMock()
     mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
     mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-    mock_cursor.fetchall.return_value = [(1, "Ceres"), (2, "Vesta")]
+    mock_cursor.fetchall.return_value = [(1, "Ceres", None), (2, "Vesta", None)]
 
     result = harvest_sbdb.fetch_ssodnet_entities(mock_conn)
 
-    assert result == [(1, "Ceres"), (2, "Vesta")]
+    assert result == [(1, "Ceres", None), (2, "Vesta", None)]
     # Verify query filters by source='ssodnet'
     sql = mock_cursor.execute.call_args[0][0]
     assert "source" in sql
@@ -234,11 +234,11 @@ def test_fetch_ssodnet_entities_with_cursor() -> None:
     mock_cursor = MagicMock()
     mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
     mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-    mock_cursor.fetchall.return_value = [(3, "Pallas")]
+    mock_cursor.fetchall.return_value = [(3, "Pallas", None)]
 
     result = harvest_sbdb.fetch_ssodnet_entities(mock_conn, after_id=2)
 
-    assert result == [(3, "Pallas")]
+    assert result == [(3, "Pallas", None)]
     sql = mock_cursor.execute.call_args[0][0]
     assert "id >" in sql
     params = mock_cursor.execute.call_args[0][1]
@@ -366,7 +366,7 @@ def test_harvest_run_log_start_complete(
     mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
     # resume=False skips get_last_cursor; fetchone is only called by HarvestRunLog.start()
     mock_cursor.fetchone.return_value = (1,)
-    mock_cursor.fetchall.return_value = [(10, "Ceres")]
+    mock_cursor.fetchall.return_value = [(10, "Ceres", None)]
     mock_get_conn.return_value = mock_conn
 
     result = harvest_sbdb.run_harvest(dsn="test://db", dry_run=False, resume=False, limit=1)
@@ -400,7 +400,7 @@ def test_harvest_run_log_fail_on_error(
     mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
     # resume=False skips get_last_cursor; fetchone is only called by HarvestRunLog.start()
     mock_cursor.fetchone.return_value = (1,)
-    mock_cursor.fetchall.return_value = [(10, "Ceres")]
+    mock_cursor.fetchall.return_value = [(10, "Ceres", None)]
     mock_get_conn.return_value = mock_conn
 
     # Make update_entity_properties raise to trigger fail path
@@ -443,7 +443,7 @@ def test_run_harvest_enriches_entities(
     mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
     # get_last_cursor returns None (no resume), HarvestRunLog.start returns run_id=1
     mock_cursor.fetchone.side_effect = [None, (1,)]
-    mock_cursor.fetchall.return_value = [(10, "Ceres"), (20, "Eros")]
+    mock_cursor.fetchall.return_value = [(10, "Ceres", None), (20, "Eros", None)]
     mock_get_conn.return_value = mock_conn
 
     result = harvest_sbdb.run_harvest(dsn="test://db", dry_run=False, resume=True)
@@ -475,7 +475,7 @@ def test_run_harvest_resume_from_cursor(
         (json.dumps({"last_entity_id": 50}),),  # get_last_cursor
         (2,),  # HarvestRunLog.start
     ]
-    mock_cursor.fetchall.return_value = [(51, "Pallas")]
+    mock_cursor.fetchall.return_value = [(51, "Pallas", None)]
     mock_get_conn.return_value = mock_conn
 
     result = harvest_sbdb.run_harvest(dsn="test://db", dry_run=False, resume=True)
@@ -541,7 +541,7 @@ def test_dry_run_skips_db_writes(
     mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
     mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
     mock_cursor.fetchone.return_value = None
-    mock_cursor.fetchall.return_value = [(10, "Ceres")]
+    mock_cursor.fetchall.return_value = [(10, "Ceres", None)]
     mock_get_conn.return_value = mock_conn
 
     result = harvest_sbdb.run_harvest(dsn="test://db", dry_run=True, resume=False)

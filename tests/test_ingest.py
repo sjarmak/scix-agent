@@ -12,9 +12,33 @@ import pytest
 
 from scix.ingest import IngestPipeline, discover_files, open_jsonl
 
-DSN = os.environ.get("SCIX_DSN", "dbname=scix")
+# SAFETY: destructive tests must use a dedicated test database, never production.
+# Require explicit SCIX_TEST_DSN env var; refuse to run against dbname=scix.
+TEST_DSN = os.environ.get("SCIX_TEST_DSN")
+DSN = TEST_DSN or os.environ.get("SCIX_DSN", "dbname=scix")
 DATA_DIR = Path("ads_metadata_by_year_picard")
 SMALL_FILE = DATA_DIR / "ads_metadata_2026_full.jsonl.gz"
+
+_PRODUCTION_DB_NAMES = {"scix"}
+
+
+def _is_production_dsn(dsn: str) -> bool:
+    """Return True if DSN appears to point at a production database."""
+    for token in dsn.split():
+        if "=" in token:
+            key, _, value = token.partition("=")
+            if key.strip() == "dbname" and value.strip() in _PRODUCTION_DB_NAMES:
+                return True
+    return False
+
+
+_skip_destructive = pytest.mark.skipif(
+    TEST_DSN is None or _is_production_dsn(DSN),
+    reason=(
+        "Destructive ingest tests require SCIX_TEST_DSN pointing to a non-production "
+        "database (refuses dbname=scix). Skipped to protect production data."
+    ),
+)
 
 
 @pytest.fixture()
@@ -24,7 +48,16 @@ def conn():
 
 
 def _wipe_tables(conn) -> None:
-    """Delete all rows from tables that depend on papers (in FK order), then papers."""
+    """Delete all rows from tables that depend on papers (in FK order), then papers.
+
+    SAFETY: refuses to run against the production database. Callers must ensure
+    SCIX_TEST_DSN points at a dedicated test database.
+    """
+    if _is_production_dsn(DSN):
+        raise RuntimeError(
+            "Refusing to wipe tables on production DSN. Set SCIX_TEST_DSN to a "
+            "non-production database before running destructive ingest tests."
+        )
     with conn.cursor() as cur:
         cur.execute("DELETE FROM citation_edges")
         cur.execute("DELETE FROM paper_embeddings")
@@ -82,6 +115,7 @@ class TestDiscoverFiles:
 
 
 @pytest.mark.integration
+@_skip_destructive
 class TestIngestPipelineE2E:
     @pytest.mark.skipif(not SMALL_FILE.exists(), reason="2026 data file not found")
     def test_ingest_2026_file(self, conn, clean_db) -> None:

@@ -35,6 +35,7 @@ class TestGetCitationContext:
                 "context_text": "As shown by Smith et al. (2020), dark matter...",
                 "intent": "background",
                 "char_offset": 1234,
+                "section_name": "introduction",
             }
         ]
         mock_conn = MagicMock()
@@ -77,16 +78,19 @@ class TestGetCitationContext:
                 "context_text": "First mention in introduction...",
                 "intent": "background",
                 "char_offset": 500,
+                "section_name": "introduction",
             },
             {
                 "context_text": "Second mention in methods...",
                 "intent": "method",
                 "char_offset": 3200,
+                "section_name": "methods",
             },
             {
                 "context_text": "Third mention in discussion...",
                 "intent": "result",
                 "char_offset": 8900,
+                "section_name": "discussion",
             },
         ]
         mock_conn = MagicMock()
@@ -111,6 +115,7 @@ class TestGetCitationContext:
                 "context_text": "Some citation text...",
                 "intent": None,
                 "char_offset": None,
+                "section_name": None,
             }
         ]
         mock_conn = MagicMock()

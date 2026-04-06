@@ -9,7 +9,32 @@ import pytest
 
 from scix.db import IndexManager, IngestLog, get_connection
 
-DSN = os.environ.get("SCIX_DSN", "dbname=scix")
+TEST_DSN = os.environ.get("SCIX_TEST_DSN")
+DSN = TEST_DSN or os.environ.get("SCIX_DSN", "dbname=scix")
+
+_PRODUCTION_DB_NAMES = {"scix"}
+
+
+def _is_production_dsn(dsn: str) -> bool:
+    """Return True if DSN appears to point at a production database."""
+    for token in dsn.split():
+        if "=" in token:
+            key, _, value = token.partition("=")
+            if key.strip() == "dbname" and value.strip() in _PRODUCTION_DB_NAMES:
+                return True
+    return False
+
+
+# SAFETY: tests that drop indexes on the live papers table must never run
+# against production. A killed/interrupted drop_and_recreate roundtrip would
+# leave the production papers table without indexes.
+_skip_destructive = pytest.mark.skipif(
+    TEST_DSN is None or _is_production_dsn(DSN),
+    reason=(
+        "Destructive index tests require SCIX_TEST_DSN pointing to a non-production "
+        "database (refuses dbname=scix). Skipped to protect production indexes."
+    ),
+)
 
 
 @pytest.fixture()
@@ -50,6 +75,7 @@ class TestIndexManager:
             assert idx.definition.upper().startswith("CREATE INDEX")
             assert idx.table == "papers"
 
+    @_skip_destructive
     def test_drop_and_recreate_roundtrip(self, conn) -> None:
         mgr = IndexManager(conn, "papers")
         original = mgr.get_non_pk_indexes()

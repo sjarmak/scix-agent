@@ -60,7 +60,12 @@ def download_ascl_catalog(url: str = ASCL_URL) -> list[dict[str, Any]]:
     """
     client = _get_client()
     response = client.get(url)
-    entries = response.json()
+    data = response.json()
+    # API returns either list[dict] or dict[str, dict] (keyed by numeric id)
+    if isinstance(data, dict):
+        entries = list(data.values())
+    else:
+        entries = data
     logger.info("Downloaded ASCL catalog: %d entries", len(entries))
     return entries
 

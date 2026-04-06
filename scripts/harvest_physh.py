@@ -65,7 +65,7 @@ _TECHNIQUE_SUBFACET_IDS = frozenset(
 def download_physh(
     url: str = PHYSH_URL,
     cache_dir: Path | None = None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | list[dict[str, Any]]:
     """Download and decompress the PhySH JSON-LD vocabulary.
 
     If *cache_dir* is provided and the file already exists there, reads from
@@ -107,13 +107,33 @@ def download_physh(
     return json.loads(decompressed)
 
 
+_PREFIX_MAP: dict[str, str] = {
+    "skos:": "http://www.w3.org/2004/02/skos/core#",
+    "physh_rdf:": "https://physh.org/rdf/2018/01/01/core#",
+}
+
+
+def _resolve_key(node: dict[str, Any], key: str) -> Any:
+    """Look up a key in a JSON-LD node, trying both prefixed and full URI forms."""
+    val = node.get(key)
+    if val is not None:
+        return val
+    # Try expanding prefix
+    for prefix, uri in _PREFIX_MAP.items():
+        if key.startswith(prefix):
+            val = node.get(uri + key[len(prefix) :])
+            if val is not None:
+                return val
+    return None
+
+
 def _extract_label(node: dict[str, Any], key: str) -> str:
     """Extract a single label string from a JSON-LD node.
 
     Handles both ``{"@value": "..."}`` objects and plain strings,
     as well as lists of such values (returns the first).
     """
-    val = node.get(key)
+    val = _resolve_key(node, key)
     if val is None:
         return ""
     if isinstance(val, str):
@@ -131,7 +151,7 @@ def _extract_label(node: dict[str, Any], key: str) -> str:
 
 def _extract_labels(node: dict[str, Any], key: str) -> list[str]:
     """Extract all label strings from a JSON-LD node (for altLabels)."""
-    val = node.get(key)
+    val = _resolve_key(node, key)
     if val is None:
         return []
     if isinstance(val, str):
@@ -154,7 +174,7 @@ def _extract_labels(node: dict[str, Any], key: str) -> list[str]:
 
 def _extract_ids(node: dict[str, Any], key: str) -> list[str]:
     """Extract IDs from a relationship field (list of ``{"@id": ...}``)."""
-    val = node.get(key)
+    val = _resolve_key(node, key)
     if val is None:
         return []
     if isinstance(val, dict):
@@ -186,7 +206,11 @@ def parse_physh_techniques(jsonld: dict[str, Any]) -> list[dict[str, Any]]:
     Returns:
         List of entity dictionary entry dicts.
     """
-    graph = jsonld.get("@graph", [])
+    # Handle both {"@graph": [...]} and plain list [...] formats
+    if isinstance(jsonld, list):
+        graph = jsonld
+    else:
+        graph = jsonld.get("@graph", [])
     if not graph:
         logger.warning("No @graph found in PhySH JSON-LD")
         return []
@@ -251,6 +275,22 @@ def parse_physh_techniques(jsonld: dict[str, Any]) -> list[dict[str, Any]]:
         len(visited),
         len(seed_ids),
     )
+
+    # Fallback: if subfacet-based BFS yielded nothing, harvest ALL concepts
+    if not visited:
+        logger.info(
+            "Subfacet IDs not found in current PhySH data — "
+            "falling back to all %d skos:Concept nodes",
+            len(by_id),
+        )
+        for node in graph:
+            types = node.get("@type", [])
+            if isinstance(types, str):
+                types = [types]
+            if any("Concept" in t for t in types):
+                nid = node.get("@id", "")
+                if nid:
+                    visited.add(nid)
 
     # Build entries
     entries: list[dict[str, Any]] = []

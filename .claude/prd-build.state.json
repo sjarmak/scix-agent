@@ -1,5 +1,5 @@
 {
-  "status": "executing",
+  "status": "done",
   "prd_path": "docs/prd/prd_remaining_harvesters.md",
   "max_passes": 3,
   "max_parallel": 5,

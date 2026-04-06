@@ -57,3 +57,4 @@ Thumbs.db
 # RFC-DAG state (ephemeral orchestration state)
 .claude/rfc-dag.state.json
 .claude/rfc-dag.log.md
+.cache/

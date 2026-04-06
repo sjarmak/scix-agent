@@ -1,0 +1,9 @@
+#!/bin/sh
+# Installed by gc — forwards bd events to Gas City event log.
+# Args: $1=issue_id  $2=event_type  stdin=issue JSON
+GC_BIN="${GC_BIN:-gc}"
+DATA=$(cat)
+title=$(echo "$DATA" | grep -o '"title":"[^"]*"' | head -1 | cut -d'"' -f4)
+(
+  "$GC_BIN" event emit bead.created --subject "$1" --message "$title" --payload "$DATA" >/dev/null 2>&1 || true
+) </dev/null >/dev/null 2>&1 &

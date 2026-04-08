@@ -1,0 +1,2676 @@
+{
+  "summaries": [
+    {
+      "method": "hybrid_indus",
+      "n_queries": 50,
+      "ndcg_10": 0.3332,
+      "recall_10": 0.2576,
+      "recall_20": 0.4095,
+      "precision_10": 0.27,
+      "mrr": 0.5544,
+      "latency_ms": 51.4,
+      "std_ndcg_10": 0.2218
+    },
+    {
+      "method": "hybrid_specter2",
+      "n_queries": 50,
+      "ndcg_10": 0.3209,
+      "recall_10": 0.2426,
+      "recall_20": 0.3647,
+      "precision_10": 0.254,
+      "mrr": 0.5789,
+      "latency_ms": 52.2,
+      "std_ndcg_10": 0.2245
+    },
+    {
+      "method": "indus",
+      "n_queries": 50,
+      "ndcg_10": 0.3495,
+      "recall_10": 0.2601,
+      "recall_20": 0.4108,
+      "precision_10": 0.278,
+      "mrr": 0.6085,
+      "latency_ms": 54.9,
+      "std_ndcg_10": 0.2167
+    },
+    {
+      "method": "lexical",
+      "n_queries": 6,
+      "ndcg_10": 0.0864,
+      "recall_10": 0.0573,
+      "recall_20": 0.0729,
+      "precision_10": 0.1,
+      "mrr": 0.1,
+      "latency_ms": 0.9,
+      "std_ndcg_10": 0.1664
+    },
+    {
+      "method": "nomic",
+      "n_queries": 50,
+      "ndcg_10": 0.3736,
+      "recall_10": 0.2829,
+      "recall_20": 0.4229,
+      "precision_10": 0.296,
+      "mrr": 0.6073,
+      "latency_ms": 54.0,
+      "std_ndcg_10": 0.2338
+    },
+    {
+      "method": "specter2",
+      "n_queries": 50,
+      "ndcg_10": 0.322,
+      "recall_10": 0.2418,
+      "recall_20": 0.3706,
+      "precision_10": 0.252,
+      "mrr": 0.5993,
+      "latency_ms": 51.4,
+      "std_ndcg_10": 0.2196
+    }
+  ],
+  "per_query": [
+    {
+      "seed_bibcode": "2022NucFu..62l6051G",
+      "method": "specter2",
+      "ndcg_10": 0.3008,
+      "recall_10": 0.4,
+      "recall_20": 0.6,
+      "mrr": 0.3333,
+      "relevant_count": 5,
+      "latency_ms": 56.6
+    },
+    {
+      "seed_bibcode": "2022UFUG...6927488W",
+      "method": "specter2",
+      "ndcg_10": 0.6844,
+      "recall_10": 0.6,
+      "recall_20": 0.8,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 53.2
+    },
+    {
+      "seed_bibcode": "2024JSAES.14805180L",
+      "method": "specter2",
+      "ndcg_10": 0.52,
+      "recall_10": 0.2353,
+      "recall_20": 0.2941,
+      "mrr": 1.0,
+      "relevant_count": 17,
+      "latency_ms": 51.0
+    },
+    {
+      "seed_bibcode": "2022arXiv220713544W",
+      "method": "specter2",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.4,
+      "mrr": 0.0833,
+      "relevant_count": 5,
+      "latency_ms": 51.4
+    },
+    {
+      "seed_bibcode": "2022arXiv220302236K",
+      "method": "specter2",
+      "ndcg_10": 0.791,
+      "recall_10": 0.3684,
+      "recall_20": 0.4737,
+      "mrr": 1.0,
+      "relevant_count": 19,
+      "latency_ms": 51.5
+    },
+    {
+      "seed_bibcode": "2025JHEP...01..081A",
+      "method": "specter2",
+      "ndcg_10": 0.3863,
+      "recall_10": 0.2778,
+      "recall_20": 0.4444,
+      "mrr": 0.25,
+      "relevant_count": 18,
+      "latency_ms": 51.9
+    },
+    {
+      "seed_bibcode": "2020IJSTA..13.3291L",
+      "method": "specter2",
+      "ndcg_10": 0.1461,
+      "recall_10": 0.2,
+      "recall_20": 0.4,
+      "mrr": 0.25,
+      "relevant_count": 5,
+      "latency_ms": 48.7
+    },
+    {
+      "seed_bibcode": "2023arXiv230313711A",
+      "method": "specter2",
+      "ndcg_10": 0.4,
+      "recall_10": 0.3,
+      "recall_20": 0.4,
+      "mrr": 1.0,
+      "relevant_count": 10,
+      "latency_ms": 50.0
+    },
+    {
+      "seed_bibcode": "2017JApA...38...61S",
+      "method": "specter2",
+      "ndcg_10": 0.2229,
+      "recall_10": 0.4,
+      "recall_20": 0.6,
+      "mrr": 0.1667,
+      "relevant_count": 5,
+      "latency_ms": 49.2
+    },
+    {
+      "seed_bibcode": "2022JARS...16c4534W",
+      "method": "specter2",
+      "ndcg_10": 0.11,
+      "recall_10": 0.1,
+      "recall_20": 0.1,
+      "mrr": 0.3333,
+      "relevant_count": 10,
+      "latency_ms": 51.5
+    },
+    {
+      "seed_bibcode": "2023EnEPS..26..307M",
+      "method": "specter2",
+      "ndcg_10": 0.3392,
+      "recall_10": 0.2,
+      "recall_20": 0.2,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 55.0
+    },
+    {
+      "seed_bibcode": "2017Optik.135..366H",
+      "method": "specter2",
+      "ndcg_10": 0.1545,
+      "recall_10": 0.2222,
+      "recall_20": 0.2222,
+      "mrr": 0.1667,
+      "relevant_count": 9,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2016AngCh.128.3403L",
+      "method": "specter2",
+      "ndcg_10": 0.1374,
+      "recall_10": 0.1429,
+      "recall_20": 0.2857,
+      "mrr": 0.3333,
+      "relevant_count": 7,
+      "latency_ms": 52.4
+    },
+    {
+      "seed_bibcode": "2017ITGRS..55.1085G",
+      "method": "specter2",
+      "ndcg_10": 0.1009,
+      "recall_10": 0.1667,
+      "recall_20": 0.3333,
+      "mrr": 0.1429,
+      "relevant_count": 6,
+      "latency_ms": 51.3
+    },
+    {
+      "seed_bibcode": "2010CoPP...50..350U",
+      "method": "specter2",
+      "ndcg_10": 0.4409,
+      "recall_10": 0.25,
+      "recall_20": 0.5625,
+      "mrr": 1.0,
+      "relevant_count": 16,
+      "latency_ms": 51.2
+    },
+    {
+      "seed_bibcode": "2019arXiv190504074Z",
+      "method": "specter2",
+      "ndcg_10": 0.2368,
+      "recall_10": 0.1667,
+      "recall_20": 0.2222,
+      "mrr": 0.25,
+      "relevant_count": 18,
+      "latency_ms": 49.7
+    },
+    {
+      "seed_bibcode": "2021PhRvD.103f4068A",
+      "method": "specter2",
+      "ndcg_10": 0.2918,
+      "recall_10": 0.3333,
+      "recall_20": 0.3333,
+      "mrr": 0.5,
+      "relevant_count": 6,
+      "latency_ms": 48.7
+    },
+    {
+      "seed_bibcode": "2021EnInt.15606635R",
+      "method": "specter2",
+      "ndcg_10": 0.3203,
+      "recall_10": 0.5,
+      "recall_20": 0.6667,
+      "mrr": 0.2,
+      "relevant_count": 6,
+      "latency_ms": 49.8
+    },
+    {
+      "seed_bibcode": "2021Univ....7..463A",
+      "method": "specter2",
+      "ndcg_10": 0.3576,
+      "recall_10": 0.2857,
+      "recall_20": 0.4286,
+      "mrr": 1.0,
+      "relevant_count": 7,
+      "latency_ms": 48.7
+    },
+    {
+      "seed_bibcode": "2020NatSR..10.9201P",
+      "method": "specter2",
+      "ndcg_10": 0.235,
+      "recall_10": 0.1111,
+      "recall_20": 0.1111,
+      "mrr": 1.0,
+      "relevant_count": 9,
+      "latency_ms": 52.8
+    },
+    {
+      "seed_bibcode": "2020Cryst..10..902N",
+      "method": "specter2",
+      "ndcg_10": 0.3261,
+      "recall_10": 0.25,
+      "recall_20": 0.25,
+      "mrr": 1.0,
+      "relevant_count": 8,
+      "latency_ms": 53.4
+    },
+    {
+      "seed_bibcode": "2020EPJC...80..573B",
+      "method": "specter2",
+      "ndcg_10": 0.11,
+      "recall_10": 0.0625,
+      "recall_20": 0.125,
+      "mrr": 0.3333,
+      "relevant_count": 16,
+      "latency_ms": 51.3
+    },
+    {
+      "seed_bibcode": "2006Icar..181..375T",
+      "method": "specter2",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.1429,
+      "mrr": 0.0667,
+      "relevant_count": 7,
+      "latency_ms": 52.0
+    },
+    {
+      "seed_bibcode": "2010arXiv1003.2376N",
+      "method": "specter2",
+      "ndcg_10": 0.4731,
+      "recall_10": 0.6,
+      "recall_20": 0.6,
+      "mrr": 0.5,
+      "relevant_count": 5,
+      "latency_ms": 50.3
+    },
+    {
+      "seed_bibcode": "2011Icar..211..238G",
+      "method": "specter2",
+      "ndcg_10": 0.8268,
+      "recall_10": 0.4706,
+      "recall_20": 0.5294,
+      "mrr": 1.0,
+      "relevant_count": 17,
+      "latency_ms": 55.9
+    },
+    {
+      "seed_bibcode": "2019PhRvD.100e5031M",
+      "method": "specter2",
+      "ndcg_10": 0.2122,
+      "recall_10": 0.0833,
+      "recall_20": 0.125,
+      "mrr": 0.5,
+      "relevant_count": 24,
+      "latency_ms": 51.2
+    },
+    {
+      "seed_bibcode": "2015JSAES..58..165N",
+      "method": "specter2",
+      "ndcg_10": 0.6817,
+      "recall_10": 0.2727,
+      "recall_20": 0.5,
+      "mrr": 1.0,
+      "relevant_count": 22,
+      "latency_ms": 50.1
+    },
+    {
+      "seed_bibcode": "2008Icar..197...65H",
+      "method": "specter2",
+      "ndcg_10": 0.4671,
+      "recall_10": 0.3636,
+      "recall_20": 0.5455,
+      "mrr": 1.0,
+      "relevant_count": 11,
+      "latency_ms": 48.4
+    },
+    {
+      "seed_bibcode": "2014JSAES..51...12C",
+      "method": "specter2",
+      "ndcg_10": 0.63,
+      "recall_10": 0.1786,
+      "recall_20": 0.3929,
+      "mrr": 1.0,
+      "relevant_count": 28,
+      "latency_ms": 49.7
+    },
+    {
+      "seed_bibcode": "2018JHEP...11..163G",
+      "method": "specter2",
+      "ndcg_10": 0.2279,
+      "recall_10": 0.1111,
+      "recall_20": 0.1111,
+      "mrr": 0.2,
+      "relevant_count": 27,
+      "latency_ms": 51.2
+    },
+    {
+      "seed_bibcode": "2018IJSTA..11.3312L",
+      "method": "specter2",
+      "ndcg_10": 0.2201,
+      "recall_10": 0.0769,
+      "recall_20": 0.0769,
+      "mrr": 1.0,
+      "relevant_count": 13,
+      "latency_ms": 51.4
+    },
+    {
+      "seed_bibcode": "2020Fore...11.1347T",
+      "method": "specter2",
+      "ndcg_10": 0.3981,
+      "recall_10": 0.4286,
+      "recall_20": 0.5714,
+      "mrr": 0.5,
+      "relevant_count": 7,
+      "latency_ms": 49.9
+    },
+    {
+      "seed_bibcode": "2013ClDy...41..775P",
+      "method": "specter2",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.2857,
+      "mrr": 0.0833,
+      "relevant_count": 14,
+      "latency_ms": 53.1
+    },
+    {
+      "seed_bibcode": "2019FrMaS...6..452G",
+      "method": "specter2",
+      "ndcg_10": 0.4522,
+      "recall_10": 0.4,
+      "recall_20": 0.6,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 52.2
+    },
+    {
+      "seed_bibcode": "2015AngCh.127.5769A",
+      "method": "specter2",
+      "ndcg_10": 0.2766,
+      "recall_10": 0.4,
+      "recall_20": 0.6,
+      "mrr": 0.3333,
+      "relevant_count": 5,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2022CmPhy...5..215C",
+      "method": "specter2",
+      "ndcg_10": 0.3026,
+      "recall_10": 0.1667,
+      "recall_20": 0.3333,
+      "mrr": 1.0,
+      "relevant_count": 6,
+      "latency_ms": 50.0
+    },
+    {
+      "seed_bibcode": "2021PhLB..82036554G",
+      "method": "specter2",
+      "ndcg_10": 0.2201,
+      "recall_10": 0.0312,
+      "recall_20": 0.0312,
+      "mrr": 1.0,
+      "relevant_count": 32,
+      "latency_ms": 51.7
+    },
+    {
+      "seed_bibcode": "2014ITGRS..52.5122S",
+      "method": "specter2",
+      "ndcg_10": 0.11,
+      "recall_10": 0.0769,
+      "recall_20": 0.1538,
+      "mrr": 0.3333,
+      "relevant_count": 13,
+      "latency_ms": 50.0
+    },
+    {
+      "seed_bibcode": "2011E&PSL.312..371G",
+      "method": "specter2",
+      "ndcg_10": 0.3647,
+      "recall_10": 0.2,
+      "recall_20": 0.5333,
+      "mrr": 1.0,
+      "relevant_count": 15,
+      "latency_ms": 49.2
+    },
+    {
+      "seed_bibcode": "2019EnInt.13105016P",
+      "method": "specter2",
+      "ndcg_10": 0.7116,
+      "recall_10": 0.4,
+      "recall_20": 0.6,
+      "mrr": 1.0,
+      "relevant_count": 15,
+      "latency_ms": 52.9
+    },
+    {
+      "seed_bibcode": "2014Sust....6.3722K",
+      "method": "specter2",
+      "ndcg_10": 0.4035,
+      "recall_10": 0.1429,
+      "recall_20": 0.381,
+      "mrr": 1.0,
+      "relevant_count": 21,
+      "latency_ms": 51.1
+    },
+    {
+      "seed_bibcode": "2012ApPhL.100o2115L",
+      "method": "specter2",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.0,
+      "mrr": 0.0222,
+      "relevant_count": 6,
+      "latency_ms": 52.0
+    },
+    {
+      "seed_bibcode": "2002ClDy...19..633F",
+      "method": "specter2",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.0,
+      "mrr": 0.0263,
+      "relevant_count": 5,
+      "latency_ms": 52.6
+    },
+    {
+      "seed_bibcode": "2005RvGeo..43.3002D",
+      "method": "specter2",
+      "ndcg_10": 0.3212,
+      "recall_10": 0.3333,
+      "recall_20": 0.5,
+      "mrr": 0.5,
+      "relevant_count": 6,
+      "latency_ms": 51.3
+    },
+    {
+      "seed_bibcode": "2001JGR...10623607S",
+      "method": "specter2",
+      "ndcg_10": 0.7223,
+      "recall_10": 0.4615,
+      "recall_20": 0.6154,
+      "mrr": 1.0,
+      "relevant_count": 13,
+      "latency_ms": 51.6
+    },
+    {
+      "seed_bibcode": "1996JAP....79.7324S",
+      "method": "specter2",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.1429,
+      "mrr": 0.0833,
+      "relevant_count": 7,
+      "latency_ms": 51.2
+    },
+    {
+      "seed_bibcode": "2020ScTEn.71134843W",
+      "method": "specter2",
+      "ndcg_10": 0.6438,
+      "recall_10": 0.3529,
+      "recall_20": 0.4706,
+      "mrr": 1.0,
+      "relevant_count": 17,
+      "latency_ms": 52.3
+    },
+    {
+      "seed_bibcode": "2008PhRvB..78r0502A",
+      "method": "specter2",
+      "ndcg_10": 0.4499,
+      "recall_10": 0.4,
+      "recall_20": 0.7,
+      "mrr": 1.0,
+      "relevant_count": 10,
+      "latency_ms": 52.2
+    },
+    {
+      "seed_bibcode": "2013NatCo...4.2761D",
+      "method": "specter2",
+      "ndcg_10": 0.22,
+      "recall_10": 0.4,
+      "recall_20": 0.4,
+      "mrr": 0.1429,
+      "relevant_count": 5,
+      "latency_ms": 52.8
+    },
+    {
+      "seed_bibcode": "2015NatCo...6.7497E",
+      "method": "specter2",
+      "ndcg_10": 0.1513,
+      "recall_10": 0.1667,
+      "recall_20": 0.3333,
+      "mrr": 0.3333,
+      "relevant_count": 6,
+      "latency_ms": 52.9
+    },
+    {
+      "seed_bibcode": "2022NucFu..62l6051G",
+      "method": "indus",
+      "ndcg_10": 0.4852,
+      "recall_10": 0.4,
+      "recall_20": 0.6,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 267.0
+    },
+    {
+      "seed_bibcode": "2022UFUG...6927488W",
+      "method": "indus",
+      "ndcg_10": 0.3452,
+      "recall_10": 0.4,
+      "recall_20": 0.8,
+      "mrr": 0.5,
+      "relevant_count": 5,
+      "latency_ms": 51.8
+    },
+    {
+      "seed_bibcode": "2024JSAES.14805180L",
+      "method": "indus",
+      "ndcg_10": 0.574,
+      "recall_10": 0.2941,
+      "recall_20": 0.5294,
+      "mrr": 1.0,
+      "relevant_count": 17,
+      "latency_ms": 50.5
+    },
+    {
+      "seed_bibcode": "2022arXiv220713544W",
+      "method": "indus",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.0,
+      "mrr": 0.0169,
+      "relevant_count": 5,
+      "latency_ms": 50.4
+    },
+    {
+      "seed_bibcode": "2022arXiv220302236K",
+      "method": "indus",
+      "ndcg_10": 0.5581,
+      "recall_10": 0.2632,
+      "recall_20": 0.4211,
+      "mrr": 1.0,
+      "relevant_count": 19,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2025JHEP...01..081A",
+      "method": "indus",
+      "ndcg_10": 0.5431,
+      "recall_10": 0.3333,
+      "recall_20": 0.5,
+      "mrr": 0.5,
+      "relevant_count": 18,
+      "latency_ms": 51.6
+    },
+    {
+      "seed_bibcode": "2020IJSTA..13.3291L",
+      "method": "indus",
+      "ndcg_10": 0.3392,
+      "recall_10": 0.2,
+      "recall_20": 0.2,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 52.0
+    },
+    {
+      "seed_bibcode": "2023arXiv230313711A",
+      "method": "indus",
+      "ndcg_10": 0.3933,
+      "recall_10": 0.3,
+      "recall_20": 0.5,
+      "mrr": 1.0,
+      "relevant_count": 10,
+      "latency_ms": 51.5
+    },
+    {
+      "seed_bibcode": "2017JApA...38...61S",
+      "method": "indus",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.2,
+      "mrr": 0.0769,
+      "relevant_count": 5,
+      "latency_ms": 49.3
+    },
+    {
+      "seed_bibcode": "2022JARS...16c4534W",
+      "method": "indus",
+      "ndcg_10": 0.0784,
+      "recall_10": 0.1,
+      "recall_20": 0.3,
+      "mrr": 0.1667,
+      "relevant_count": 10,
+      "latency_ms": 50.1
+    },
+    {
+      "seed_bibcode": "2023EnEPS..26..307M",
+      "method": "indus",
+      "ndcg_10": 0.3392,
+      "recall_10": 0.2,
+      "recall_20": 0.4,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 52.3
+    },
+    {
+      "seed_bibcode": "2017Optik.135..366H",
+      "method": "indus",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.2222,
+      "mrr": 0.0556,
+      "relevant_count": 9,
+      "latency_ms": 50.0
+    },
+    {
+      "seed_bibcode": "2016AngCh.128.3403L",
+      "method": "indus",
+      "ndcg_10": 0.2578,
+      "recall_10": 0.4286,
+      "recall_20": 0.4286,
+      "mrr": 0.1429,
+      "relevant_count": 7,
+      "latency_ms": 47.4
+    },
+    {
+      "seed_bibcode": "2017ITGRS..55.1085G",
+      "method": "indus",
+      "ndcg_10": 0.2045,
+      "recall_10": 0.3333,
+      "recall_20": 0.6667,
+      "mrr": 0.2,
+      "relevant_count": 6,
+      "latency_ms": 49.4
+    },
+    {
+      "seed_bibcode": "2010CoPP...50..350U",
+      "method": "indus",
+      "ndcg_10": 0.5331,
+      "recall_10": 0.3125,
+      "recall_20": 0.5625,
+      "mrr": 1.0,
+      "relevant_count": 16,
+      "latency_ms": 53.6
+    },
+    {
+      "seed_bibcode": "2019arXiv190504074Z",
+      "method": "indus",
+      "ndcg_10": 0.3301,
+      "recall_10": 0.1111,
+      "recall_20": 0.1667,
+      "mrr": 1.0,
+      "relevant_count": 18,
+      "latency_ms": 51.4
+    },
+    {
+      "seed_bibcode": "2021PhRvD.103f4068A",
+      "method": "indus",
+      "ndcg_10": 0.6013,
+      "recall_10": 0.5,
+      "recall_20": 0.5,
+      "mrr": 1.0,
+      "relevant_count": 6,
+      "latency_ms": 50.0
+    },
+    {
+      "seed_bibcode": "2021EnInt.15606635R",
+      "method": "indus",
+      "ndcg_10": 0.4539,
+      "recall_10": 0.3333,
+      "recall_20": 0.5,
+      "mrr": 1.0,
+      "relevant_count": 6,
+      "latency_ms": 51.0
+    },
+    {
+      "seed_bibcode": "2021Univ....7..463A",
+      "method": "indus",
+      "ndcg_10": 0.5307,
+      "recall_10": 0.4286,
+      "recall_20": 0.5714,
+      "mrr": 1.0,
+      "relevant_count": 7,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2020NatSR..10.9201P",
+      "method": "indus",
+      "ndcg_10": 0.1175,
+      "recall_10": 0.1111,
+      "recall_20": 0.1111,
+      "mrr": 0.3333,
+      "relevant_count": 9,
+      "latency_ms": 49.0
+    },
+    {
+      "seed_bibcode": "2020Cryst..10..902N",
+      "method": "indus",
+      "ndcg_10": 0.2108,
+      "recall_10": 0.25,
+      "recall_20": 0.5,
+      "mrr": 0.3333,
+      "relevant_count": 8,
+      "latency_ms": 50.9
+    },
+    {
+      "seed_bibcode": "2020EPJC...80..573B",
+      "method": "indus",
+      "ndcg_10": 0.11,
+      "recall_10": 0.0625,
+      "recall_20": 0.25,
+      "mrr": 0.3333,
+      "relevant_count": 16,
+      "latency_ms": 49.8
+    },
+    {
+      "seed_bibcode": "2006Icar..181..375T",
+      "method": "indus",
+      "ndcg_10": 0.2354,
+      "recall_10": 0.2857,
+      "recall_20": 0.4286,
+      "mrr": 0.3333,
+      "relevant_count": 7,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2010arXiv1003.2376N",
+      "method": "indus",
+      "ndcg_10": 0.573,
+      "recall_10": 0.6,
+      "recall_20": 0.8,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 50.1
+    },
+    {
+      "seed_bibcode": "2011Icar..211..238G",
+      "method": "indus",
+      "ndcg_10": 0.6489,
+      "recall_10": 0.2941,
+      "recall_20": 0.4706,
+      "mrr": 1.0,
+      "relevant_count": 17,
+      "latency_ms": 49.1
+    },
+    {
+      "seed_bibcode": "2019PhRvD.100e5031M",
+      "method": "indus",
+      "ndcg_10": 0.0851,
+      "recall_10": 0.0417,
+      "recall_20": 0.1667,
+      "mrr": 0.2,
+      "relevant_count": 24,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2015JSAES..58..165N",
+      "method": "indus",
+      "ndcg_10": 0.7223,
+      "recall_10": 0.2727,
+      "recall_20": 0.3636,
+      "mrr": 1.0,
+      "relevant_count": 22,
+      "latency_ms": 48.6
+    },
+    {
+      "seed_bibcode": "2008Icar..197...65H",
+      "method": "indus",
+      "ndcg_10": 0.5101,
+      "recall_10": 0.3636,
+      "recall_20": 0.5455,
+      "mrr": 1.0,
+      "relevant_count": 11,
+      "latency_ms": 49.2
+    },
+    {
+      "seed_bibcode": "2014JSAES..51...12C",
+      "method": "indus",
+      "ndcg_10": 0.8553,
+      "recall_10": 0.2857,
+      "recall_20": 0.4286,
+      "mrr": 1.0,
+      "relevant_count": 28,
+      "latency_ms": 51.0
+    },
+    {
+      "seed_bibcode": "2018JHEP...11..163G",
+      "method": "indus",
+      "ndcg_10": 0.4106,
+      "recall_10": 0.1852,
+      "recall_20": 0.2963,
+      "mrr": 0.3333,
+      "relevant_count": 27,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2018IJSTA..11.3312L",
+      "method": "indus",
+      "ndcg_10": 0.2201,
+      "recall_10": 0.0769,
+      "recall_20": 0.0769,
+      "mrr": 1.0,
+      "relevant_count": 13,
+      "latency_ms": 51.2
+    },
+    {
+      "seed_bibcode": "2020Fore...11.1347T",
+      "method": "indus",
+      "ndcg_10": 0.4497,
+      "recall_10": 0.5714,
+      "recall_20": 0.7143,
+      "mrr": 0.5,
+      "relevant_count": 7,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2013ClDy...41..775P",
+      "method": "indus",
+      "ndcg_10": 0.1799,
+      "recall_10": 0.1429,
+      "recall_20": 0.2857,
+      "mrr": 0.25,
+      "relevant_count": 14,
+      "latency_ms": 49.0
+    },
+    {
+      "seed_bibcode": "2019FrMaS...6..452G",
+      "method": "indus",
+      "ndcg_10": 0.5503,
+      "recall_10": 0.6,
+      "recall_20": 0.8,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 49.8
+    },
+    {
+      "seed_bibcode": "2015AngCh.127.5769A",
+      "method": "indus",
+      "ndcg_10": 0.3541,
+      "recall_10": 0.6,
+      "recall_20": 0.6,
+      "mrr": 0.2,
+      "relevant_count": 5,
+      "latency_ms": 52.0
+    },
+    {
+      "seed_bibcode": "2022CmPhy...5..215C",
+      "method": "indus",
+      "ndcg_10": 0.3026,
+      "recall_10": 0.1667,
+      "recall_20": 0.3333,
+      "mrr": 1.0,
+      "relevant_count": 6,
+      "latency_ms": 50.8
+    },
+    {
+      "seed_bibcode": "2021PhLB..82036554G",
+      "method": "indus",
+      "ndcg_10": 0.4369,
+      "recall_10": 0.1562,
+      "recall_20": 0.1562,
+      "mrr": 0.5,
+      "relevant_count": 32,
+      "latency_ms": 49.8
+    },
+    {
+      "seed_bibcode": "2014ITGRS..52.5122S",
+      "method": "indus",
+      "ndcg_10": 0.3052,
+      "recall_10": 0.1538,
+      "recall_20": 0.2308,
+      "mrr": 1.0,
+      "relevant_count": 13,
+      "latency_ms": 52.5
+    },
+    {
+      "seed_bibcode": "2011E&PSL.312..371G",
+      "method": "indus",
+      "ndcg_10": 0.3693,
+      "recall_10": 0.2667,
+      "recall_20": 0.4,
+      "mrr": 0.5,
+      "relevant_count": 15,
+      "latency_ms": 51.5
+    },
+    {
+      "seed_bibcode": "2019EnInt.13105016P",
+      "method": "indus",
+      "ndcg_10": 0.5658,
+      "recall_10": 0.4,
+      "recall_20": 0.5333,
+      "mrr": 0.5,
+      "relevant_count": 15,
+      "latency_ms": 55.2
+    },
+    {
+      "seed_bibcode": "2014Sust....6.3722K",
+      "method": "indus",
+      "ndcg_10": 0.427,
+      "recall_10": 0.2381,
+      "recall_20": 0.5238,
+      "mrr": 0.3333,
+      "relevant_count": 21,
+      "latency_ms": 48.9
+    },
+    {
+      "seed_bibcode": "2012ApPhL.100o2115L",
+      "method": "indus",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.3333,
+      "mrr": 0.0714,
+      "relevant_count": 6,
+      "latency_ms": 50.0
+    },
+    {
+      "seed_bibcode": "2002ClDy...19..633F",
+      "method": "indus",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.0,
+      "mrr": 0.0227,
+      "relevant_count": 5,
+      "latency_ms": 48.7
+    },
+    {
+      "seed_bibcode": "2005RvGeo..43.3002D",
+      "method": "indus",
+      "ndcg_10": 0.1303,
+      "recall_10": 0.1667,
+      "recall_20": 0.5,
+      "mrr": 0.25,
+      "relevant_count": 6,
+      "latency_ms": 49.0
+    },
+    {
+      "seed_bibcode": "2001JGR...10623607S",
+      "method": "indus",
+      "ndcg_10": 0.7601,
+      "recall_10": 0.5385,
+      "recall_20": 0.6154,
+      "mrr": 1.0,
+      "relevant_count": 13,
+      "latency_ms": 50.5
+    },
+    {
+      "seed_bibcode": "1996JAP....79.7324S",
+      "method": "indus",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.2857,
+      "mrr": 0.0714,
+      "relevant_count": 7,
+      "latency_ms": 52.4
+    },
+    {
+      "seed_bibcode": "2020ScTEn.71134843W",
+      "method": "indus",
+      "ndcg_10": 0.4473,
+      "recall_10": 0.2353,
+      "recall_20": 0.3529,
+      "mrr": 1.0,
+      "relevant_count": 17,
+      "latency_ms": 50.2
+    },
+    {
+      "seed_bibcode": "2008PhRvB..78r0502A",
+      "method": "indus",
+      "ndcg_10": 0.3719,
+      "recall_10": 0.3,
+      "recall_20": 0.3,
+      "mrr": 1.0,
+      "relevant_count": 10,
+      "latency_ms": 52.6
+    },
+    {
+      "seed_bibcode": "2013NatCo...4.2761D",
+      "method": "indus",
+      "ndcg_10": 0.1312,
+      "recall_10": 0.2,
+      "recall_20": 0.4,
+      "mrr": 0.2,
+      "relevant_count": 5,
+      "latency_ms": 51.4
+    },
+    {
+      "seed_bibcode": "2015NatCo...6.7497E",
+      "method": "indus",
+      "ndcg_10": 0.4297,
+      "recall_10": 0.5,
+      "recall_20": 0.6667,
+      "mrr": 0.5,
+      "relevant_count": 6,
+      "latency_ms": 49.7
+    },
+    {
+      "seed_bibcode": "2022NucFu..62l6051G",
+      "method": "nomic",
+      "ndcg_10": 0.3836,
+      "recall_10": 0.4,
+      "recall_20": 0.4,
+      "mrr": 0.5,
+      "relevant_count": 5,
+      "latency_ms": 219.3
+    },
+    {
+      "seed_bibcode": "2022UFUG...6927488W",
+      "method": "nomic",
+      "ndcg_10": 0.7622,
+      "recall_10": 0.8,
+      "recall_20": 0.8,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 53.9
+    },
+    {
+      "seed_bibcode": "2024JSAES.14805180L",
+      "method": "nomic",
+      "ndcg_10": 0.5965,
+      "recall_10": 0.2941,
+      "recall_20": 0.4706,
+      "mrr": 1.0,
+      "relevant_count": 17,
+      "latency_ms": 48.9
+    },
+    {
+      "seed_bibcode": "2022arXiv220713544W",
+      "method": "nomic",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.0,
+      "mrr": 0.0213,
+      "relevant_count": 5,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2022arXiv220302236K",
+      "method": "nomic",
+      "ndcg_10": 0.7632,
+      "recall_10": 0.3684,
+      "recall_20": 0.5263,
+      "mrr": 1.0,
+      "relevant_count": 19,
+      "latency_ms": 52.5
+    },
+    {
+      "seed_bibcode": "2025JHEP...01..081A",
+      "method": "nomic",
+      "ndcg_10": 0.4106,
+      "recall_10": 0.2778,
+      "recall_20": 0.5556,
+      "mrr": 0.3333,
+      "relevant_count": 18,
+      "latency_ms": 51.2
+    },
+    {
+      "seed_bibcode": "2020IJSTA..13.3291L",
+      "method": "nomic",
+      "ndcg_10": 0.107,
+      "recall_10": 0.2,
+      "recall_20": 0.2,
+      "mrr": 0.125,
+      "relevant_count": 5,
+      "latency_ms": 49.8
+    },
+    {
+      "seed_bibcode": "2023arXiv230313711A",
+      "method": "nomic",
+      "ndcg_10": 0.4506,
+      "recall_10": 0.4,
+      "recall_20": 0.4,
+      "mrr": 1.0,
+      "relevant_count": 10,
+      "latency_ms": 47.6
+    },
+    {
+      "seed_bibcode": "2017JApA...38...61S",
+      "method": "nomic",
+      "ndcg_10": 0.1021,
+      "recall_10": 0.2,
+      "recall_20": 0.6,
+      "mrr": 0.1111,
+      "relevant_count": 5,
+      "latency_ms": 51.6
+    },
+    {
+      "seed_bibcode": "2022JARS...16c4534W",
+      "method": "nomic",
+      "ndcg_10": 0.0948,
+      "recall_10": 0.1,
+      "recall_20": 0.2,
+      "mrr": 0.25,
+      "relevant_count": 10,
+      "latency_ms": 49.2
+    },
+    {
+      "seed_bibcode": "2023EnEPS..26..307M",
+      "method": "nomic",
+      "ndcg_10": 0.3392,
+      "recall_10": 0.2,
+      "recall_20": 0.4,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 48.4
+    },
+    {
+      "seed_bibcode": "2017Optik.135..366H",
+      "method": "nomic",
+      "ndcg_10": 0.0837,
+      "recall_10": 0.1111,
+      "recall_20": 0.4444,
+      "mrr": 0.1667,
+      "relevant_count": 9,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2016AngCh.128.3403L",
+      "method": "nomic",
+      "ndcg_10": 0.2558,
+      "recall_10": 0.2857,
+      "recall_20": 0.4286,
+      "mrr": 0.3333,
+      "relevant_count": 7,
+      "latency_ms": 50.5
+    },
+    {
+      "seed_bibcode": "2017ITGRS..55.1085G",
+      "method": "nomic",
+      "ndcg_10": 0.1513,
+      "recall_10": 0.1667,
+      "recall_20": 0.1667,
+      "mrr": 0.3333,
+      "relevant_count": 6,
+      "latency_ms": 49.7
+    },
+    {
+      "seed_bibcode": "2010CoPP...50..350U",
+      "method": "nomic",
+      "ndcg_10": 0.6311,
+      "recall_10": 0.4375,
+      "recall_20": 0.6875,
+      "mrr": 0.5,
+      "relevant_count": 16,
+      "latency_ms": 50.5
+    },
+    {
+      "seed_bibcode": "2019arXiv190504074Z",
+      "method": "nomic",
+      "ndcg_10": 0.1546,
+      "recall_10": 0.1111,
+      "recall_20": 0.3333,
+      "mrr": 0.2,
+      "relevant_count": 18,
+      "latency_ms": 51.4
+    },
+    {
+      "seed_bibcode": "2021PhRvD.103f4068A",
+      "method": "nomic",
+      "ndcg_10": 0.581,
+      "recall_10": 0.5,
+      "recall_20": 0.5,
+      "mrr": 1.0,
+      "relevant_count": 6,
+      "latency_ms": 49.8
+    },
+    {
+      "seed_bibcode": "2021EnInt.15606635R",
+      "method": "nomic",
+      "ndcg_10": 0.3825,
+      "recall_10": 0.5,
+      "recall_20": 0.5,
+      "mrr": 0.3333,
+      "relevant_count": 6,
+      "latency_ms": 48.3
+    },
+    {
+      "seed_bibcode": "2021Univ....7..463A",
+      "method": "nomic",
+      "ndcg_10": 0.4492,
+      "recall_10": 0.4286,
+      "recall_20": 0.5714,
+      "mrr": 1.0,
+      "relevant_count": 7,
+      "latency_ms": 48.7
+    },
+    {
+      "seed_bibcode": "2020NatSR..10.9201P",
+      "method": "nomic",
+      "ndcg_10": 0.1483,
+      "recall_10": 0.1111,
+      "recall_20": 0.1111,
+      "mrr": 0.5,
+      "relevant_count": 9,
+      "latency_ms": 50.3
+    },
+    {
+      "seed_bibcode": "2020Cryst..10..902N",
+      "method": "nomic",
+      "ndcg_10": 0.1851,
+      "recall_10": 0.25,
+      "recall_20": 0.625,
+      "mrr": 0.25,
+      "relevant_count": 8,
+      "latency_ms": 52.4
+    },
+    {
+      "seed_bibcode": "2020EPJC...80..573B",
+      "method": "nomic",
+      "ndcg_10": 0.501,
+      "recall_10": 0.25,
+      "recall_20": 0.625,
+      "mrr": 1.0,
+      "relevant_count": 16,
+      "latency_ms": 51.3
+    },
+    {
+      "seed_bibcode": "2006Icar..181..375T",
+      "method": "nomic",
+      "ndcg_10": 0.2562,
+      "recall_10": 0.2857,
+      "recall_20": 0.2857,
+      "mrr": 0.5,
+      "relevant_count": 7,
+      "latency_ms": 50.2
+    },
+    {
+      "seed_bibcode": "2010arXiv1003.2376N",
+      "method": "nomic",
+      "ndcg_10": 0.6992,
+      "recall_10": 0.6,
+      "recall_20": 0.6,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 52.0
+    },
+    {
+      "seed_bibcode": "2011Icar..211..238G",
+      "method": "nomic",
+      "ndcg_10": 0.7084,
+      "recall_10": 0.3529,
+      "recall_20": 0.5882,
+      "mrr": 1.0,
+      "relevant_count": 17,
+      "latency_ms": 51.5
+    },
+    {
+      "seed_bibcode": "2019PhRvD.100e5031M",
+      "method": "nomic",
+      "ndcg_10": 0.5077,
+      "recall_10": 0.1667,
+      "recall_20": 0.2083,
+      "mrr": 1.0,
+      "relevant_count": 24,
+      "latency_ms": 54.0
+    },
+    {
+      "seed_bibcode": "2015JSAES..58..165N",
+      "method": "nomic",
+      "ndcg_10": 0.7788,
+      "recall_10": 0.3182,
+      "recall_20": 0.4091,
+      "mrr": 1.0,
+      "relevant_count": 22,
+      "latency_ms": 49.9
+    },
+    {
+      "seed_bibcode": "2008Icar..197...65H",
+      "method": "nomic",
+      "ndcg_10": 0.6274,
+      "recall_10": 0.4545,
+      "recall_20": 0.5455,
+      "mrr": 1.0,
+      "relevant_count": 11,
+      "latency_ms": 50.8
+    },
+    {
+      "seed_bibcode": "2014JSAES..51...12C",
+      "method": "nomic",
+      "ndcg_10": 0.7124,
+      "recall_10": 0.25,
+      "recall_20": 0.3929,
+      "mrr": 1.0,
+      "relevant_count": 28,
+      "latency_ms": 52.5
+    },
+    {
+      "seed_bibcode": "2018JHEP...11..163G",
+      "method": "nomic",
+      "ndcg_10": 0.1737,
+      "recall_10": 0.0741,
+      "recall_20": 0.1481,
+      "mrr": 0.3333,
+      "relevant_count": 27,
+      "latency_ms": 51.1
+    },
+    {
+      "seed_bibcode": "2018IJSTA..11.3312L",
+      "method": "nomic",
+      "ndcg_10": 0.2201,
+      "recall_10": 0.0769,
+      "recall_20": 0.1538,
+      "mrr": 1.0,
+      "relevant_count": 13,
+      "latency_ms": 50.2
+    },
+    {
+      "seed_bibcode": "2020Fore...11.1347T",
+      "method": "nomic",
+      "ndcg_10": 0.2958,
+      "recall_10": 0.4286,
+      "recall_20": 0.7143,
+      "mrr": 0.25,
+      "relevant_count": 7,
+      "latency_ms": 51.1
+    },
+    {
+      "seed_bibcode": "2013ClDy...41..775P",
+      "method": "nomic",
+      "ndcg_10": 0.1795,
+      "recall_10": 0.1429,
+      "recall_20": 0.4286,
+      "mrr": 0.3333,
+      "relevant_count": 14,
+      "latency_ms": 50.0
+    },
+    {
+      "seed_bibcode": "2019FrMaS...6..452G",
+      "method": "nomic",
+      "ndcg_10": 0.1461,
+      "recall_10": 0.2,
+      "recall_20": 0.2,
+      "mrr": 0.25,
+      "relevant_count": 5,
+      "latency_ms": 50.8
+    },
+    {
+      "seed_bibcode": "2015AngCh.127.5769A",
+      "method": "nomic",
+      "ndcg_10": 0.5531,
+      "recall_10": 0.4,
+      "recall_20": 0.4,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2022CmPhy...5..215C",
+      "method": "nomic",
+      "ndcg_10": 0.6106,
+      "recall_10": 0.5,
+      "recall_20": 0.6667,
+      "mrr": 1.0,
+      "relevant_count": 6,
+      "latency_ms": 49.8
+    },
+    {
+      "seed_bibcode": "2021PhLB..82036554G",
+      "method": "nomic",
+      "ndcg_10": 0.2985,
+      "recall_10": 0.0625,
+      "recall_20": 0.125,
+      "mrr": 1.0,
+      "relevant_count": 32,
+      "latency_ms": 50.2
+    },
+    {
+      "seed_bibcode": "2014ITGRS..52.5122S",
+      "method": "nomic",
+      "ndcg_10": 0.1389,
+      "recall_10": 0.0769,
+      "recall_20": 0.1538,
+      "mrr": 0.5,
+      "relevant_count": 13,
+      "latency_ms": 51.7
+    },
+    {
+      "seed_bibcode": "2011E&PSL.312..371G",
+      "method": "nomic",
+      "ndcg_10": 0.4477,
+      "recall_10": 0.3333,
+      "recall_20": 0.4,
+      "mrr": 0.5,
+      "relevant_count": 15,
+      "latency_ms": 49.7
+    },
+    {
+      "seed_bibcode": "2019EnInt.13105016P",
+      "method": "nomic",
+      "ndcg_10": 0.6968,
+      "recall_10": 0.4,
+      "recall_20": 0.6,
+      "mrr": 1.0,
+      "relevant_count": 15,
+      "latency_ms": 49.7
+    },
+    {
+      "seed_bibcode": "2014Sust....6.3722K",
+      "method": "nomic",
+      "ndcg_10": 0.3005,
+      "recall_10": 0.1905,
+      "recall_20": 0.5714,
+      "mrr": 0.2,
+      "relevant_count": 21,
+      "latency_ms": 51.3
+    },
+    {
+      "seed_bibcode": "2012ApPhL.100o2115L",
+      "method": "nomic",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.0,
+      "mrr": 0.0294,
+      "relevant_count": 6,
+      "latency_ms": 51.3
+    },
+    {
+      "seed_bibcode": "2002ClDy...19..633F",
+      "method": "nomic",
+      "ndcg_10": 0.098,
+      "recall_10": 0.2,
+      "recall_20": 0.2,
+      "mrr": 0.1,
+      "relevant_count": 5,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2005RvGeo..43.3002D",
+      "method": "nomic",
+      "ndcg_10": 0.3422,
+      "recall_10": 0.3333,
+      "recall_20": 0.6667,
+      "mrr": 0.5,
+      "relevant_count": 6,
+      "latency_ms": 50.6
+    },
+    {
+      "seed_bibcode": "2001JGR...10623607S",
+      "method": "nomic",
+      "ndcg_10": 0.7936,
+      "recall_10": 0.5385,
+      "recall_20": 0.6923,
+      "mrr": 1.0,
+      "relevant_count": 13,
+      "latency_ms": 52.6
+    },
+    {
+      "seed_bibcode": "1996JAP....79.7324S",
+      "method": "nomic",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.4286,
+      "mrr": 0.0769,
+      "relevant_count": 7,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2020ScTEn.71134843W",
+      "method": "nomic",
+      "ndcg_10": 0.5135,
+      "recall_10": 0.2353,
+      "recall_20": 0.3529,
+      "mrr": 1.0,
+      "relevant_count": 17,
+      "latency_ms": 48.9
+    },
+    {
+      "seed_bibcode": "2008PhRvB..78r0502A",
+      "method": "nomic",
+      "ndcg_10": 0.4734,
+      "recall_10": 0.4,
+      "recall_20": 0.6,
+      "mrr": 1.0,
+      "relevant_count": 10,
+      "latency_ms": 49.6
+    },
+    {
+      "seed_bibcode": "2013NatCo...4.2761D",
+      "method": "nomic",
+      "ndcg_10": 0.321,
+      "recall_10": 0.4,
+      "recall_20": 0.4,
+      "mrr": 0.5,
+      "relevant_count": 5,
+      "latency_ms": 50.1
+    },
+    {
+      "seed_bibcode": "2015NatCo...6.7497E",
+      "method": "nomic",
+      "ndcg_10": 0.2522,
+      "recall_10": 0.3333,
+      "recall_20": 0.6667,
+      "mrr": 0.3333,
+      "relevant_count": 6,
+      "latency_ms": 50.4
+    },
+    {
+      "seed_bibcode": "2020IJSTA..13.3291L",
+      "method": "lexical",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.0,
+      "mrr": 0.0,
+      "relevant_count": 5,
+      "latency_ms": 1.6
+    },
+    {
+      "seed_bibcode": "2016AngCh.128.3403L",
+      "method": "lexical",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.0,
+      "mrr": 0.0,
+      "relevant_count": 7,
+      "latency_ms": 0.5
+    },
+    {
+      "seed_bibcode": "2010CoPP...50..350U",
+      "method": "lexical",
+      "ndcg_10": 0.4548,
+      "recall_10": 0.3125,
+      "recall_20": 0.3125,
+      "mrr": 0.5,
+      "relevant_count": 16,
+      "latency_ms": 1.1
+    },
+    {
+      "seed_bibcode": "2019arXiv190504074Z",
+      "method": "lexical",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.0,
+      "mrr": 0.0,
+      "relevant_count": 18,
+      "latency_ms": 0.6
+    },
+    {
+      "seed_bibcode": "2021PhLB..82036554G",
+      "method": "lexical",
+      "ndcg_10": 0.0636,
+      "recall_10": 0.0312,
+      "recall_20": 0.125,
+      "mrr": 0.1,
+      "relevant_count": 32,
+      "latency_ms": 1.2
+    },
+    {
+      "seed_bibcode": "2014ITGRS..52.5122S",
+      "method": "lexical",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.0,
+      "mrr": 0.0,
+      "relevant_count": 13,
+      "latency_ms": 0.4
+    },
+    {
+      "seed_bibcode": "2022NucFu..62l6051G",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.3008,
+      "recall_10": 0.4,
+      "recall_20": 0.6,
+      "mrr": 0.3333,
+      "relevant_count": 5,
+      "latency_ms": 52.3
+    },
+    {
+      "seed_bibcode": "2022UFUG...6927488W",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.6844,
+      "recall_10": 0.6,
+      "recall_20": 0.8,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2024JSAES.14805180L",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.5353,
+      "recall_10": 0.2353,
+      "recall_20": 0.2941,
+      "mrr": 1.0,
+      "relevant_count": 17,
+      "latency_ms": 51.0
+    },
+    {
+      "seed_bibcode": "2022arXiv220713544W",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.4,
+      "mrr": 0.0833,
+      "relevant_count": 5,
+      "latency_ms": 52.1
+    },
+    {
+      "seed_bibcode": "2022arXiv220302236K",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.791,
+      "recall_10": 0.3684,
+      "recall_20": 0.4737,
+      "mrr": 1.0,
+      "relevant_count": 19,
+      "latency_ms": 52.5
+    },
+    {
+      "seed_bibcode": "2025JHEP...01..081A",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.3863,
+      "recall_10": 0.2778,
+      "recall_20": 0.4444,
+      "mrr": 0.25,
+      "relevant_count": 18,
+      "latency_ms": 54.0
+    },
+    {
+      "seed_bibcode": "2020IJSTA..13.3291L",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.1021,
+      "recall_10": 0.2,
+      "recall_20": 0.2,
+      "mrr": 0.1111,
+      "relevant_count": 5,
+      "latency_ms": 54.0
+    },
+    {
+      "seed_bibcode": "2023arXiv230313711A",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.4,
+      "recall_10": 0.3,
+      "recall_20": 0.4,
+      "mrr": 1.0,
+      "relevant_count": 10,
+      "latency_ms": 50.8
+    },
+    {
+      "seed_bibcode": "2017JApA...38...61S",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.2229,
+      "recall_10": 0.4,
+      "recall_20": 0.6,
+      "mrr": 0.1667,
+      "relevant_count": 5,
+      "latency_ms": 51.2
+    },
+    {
+      "seed_bibcode": "2022JARS...16c4534W",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.11,
+      "recall_10": 0.1,
+      "recall_20": 0.1,
+      "mrr": 0.3333,
+      "relevant_count": 10,
+      "latency_ms": 52.6
+    },
+    {
+      "seed_bibcode": "2023EnEPS..26..307M",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.3392,
+      "recall_10": 0.2,
+      "recall_20": 0.2,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 50.4
+    },
+    {
+      "seed_bibcode": "2017Optik.135..366H",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.1545,
+      "recall_10": 0.2222,
+      "recall_20": 0.2222,
+      "mrr": 0.1667,
+      "relevant_count": 9,
+      "latency_ms": 53.4
+    },
+    {
+      "seed_bibcode": "2016AngCh.128.3403L",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.1374,
+      "recall_10": 0.1429,
+      "recall_20": 0.2857,
+      "mrr": 0.3333,
+      "relevant_count": 7,
+      "latency_ms": 52.6
+    },
+    {
+      "seed_bibcode": "2017ITGRS..55.1085G",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.1009,
+      "recall_10": 0.1667,
+      "recall_20": 0.3333,
+      "mrr": 0.1429,
+      "relevant_count": 6,
+      "latency_ms": 52.5
+    },
+    {
+      "seed_bibcode": "2010CoPP...50..350U",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.5645,
+      "recall_10": 0.3125,
+      "recall_20": 0.375,
+      "mrr": 1.0,
+      "relevant_count": 16,
+      "latency_ms": 52.5
+    },
+    {
+      "seed_bibcode": "2019arXiv190504074Z",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.1478,
+      "recall_10": 0.1111,
+      "recall_20": 0.2222,
+      "mrr": 0.1667,
+      "relevant_count": 18,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2021PhRvD.103f4068A",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.2918,
+      "recall_10": 0.3333,
+      "recall_20": 0.3333,
+      "mrr": 0.5,
+      "relevant_count": 6,
+      "latency_ms": 51.2
+    },
+    {
+      "seed_bibcode": "2021EnInt.15606635R",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.3203,
+      "recall_10": 0.5,
+      "recall_20": 0.6667,
+      "mrr": 0.2,
+      "relevant_count": 6,
+      "latency_ms": 52.6
+    },
+    {
+      "seed_bibcode": "2021Univ....7..463A",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.3576,
+      "recall_10": 0.2857,
+      "recall_20": 0.4286,
+      "mrr": 1.0,
+      "relevant_count": 7,
+      "latency_ms": 52.0
+    },
+    {
+      "seed_bibcode": "2020NatSR..10.9201P",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.235,
+      "recall_10": 0.1111,
+      "recall_20": 0.1111,
+      "mrr": 1.0,
+      "relevant_count": 9,
+      "latency_ms": 53.3
+    },
+    {
+      "seed_bibcode": "2020Cryst..10..902N",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.3261,
+      "recall_10": 0.25,
+      "recall_20": 0.25,
+      "mrr": 1.0,
+      "relevant_count": 8,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2020EPJC...80..573B",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.11,
+      "recall_10": 0.0625,
+      "recall_20": 0.125,
+      "mrr": 0.3333,
+      "relevant_count": 16,
+      "latency_ms": 51.6
+    },
+    {
+      "seed_bibcode": "2006Icar..181..375T",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.1429,
+      "mrr": 0.0667,
+      "relevant_count": 7,
+      "latency_ms": 54.1
+    },
+    {
+      "seed_bibcode": "2010arXiv1003.2376N",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.4731,
+      "recall_10": 0.6,
+      "recall_20": 0.6,
+      "mrr": 0.5,
+      "relevant_count": 5,
+      "latency_ms": 52.8
+    },
+    {
+      "seed_bibcode": "2011Icar..211..238G",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.8268,
+      "recall_10": 0.4706,
+      "recall_20": 0.5294,
+      "mrr": 1.0,
+      "relevant_count": 17,
+      "latency_ms": 51.8
+    },
+    {
+      "seed_bibcode": "2019PhRvD.100e5031M",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.2122,
+      "recall_10": 0.0833,
+      "recall_20": 0.125,
+      "mrr": 0.5,
+      "relevant_count": 24,
+      "latency_ms": 50.0
+    },
+    {
+      "seed_bibcode": "2015JSAES..58..165N",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.6817,
+      "recall_10": 0.2727,
+      "recall_20": 0.5,
+      "mrr": 1.0,
+      "relevant_count": 22,
+      "latency_ms": 50.2
+    },
+    {
+      "seed_bibcode": "2008Icar..197...65H",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.4671,
+      "recall_10": 0.3636,
+      "recall_20": 0.5455,
+      "mrr": 1.0,
+      "relevant_count": 11,
+      "latency_ms": 50.3
+    },
+    {
+      "seed_bibcode": "2014JSAES..51...12C",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.63,
+      "recall_10": 0.1786,
+      "recall_20": 0.3929,
+      "mrr": 1.0,
+      "relevant_count": 28,
+      "latency_ms": 51.7
+    },
+    {
+      "seed_bibcode": "2018JHEP...11..163G",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.2279,
+      "recall_10": 0.1111,
+      "recall_20": 0.1111,
+      "mrr": 0.2,
+      "relevant_count": 27,
+      "latency_ms": 53.2
+    },
+    {
+      "seed_bibcode": "2018IJSTA..11.3312L",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.2201,
+      "recall_10": 0.0769,
+      "recall_20": 0.0769,
+      "mrr": 1.0,
+      "relevant_count": 13,
+      "latency_ms": 51.0
+    },
+    {
+      "seed_bibcode": "2020Fore...11.1347T",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.3981,
+      "recall_10": 0.4286,
+      "recall_20": 0.5714,
+      "mrr": 0.5,
+      "relevant_count": 7,
+      "latency_ms": 56.8
+    },
+    {
+      "seed_bibcode": "2013ClDy...41..775P",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.2857,
+      "mrr": 0.0833,
+      "relevant_count": 14,
+      "latency_ms": 55.6
+    },
+    {
+      "seed_bibcode": "2019FrMaS...6..452G",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.4522,
+      "recall_10": 0.4,
+      "recall_20": 0.6,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 53.6
+    },
+    {
+      "seed_bibcode": "2015AngCh.127.5769A",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.2766,
+      "recall_10": 0.4,
+      "recall_20": 0.6,
+      "mrr": 0.3333,
+      "relevant_count": 5,
+      "latency_ms": 50.1
+    },
+    {
+      "seed_bibcode": "2022CmPhy...5..215C",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.3026,
+      "recall_10": 0.1667,
+      "recall_20": 0.3333,
+      "mrr": 1.0,
+      "relevant_count": 6,
+      "latency_ms": 50.8
+    },
+    {
+      "seed_bibcode": "2021PhLB..82036554G",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.1737,
+      "recall_10": 0.0625,
+      "recall_20": 0.125,
+      "mrr": 0.3333,
+      "relevant_count": 32,
+      "latency_ms": 52.7
+    },
+    {
+      "seed_bibcode": "2014ITGRS..52.5122S",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.0948,
+      "recall_10": 0.0769,
+      "recall_20": 0.1538,
+      "mrr": 0.25,
+      "relevant_count": 13,
+      "latency_ms": 51.7
+    },
+    {
+      "seed_bibcode": "2011E&PSL.312..371G",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.3647,
+      "recall_10": 0.2,
+      "recall_20": 0.5333,
+      "mrr": 1.0,
+      "relevant_count": 15,
+      "latency_ms": 52.1
+    },
+    {
+      "seed_bibcode": "2019EnInt.13105016P",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.7116,
+      "recall_10": 0.4,
+      "recall_20": 0.6,
+      "mrr": 1.0,
+      "relevant_count": 15,
+      "latency_ms": 53.2
+    },
+    {
+      "seed_bibcode": "2014Sust....6.3722K",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.4035,
+      "recall_10": 0.1429,
+      "recall_20": 0.381,
+      "mrr": 1.0,
+      "relevant_count": 21,
+      "latency_ms": 52.9
+    },
+    {
+      "seed_bibcode": "2012ApPhL.100o2115L",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.0,
+      "mrr": 0.0,
+      "relevant_count": 6,
+      "latency_ms": 53.5
+    },
+    {
+      "seed_bibcode": "2002ClDy...19..633F",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.0,
+      "mrr": 0.0,
+      "relevant_count": 5,
+      "latency_ms": 53.8
+    },
+    {
+      "seed_bibcode": "2005RvGeo..43.3002D",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.3212,
+      "recall_10": 0.3333,
+      "recall_20": 0.5,
+      "mrr": 0.5,
+      "relevant_count": 6,
+      "latency_ms": 51.2
+    },
+    {
+      "seed_bibcode": "2001JGR...10623607S",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.7223,
+      "recall_10": 0.4615,
+      "recall_20": 0.6154,
+      "mrr": 1.0,
+      "relevant_count": 13,
+      "latency_ms": 52.0
+    },
+    {
+      "seed_bibcode": "1996JAP....79.7324S",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.1429,
+      "mrr": 0.0833,
+      "relevant_count": 7,
+      "latency_ms": 52.0
+    },
+    {
+      "seed_bibcode": "2020ScTEn.71134843W",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.6438,
+      "recall_10": 0.3529,
+      "recall_20": 0.4706,
+      "mrr": 1.0,
+      "relevant_count": 17,
+      "latency_ms": 51.5
+    },
+    {
+      "seed_bibcode": "2008PhRvB..78r0502A",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.4499,
+      "recall_10": 0.4,
+      "recall_20": 0.7,
+      "mrr": 1.0,
+      "relevant_count": 10,
+      "latency_ms": 52.8
+    },
+    {
+      "seed_bibcode": "2013NatCo...4.2761D",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.22,
+      "recall_10": 0.4,
+      "recall_20": 0.4,
+      "mrr": 0.1429,
+      "relevant_count": 5,
+      "latency_ms": 53.6
+    },
+    {
+      "seed_bibcode": "2015NatCo...6.7497E",
+      "method": "hybrid_specter2",
+      "ndcg_10": 0.1513,
+      "recall_10": 0.1667,
+      "recall_20": 0.3333,
+      "mrr": 0.3333,
+      "relevant_count": 6,
+      "latency_ms": 52.2
+    },
+    {
+      "seed_bibcode": "2022NucFu..62l6051G",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.4852,
+      "recall_10": 0.4,
+      "recall_20": 0.6,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 53.1
+    },
+    {
+      "seed_bibcode": "2022UFUG...6927488W",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.3452,
+      "recall_10": 0.4,
+      "recall_20": 0.8,
+      "mrr": 0.5,
+      "relevant_count": 5,
+      "latency_ms": 53.8
+    },
+    {
+      "seed_bibcode": "2024JSAES.14805180L",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.5771,
+      "recall_10": 0.2941,
+      "recall_20": 0.5294,
+      "mrr": 1.0,
+      "relevant_count": 17,
+      "latency_ms": 52.2
+    },
+    {
+      "seed_bibcode": "2022arXiv220713544W",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.0,
+      "mrr": 0.0,
+      "relevant_count": 5,
+      "latency_ms": 50.5
+    },
+    {
+      "seed_bibcode": "2022arXiv220302236K",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.5581,
+      "recall_10": 0.2632,
+      "recall_20": 0.4211,
+      "mrr": 1.0,
+      "relevant_count": 19,
+      "latency_ms": 50.7
+    },
+    {
+      "seed_bibcode": "2025JHEP...01..081A",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.5431,
+      "recall_10": 0.3333,
+      "recall_20": 0.5,
+      "mrr": 0.5,
+      "relevant_count": 18,
+      "latency_ms": 53.7
+    },
+    {
+      "seed_bibcode": "2020IJSTA..13.3291L",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.1208,
+      "recall_10": 0.2,
+      "recall_20": 0.2,
+      "mrr": 0.1667,
+      "relevant_count": 5,
+      "latency_ms": 52.1
+    },
+    {
+      "seed_bibcode": "2023arXiv230313711A",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.3933,
+      "recall_10": 0.3,
+      "recall_20": 0.5,
+      "mrr": 1.0,
+      "relevant_count": 10,
+      "latency_ms": 50.0
+    },
+    {
+      "seed_bibcode": "2017JApA...38...61S",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.2,
+      "mrr": 0.0769,
+      "relevant_count": 5,
+      "latency_ms": 52.1
+    },
+    {
+      "seed_bibcode": "2022JARS...16c4534W",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.0784,
+      "recall_10": 0.1,
+      "recall_20": 0.3,
+      "mrr": 0.1667,
+      "relevant_count": 10,
+      "latency_ms": 50.1
+    },
+    {
+      "seed_bibcode": "2023EnEPS..26..307M",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.3392,
+      "recall_10": 0.2,
+      "recall_20": 0.4,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 50.5
+    },
+    {
+      "seed_bibcode": "2017Optik.135..366H",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.2222,
+      "mrr": 0.0556,
+      "relevant_count": 9,
+      "latency_ms": 52.4
+    },
+    {
+      "seed_bibcode": "2016AngCh.128.3403L",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.2578,
+      "recall_10": 0.4286,
+      "recall_20": 0.4286,
+      "mrr": 0.1429,
+      "relevant_count": 7,
+      "latency_ms": 50.3
+    },
+    {
+      "seed_bibcode": "2017ITGRS..55.1085G",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.2045,
+      "recall_10": 0.3333,
+      "recall_20": 0.6667,
+      "mrr": 0.2,
+      "relevant_count": 6,
+      "latency_ms": 50.0
+    },
+    {
+      "seed_bibcode": "2010CoPP...50..350U",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.4794,
+      "recall_10": 0.3125,
+      "recall_20": 0.5625,
+      "mrr": 0.5,
+      "relevant_count": 16,
+      "latency_ms": 50.8
+    },
+    {
+      "seed_bibcode": "2019arXiv190504074Z",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.1952,
+      "recall_10": 0.1111,
+      "recall_20": 0.1667,
+      "mrr": 0.3333,
+      "relevant_count": 18,
+      "latency_ms": 49.6
+    },
+    {
+      "seed_bibcode": "2021PhRvD.103f4068A",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.6013,
+      "recall_10": 0.5,
+      "recall_20": 0.5,
+      "mrr": 1.0,
+      "relevant_count": 6,
+      "latency_ms": 50.6
+    },
+    {
+      "seed_bibcode": "2021EnInt.15606635R",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.4539,
+      "recall_10": 0.3333,
+      "recall_20": 0.5,
+      "mrr": 1.0,
+      "relevant_count": 6,
+      "latency_ms": 50.3
+    },
+    {
+      "seed_bibcode": "2021Univ....7..463A",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.5307,
+      "recall_10": 0.4286,
+      "recall_20": 0.5714,
+      "mrr": 1.0,
+      "relevant_count": 7,
+      "latency_ms": 51.7
+    },
+    {
+      "seed_bibcode": "2020NatSR..10.9201P",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.1175,
+      "recall_10": 0.1111,
+      "recall_20": 0.1111,
+      "mrr": 0.3333,
+      "relevant_count": 9,
+      "latency_ms": 53.0
+    },
+    {
+      "seed_bibcode": "2020Cryst..10..902N",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.2108,
+      "recall_10": 0.25,
+      "recall_20": 0.5,
+      "mrr": 0.3333,
+      "relevant_count": 8,
+      "latency_ms": 52.0
+    },
+    {
+      "seed_bibcode": "2020EPJC...80..573B",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.11,
+      "recall_10": 0.0625,
+      "recall_20": 0.25,
+      "mrr": 0.3333,
+      "relevant_count": 16,
+      "latency_ms": 53.6
+    },
+    {
+      "seed_bibcode": "2006Icar..181..375T",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.2354,
+      "recall_10": 0.2857,
+      "recall_20": 0.4286,
+      "mrr": 0.3333,
+      "relevant_count": 7,
+      "latency_ms": 50.4
+    },
+    {
+      "seed_bibcode": "2010arXiv1003.2376N",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.573,
+      "recall_10": 0.6,
+      "recall_20": 0.8,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 49.7
+    },
+    {
+      "seed_bibcode": "2011Icar..211..238G",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.6489,
+      "recall_10": 0.2941,
+      "recall_20": 0.4706,
+      "mrr": 1.0,
+      "relevant_count": 17,
+      "latency_ms": 49.9
+    },
+    {
+      "seed_bibcode": "2019PhRvD.100e5031M",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.0851,
+      "recall_10": 0.0417,
+      "recall_20": 0.1667,
+      "mrr": 0.2,
+      "relevant_count": 24,
+      "latency_ms": 52.3
+    },
+    {
+      "seed_bibcode": "2015JSAES..58..165N",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.7223,
+      "recall_10": 0.2727,
+      "recall_20": 0.3636,
+      "mrr": 1.0,
+      "relevant_count": 22,
+      "latency_ms": 51.4
+    },
+    {
+      "seed_bibcode": "2008Icar..197...65H",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.5101,
+      "recall_10": 0.3636,
+      "recall_20": 0.5455,
+      "mrr": 1.0,
+      "relevant_count": 11,
+      "latency_ms": 52.7
+    },
+    {
+      "seed_bibcode": "2014JSAES..51...12C",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.8553,
+      "recall_10": 0.2857,
+      "recall_20": 0.4286,
+      "mrr": 1.0,
+      "relevant_count": 28,
+      "latency_ms": 56.5
+    },
+    {
+      "seed_bibcode": "2018JHEP...11..163G",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.4106,
+      "recall_10": 0.1852,
+      "recall_20": 0.2963,
+      "mrr": 0.3333,
+      "relevant_count": 27,
+      "latency_ms": 53.3
+    },
+    {
+      "seed_bibcode": "2018IJSTA..11.3312L",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.2201,
+      "recall_10": 0.0769,
+      "recall_20": 0.0769,
+      "mrr": 1.0,
+      "relevant_count": 13,
+      "latency_ms": 50.8
+    },
+    {
+      "seed_bibcode": "2020Fore...11.1347T",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.4497,
+      "recall_10": 0.5714,
+      "recall_20": 0.7143,
+      "mrr": 0.5,
+      "relevant_count": 7,
+      "latency_ms": 52.8
+    },
+    {
+      "seed_bibcode": "2013ClDy...41..775P",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.1799,
+      "recall_10": 0.1429,
+      "recall_20": 0.2857,
+      "mrr": 0.25,
+      "relevant_count": 14,
+      "latency_ms": 50.5
+    },
+    {
+      "seed_bibcode": "2019FrMaS...6..452G",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.5503,
+      "recall_10": 0.6,
+      "recall_20": 0.8,
+      "mrr": 1.0,
+      "relevant_count": 5,
+      "latency_ms": 48.3
+    },
+    {
+      "seed_bibcode": "2015AngCh.127.5769A",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.3541,
+      "recall_10": 0.6,
+      "recall_20": 0.6,
+      "mrr": 0.2,
+      "relevant_count": 5,
+      "latency_ms": 48.7
+    },
+    {
+      "seed_bibcode": "2022CmPhy...5..215C",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.3026,
+      "recall_10": 0.1667,
+      "recall_20": 0.3333,
+      "mrr": 1.0,
+      "relevant_count": 6,
+      "latency_ms": 51.2
+    },
+    {
+      "seed_bibcode": "2021PhLB..82036554G",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.11,
+      "recall_10": 0.0312,
+      "recall_20": 0.0938,
+      "mrr": 0.3333,
+      "relevant_count": 32,
+      "latency_ms": 51.1
+    },
+    {
+      "seed_bibcode": "2014ITGRS..52.5122S",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.2173,
+      "recall_10": 0.1538,
+      "recall_20": 0.2308,
+      "mrr": 0.5,
+      "relevant_count": 13,
+      "latency_ms": 53.8
+    },
+    {
+      "seed_bibcode": "2011E&PSL.312..371G",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.3693,
+      "recall_10": 0.2667,
+      "recall_20": 0.4,
+      "mrr": 0.5,
+      "relevant_count": 15,
+      "latency_ms": 52.5
+    },
+    {
+      "seed_bibcode": "2019EnInt.13105016P",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.5658,
+      "recall_10": 0.4,
+      "recall_20": 0.5333,
+      "mrr": 0.5,
+      "relevant_count": 15,
+      "latency_ms": 51.7
+    },
+    {
+      "seed_bibcode": "2014Sust....6.3722K",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.427,
+      "recall_10": 0.2381,
+      "recall_20": 0.5238,
+      "mrr": 0.3333,
+      "relevant_count": 21,
+      "latency_ms": 51.7
+    },
+    {
+      "seed_bibcode": "2012ApPhL.100o2115L",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.3333,
+      "mrr": 0.0714,
+      "relevant_count": 6,
+      "latency_ms": 52.3
+    },
+    {
+      "seed_bibcode": "2002ClDy...19..633F",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.0,
+      "mrr": 0.0,
+      "relevant_count": 5,
+      "latency_ms": 50.0
+    },
+    {
+      "seed_bibcode": "2005RvGeo..43.3002D",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.1303,
+      "recall_10": 0.1667,
+      "recall_20": 0.5,
+      "mrr": 0.25,
+      "relevant_count": 6,
+      "latency_ms": 51.7
+    },
+    {
+      "seed_bibcode": "2001JGR...10623607S",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.7601,
+      "recall_10": 0.5385,
+      "recall_20": 0.6154,
+      "mrr": 1.0,
+      "relevant_count": 13,
+      "latency_ms": 51.3
+    },
+    {
+      "seed_bibcode": "1996JAP....79.7324S",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.0,
+      "recall_10": 0.0,
+      "recall_20": 0.2857,
+      "mrr": 0.0714,
+      "relevant_count": 7,
+      "latency_ms": 50.1
+    },
+    {
+      "seed_bibcode": "2020ScTEn.71134843W",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.4473,
+      "recall_10": 0.2353,
+      "recall_20": 0.3529,
+      "mrr": 1.0,
+      "relevant_count": 17,
+      "latency_ms": 50.1
+    },
+    {
+      "seed_bibcode": "2008PhRvB..78r0502A",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.3719,
+      "recall_10": 0.3,
+      "recall_20": 0.3,
+      "mrr": 1.0,
+      "relevant_count": 10,
+      "latency_ms": 51.5
+    },
+    {
+      "seed_bibcode": "2013NatCo...4.2761D",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.1312,
+      "recall_10": 0.2,
+      "recall_20": 0.4,
+      "mrr": 0.2,
+      "relevant_count": 5,
+      "latency_ms": 50.3
+    },
+    {
+      "seed_bibcode": "2015NatCo...6.7497E",
+      "method": "hybrid_indus",
+      "ndcg_10": 0.4297,
+      "recall_10": 0.5,
+      "recall_20": 0.6667,
+      "mrr": 0.5,
+      "relevant_count": 6,
+      "latency_ms": 51.6
+    }
+  ],
+  "significance": [
+    {
+      "n_pairs": 50,
+      "statistic": 8.0,
+      "p_value": 0.600179,
+      "mean_diff": -0.0011,
+      "comparison": "hybrid_specter2 vs specter2"
+    },
+    {
+      "n_pairs": 6,
+      "statistic": 0.0,
+      "p_value": 0.03125,
+      "mean_diff": 0.117,
+      "comparison": "hybrid_specter2 vs lexical"
+    },
+    {
+      "n_pairs": 50,
+      "statistic": 1.0,
+      "p_value": 0.046399,
+      "mean_diff": -0.0164,
+      "comparison": "hybrid_indus vs indus"
+    },
+    {
+      "n_pairs": 50,
+      "statistic": 342.0,
+      "p_value": 0.170952,
+      "mean_diff": -0.0276,
+      "comparison": "specter2 vs indus"
+    },
+    {
+      "n_pairs": 50,
+      "statistic": 310.0,
+      "p_value": 0.019172,
+      "mean_diff": -0.0516,
+      "comparison": "specter2 vs nomic"
+    },
+    {
+      "n_pairs": 6,
+      "statistic": 1.0,
+      "p_value": 0.0625,
+      "mean_diff": 0.1288,
+      "comparison": "specter2 vs lexical"
+    }
+  ]
+}

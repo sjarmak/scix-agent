@@ -9,6 +9,9 @@ import pytest
 
 from scix.mcp_server import (
     _dispatch_tool,
+    _hnsw_index_cache,
+    _hnsw_index_exists,
+    _hnsw_index_name,
     _parse_filters,
     _result_to_json,
 )
@@ -134,6 +137,101 @@ class TestDispatchTool:
 
 
 # ---------------------------------------------------------------------------
+# HNSW index guard (protects semantic_search from seq-scan timeouts
+# while a per-model index build is in progress)
+# ---------------------------------------------------------------------------
+
+
+class TestHnswIndexGuard:
+    def setup_method(self) -> None:
+        _hnsw_index_cache.clear()
+
+    def teardown_method(self) -> None:
+        _hnsw_index_cache.clear()
+
+    def test_index_name_convention(self) -> None:
+        assert _hnsw_index_name("indus") == "idx_embed_hnsw_indus"
+        assert _hnsw_index_name("specter2") == "idx_embed_hnsw_specter2"
+
+    def _mock_conn_with_index(self, *, exists: bool) -> MagicMock:
+        """Build a mock connection whose cursor returns one row iff exists=True."""
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = (1,) if exists else None
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        return mock_conn
+
+    def test_returns_true_when_index_present(self) -> None:
+        mock_conn = self._mock_conn_with_index(exists=True)
+        assert _hnsw_index_exists(mock_conn, "indus") is True
+
+    def test_returns_false_when_index_missing(self) -> None:
+        mock_conn = self._mock_conn_with_index(exists=False)
+        assert _hnsw_index_exists(mock_conn, "indus") is False
+
+    def test_positive_result_is_cached(self) -> None:
+        mock_conn = self._mock_conn_with_index(exists=True)
+        _hnsw_index_exists(mock_conn, "indus")
+        _hnsw_index_exists(mock_conn, "indus")
+        # Second call should hit cache, not the DB
+        assert mock_conn.cursor.call_count == 1
+
+    def test_negative_result_is_rechecked(self) -> None:
+        """False results must be re-checked so an in-progress build is picked up."""
+        mock_conn = self._mock_conn_with_index(exists=False)
+        _hnsw_index_exists(mock_conn, "indus")
+        # Force cache expiry by rewriting the checked_at timestamp into the past
+        exists, _ = _hnsw_index_cache["indus"]
+        _hnsw_index_cache["indus"] = (exists, 0.0)
+        _hnsw_index_exists(mock_conn, "indus")
+        assert mock_conn.cursor.call_count == 2
+
+    @patch("scix.mcp_server._hnsw_index_exists")
+    def test_semantic_search_short_circuits_when_index_missing(self, mock_guard: MagicMock) -> None:
+        """When the HNSW index is missing, semantic_search must not embed or query."""
+        mock_guard.return_value = False
+        mock_conn = MagicMock()
+        with (
+            patch("scix.search.vector_search") as mock_vs,
+            patch("scix.mcp_server.load_model") as mock_load,
+        ):
+            result = json.loads(
+                _dispatch_tool(mock_conn, "semantic_search", {"query": "dark matter"})
+            )
+            mock_vs.assert_not_called()
+            mock_load.assert_not_called()
+        assert result["error"] == "vector_index_unavailable"
+        assert result["model_name"] == "indus"
+        assert "idx_embed_hnsw_indus" in result["detail"]
+
+    @patch("scix.mcp_server._hnsw_index_exists")
+    @patch("scix.mcp_server.embed_batch")
+    @patch("scix.mcp_server.load_model")
+    @patch("scix.search.vector_search")
+    def test_semantic_search_proceeds_when_index_present(
+        self,
+        mock_vs: MagicMock,
+        mock_load: MagicMock,
+        mock_embed: MagicMock,
+        mock_guard: MagicMock,
+    ) -> None:
+        from scix.search import SearchResult
+
+        mock_guard.return_value = True
+        mock_load.return_value = (MagicMock(), MagicMock())
+        mock_embed.return_value = [[0.0] * 768]
+        mock_vs.return_value = SearchResult(
+            papers=[{"bibcode": "2024ApJ...042X"}],
+            total=1,
+            timing_ms={"vector_ms": 42.0},
+        )
+        mock_conn = MagicMock()
+        result = json.loads(_dispatch_tool(mock_conn, "semantic_search", {"query": "dark matter"}))
+        mock_vs.assert_called_once()
+        assert result["total"] == 1
+
+
+# ---------------------------------------------------------------------------
 # _dispatch_tool — graph tool dispatch tests
 # ---------------------------------------------------------------------------
 
@@ -250,12 +348,12 @@ class TestInitModel:
             pytest.skip("mcp SDK not installed")
 
     def test_init_model_impl_calls_load_model(self) -> None:
-        """_init_model_impl should call load_model."""
+        """_init_model_impl should call load_model with INDUS."""
         from scix.mcp_server import _init_model_impl
 
         with patch("scix.mcp_server.load_model") as mock_load:
             _init_model_impl()
-            mock_load.assert_called_once_with("specter2", device="cpu")
+            mock_load.assert_called_once_with("indus", device="cpu")
 
     def test_init_model_impl_survives_import_error(self) -> None:
         """_init_model_impl should not crash if torch/transformers missing."""

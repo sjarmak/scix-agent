@@ -127,6 +127,55 @@ def _set_timeout(conn: psycopg.Connection, tool_name: str) -> None:
         cur.execute(f"SET LOCAL statement_timeout = {timeout_ms}")
 
 
+# ---------------------------------------------------------------------------
+# HNSW index availability guard (prevents silent seq-scan timeouts on
+# semantic_search when a per-model HNSW index has not been built yet)
+# ---------------------------------------------------------------------------
+
+# Cache: model_name -> (exists, checked_at_monotonic)
+# - True results are cached indefinitely (HNSW indexes don't disappear in
+#   normal operation).
+# - False results are re-checked every _HNSW_CACHE_TTL_MISS_SEC seconds, so
+#   semantic_search picks up an in-progress build shortly after it commits.
+_hnsw_index_cache: dict[str, tuple[bool, float]] = {}
+_HNSW_CACHE_TTL_MISS_SEC = 30.0
+
+
+def _hnsw_index_name(model_name: str) -> str:
+    """Return the conventional HNSW partial-index name for a given embedding model."""
+    return f"idx_embed_hnsw_{model_name}"
+
+
+def _hnsw_index_exists(conn: psycopg.Connection, model_name: str) -> bool:
+    """Check whether the per-model HNSW partial index on paper_embeddings exists.
+
+    Without this index, ``semantic_search`` for a 30M+ row model degrades to a
+    sequential scan and is guaranteed to exceed the statement timeout. Cheap
+    pg_indexes lookup, cached to keep the hot path free.
+    """
+    now = time.monotonic()
+    cached = _hnsw_index_cache.get(model_name)
+    if cached is not None:
+        exists, checked_at = cached
+        if exists or (now - checked_at) < _HNSW_CACHE_TTL_MISS_SEC:
+            return exists
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1 FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND tablename = 'paper_embeddings'
+              AND indexname = %s
+            """,
+            (_hnsw_index_name(model_name),),
+        )
+        exists = cur.fetchone() is not None
+
+    _hnsw_index_cache[model_name] = (exists, now)
+    return exists
+
+
 def _log_query(
     conn: psycopg.Connection,
     tool_name: str,
@@ -207,22 +256,22 @@ def _annotate_working_set(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _init_model_impl() -> None:
-    """Eagerly load SPECTER2 model into cache at server startup.
+    """Eagerly load INDUS model into cache at server startup.
 
     Non-fatal: if torch/transformers are not installed, semantic_search
     will be unavailable but all other tools still work.
     """
     try:
         device = os.environ.get("SCIX_EMBED_DEVICE", "cpu")
-        load_model("specter2", device=device)
-        logger.info("SPECTER2 model pre-loaded on %s", device)
+        load_model("indus", device=device)
+        logger.info("INDUS model pre-loaded on %s", device)
     except ImportError:
         logger.warning(
             "torch/transformers not installed — semantic_search will be unavailable. "
             "Install with: pip install transformers torch"
         )
     except Exception:
-        logger.exception("Failed to pre-load SPECTER2 model")
+        logger.exception("Failed to pre-load INDUS model")
 
 
 def _shutdown() -> None:
@@ -246,7 +295,7 @@ def _shutdown() -> None:
 def create_server():
     """Create and configure the MCP server with 22 tools (7 core + 4 graph + 3 intelligence + 7 entity/session + health_check).
 
-    Eagerly pre-loads the SPECTER2 model so semantic_search is fast from
+    Eagerly pre-loads the INDUS model so semantic_search is fast from
     the first call.
     """
     try:
@@ -268,7 +317,7 @@ def create_server():
                 name="semantic_search",
                 description=(
                     "Search for papers by semantic similarity to a natural language query. "
-                    "Uses SPECTER2 embeddings and pgvector cosine similarity."
+                    "Uses INDUS (nasa-impact/nasa-smd-ibm-st-v2) embeddings and pgvector cosine similarity."
                 ),
                 inputSchema={
                     "type": "object",
@@ -939,25 +988,47 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
     logger.info("tool_call: %s args=%s", name, list(args.keys()))
 
     if name == "semantic_search":
-        try:
-            device = os.environ.get("SCIX_EMBED_DEVICE", "cpu")
-            model, tokenizer = load_model("specter2", device=device)
-            vectors = embed_batch(model, tokenizer, [args["query"]], batch_size=1)
-            query_embedding = vectors[0]
-        except ImportError:
+        model_name = "indus"
+        if not _hnsw_index_exists(conn, model_name):
             result_json = json.dumps(
                 {
-                    "error": "transformers/torch not installed for embedding",
-                    "hint": "pip install transformers torch",
-                }
+                    "error": "vector_index_unavailable",
+                    "model_name": model_name,
+                    "detail": (
+                        f"HNSW index '{_hnsw_index_name(model_name)}' is not "
+                        "available yet. A build may be in progress. Running "
+                        "semantic_search now would trigger a sequential scan "
+                        "over the full embedding table and exceed the "
+                        "statement timeout. Use keyword_search as a fallback "
+                        "until the index is committed."
+                    ),
+                },
+                indent=2,
             )
         else:
-            filters = _parse_filters(args.get("filters"))
-            limit = args.get("limit", 10)
-            result = search.vector_search(
-                conn, query_embedding, model_name="specter2", filters=filters, limit=limit
-            )
-            result_json = _result_to_json(result)
+            try:
+                device = os.environ.get("SCIX_EMBED_DEVICE", "cpu")
+                model, tokenizer = load_model(model_name, device=device)
+                vectors = embed_batch(model, tokenizer, [args["query"]], batch_size=1)
+                query_embedding = vectors[0]
+            except ImportError:
+                result_json = json.dumps(
+                    {
+                        "error": "transformers/torch not installed for embedding",
+                        "hint": "pip install transformers torch",
+                    }
+                )
+            else:
+                filters = _parse_filters(args.get("filters"))
+                limit = args.get("limit", 10)
+                result = search.vector_search(
+                    conn,
+                    query_embedding,
+                    model_name=model_name,
+                    filters=filters,
+                    limit=limit,
+                )
+                result_json = _result_to_json(result)
 
     elif name == "keyword_search":
         filters = _parse_filters(args.get("filters"))
@@ -1099,7 +1170,9 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
         if source_filter:
             logger.info("source filter '%s' ignored — column not yet in schema", source_filter)
         if confidence_filter:
-            logger.info("confidence_tier filter '%s' ignored — column not yet in schema", confidence_filter)
+            logger.info(
+                "confidence_tier filter '%s' ignored — column not yet in schema", confidence_filter
+            )
 
         query += " LIMIT %s"
         params.append(limit)
@@ -1398,12 +1471,19 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
 
 async def main() -> None:
     """Run the MCP server on stdio."""
+    from mcp.server.models import InitializationOptions
     from mcp.server.stdio import stdio_server
+    from mcp.types import ServerCapabilities
 
     server = create_server()
+    init_options = InitializationOptions(
+        server_name="scix",
+        server_version="0.1.0",
+        capabilities=ServerCapabilities(tools={}),
+    )
     try:
         async with stdio_server() as (read_stream, write_stream):
-            await server.run(read_stream, write_stream)
+            await server.run(read_stream, write_stream, init_options)
     finally:
         _shutdown()
 

@@ -7,7 +7,34 @@ import os
 import psycopg
 import psycopg.errors
 
+# Default DSN for read-only tests; destructive tests MUST use SCIX_TEST_DSN.
 DSN = os.environ.get("SCIX_DSN", "dbname=scix")
+
+_PRODUCTION_DB_NAMES = {"scix"}
+
+
+def is_production_dsn(dsn: str) -> bool:
+    """Return True if DSN appears to point at a production database."""
+    for token in dsn.split():
+        if "=" in token:
+            key, _, value = token.partition("=")
+            if key.strip() == "dbname" and value.strip() in _PRODUCTION_DB_NAMES:
+                return True
+    return False
+
+
+def get_test_dsn() -> str | None:
+    """Return DSN for destructive tests, or None if not configured.
+
+    Destructive tests MUST call this instead of using DSN directly.
+    Returns SCIX_TEST_DSN if set and not pointing at production.
+    """
+    test_dsn = os.environ.get("SCIX_TEST_DSN")
+    if test_dsn is None:
+        return None
+    if is_production_dsn(test_dsn):
+        return None
+    return test_dsn
 
 # Per-query timeout in seconds (configurable for slow environments)
 STMT_TIMEOUT_S = int(os.environ.get("SCIX_TEST_TIMEOUT", "60"))

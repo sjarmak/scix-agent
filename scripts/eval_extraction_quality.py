@@ -276,7 +276,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--output",
-        default=".claude/prd-build-artifacts/extraction-quality-eval.md",
+        default="build-artifacts/extraction-quality-eval.md",
         help="Output path for the evaluation report",
     )
     parser.add_argument(

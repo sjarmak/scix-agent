@@ -12,10 +12,12 @@ import pathlib
 import psycopg
 import pytest
 
+from helpers import is_production_dsn
+
 MIGRATION_PATH = (
     pathlib.Path(__file__).resolve().parent.parent / "migrations" / "015_staging_schema.sql"
 )
-DSN = os.environ.get("SCIX_DSN", "dbname=scix")
+DSN = os.environ.get("SCIX_TEST_DSN") or os.environ.get("SCIX_DSN", "dbname=scix")
 
 
 # ---------------------------------------------------------------------------
@@ -83,9 +85,14 @@ def _db_available() -> bool:
 
 
 skip_no_db = pytest.mark.skipif(not _db_available(), reason="No database available")
+skip_production = pytest.mark.skipif(
+    is_production_dsn(DSN),
+    reason="Staging integration tests TRUNCATE tables. Set SCIX_TEST_DSN to enable.",
+)
 
 
 @skip_no_db
+@skip_production
 class TestStagingIntegration:
     """Full cycle: insert into staging -> promote -> verify in public -> staging empty."""
 

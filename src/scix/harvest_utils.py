@@ -77,8 +77,19 @@ class HarvestRunLog:
         records_fetched: int,
         records_upserted: int,
         counts: dict[str, int] | None = None,
+        refresh_views: bool = True,
     ) -> None:
-        """Mark the harvest run as completed with final counts."""
+        """Mark the harvest run as completed with final counts.
+
+        Args:
+            records_fetched: Total records fetched from source.
+            records_upserted: Records upserted into the database.
+            counts: Optional breakdown of counts by type.
+            refresh_views: If True (default), refresh all agent
+                materialized views after marking the run complete.
+                View refresh failures are logged but do not affect
+                the harvest completion status.
+        """
         with self._conn.cursor() as cur:
             cur.execute(
                 """
@@ -98,6 +109,47 @@ class HarvestRunLog:
                 ),
             )
         self._conn.commit()
+
+        if refresh_views:
+            self._refresh_agent_views()
+
+    def _refresh_agent_views(self) -> None:
+        """Refresh all agent materialized views after harvest completion.
+
+        Uses autocommit because REFRESH CONCURRENTLY cannot run in a
+        transaction block. Failures are logged but never raised — a
+        view refresh failure must not block the harvest.
+        """
+        from scix.views import refresh_all_views
+
+        try:
+            # REFRESH CONCURRENTLY requires autocommit
+            old_autocommit = self._conn.autocommit
+            self._conn.autocommit = True
+            try:
+                results = refresh_all_views(self._conn)
+                failed = [r for r in results if not r.success]
+                if failed:
+                    for r in failed:
+                        logger.warning(
+                            "View refresh failed for %s after harvest %s: %s",
+                            r.view_name,
+                            self._source,
+                            r.error,
+                        )
+                else:
+                    logger.info(
+                        "All agent views refreshed after harvest %s (run %d)",
+                        self._source,
+                        self.run_id,
+                    )
+            finally:
+                self._conn.autocommit = old_autocommit
+        except Exception:
+            logger.exception(
+                "Unexpected error refreshing views after harvest %s",
+                self._source,
+            )
 
     def fail(self, error_message: str) -> None:
         """Mark the harvest run as failed."""

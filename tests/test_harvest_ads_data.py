@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import psycopg
 import pytest
-from helpers import DSN
+from helpers import DSN, is_production_dsn
 
 import sys
 
@@ -102,6 +102,8 @@ TEST_BIBCODES = [
 @pytest.fixture()
 def db_conn():
     """Provide a database connection, skip if unavailable or tables missing."""
+    if is_production_dsn(DSN):
+        pytest.skip("Refuses to write test data to production. Set SCIX_TEST_DSN.")
     try:
         conn = psycopg.connect(DSN)
     except psycopg.OperationalError:

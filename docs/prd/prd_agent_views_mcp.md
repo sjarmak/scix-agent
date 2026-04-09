@@ -43,7 +43,7 @@ This gate must pass before any view migration is applied.
   - Generate synthetic entities (1M), document_entities (10M), entity_aliases (500K) in a test schema
   - Create each materialized view definition
   - Measure: CREATE time, REFRESH CONCURRENTLY time, single-row query time
-  - Output results to stdout and `.claude/prd-build-artifacts/matview-benchmark.md`
+  - Output results to stdout and `build-artifacts/matview-benchmark.md`
   - Acceptance: Script runs to completion; results include timing for all 3 views; recommendations printed if any view exceeds 30-minute refresh
 
 - **Agent document context view** (materialized, migration 023 or later)

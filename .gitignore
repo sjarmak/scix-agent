@@ -58,3 +58,4 @@ Thumbs.db
 .claude/rfc-dag.state.json
 .claude/rfc-dag.log.md
 .cache/
+*.deb

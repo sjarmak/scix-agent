@@ -81,7 +81,7 @@ This gate determines SsODNet scope: if <10K unique small-body names in extractio
   - Sample 50 random papers from extractions table
   - Run entity resolver on all mentions
   - Output: precision, recall, match_method distribution, unmatched mentions list
-  - Write results to `.claude/prd-build-artifacts/extraction-quality-eval.md`
+  - Write results to `build-artifacts/extraction-quality-eval.md`
   - Acceptance: Script runs without error; output includes precision/recall numbers and unmatched mention examples
 
 ### Should-Have

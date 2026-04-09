@@ -12,7 +12,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
-from helpers import DSN
+from helpers import DSN, is_production_dsn
 
 from scix.uat import (
     UATConcept,
@@ -268,9 +268,20 @@ def _has_uat_tables(conn: psycopg.Connection) -> bool:
         return cur.fetchone()[0] == 3
 
 
+_skip_destructive = pytest.mark.skipif(
+    is_production_dsn(DSN),
+    reason=(
+        "UAT integration tests wipe uat_concepts/uat_relationships/paper_uat_mappings. "
+        "Set SCIX_TEST_DSN to a non-production database to enable these tests."
+    ),
+)
+
+
 @pytest.fixture()
 def db_conn():
     """Provide a database connection, skip if unavailable or tables missing."""
+    if is_production_dsn(DSN):
+        pytest.skip("Refusing destructive UAT tests against production DSN")
     try:
         conn = psycopg.connect(DSN)
     except psycopg.OperationalError:

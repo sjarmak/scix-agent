@@ -1,0 +1,189 @@
+[
+  {
+    "id": "extraction-quality-eval",
+    "name": "Extraction Quality Evaluation",
+    "description": "Build scripts/eval_extraction_quality.py: sample 50 papers from extractions table, run entity resolver on all mentions, compute precision/recall/match_method distribution, output unmatched mentions. Write results to .claude/prd-build-artifacts/extraction-quality-eval.md. This is the blocking gate for SsODNet scope.",
+    "deps": [],
+    "tier": "medium",
+    "acceptance": [
+      "File scripts/eval_extraction_quality.py exists and is importable",
+      "Script samples 50 papers from extractions table using EntityResolver",
+      "Output includes precision and recall numbers",
+      "Output includes match_method distribution",
+      "Output includes unmatched mention examples",
+      "Tests in tests/test_eval_extraction_quality.py pass: pytest tests/test_eval_extraction_quality.py"
+    ],
+    "layer": 0,
+    "scope": [
+      "scripts/eval_extraction_quality.py",
+      "tests/test_eval_extraction_quality.py"
+    ],
+    "status": "landed",
+    "branch": "c9165d0",
+    "pipeline_stage": "landed",
+    "pipeline_output": { "tests_passed": 22, "review": "PASS" },
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "spase-harvester-update",
+    "name": "SPASE Harvester Update v2.7.1",
+    "description": "Update scripts/harvest_spase.py: replace urllib with ResilientClient, update SPASE_VERSION from 2.7.0 to 2.7.1, write to entities table (in addition to entity_dictionary) using harvest_utils.upsert_entity, store entity_identifiers with id_scheme='spase_resource_id', add HarvestRunLog lifecycle. Update tests accordingly.",
+    "deps": [],
+    "tier": "medium",
+    "acceptance": [
+      "harvest_spase.py imports ResilientClient from scix.http_client (no urllib usage)",
+      "SPASE_VERSION constant is '2.7.1'",
+      "harvest_spase.py imports and uses HarvestRunLog from scix.harvest_utils",
+      "harvest_spase.py calls upsert_entity from scix.harvest_utils",
+      "harvest_spase.py stores entity_identifiers with id_scheme='spase_resource_id'",
+      "Tests pass: pytest tests/test_harvest_spase.py"
+    ],
+    "layer": 0,
+    "scope": ["scripts/harvest_spase.py", "tests/test_harvest_spase.py"],
+    "status": "landed",
+    "branch": "d5d6fb9",
+    "pipeline_stage": "landed",
+    "pipeline_output": { "tests_passed": 61, "review": "PASS" },
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "harvester-modernization",
+    "name": "Modernize Existing Harvesters to ResilientClient + HarvestRunLog",
+    "description": "Update 6 existing harvesters to use ResilientClient (replace urllib) and add HarvestRunLog lifecycle: harvest_ascl.py, harvest_aas_facilities.py, harvest_vizier.py, harvest_pwc_methods.py, harvest_physh.py, harvest_astromlab.py. Follow the pattern established by harvest_gcmd.py (import ResilientClient, create client, use client.get() instead of urllib, wrap in HarvestRunLog start/complete/fail). Update corresponding tests.",
+    "deps": [],
+    "tier": "large",
+    "acceptance": [
+      "harvest_ascl.py imports ResilientClient and HarvestRunLog (no urllib usage)",
+      "harvest_aas_facilities.py imports ResilientClient and HarvestRunLog (no urllib usage)",
+      "harvest_vizier.py imports ResilientClient and HarvestRunLog (no urllib usage)",
+      "harvest_pwc_methods.py imports ResilientClient and HarvestRunLog (no urllib usage)",
+      "harvest_physh.py imports ResilientClient and HarvestRunLog (no urllib usage)",
+      "harvest_astromlab.py imports ResilientClient and HarvestRunLog (no urllib usage)",
+      "All harvest tests pass: pytest tests/test_harvest_ascl.py tests/test_harvest_aas.py tests/test_harvest_vizier.py tests/test_harvest_pwc.py tests/test_harvest_physh.py tests/test_harvest_astromlab.py"
+    ],
+    "layer": 0,
+    "scope": [
+      "scripts/harvest_ascl.py",
+      "scripts/harvest_aas_facilities.py",
+      "scripts/harvest_vizier.py",
+      "scripts/harvest_pwc_methods.py",
+      "scripts/harvest_physh.py",
+      "scripts/harvest_astromlab.py",
+      "tests/test_harvest_ascl.py",
+      "tests/test_harvest_aas.py",
+      "tests/test_harvest_vizier.py",
+      "tests/test_harvest_pwc.py",
+      "tests/test_harvest_physh.py",
+      "tests/test_harvest_astromlab.py"
+    ],
+    "status": "landed",
+    "branch": "558dfca",
+    "pipeline_stage": "landed",
+    "pipeline_output": { "tests_passed": 166, "skipped": 4, "review": "PASS" },
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "ssodnet-harvester",
+    "name": "SsODNet Harvester",
+    "description": "Build scripts/harvest_ssodnet.py: download ssoBFT Parquet file (or API-based seed) using ResilientClient with SHA-256 checksum and HTTP Range resume, parse into entities (canonical_name from IAU-preferred designation, entity_type='target', source='ssodnet'), store entity_identifiers (ssodnet name with id_scheme='ssodnet', SPK-ID with id_scheme='sbdb_spkid'), store entity_aliases (all known designations), store physical properties (diameter, albedo, taxonomy) in entities.properties, use staging schema (migration 022) for bulk load with staging.promote_entities() for atomic promote, log harvest_run with satellite count validation. Write tests.",
+    "deps": ["extraction-quality-eval"],
+    "tier": "large",
+    "acceptance": [
+      "File scripts/harvest_ssodnet.py exists and is importable",
+      "Script imports and uses ResilientClient from scix.http_client",
+      "Script imports and uses HarvestRunLog from scix.harvest_utils",
+      "Script supports both bulk (ssoBFT Parquet) and seed (API) modes via CLI flag",
+      "Script uses staging schema for bulk load (references staging.promote_entities or equivalent)",
+      "Script stores entity_identifiers with id_scheme='ssodnet' and id_scheme='sbdb_spkid'",
+      "Script stores entity_aliases for all known designations",
+      "Script stores physical properties in entities.properties JSONB field",
+      "Tests pass: pytest tests/test_harvest_ssodnet.py"
+    ],
+    "layer": 1,
+    "scope": ["scripts/harvest_ssodnet.py", "tests/test_harvest_ssodnet.py"],
+    "status": "landed",
+    "branch": "ef4f70d",
+    "pipeline_stage": "landed",
+    "pipeline_output": { "tests_passed": 28, "review": "PASS" },
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "cmr-harvester",
+    "name": "CMR Collection Harvester",
+    "description": "Build scripts/harvest_cmr.py: use ResilientClient to paginate NASA CMR collections via Search-After headers, request UMM-JSON format (Accept: application/vnd.nasa.cmr.umm_results+json), store as datasets (source='cmr', canonical_id=concept-id), extract instruments/platforms/science_keywords and cross-reference GCMD entities via entity_identifiers(id_scheme='gcmd_uuid'), deduplicate on concept-id, log harvest_run with page counts. Write tests.",
+    "deps": ["extraction-quality-eval"],
+    "tier": "large",
+    "acceptance": [
+      "File scripts/harvest_cmr.py exists and is importable",
+      "Script imports and uses ResilientClient from scix.http_client",
+      "Script imports and uses HarvestRunLog from scix.harvest_utils",
+      "Script uses Search-After header pagination (not offset-based)",
+      "Script requests UMM-JSON format via Accept header",
+      "Script stores datasets with source='cmr'",
+      "Script extracts instruments, platforms, science_keywords from UMM-JSON",
+      "Script cross-references GCMD entities via entity_identifiers with id_scheme='gcmd_uuid'",
+      "Script deduplicates on concept-id",
+      "Tests pass: pytest tests/test_harvest_cmr.py"
+    ],
+    "layer": 1,
+    "scope": ["scripts/harvest_cmr.py", "tests/test_harvest_cmr.py"],
+    "status": "landed",
+    "branch": "de1f942",
+    "pipeline_stage": "landed",
+    "pipeline_output": { "tests_passed": 25, "review": "PASS" },
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "sbdb-enrichment",
+    "name": "SBDB Enrichment Harvester",
+    "description": "Build scripts/harvest_sbdb.py: query JPL SBDB API for objects already in entities table (from SsODNet) to add orbital elements, use ResilientClient with rate_limit={'ssd.jpl.nasa.gov': 1} (1 concurrent per IP), update entities.properties with orbital_class/neo/pha/discovery_date/discovery_site, resumable via harvest_runs.cursor_state (last processed entity_id), log harvest_run. Write tests.",
+    "deps": ["ssodnet-harvester"],
+    "tier": "medium",
+    "acceptance": [
+      "File scripts/harvest_sbdb.py exists and is importable",
+      "Script imports and uses ResilientClient with rate_limits={'ssd.jpl.nasa.gov': 1.0}",
+      "Script imports and uses HarvestRunLog from scix.harvest_utils",
+      "Script queries entities table for source='ssodnet' entities",
+      "Script updates entities.properties with orbital_class, neo, pha, discovery_date, discovery_site",
+      "Script implements cursor-based resumption via harvest_runs.cursor_state",
+      "Tests pass: pytest tests/test_harvest_sbdb.py"
+    ],
+    "layer": 2,
+    "scope": ["scripts/harvest_sbdb.py", "tests/test_harvest_sbdb.py"],
+    "status": "landed",
+    "branch": "b14607d",
+    "pipeline_stage": "landed",
+    "pipeline_output": { "tests_passed": 30, "review": "PASS" },
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "wikidata-cross-linking",
+    "name": "Wikidata Cross-Linking for New Entities",
+    "description": "Extend scripts/enrich_wikidata_multi.py to query entities from the new entities table (not just entity_dictionary), store QIDs in entity_identifiers with id_scheme='wikidata'. The script currently only queries entity_dictionary. Add a new mode/flag that reads from the entities table and writes entity_identifiers rows. Update tests.",
+    "deps": ["ssodnet-harvester"],
+    "tier": "medium",
+    "acceptance": [
+      "enrich_wikidata_multi.py has a mode to query from entities table (not just entity_dictionary)",
+      "Script stores Wikidata QIDs in entity_identifiers with id_scheme='wikidata'",
+      "Existing entity_dictionary enrichment still works (no regression)",
+      "Tests pass: pytest tests/test_enrich_wikidata.py or equivalent test file"
+    ],
+    "layer": 3,
+    "scope": [
+      "scripts/enrich_wikidata_multi.py",
+      "tests/test_enrich_wikidata.py"
+    ],
+    "status": "landed",
+    "branch": "27cb0bf",
+    "pipeline_stage": "landed",
+    "pipeline_output": { "tests_passed": 59, "review": "PASS" },
+    "eviction_context": null,
+    "pass_number": 1
+  }
+]

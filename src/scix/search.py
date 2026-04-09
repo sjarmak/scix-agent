@@ -177,7 +177,9 @@ def vector_search(
     """
     t0 = time.perf_counter()
 
+    ndim = len(query_embedding)
     vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
+    vec_cast = f"vector({ndim})"
     filter_clause, filter_params = (filters or SearchFilters()).to_where_clause("p")
 
     with conn.cursor() as cur:
@@ -194,14 +196,16 @@ def vector_search(
     if scan_mode is not None:
         iterative_applied = configure_iterative_scan(conn, mode=scan_mode)
 
+    # Cast embedding to vector(N) to match per-model partial HNSW expression
+    # indexes which are defined on (embedding::vector(N)).
     query = f"""
         SELECT {STUB_COLUMNS},
-               1 - (pe.embedding <=> %s::vector) AS similarity
+               1 - (pe.embedding::{vec_cast} <=> %s::{vec_cast}) AS similarity
         FROM paper_embeddings pe
         JOIN papers p ON p.bibcode = pe.bibcode
         WHERE pe.model_name = %s
         {filter_clause}
-        ORDER BY pe.embedding <=> %s::vector
+        ORDER BY pe.embedding::{vec_cast} <=> %s::{vec_cast}
         LIMIT %s
     """
     params: list[Any] = [vec_str, model_name] + filter_params + [vec_str, limit]
@@ -1189,6 +1193,53 @@ def get_document_context(
 
     return SearchResult(
         papers=[dict(row)],
+        total=1,
+        timing_ms={"query_ms": query_ms},
+    )
+
+
+def get_entity_context(
+    conn: psycopg.Connection,
+    entity_id: int,
+) -> SearchResult:
+    """Get full entity context from the agent_entity_context matview.
+
+    Returns entity card: entity_id, canonical_name, entity_type, discipline,
+    source, identifiers, aliases, relationships, and citing_paper_count.
+
+    Returns an empty SearchResult with an error in metadata when the entity_id
+    is not found, rather than raising an exception.
+    """
+    t0 = time.perf_counter()
+
+    sql = """
+        SELECT entity_id, canonical_name, entity_type, discipline, source,
+               identifiers, aliases, relationships, citing_paper_count
+        FROM agent_entity_context
+        WHERE entity_id = %s
+    """
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(sql, (entity_id,))
+        row = cur.fetchone()
+
+    query_ms = _elapsed_ms(t0)
+
+    if row is None:
+        return SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"query_ms": query_ms},
+            metadata={"error": f"Entity not found: {entity_id}"},
+        )
+
+    result = dict(row)
+    # Convert aliases from SQL array to list for JSON serialization
+    if result.get("aliases") is not None:
+        result["aliases"] = list(result["aliases"])
+
+    return SearchResult(
+        papers=[result],
         total=1,
         timing_ms={"query_ms": query_ms},
     )

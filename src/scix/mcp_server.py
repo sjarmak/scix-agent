@@ -24,6 +24,7 @@ import psycopg
 from scix import search
 from scix.db import DEFAULT_DSN
 from scix.embed import _model_cache, clear_model_cache, embed_batch, load_model
+from scix.entity_resolver import EntityResolver
 from scix.session import SessionState, WorkingSetEntry
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,9 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "get_citation_context": float(os.environ.get("SCIX_TIMEOUT_CITATION_CONTEXT", "5")),
     "read_paper_section": float(os.environ.get("SCIX_TIMEOUT_READ_SECTION", "5")),
     "search_within_paper": float(os.environ.get("SCIX_TIMEOUT_SEARCH_WITHIN", "10")),
+    "document_context": float(os.environ.get("SCIX_TIMEOUT_DOC_CONTEXT", "5")),
+    "entity_context": float(os.environ.get("SCIX_TIMEOUT_ENTITY_CONTEXT", "5")),
+    "resolve_entity": float(os.environ.get("SCIX_TIMEOUT_RESOLVE_ENTITY", "10")),
 }
 
 
@@ -851,6 +855,55 @@ def create_server():
                     "required": ["bibcode"],
                 },
             ),
+            Tool(
+                name="entity_context",
+                description=(
+                    "Get full context for a known entity by its entity_id: "
+                    "canonical name, type, discipline, all external identifiers, "
+                    "aliases, relationships to other entities, and citing paper count. "
+                    "Use this when you already have an entity_id (e.g., from "
+                    "document_context results) and want the complete entity card."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "entity_id": {
+                            "type": "integer",
+                            "description": "Entity ID (from document_context or resolve_entity results)",
+                        },
+                    },
+                    "required": ["entity_id"],
+                },
+            ),
+            Tool(
+                name="resolve_entity",
+                description=(
+                    "Resolve a text mention to canonical entities. Use this when "
+                    "you have an entity name, alias, or external identifier and "
+                    "want to find matching entities in the knowledge graph. Returns "
+                    "ranked candidates with match method and confidence. For browsing "
+                    "a known entity's full card, use entity_context instead."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Entity name, alias, or external identifier to resolve",
+                        },
+                        "discipline": {
+                            "type": "string",
+                            "description": "Optional discipline for ranking boost (e.g., 'astronomy', 'physics')",
+                        },
+                        "fuzzy": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "Enable fuzzy matching via pg_trgm similarity",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -1033,19 +1086,20 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
 
         query = """
                 SELECT e.bibcode, e.extraction_type, e.extraction_version, e.payload,
-                       p.title, e.source, e.confidence_tier, e.extraction_model
+                       p.title
                 FROM extractions e
                 JOIN papers p ON p.bibcode = e.bibcode
                 WHERE e.payload @> %s::jsonb
         """
         params: list[Any] = [containment]
 
+        # source and confidence_tier filters are accepted but only applied
+        # when the corresponding columns exist on the extractions table.
+        # Currently these columns are not present (planned migration).
         if source_filter:
-            query += " AND e.source = %s"
-            params.append(source_filter)
+            logger.info("source filter '%s' ignored — column not yet in schema", source_filter)
         if confidence_filter:
-            query += " AND e.confidence_tier = %s"
-            params.append(confidence_filter)
+            logger.info("confidence_tier filter '%s' ignored — column not yet in schema", confidence_filter)
 
         query += " LIMIT %s"
         params.append(limit)
@@ -1060,9 +1114,6 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
                 "extraction_version": row[2],
                 "payload": row[3],
                 "title": row[4],
-                "source": row[5],
-                "confidence_tier": row[6],
-                "extraction_model": row[7],
             }
             for row in rows
         ]
@@ -1167,9 +1218,9 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
                     SELECT DISTINCT p.bibcode, p.title, pm.pagerank,
                            pm.{community_col} AS community_id
                     FROM citation_edges ce
-                    JOIN papers p ON p.bibcode = ce.citing
+                    JOIN papers p ON p.bibcode = ce.source_bibcode
                     JOIN paper_metrics pm ON pm.bibcode = p.bibcode
-                    WHERE ce.cited = ANY(%s)
+                    WHERE ce.target_bibcode = ANY(%s)
                       AND pm.{community_col} IS NOT NULL
                       AND pm.{community_col} NOT IN (
                           SELECT DISTINCT pm2.{community_col}
@@ -1268,6 +1319,48 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
             return json.dumps({"error": "bibcode must be a non-empty string"})
         result = search.get_document_context(conn, bibcode)
         result_json = _result_to_json(result)
+
+    elif name == "entity_context":
+        entity_id = args.get("entity_id")
+        if entity_id is None:
+            return json.dumps({"error": "entity_id is required"})
+        try:
+            entity_id = int(entity_id)
+        except (TypeError, ValueError):
+            return json.dumps({"error": "entity_id must be an integer"})
+        result = search.get_entity_context(conn, entity_id)
+        result_json = _result_to_json(result)
+
+    elif name == "resolve_entity":
+        query = args.get("query", "")
+        if not query or not query.strip():
+            return json.dumps({"error": "query must be a non-empty string"})
+        resolver = EntityResolver(conn)
+        candidates = resolver.resolve(
+            query.strip(),
+            discipline=args.get("discipline"),
+            fuzzy=args.get("fuzzy", False),
+        )
+        result_json = json.dumps(
+            {
+                "query": query.strip(),
+                "candidates": [
+                    {
+                        "entity_id": c.entity_id,
+                        "canonical_name": c.canonical_name,
+                        "entity_type": c.entity_type,
+                        "source": c.source,
+                        "discipline": c.discipline,
+                        "confidence": c.confidence,
+                        "match_method": c.match_method,
+                    }
+                    for c in candidates
+                ],
+                "total": len(candidates),
+            },
+            indent=2,
+            default=str,
+        )
 
     elif name == "health_check":
         status: dict[str, Any] = {"pool": "no_pool", "model_cached": False, "db": "unknown"}

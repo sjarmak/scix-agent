@@ -34,7 +34,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("embed_opt")
 
-MODEL_NAME = "specter2"
+MODEL_NAME = "indus"
 BATCH_SIZE = 512
 WRITE_BUFFER = 20_000
 NUM_TOKENIZER_THREADS = 3

@@ -20,8 +20,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--model",
-        default="specter2",
-        help="Embedding model name (default: specter2)",
+        default="indus",
+        help="Embedding model name (default: indus)",
     )
     parser.add_argument(
         "--batch-size",

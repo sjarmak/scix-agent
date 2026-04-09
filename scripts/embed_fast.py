@@ -2,10 +2,10 @@
 """Fast GPU embedding pipeline using materialized unembedded table.
 
 Pre-requisite: run this SQL first to create the source table:
-    CREATE UNLOGGED TABLE _to_embed AS
+    CREATE TABLE _to_embed AS
     SELECT p.bibcode, p.title, p.abstract
     FROM papers p
-    LEFT JOIN paper_embeddings pe ON p.bibcode = pe.bibcode AND pe.model_name = 'specter2'
+    LEFT JOIN paper_embeddings pe ON p.bibcode = pe.bibcode AND pe.model_name = 'indus'
     WHERE pe.bibcode IS NULL AND p.title IS NOT NULL
     ORDER BY p.bibcode;
 
@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scix.db import get_connection
 from scix.embed import (
+    MODEL_POOLING,
     EmbeddingInput,
     embed_batch,
     load_model,
@@ -38,7 +39,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("embed_fast")
 
-MODEL_NAME = "specter2"
+MODEL_NAME = "indus"
 BATCH_SIZE = 256
 WRITE_BUFFER = 10_000
 DEVICE = "cuda"
@@ -155,7 +156,8 @@ def main() -> None:
             else:
                 stats["to"] += 1
 
-        vectors = embed_batch(model, tokenizer, texts, batch_size=BATCH_SIZE)
+        pooling = MODEL_POOLING.get(MODEL_NAME, "cls")
+        vectors = embed_batch(model, tokenizer, texts, batch_size=BATCH_SIZE, pooling=pooling)
         write_q.put((batch_inputs, vectors))
 
     reader_t.join(timeout=300)

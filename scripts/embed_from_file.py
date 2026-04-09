@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import numpy as np
 import torch
 
-from scix.embed import EmbeddingInput, load_model, prepare_input
+from scix.embed import MODEL_POOLING, EmbeddingInput, load_model, prepare_input
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,7 +38,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("embed_file")
 
-MODEL_NAME = "specter2"
+MODEL_NAME = "indus"
 BATCH_SIZE = 512
 WRITE_BUFFER = 20_000
 
@@ -203,7 +203,19 @@ def main() -> None:
 
                 with torch.no_grad():
                     outputs = model(**tokens)
-                vecs = outputs.last_hidden_state[:, 0, :].cpu().numpy().astype(np.float32)
+
+                pooling = MODEL_POOLING.get(MODEL_NAME, "cls")
+                if pooling == "mean":
+                    mask = tokens["attention_mask"].unsqueeze(-1)
+                    masked = outputs.last_hidden_state * mask
+                    vecs = (
+                        (masked.sum(dim=1) / mask.sum(dim=1).clamp(min=1))
+                        .cpu()
+                        .numpy()
+                        .astype(np.float32)
+                    )
+                else:
+                    vecs = outputs.last_hidden_state[:, 0, :].cpu().numpy().astype(np.float32)
 
                 # Accumulate
                 for inp_item in batch_inputs:
@@ -235,7 +247,15 @@ def main() -> None:
         tokens = {k: v.to(device) for k, v in tokens.items()}
         with torch.no_grad():
             outputs = model(**tokens)
-        vecs = outputs.last_hidden_state[:, 0, :].cpu().numpy().astype(np.float32)
+        pooling = MODEL_POOLING.get(MODEL_NAME, "cls")
+        if pooling == "mean":
+            mask = tokens["attention_mask"].unsqueeze(-1)
+            masked = outputs.last_hidden_state * mask
+            vecs = (
+                (masked.sum(dim=1) / mask.sum(dim=1).clamp(min=1)).cpu().numpy().astype(np.float32)
+            )
+        else:
+            vecs = outputs.last_hidden_state[:, 0, :].cpu().numpy().astype(np.float32)
         for inp_item in batch_inputs:
             buf_bibcodes.append(inp_item.bibcode)
             buf_input_types.append(inp_item.input_type)

@@ -1,8 +1,12 @@
-"""Embedding pipeline: SPECTER2 and OpenAI embeddings, stored in paper_embeddings.
+"""Embedding pipeline: SPECTER2, INDUS, and OpenAI embeddings, stored in paper_embeddings.
 
 Uses HuggingFace transformers + torch directly (no sentence-transformers wrapper)
-for SPECTER2, and the OpenAI SDK for text-embedding-3-large.
+for SPECTER2 and INDUS, and the OpenAI SDK for text-embedding-3-large.
 Writes embeddings via psycopg COPY for bulk throughput.
+
+Pooling strategies:
+  - SPECTER2 (allenai/specter2_base): CLS token (first token of last_hidden_state)
+  - INDUS (nasa-impact/nasa-smd-ibm-st-v2): Mean pooling over non-padding tokens
 """
 
 from __future__ import annotations
@@ -23,6 +27,12 @@ logger = logging.getLogger(__name__)
 
 # Module-level model cache: (model_name, device) -> (model, tokenizer)
 _model_cache: dict[tuple[str, str], tuple[Any, Any]] = {}
+
+# Pooling strategy per model: "cls" (first token) or "mean" (attention-masked average)
+MODEL_POOLING: dict[str, str] = {
+    "specter2": "cls",
+    "indus": "mean",
+}
 
 
 def clear_model_cache() -> None:
@@ -66,9 +76,10 @@ def prepare_input(bibcode: str, title: str | None, abstract: str | None) -> Embe
     )
 
 
-def load_model(model_name: str = "specter2", device: str = "cpu") -> tuple[Any, Any]:
-    """Load SPECTER2 model and tokenizer via transformers.
+def load_model(model_name: str = "indus", device: str = "cpu") -> tuple[Any, Any]:
+    """Load embedding model and tokenizer via transformers.
 
+    Supports SPECTER2 (CLS pooling) and INDUS (mean pooling).
     Returns (model, tokenizer) tuple. The model is moved to the specified device.
     Results are cached in _model_cache so subsequent calls with the same
     (model_name, device) return instantly.
@@ -92,10 +103,13 @@ def load_model(model_name: str = "specter2", device: str = "cpu") -> tuple[Any, 
         logger.debug("Model cache hit for %s on %s", model_name, device)
         return _model_cache[cache_key]
 
-    if model_name == "specter2":
-        hf_name = "allenai/specter2_base"
-    else:
-        raise ValueError(f"Unknown model: {model_name}. Supported: specter2")
+    MODEL_REGISTRY: dict[str, str] = {
+        "specter2": "allenai/specter2_base",
+        "indus": "nasa-impact/nasa-smd-ibm-st-v2",
+    }
+    hf_name = MODEL_REGISTRY.get(model_name)
+    if hf_name is None:
+        raise ValueError(f"Unknown model: {model_name}. Supported: {', '.join(MODEL_REGISTRY)}")
 
     logger.info("Loading model %s on %s", hf_name, device)
     tokenizer = AutoTokenizer.from_pretrained(hf_name)
@@ -110,9 +124,16 @@ def load_model(model_name: str = "specter2", device: str = "cpu") -> tuple[Any, 
 
 
 def embed_batch(
-    model: Any, tokenizer: Any, texts: list[str], batch_size: int = 32
+    model: Any,
+    tokenizer: Any,
+    texts: list[str],
+    batch_size: int = 32,
+    pooling: str = "cls",
 ) -> list[list[float]]:
-    """Generate embeddings for a batch of texts using CLS token pooling.
+    """Generate embeddings for a batch of texts.
+
+    Args:
+        pooling: "cls" for CLS token (SPECTER2) or "mean" for mean pooling (INDUS).
 
     Returns list of float vectors (one per input text).
     """
@@ -132,8 +153,17 @@ def embed_batch(
     with torch.no_grad():
         outputs = model(**inputs)
 
-    # SPECTER2 uses CLS token embedding (first token of last_hidden_state)
-    embeddings = outputs.last_hidden_state[:, 0, :].cpu().tolist()
+    if pooling == "mean":
+        # Mean pooling: average over non-padding tokens
+        attention_mask = inputs["attention_mask"].unsqueeze(-1)  # (B, T, 1)
+        masked = outputs.last_hidden_state * attention_mask
+        summed = masked.sum(dim=1)  # (B, D)
+        counts = attention_mask.sum(dim=1).clamp(min=1)  # (B, 1)
+        embeddings = (summed / counts).cpu().tolist()
+    else:
+        # CLS pooling: first token of last_hidden_state (SPECTER2 default)
+        embeddings = outputs.last_hidden_state[:, 0, :].cpu().tolist()
+
     return embeddings
 
 
@@ -235,7 +265,7 @@ _UNEMBEDDED_WHERE = """
 
 def run_embedding_pipeline(
     dsn: str | None = None,
-    model_name: str = "specter2",
+    model_name: str = "indus",
     batch_size: int = 32,
     device: str = "cpu",
     limit: int | None = None,
@@ -253,7 +283,7 @@ def run_embedding_pipeline(
 
     Args:
         dsn: Database connection string.
-        model_name: Model name (currently only 'specter2' supported).
+        model_name: Model name ('indus' or 'specter2').
         batch_size: GPU inference batch size.
         device: Torch device ('cpu', 'cuda', 'auto').
         limit: Max papers to embed (None = all).
@@ -396,7 +426,8 @@ def run_embedding_pipeline(
                 else:
                     stats["title_only"] += 1
 
-            vectors = embed_batch(model, tokenizer, texts, batch_size=batch_size)
+            pooling = MODEL_POOLING.get(model_name, "cls")
+            vectors = embed_batch(model, tokenizer, texts, batch_size=batch_size, pooling=pooling)
             write_queue.put((batch_inputs, vectors))
 
         # Wait for threads to complete

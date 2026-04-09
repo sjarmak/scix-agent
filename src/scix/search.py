@@ -531,6 +531,57 @@ def get_references(
     )
 
 
+def _author_name_variants(author_name: str) -> list[str]:
+    """Generate plausible ADS name variants from user input.
+
+    ADS stores names as "Surname, Given" with varying abbreviation levels.
+    Given "Jarmak, Stephanie G." this produces:
+        Jarmak, Stephanie G.
+        Jarmak, Stephanie
+        Jarmak, S. G.
+        Jarmak, S.
+    Given "Stephanie Jarmak" (western order) it normalizes first.
+    """
+    # Normalize to "Surname, Given" form
+    if "," in author_name:
+        surname, given = author_name.split(",", 1)
+        surname = surname.strip()
+        given = given.strip()
+    else:
+        parts = author_name.strip().split()
+        if len(parts) >= 2:
+            surname = parts[-1]
+            given = " ".join(parts[:-1])
+        else:
+            # Single name — return as-is
+            return [author_name.strip()]
+
+    variants: list[str] = []
+    given_parts = given.split()
+
+    if given_parts:
+        # Full name: "Jarmak, Stephanie G."
+        variants.append(f"{surname}, {given}")
+        # First name only: "Jarmak, Stephanie"
+        if len(given_parts) > 1:
+            variants.append(f"{surname}, {given_parts[0]}")
+        # All initials: "Jarmak, S. G."
+        initials_full = " ".join(f"{p[0]}." for p in given_parts if p)
+        variants.append(f"{surname}, {initials_full}")
+        # First initial only: "Jarmak, S."
+        if len(given_parts) > 1:
+            variants.append(f"{surname}, {given_parts[0][0]}.")
+
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for v in variants:
+        if v not in seen:
+            seen.add(v)
+            unique.append(v)
+    return unique
+
+
 def get_author_papers(
     conn: psycopg.Connection,
     author_name: str,
@@ -539,28 +590,34 @@ def get_author_papers(
     year_max: int | None = None,
     limit: int = 50,
 ) -> SearchResult:
-    """Get papers by an author (case-insensitive partial match on authors array)."""
+    """Get papers by an author.
+
+    Generates plausible name variants from the input, then queries
+    the GIN index on authors via array containment (@>).
+    Each variant hits a fast bitmap index scan — no sequential scan needed.
+    """
     t0 = time.perf_counter()
 
     year_clause = ""
-    params: list[Any] = [f"%{author_name}%"]
+    year_params: list[Any] = []
 
     if year_min is not None:
         year_clause += " AND p.year >= %s"
-        params.append(year_min)
+        year_params.append(year_min)
     if year_max is not None:
         year_clause += " AND p.year <= %s"
-        params.append(year_max)
+        year_params.append(year_max)
 
-    params.append(limit)
+    variants = _author_name_variants(author_name)
+
+    # Use GIN index (authors @>) for each variant — fast BitmapOr
+    or_clauses = " OR ".join(["p.authors @> ARRAY[%s]"] * len(variants))
+    params: list[Any] = [*variants, *year_params, limit]
 
     sql = f"""
         SELECT {STUB_COLUMNS}
         FROM papers p
-        WHERE EXISTS (
-            SELECT 1 FROM unnest(p.authors) AS a(name)
-            WHERE a.name ILIKE %s
-        )
+        WHERE ({or_clauses})
         {year_clause}
         ORDER BY p.year DESC, p.citation_count DESC NULLS LAST
         LIMIT %s

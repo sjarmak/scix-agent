@@ -120,7 +120,7 @@ class TestIngestPipelineE2E:
     @pytest.mark.skipif(not SMALL_FILE.exists(), reason="2026 data file not found")
     def test_ingest_2026_file(self, conn, clean_db) -> None:
         """Ingest the real 2026 file (21 records) end-to-end."""
-        pipeline = IngestPipeline(data_dir=DATA_DIR, batch_size=100)
+        pipeline = IngestPipeline(data_dir=DATA_DIR, dsn=DSN, batch_size=100)
         pipeline.run(drop_indexes=False, single_file=SMALL_FILE)
 
         with conn.cursor() as cur:
@@ -147,7 +147,7 @@ class TestIngestPipelineE2E:
     @pytest.mark.skipif(not SMALL_FILE.exists(), reason="2026 data file not found")
     def test_resumability_skips_complete(self, conn, clean_db) -> None:
         """Re-running should skip already-complete files."""
-        pipeline = IngestPipeline(data_dir=DATA_DIR, batch_size=100)
+        pipeline = IngestPipeline(data_dir=DATA_DIR, dsn=DSN, batch_size=100)
         pipeline.run(drop_indexes=False, single_file=SMALL_FILE)
 
         with conn.cursor() as cur:
@@ -190,7 +190,7 @@ class TestIngestPipelineE2E:
             for rec in records:
                 f.write(json.dumps(rec) + "\n")
 
-        pipeline = IngestPipeline(data_dir=tmp_path, batch_size=100)
+        pipeline = IngestPipeline(data_dir=tmp_path, dsn=DSN, batch_size=100)
         pipeline.run(drop_indexes=False, single_file=filepath)
 
         with conn.cursor() as cur:
@@ -208,3 +208,54 @@ class TestIngestPipelineE2E:
             )
             targets = [r[0] for r in cur.fetchall()]
             assert targets == ["2024test...002B", "2024test...003C"]
+
+    def test_duplicate_bibcodes_in_batch(self, conn, clean_db, tmp_path: Path) -> None:
+        """Duplicate bibcodes within the same file should not cause a cardinality error.
+
+        Regression test: ON CONFLICT DO UPDATE fails if the same INSERT contains
+        two rows with the same constrained key. The DISTINCT ON (bibcode) in
+        _PAPER_MERGE_SQL deduplicates the staging table before merge.
+        """
+        records = [
+            {
+                "bibcode": "2024test...DUP1",
+                "title": ["First version"],
+                "year": "2024",
+                "author": ["Author, A."],
+                "first_author": "Author, A.",
+                "doctype": "article",
+                "citation_count": 1,
+            },
+            {
+                "bibcode": "2024test...DUP1",  # same bibcode, different metadata
+                "title": ["Second version"],
+                "year": "2024",
+                "author": ["Author, A."],
+                "first_author": "Author, A.",
+                "doctype": "article",
+                "citation_count": 5,
+            },
+            {
+                "bibcode": "2024test...DUP2",
+                "title": ["Unique paper"],
+                "year": "2024",
+                "author": ["Author, B."],
+                "first_author": "Author, B.",
+                "doctype": "article",
+            },
+        ]
+        filepath = tmp_path / "test_dedup.jsonl.gz"
+        with gzip.open(filepath, "wt") as f:
+            for rec in records:
+                f.write(json.dumps(rec) + "\n")
+
+        pipeline = IngestPipeline(data_dir=tmp_path, dsn=DSN, batch_size=100)
+        pipeline.run(drop_indexes=False, single_file=filepath)
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM papers")
+            assert cur.fetchone()[0] == 2  # deduped to 2 unique bibcodes
+
+            cur.execute("SELECT title FROM papers WHERE bibcode = '2024test...DUP1'")
+            row = cur.fetchone()
+            assert row is not None  # one of the two versions survived

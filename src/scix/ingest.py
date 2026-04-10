@@ -20,17 +20,22 @@ logger = logging.getLogger(__name__)
 # SQL column list for COPY
 _COPY_COLS = ", ".join(COLUMN_ORDER)
 
-# Papers staging: COPY into temp table, then merge with ON CONFLICT DO NOTHING.
-# This makes retry safe — duplicate bibcodes from a partially-ingested file are skipped.
+# Papers staging: COPY into temp table, then merge with ON CONFLICT DO UPDATE.
+# New bibcodes are inserted; existing bibcodes get their metadata refreshed
+# (citation counts, read counts, new references, etc.).
 _PAPER_STAGING_DDL = (
     "CREATE TEMP TABLE IF NOT EXISTS _paper_staging "
     f"(LIKE papers INCLUDING DEFAULTS) ON COMMIT DELETE ROWS"
 )
 _PAPER_STAGING_COPY = f"COPY _paper_staging ({_COPY_COLS}) FROM STDIN"
+
+# Build SET clause for all non-PK columns: col = EXCLUDED.col
+_UPDATE_COLS = ", ".join(f"{col} = EXCLUDED.{col}" for col in COLUMN_ORDER if col != "bibcode")
 _PAPER_MERGE_SQL = (
     f"INSERT INTO papers ({_COPY_COLS}) "
-    f"SELECT {_COPY_COLS} FROM _paper_staging "
-    "ON CONFLICT (bibcode) DO NOTHING"
+    f"SELECT DISTINCT ON (bibcode) {_COPY_COLS} FROM _paper_staging "
+    f"ORDER BY bibcode "
+    f"ON CONFLICT (bibcode) DO UPDATE SET {_UPDATE_COLS}"
 )
 
 _EDGE_STAGING_DDL = (
@@ -118,9 +123,7 @@ class IngestPipeline:
         finally:
             conn.close()
 
-    def _ingest_file(
-        self, conn: psycopg.Connection, filepath: Path, ingest_log: IngestLog
-    ) -> None:
+    def _ingest_file(self, conn: psycopg.Connection, filepath: Path, ingest_log: IngestLog) -> None:
         """Stream-ingest a single JSONL file."""
         filename = filepath.name
         logger.info("Starting ingestion: %s", filename)
@@ -147,15 +150,11 @@ class IngestPipeline:
                         edge_batch.extend(edges)
                     except (json.JSONDecodeError, ValueError) as e:
                         total_errors += 1
-                        logger.warning(
-                            "%s line %d: %s", filename, line_no, e
-                        )
+                        logger.warning("%s line %d: %s", filename, line_no, e)
                         continue
 
                     if len(paper_batch) >= self._batch_size:
-                        inserted, edge_count = self._flush_batch(
-                            conn, paper_batch, edge_batch
-                        )
+                        inserted, edge_count = self._flush_batch(conn, paper_batch, edge_batch)
                         total_records += inserted
                         total_edges += edge_count
                         paper_batch.clear()
@@ -171,15 +170,11 @@ class IngestPipeline:
                             total_errors,
                             rate,
                         )
-                        ingest_log.update_counts(
-                            filename, total_records, total_errors, total_edges
-                        )
+                        ingest_log.update_counts(filename, total_records, total_errors, total_edges)
 
             # Flush remaining
             if paper_batch:
-                inserted, edge_count = self._flush_batch(
-                    conn, paper_batch, edge_batch
-                )
+                inserted, edge_count = self._flush_batch(conn, paper_batch, edge_batch)
                 total_records += inserted
                 total_edges += edge_count
 
@@ -194,9 +189,7 @@ class IngestPipeline:
                 rate,
                 elapsed,
             )
-            ingest_log.update_counts(
-                filename, total_records, total_errors, total_edges
-            )
+            ingest_log.update_counts(filename, total_records, total_errors, total_edges)
             ingest_log.finish(filename)
 
         except Exception:

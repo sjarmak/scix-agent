@@ -334,15 +334,160 @@ _FILTERS_SCHEMA = {
 
 
 # ---------------------------------------------------------------------------
+# Expected consolidated tools (used by startup self-test)
+# ---------------------------------------------------------------------------
+
+EXPECTED_TOOLS: tuple[str, ...] = (
+    "search",
+    "concept_search",
+    "get_paper",
+    "read_paper",
+    "citation_graph",
+    "citation_similarity",
+    "citation_chain",
+    "entity",
+    "entity_context",
+    "graph_context",
+    "find_gaps",
+    "temporal_evolution",
+    "facet_counts",
+)
+
+
+def startup_self_test(server: Any = None) -> dict[str, Any]:
+    """Validate that list_tools() returns exactly 13 tools with valid schemas.
+
+    Pure function — does NOT require a database connection. Inspects only
+    the registered tool schemas. Runs during server initialization (see
+    ``create_server``) and can also be invoked standalone from the main
+    entry point.
+
+    Args:
+        server: Optional already-created MCP Server instance. If ``None``,
+            a fresh server is created via ``create_server`` with the
+            self-test disabled (to avoid infinite recursion).
+
+    Returns:
+        Dict with keys ``ok`` (bool), ``tool_count`` (int),
+        ``tool_names`` (list[str]), and ``errors`` (list[str]).
+
+    Raises:
+        RuntimeError: If the self-test fails (wrong count, missing tool,
+            invalid schema). Failures are fatal by design so the server
+            never silently starts with broken tools.
+    """
+    import asyncio
+
+    errors: list[str] = []
+    tool_names: list[str] = []
+
+    try:
+        from mcp.types import ListToolsRequest
+    except ImportError as exc:
+        raise RuntimeError(f"startup_self_test: mcp SDK not available: {exc}") from exc
+
+    if server is None:
+        server = create_server(_run_self_test=False)
+
+    try:
+        handler = server.request_handlers[ListToolsRequest]
+    except (AttributeError, KeyError) as exc:
+        raise RuntimeError(
+            f"startup_self_test: server has no ListToolsRequest handler: {exc}"
+        ) from exc
+
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(handler(ListToolsRequest(method="tools/list")))
+    finally:
+        loop.close()
+
+    # Real MCP server handlers wrap the ListToolsResult in a ServerResult
+    # envelope (`.root.tools`); raw test fixtures may return `.tools`
+    # directly. Accept both.
+    tools = None
+    if hasattr(result, "root") and hasattr(result.root, "tools"):
+        tools = result.root.tools
+    elif hasattr(result, "tools"):
+        tools = result.tools
+    if tools is None:
+        raise RuntimeError(f"startup_self_test: unexpected list_tools result shape: {result!r}")
+
+    tool_count = len(tools)
+    if tool_count != 13:
+        errors.append(f"expected exactly 13 tools, got {tool_count}")
+
+    expected_set = set(EXPECTED_TOOLS)
+    seen: set[str] = set()
+
+    for tool in tools:
+        name = getattr(tool, "name", None)
+        if not name or not isinstance(name, str):
+            errors.append(f"tool missing valid name: {tool!r}")
+            continue
+        tool_names.append(name)
+
+        if name in seen:
+            errors.append(f"duplicate tool name: {name}")
+        seen.add(name)
+
+        schema = getattr(tool, "inputSchema", None)
+        if not isinstance(schema, dict):
+            errors.append(f"tool {name}: inputSchema is not a dict")
+            continue
+        if schema.get("type") != "object":
+            errors.append(
+                f"tool {name}: inputSchema.type must be 'object', got " f"{schema.get('type')!r}"
+            )
+        if "properties" not in schema or not isinstance(schema["properties"], dict):
+            errors.append(f"tool {name}: inputSchema.properties missing or not a dict")
+
+    missing = expected_set - seen
+    extra = seen - expected_set
+    if missing:
+        errors.append(f"missing expected tools: {sorted(missing)}")
+    if extra:
+        errors.append(f"unexpected extra tools: {sorted(extra)}")
+
+    status: dict[str, Any] = {
+        "ok": not errors,
+        "tool_count": tool_count,
+        "tool_names": sorted(tool_names),
+        "errors": errors,
+    }
+
+    if errors:
+        logger.critical(
+            "startup_self_test FAILED: tool_count=%d errors=%s",
+            tool_count,
+            errors,
+        )
+        raise RuntimeError(f"startup_self_test failed: {errors}")
+
+    logger.info(
+        "startup_self_test OK: %d tools registered (%s)",
+        tool_count,
+        ", ".join(sorted(tool_names)),
+    )
+    return status
+
+
+# ---------------------------------------------------------------------------
 # MCP server creation
 # ---------------------------------------------------------------------------
 
 
-def create_server():
+def create_server(_run_self_test: bool = True):
     """Create and configure the MCP server with 13 consolidated tools.
 
     Eagerly pre-loads the INDUS model so semantic_search is fast from
     the first call.
+
+    Args:
+        _run_self_test: If True (default), run ``startup_self_test`` after
+            the server is built to fail fast on broken tool schemas. Set
+            to False internally by ``startup_self_test`` itself to avoid
+            infinite recursion.
     """
     try:
         from mcp.server import Server
@@ -781,6 +926,13 @@ def create_server():
                 latency_ms = (time.monotonic() - t0) * 1000
                 _log_query(conn, name, arguments, latency_ms, success, error_msg)
             return [TextContent(type="text", text=result_json)]
+
+    if _run_self_test:
+        try:
+            startup_self_test(server)
+        except Exception:
+            logger.critical("create_server: startup self-test failed — server will not start")
+            raise
 
     return server
 

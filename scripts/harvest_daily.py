@@ -40,7 +40,6 @@ FIELDS = ",".join(
         "bibcode",
         "bibgroup",
         "bibstem",
-        "body",
         "citation",
         "citation_count",
         "copyright",

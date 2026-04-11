@@ -6,109 +6,109 @@
     {
       "tool": "keyword_search",
       "status": "PASS",
-      "elapsed_ms": 3013.2,
+      "elapsed_ms": 4123.7,
       "detail": "5 papers"
     },
     {
       "tool": "get_paper",
       "status": "PASS",
-      "elapsed_ms": 16.2,
+      "elapsed_ms": 705.7,
       "detail": "1 papers"
     },
     {
       "tool": "get_citations",
       "status": "PASS",
-      "elapsed_ms": 44.7,
+      "elapsed_ms": 1195.8,
       "detail": "5 papers"
     },
     {
       "tool": "get_references",
       "status": "PASS",
-      "elapsed_ms": 1.0,
+      "elapsed_ms": 2.5,
       "detail": "2 papers"
     },
     {
       "tool": "co_citation_analysis",
       "status": "PASS",
-      "elapsed_ms": 22598.5,
+      "elapsed_ms": 32394.9,
       "detail": "5 papers"
     },
     {
       "tool": "bibliographic_coupling",
       "status": "PASS",
-      "elapsed_ms": 19.2,
+      "elapsed_ms": 98.5,
       "detail": "0 papers"
     },
     {
       "tool": "citation_chain",
       "status": "PASS",
-      "elapsed_ms": 20.1,
+      "elapsed_ms": 22.3,
       "detail": "2 papers"
     },
     {
       "tool": "get_author_papers",
       "status": "PASS",
-      "elapsed_ms": 4575.1,
+      "elapsed_ms": 5683.3,
       "detail": "50 papers"
     },
     {
       "tool": "facet_counts",
       "status": "PASS",
-      "elapsed_ms": 16320.1,
+      "elapsed_ms": 44284.3,
       "detail": "10 papers"
     },
     {
       "tool": "temporal_evolution",
       "status": "PASS",
-      "elapsed_ms": 364.1,
+      "elapsed_ms": 1854.6,
       "detail": "51 papers"
     },
     {
       "tool": "get_paper_metrics",
       "status": "PASS",
-      "elapsed_ms": 2.6,
+      "elapsed_ms": 15.5,
       "detail": "1 papers"
     },
     {
       "tool": "explore_community",
       "status": "PASS",
-      "elapsed_ms": 0.1,
+      "elapsed_ms": 0.2,
       "detail": "0 papers"
     },
     {
       "tool": "entity_search",
       "status": "PASS",
-      "elapsed_ms": 4.8,
+      "elapsed_ms": 7.4,
       "detail": "0 papers"
     },
     {
       "tool": "entity_profile",
       "status": "PASS",
-      "elapsed_ms": 0.2,
+      "elapsed_ms": 0.3,
       "detail": "2 extractions"
     },
     {
       "tool": "concept_search",
       "status": "PASS",
-      "elapsed_ms": 1.7,
+      "elapsed_ms": 3.0,
       "detail": "0 papers"
     },
     {
       "tool": "get_citation_context",
       "status": "PASS",
-      "elapsed_ms": 1.4,
+      "elapsed_ms": 1.9,
       "detail": "4 papers"
     },
     {
       "tool": "read_paper_section",
       "status": "PASS",
-      "elapsed_ms": 0.8,
+      "elapsed_ms": 1.1,
       "detail": "1 papers"
     },
     {
       "tool": "search_within_paper",
       "status": "PASS",
-      "elapsed_ms": 0.6,
+      "elapsed_ms": 1.2,
       "detail": "0 papers"
     },
     {
@@ -120,19 +120,19 @@
     {
       "tool": "document_context",
       "status": "PASS",
-      "elapsed_ms": 1.4,
+      "elapsed_ms": 3.1,
       "detail": "1 papers"
     },
     {
       "tool": "entity_context",
       "status": "PASS",
-      "elapsed_ms": 0.8,
+      "elapsed_ms": 1.5,
       "detail": "1 papers"
     },
     {
       "tool": "resolve_entity",
       "status": "PASS",
-      "elapsed_ms": 3.9,
+      "elapsed_ms": 4.6,
       "detail": "1 candidates"
     },
     {
@@ -156,7 +156,7 @@
     {
       "tool": "find_gaps",
       "status": "PASS",
-      "elapsed_ms": 840.9,
+      "elapsed_ms": 961.7,
       "detail": "0 papers"
     },
     {

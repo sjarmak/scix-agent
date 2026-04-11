@@ -36,7 +36,7 @@ echo "════════════════════════�
 # ─── Step 1: Harvest new records from ADS ─────────────────────────────────────
 
 echo "[$LOG_PREFIX] Step 1/3: Harvesting new records from ADS..."
-python scripts/harvest_daily.py --output-dir "$HARVEST_DIR" -v
+python3 scripts/harvest_daily.py --output-dir "$HARVEST_DIR" -v
 
 # Find today's harvest file
 TODAY=$(date -u +%Y-%m-%d)
@@ -58,12 +58,12 @@ fi
 # ─── Step 2: Ingest into PostgreSQL (upsert papers + citation edges) ──────────
 
 echo "[$LOG_PREFIX] Step 2/3: Ingesting into PostgreSQL..."
-python scripts/ingest.py --file "$HARVEST_FILE" --no-drop-indexes -v
+python3 scripts/ingest.py --file "$HARVEST_FILE" --no-drop-indexes -v
 
 # ─── Step 3: Embed new papers with INDUS ─────────────────────────────────────
 
 echo "[$LOG_PREFIX] Step 3/3: Embedding new papers (INDUS)..."
-python scripts/embed.py --model indus --batch-size 256 --device cuda -v
+python3 scripts/embed.py --model indus --batch-size 256 --device cuda -v
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
 

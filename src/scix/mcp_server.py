@@ -363,9 +363,12 @@ def create_server():
             Tool(
                 name="search",
                 description=(
-                    "Search for papers using hybrid (semantic+keyword), semantic-only, "
-                    "or keyword-only mode. Hybrid fuses INDUS embeddings with BM25 via RRF. "
-                    "Semantic uses INDUS cosine similarity. Keyword uses tsvector full-text."
+                    "Search the scientific literature corpus for papers matching a "
+                    "natural-language query. Returns ranked papers with titles, abstracts, "
+                    "authors, years, and citation counts. Defaults to hybrid mode, the best "
+                    "general-purpose search. Use concept_search instead when the query is a "
+                    "formal astronomy taxonomy term (e.g., 'Exoplanets'). Use entity with "
+                    "action='search' when looking up a named method, dataset, or instrument."
                 ),
                 inputSchema={
                     "type": "object",
@@ -390,10 +393,11 @@ def create_server():
             Tool(
                 name="concept_search",
                 description=(
-                    "Search for papers by Unified Astronomy Thesaurus (UAT) concept. "
-                    "Accepts a concept name (e.g., 'Galaxies', 'Exoplanets') or URI. "
-                    "With include_subtopics=true, also returns papers matching "
-                    "descendant concepts in the hierarchy."
+                    "Retrieve papers tagged with a formal Unified Astronomy Thesaurus (UAT) "
+                    "concept. Accepts the concept label (e.g., 'Galaxies') or URI and can "
+                    "expand to descendant concepts in the hierarchy. Returns papers ranked "
+                    "by relevance within the concept. Use search instead when the query is "
+                    "free-form natural language rather than a curated taxonomy term."
                 ),
                 inputSchema={
                     "type": "object",
@@ -416,9 +420,11 @@ def create_server():
             Tool(
                 name="get_paper",
                 description=(
-                    "Get full metadata for a paper by its ADS bibcode. "
-                    "With include_entities=true, also returns all linked entities "
-                    "from the agent_document_context materialized view."
+                    "Fetch full metadata for a single paper by its ADS bibcode: title, "
+                    "abstract, authors, affiliations, year, keywords, and citation counts. "
+                    "Optionally include linked entities (methods, datasets, instruments) "
+                    "detected in the paper. Use search or concept_search instead when you "
+                    "do not yet know the bibcode. Use read_paper to access the full body text."
                 ),
                 inputSchema={
                     "type": "object",
@@ -440,10 +446,11 @@ def create_server():
             Tool(
                 name="read_paper",
                 description=(
-                    "Read or search within a paper's full-text body. "
-                    "Without search_query: reads a section (IMRaD sections, paginated). "
-                    "With search_query: searches the body for matching passages "
-                    "using ts_headline."
+                    "Read or search inside one paper's full-text body. Without search_query, "
+                    "returns a paginated chunk of a named section (introduction, methods, "
+                    "results, discussion, conclusions, or full). With search_query, returns "
+                    "highlighted passages matching terms inside that paper. Use get_paper "
+                    "instead when you only need metadata and abstract, not body text."
                 ),
                 inputSchema={
                     "type": "object",
@@ -482,9 +489,12 @@ def create_server():
             Tool(
                 name="citation_graph",
                 description=(
-                    "Get citations for a paper. direction=forward returns papers that "
-                    "cite it; backward returns papers it cites; both returns all. "
-                    "With include_context=true, includes citation context text when available."
+                    "Walk the citation graph around a paper. direction=forward returns "
+                    "papers that cite it (impact); backward returns papers it cites "
+                    "(foundations); both returns each. Optionally include surrounding "
+                    "citation context sentences. Use citation_similarity instead when you "
+                    "want papers that are related via shared citation patterns rather than "
+                    "direct citation links. Use citation_chain to trace a path between two papers."
                 ),
                 inputSchema={
                     "type": "object",
@@ -510,9 +520,12 @@ def create_server():
             Tool(
                 name="citation_similarity",
                 description=(
-                    "Find similar papers via citation structure. "
-                    "co_citation: papers frequently co-cited with this paper. "
-                    "coupling: papers sharing references with this paper."
+                    "Find papers related to a seed paper through shared citation patterns. "
+                    "method='co_citation' returns papers often cited together with the seed "
+                    "(peer works in the same discussion). method='coupling' returns papers "
+                    "that share many references with the seed (papers built on similar "
+                    "foundations). Use citation_graph instead when you want direct citing "
+                    "or cited papers rather than structurally similar ones."
                 ),
                 inputSchema={
                     "type": "object",
@@ -538,9 +551,12 @@ def create_server():
             Tool(
                 name="citation_chain",
                 description=(
-                    "Find the shortest citation path between two papers. "
-                    "Returns the ordered path of papers, or empty if no path "
-                    "within max_depth hops."
+                    "Trace the shortest chain of citations from one paper to another. "
+                    "Returns an ordered path of intermediate papers, or an empty path if "
+                    "none exists within max_depth hops. Useful for explaining how an idea "
+                    "propagated between two specific works. Use citation_graph instead when "
+                    "you want the full neighborhood of citing or cited papers rather than a "
+                    "single path between two endpoints."
                 ),
                 inputSchema={
                     "type": "object",
@@ -566,9 +582,12 @@ def create_server():
             Tool(
                 name="entity",
                 description=(
-                    "Search for or resolve entities. "
-                    "action=search: find papers containing an entity (requires entity_type + query). "
-                    "action=resolve: resolve a text mention to canonical entities (requires query)."
+                    "Look up named scientific entities (methods, datasets, instruments, "
+                    "materials). action='search' returns papers that mention the entity of "
+                    "a given type. action='resolve' maps a free-text mention to canonical "
+                    "entity records with aliases and identifiers. Use search instead for "
+                    "free-form queries. Use entity_context once you have an entity_id and "
+                    "need its full profile and relationships."
                 ),
                 inputSchema={
                     "type": "object",
@@ -605,9 +624,11 @@ def create_server():
             Tool(
                 name="entity_context",
                 description=(
-                    "Get full context for a known entity by its entity_id: "
-                    "canonical name, type, discipline, external identifiers, "
-                    "aliases, relationships, and citing paper count."
+                    "Fetch the full profile of a known entity by its entity_id: canonical "
+                    "name, type, discipline, external identifiers, aliases, related "
+                    "entities, and the count of papers that mention it. Use entity with "
+                    "action='resolve' instead when you only have a text mention and need "
+                    "to find the entity_id first. Requires a numeric entity_id as input."
                 ),
                 inputSchema={
                     "type": "object",
@@ -624,9 +645,12 @@ def create_server():
             Tool(
                 name="graph_context",
                 description=(
-                    "Get graph analytics for a paper: PageRank, HITS scores, "
-                    "Leiden community assignments. With include_community=true, "
-                    "also returns sibling papers in the same community ranked by PageRank."
+                    "Get citation-graph analytics for a paper: influence scores, authority "
+                    "and hub metrics, and the community it belongs to at coarse/medium/fine "
+                    "resolution. Optionally also returns sibling papers in the same "
+                    "community ranked by influence. Use citation_graph instead when you "
+                    "want direct citing or cited papers rather than computed scores and "
+                    "community membership."
                 ),
                 inputSchema={
                     "type": "object",
@@ -655,9 +679,12 @@ def create_server():
             Tool(
                 name="find_gaps",
                 description=(
-                    "Find papers in unexplored communities that cite papers you've "
-                    "inspected (via get_paper). Reads from the implicit session state. "
-                    "With clear_first=true, resets the focused set before searching."
+                    "Surface papers in communities you have not yet explored that still "
+                    "cite papers you already inspected via get_paper. Helps catch adjacent "
+                    "literature you might be missing during a research session. Reads from "
+                    "implicit session state tracked across get_paper calls. Use "
+                    "citation_graph instead when you want direct citations of a single "
+                    "paper rather than cross-community gap detection."
                 ),
                 inputSchema={
                     "type": "object",
@@ -681,8 +708,12 @@ def create_server():
             Tool(
                 name="temporal_evolution",
                 description=(
-                    "Show temporal trends. Bibcode: citations per year. "
-                    "Search terms: publication volume per year."
+                    "Show how activity around a topic or paper evolves over time. Given a "
+                    "bibcode, returns citations-per-year for that paper. Given search "
+                    "terms, returns publications-per-year matching that query. Useful for "
+                    "tracking rising or fading topics and paper impact trajectories. Use "
+                    "facet_counts instead when you want a single distribution by year "
+                    "without a topic or bibcode anchor."
                 ),
                 inputSchema={
                     "type": "object",
@@ -701,8 +732,12 @@ def create_server():
             Tool(
                 name="facet_counts",
                 description=(
-                    "Get distribution counts for a field. "
-                    "Supported: year, doctype, arxiv_class, database, bibgroup, property."
+                    "Return a distribution of paper counts grouped by a single metadata "
+                    "field: year, doctype, arxiv_class, database, bibgroup, or property. "
+                    "Accepts the same filters as search to scope the distribution to a "
+                    "subset. Useful for dataset overviews and filter discovery. Use "
+                    "temporal_evolution instead when you need year-over-year trends tied "
+                    "to a specific query or bibcode rather than a flat distribution."
                 ),
                 inputSchema={
                     "type": "object",

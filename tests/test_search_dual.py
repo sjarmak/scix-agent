@@ -1,7 +1,8 @@
-"""Tests for dual-model (SPECTER2 + OpenAI) hybrid search with RRF fusion.
+"""Tests for dual-model (INDUS + OpenAI) hybrid search with RRF fusion.
 
 Covers: dual-model fusion, single-model fallback, circuit breaker behaviour.
 All tests are unit tests using mocked database connections and vector_search.
+Note: INDUS replaced SPECTER2 as the default domain-specific model (2026-04).
 """
 
 from __future__ import annotations
@@ -55,16 +56,18 @@ class TestDualModelFusion:
     """When both query_embedding and openai_embedding are supplied,
     hybrid_search should call vector_search twice and fuse three lists."""
 
+    @patch("scix.search._model_has_embeddings", return_value=True)
     @patch("scix.search.vector_search")
     @patch("scix.search.lexical_search")
     def test_dual_model_produces_three_lists(
         self,
         mock_lexical: MagicMock,
         mock_vector: MagicMock,
+        _mock_has_emb: MagicMock,
     ) -> None:
         mock_lexical.return_value = _make_search_result("lex", timing_key="lexical_ms")
         mock_vector.side_effect = [
-            _make_search_result("specter"),
+            _make_search_result("indus"),
             _make_search_result("openai"),
         ]
         conn = MagicMock()
@@ -76,31 +79,30 @@ class TestDualModelFusion:
             openai_embedding=[0.2] * 3072,
         )
 
-        # vector_search called twice: once for specter2, once for openai
+        # vector_search called twice: once for indus, once for openai
         assert mock_vector.call_count == 2
         # Check model_name args
-        specter_call = mock_vector.call_args_list[0]
+        indus_call = mock_vector.call_args_list[0]
         openai_call = mock_vector.call_args_list[1]
-        assert (
-            specter_call.kwargs.get("model_name", specter_call[1].get("model_name", "specter2"))
-            == "specter2"
-        )
+        assert indus_call.kwargs.get("model_name") == "indus"
         assert openai_call.kwargs["model_name"] == "text-embedding-3-large"
 
         assert result.total > 0
         assert "openai_vector_ms" in result.timing_ms
         assert result.timing_ms["openai_vector_ms"] > 0
 
+    @patch("scix.search._model_has_embeddings", return_value=True)
     @patch("scix.search.vector_search")
     @patch("scix.search.lexical_search")
     def test_dual_model_fused_results_include_all_sources(
         self,
         mock_lexical: MagicMock,
         mock_vector: MagicMock,
+        _mock_has_emb: MagicMock,
     ) -> None:
         mock_lexical.return_value = _make_search_result("lex", n=2, timing_key="lexical_ms")
         mock_vector.side_effect = [
-            _make_search_result("specter", n=2),
+            _make_search_result("indus", n=2),
             _make_search_result("openai", n=2),
         ]
         conn = MagicMock()
@@ -170,18 +172,20 @@ class TestCircuitBreaker:
     """If OpenAI vector search fails, hybrid_search should not crash
     and should fall back to SPECTER2+lexical only."""
 
+    @patch("scix.search._model_has_embeddings", return_value=True)
     @patch("scix.search.vector_search")
     @patch("scix.search.lexical_search")
     def test_openai_failure_falls_back_gracefully(
         self,
         mock_lexical: MagicMock,
         mock_vector: MagicMock,
+        _mock_has_emb: MagicMock,
     ) -> None:
         mock_lexical.return_value = _make_search_result("lex", timing_key="lexical_ms")
 
-        # First call (SPECTER2) succeeds, second call (OpenAI) raises
+        # First call (INDUS) succeeds, second call (OpenAI) raises
         mock_vector.side_effect = [
-            _make_search_result("specter"),
+            _make_search_result("indus"),
             RuntimeError("OpenAI embedding column missing"),
         ]
         conn = MagicMock()
@@ -193,22 +197,24 @@ class TestCircuitBreaker:
             openai_embedding=[0.2] * 3072,
         )
 
-        # Should not crash; results should come from specter + lexical
+        # Should not crash; results should come from indus + lexical
         assert result.total > 0
         assert result.timing_ms["openai_vector_ms"] == 0.0
         assert result.timing_ms["vector_ms"] > 0
 
+    @patch("scix.search._model_has_embeddings", return_value=True)
     @patch("scix.search.vector_search")
     @patch("scix.search.lexical_search")
     def test_openai_failure_logs_warning(
         self,
         mock_lexical: MagicMock,
         mock_vector: MagicMock,
+        _mock_has_emb: MagicMock,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         mock_lexical.return_value = _make_search_result("lex", timing_key="lexical_ms")
         mock_vector.side_effect = [
-            _make_search_result("specter"),
+            _make_search_result("indus"),
             Exception("DB connection lost"),
         ]
         conn = MagicMock()

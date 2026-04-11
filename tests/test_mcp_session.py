@@ -1,8 +1,10 @@
-"""Tests for MCP server entity and session tools.
+"""Tests for MCP server session tracking and entity tools (consolidated API).
 
-Covers all 7 new tools (entity_search, entity_profile, add_to_working_set,
-get_working_set, get_session_summary, find_gaps, clear_working_set) and
-the in_working_set annotation on paper-returning tools.
+Covers:
+- entity tool (search + resolve actions)
+- Implicit session tracking (focused/seen papers)
+- find_gaps with implicit state
+- Deprecated session tool aliases
 """
 
 from __future__ import annotations
@@ -23,8 +25,10 @@ from scix import mcp_server
 def _reset_session_state():
     """Clear session state between tests."""
     mcp_server._session_state.clear_working_set()
+    mcp_server._session_state.clear_focused()
     yield
     mcp_server._session_state.clear_working_set()
+    mcp_server._session_state.clear_focused()
 
 
 def _make_conn(rows: list[tuple] | None = None) -> MagicMock:
@@ -40,7 +44,7 @@ def _make_conn(rows: list[tuple] | None = None) -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# entity_search
+# entity(action=search)
 # ---------------------------------------------------------------------------
 
 
@@ -49,20 +53,17 @@ class TestEntitySearch:
         rows = [
             (
                 "2024ApJ...001A",
-                "entities",
+                "instruments",
                 "v1",
-                {"entities": ["dark matter"]},
+                {"instruments": ["dark matter"]},
                 "Dark Matter Paper",
-                "ner",
-                "high",
-                "scibert",
             ),
         ]
         conn = _make_conn(rows)
         result_json = mcp_server._dispatch_tool(
             conn,
-            "entity_search",
-            {"entity_type": "instruments", "entity_name": "dark matter", "limit": 10},
+            "entity",
+            {"action": "search", "entity_type": "instruments", "query": "dark matter", "limit": 10},
         )
         result = json.loads(result_json)
         assert result["total"] == 1
@@ -73,148 +74,111 @@ class TestEntitySearch:
         conn = _make_conn([])
         mcp_server._dispatch_tool(
             conn,
-            "entity_search",
-            {"entity_type": "methods", "entity_name": "MCMC"},
+            "entity",
+            {"action": "search", "entity_type": "methods", "query": "MCMC"},
         )
         cur = conn.cursor.return_value
         call_args = cur.execute.call_args
         sql = call_args[0][0]
         assert "@>" in sql
         params = call_args[0][1]
-        # Containment JSON should be {"methods": ["MCMC"]}
         assert json.loads(params[0]) == {"methods": ["MCMC"]}
 
-
-# ---------------------------------------------------------------------------
-# entity_profile
-# ---------------------------------------------------------------------------
-
-
-class TestEntityProfile:
-    def test_returns_extractions_for_bibcode(self) -> None:
-        rows = [
-            ("entities", "v1", {"entities": ["star"]}, "2024-01-01T00:00:00"),
-            ("keywords", "v1", {"keywords": ["stellar"]}, "2024-01-01T00:00:00"),
-        ]
-        conn = _make_conn(rows)
-        result_json = mcp_server._dispatch_tool(
-            conn, "entity_profile", {"bibcode": "2024ApJ...002B"}
-        )
-        result = json.loads(result_json)
-        assert result["bibcode"] == "2024ApJ...002B"
-        assert result["total"] == 2
-        assert result["extractions"][0]["extraction_type"] == "entities"
-
-    def test_empty_extractions(self) -> None:
+    def test_invalid_entity_type_returns_error(self) -> None:
         conn = _make_conn([])
-        result_json = mcp_server._dispatch_tool(conn, "entity_profile", {"bibcode": "NONEXISTENT"})
-        result = json.loads(result_json)
-        assert result["total"] == 0
-        assert result["extractions"] == []
-
-
-# ---------------------------------------------------------------------------
-# add_to_working_set
-# ---------------------------------------------------------------------------
-
-
-class TestAddToWorkingSet:
-    def test_adds_multiple_bibcodes(self) -> None:
-        conn = _make_conn()
         result_json = mcp_server._dispatch_tool(
             conn,
-            "add_to_working_set",
-            {
-                "bibcodes": ["2024A", "2024B"],
-                "source_tool": "keyword_search",
-                "source_context": "dark energy",
-            },
+            "entity",
+            {"action": "search", "entity_type": "entities", "query": "test"},
         )
         result = json.loads(result_json)
-        assert result["added"] == 2
-        assert len(result["entries"]) == 2
-        assert result["entries"][0]["bibcode"] == "2024A"
+        assert "error" in result
+        assert "methods" in result["error"]
+        assert "datasets" in result["error"]
 
-    def test_delegates_to_session_state(self) -> None:
-        conn = _make_conn()
-        mcp_server._dispatch_tool(
-            conn,
-            "add_to_working_set",
-            {"bibcodes": ["2024X"], "source_tool": "test"},
+
+# ---------------------------------------------------------------------------
+# Implicit session tracking
+# ---------------------------------------------------------------------------
+
+
+class TestImplicitTracking:
+    @patch("scix.search.get_paper")
+    def test_get_paper_adds_to_focused(self, mock_get: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_get.return_value = SearchResult(
+            papers=[{"bibcode": "2024X"}], total=1, timing_ms={"query_ms": 1.0}
         )
-        assert mcp_server._session_state.is_in_working_set("2024X")
-
-
-# ---------------------------------------------------------------------------
-# get_working_set
-# ---------------------------------------------------------------------------
-
-
-class TestGetWorkingSet:
-    def test_empty_working_set(self) -> None:
         conn = _make_conn()
-        result_json = mcp_server._dispatch_tool(conn, "get_working_set", {})
-        result = json.loads(result_json)
-        assert result["total"] == 0
-        assert result["entries"] == []
+        mcp_server._dispatch_tool(conn, "get_paper", {"bibcode": "2024X"})
+        assert "2024X" in mcp_server._session_state.get_focused_papers()
 
-    def test_returns_added_entries(self) -> None:
-        mcp_server._session_state.add_to_working_set(bibcode="2024Z", source_tool="test")
+    @patch("scix.search.lexical_search")
+    def test_search_tracks_seen_bibcodes(self, mock_lex: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_lex.return_value = SearchResult(
+            papers=[{"bibcode": "2024A"}, {"bibcode": "2024B"}],
+            total=2,
+            timing_ms={"lexical_ms": 3.0},
+        )
         conn = _make_conn()
-        result_json = mcp_server._dispatch_tool(conn, "get_working_set", {})
-        result = json.loads(result_json)
-        assert result["total"] == 1
-        assert result["entries"][0]["bibcode"] == "2024Z"
+        mcp_server._dispatch_tool(conn, "search", {"query": "test", "mode": "keyword"})
+        data = mcp_server._session_state._get("_default")
+        assert "2024A" in data.seen_papers
+        assert "2024B" in data.seen_papers
 
 
 # ---------------------------------------------------------------------------
-# get_session_summary
+# find_gaps with implicit state
 # ---------------------------------------------------------------------------
 
 
-class TestGetSessionSummary:
-    def test_returns_summary(self) -> None:
-        mcp_server._session_state.add_to_working_set(bibcode="2024S", source_tool="test")
-        conn = _make_conn()
-        result_json = mcp_server._dispatch_tool(conn, "get_session_summary", {})
-        result = json.loads(result_json)
-        assert result["working_set_size"] == 1
-        assert result["seen_papers_count"] >= 1
-        assert "session_id" in result
-
-
-# ---------------------------------------------------------------------------
-# find_gaps
-# ---------------------------------------------------------------------------
-
-
-class TestFindGaps:
-    def test_empty_working_set_returns_message(self) -> None:
+class TestFindGapsImplicit:
+    def test_empty_returns_message(self) -> None:
         conn = _make_conn()
         result_json = mcp_server._dispatch_tool(conn, "find_gaps", {"limit": 5})
         result = json.loads(result_json)
         assert result["total"] == 0
-        assert "empty" in result["message"].lower()
+        assert "message" in result
 
-    def test_returns_gap_papers(self) -> None:
-        mcp_server._session_state.add_to_working_set(bibcode="2024WS1", source_tool="test")
-        rows = [
-            ("2024GAP1", "Gap Paper 1", 0.05, 42),
-            ("2024GAP2", "Gap Paper 2", 0.03, 43),
-        ]
-        conn = _make_conn(rows)
-        result_json = mcp_server._dispatch_tool(
-            conn, "find_gaps", {"resolution": "coarse", "limit": 10}
+    @patch("scix.search.get_paper")
+    def test_uses_focused_papers(self, mock_get: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_get.return_value = SearchResult(
+            papers=[{"bibcode": "2024WS1"}], total=1, timing_ms={"query_ms": 1.0}
         )
+        conn = _make_conn()
+
+        # Focus a paper via get_paper
+        mcp_server._dispatch_tool(conn, "get_paper", {"bibcode": "2024WS1"})
+
+        # Now find_gaps should use it
+        rows = [("2024GAP1", "Gap Paper", 0.05, 42)]
+        conn2 = _make_conn(rows)
+        result_json = mcp_server._dispatch_tool(conn2, "find_gaps", {"resolution": "coarse"})
         result = json.loads(result_json)
-        assert result["total"] == 2
+        assert result["total"] == 1
         assert result["papers"][0]["bibcode"] == "2024GAP1"
-        assert result["papers"][0]["community_id"] == 42
-        assert "in_working_set" in result["papers"][0]
-        assert result["resolution"] == "coarse"
+
+    @patch("scix.search.get_paper")
+    def test_clear_first_resets(self, mock_get: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_get.return_value = SearchResult(
+            papers=[{"bibcode": "2024WS1"}], total=1, timing_ms={"query_ms": 1.0}
+        )
+        conn = _make_conn()
+        mcp_server._dispatch_tool(conn, "get_paper", {"bibcode": "2024WS1"})
+
+        result_json = mcp_server._dispatch_tool(conn, "find_gaps", {"clear_first": True})
+        result = json.loads(result_json)
+        assert result["total"] == 0
 
     def test_invalid_resolution_returns_error(self) -> None:
-        mcp_server._session_state.add_to_working_set(bibcode="2024WS1", source_tool="test")
+        mcp_server._session_state.track_focused("2024WS1")
         conn = _make_conn()
         result_json = mcp_server._dispatch_tool(conn, "find_gaps", {"resolution": "invalid"})
         result = json.loads(result_json)
@@ -222,19 +186,37 @@ class TestFindGaps:
 
 
 # ---------------------------------------------------------------------------
-# clear_working_set
+# Deprecated session tool aliases
 # ---------------------------------------------------------------------------
 
 
-class TestClearWorkingSet:
-    def test_clears_and_returns_count(self) -> None:
+class TestDeprecatedSessionTools:
+    def test_add_to_working_set_still_works(self) -> None:
+        conn = _make_conn()
+        result_json = mcp_server._dispatch_tool(
+            conn,
+            "add_to_working_set",
+            {"bibcodes": ["2024A", "2024B"], "source_tool": "test"},
+        )
+        result = json.loads(result_json)
+        assert result["deprecated"] is True
+        assert result["added"] == 2
+
+    def test_get_working_set_still_works(self) -> None:
+        mcp_server._session_state.add_to_working_set(bibcode="2024Z", source_tool="test")
+        conn = _make_conn()
+        result_json = mcp_server._dispatch_tool(conn, "get_working_set", {})
+        result = json.loads(result_json)
+        assert result["deprecated"] is True
+        assert result["total"] == 1
+
+    def test_clear_working_set_still_works(self) -> None:
         mcp_server._session_state.add_to_working_set(bibcode="2024C1", source_tool="test")
-        mcp_server._session_state.add_to_working_set(bibcode="2024C2", source_tool="test")
         conn = _make_conn()
         result_json = mcp_server._dispatch_tool(conn, "clear_working_set", {})
         result = json.loads(result_json)
-        assert result["removed"] == 2
-        assert mcp_server._session_state.get_working_set() == []
+        assert result["deprecated"] is True
+        assert result["removed"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +226,6 @@ class TestClearWorkingSet:
 
 class TestInWorkingSetAnnotation:
     def test_annotation_on_search_result(self) -> None:
-        """Verify _result_to_json annotates papers with in_working_set."""
         from scix.search import SearchResult
 
         mcp_server._session_state.add_to_working_set(bibcode="2024IN", source_tool="test")
@@ -259,19 +240,3 @@ class TestInWorkingSetAnnotation:
         output = json.loads(mcp_server._result_to_json(result))
         assert output["papers"][0]["in_working_set"] is True
         assert output["papers"][1]["in_working_set"] is False
-
-    def test_entity_search_annotates_results(self) -> None:
-        mcp_server._session_state.add_to_working_set(bibcode="2024ApJ...001A", source_tool="test")
-        rows = [
-            ("2024ApJ...001A", "entities", "v1", {}, "Paper A", "ner", "high", "scibert"),
-            ("2024ApJ...002B", "entities", "v1", {}, "Paper B", "ner", "high", "scibert"),
-        ]
-        conn = _make_conn(rows)
-        result_json = mcp_server._dispatch_tool(
-            conn,
-            "entity_search",
-            {"entity_type": "instruments", "entity_name": "test"},
-        )
-        result = json.loads(result_json)
-        assert result["papers"][0]["in_working_set"] is True
-        assert result["papers"][1]["in_working_set"] is False

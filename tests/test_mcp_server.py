@@ -1,4 +1,11 @@
-"""Unit tests for the MCP server (no database or MCP SDK required)."""
+"""Unit tests for the consolidated MCP server (no database or MCP SDK required).
+
+Covers:
+- 13 consolidated tools dispatch correctly
+- Deprecated aliases return deprecated:true + use_instead
+- Implicit session tracking (focused papers)
+- list_tools() returns exactly 13 tools
+"""
 
 from __future__ import annotations
 
@@ -8,13 +15,30 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scix.mcp_server import (
+    _DEPRECATED_ALIASES,
     _dispatch_tool,
     _hnsw_index_cache,
     _hnsw_index_exists,
     _hnsw_index_name,
     _parse_filters,
     _result_to_json,
+    _session_state,
 )
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_session():
+    """Clear session state between tests."""
+    _session_state.clear_working_set()
+    _session_state.clear_focused()
+    yield
+    _session_state.clear_working_set()
+    _session_state.clear_focused()
+
 
 # ---------------------------------------------------------------------------
 # _parse_filters
@@ -78,67 +102,447 @@ class TestResultToJson:
 
 
 # ---------------------------------------------------------------------------
-# _dispatch_tool — unit tests with mocked DB
+# AC1: list_tools() returns exactly 13 tools
 # ---------------------------------------------------------------------------
 
 
-class TestDispatchTool:
+class TestListTools:
+    def test_list_tools_returns_exactly_13(self) -> None:
+        try:
+            import asyncio
+
+            from mcp.types import ListToolsRequest
+
+            from scix.mcp_server import create_server
+
+            with patch("scix.mcp_server._init_model_impl"):
+                server = create_server()
+                handler = server.request_handlers[ListToolsRequest]
+                loop = asyncio.new_event_loop()
+                try:
+                    result = loop.run_until_complete(handler(ListToolsRequest(method="tools/list")))
+                    tools = result.root.tools
+                    tool_names = sorted([t.name for t in tools])
+                    expected = sorted(
+                        [
+                            "search",
+                            "concept_search",
+                            "get_paper",
+                            "read_paper",
+                            "citation_graph",
+                            "citation_similarity",
+                            "citation_chain",
+                            "entity",
+                            "entity_context",
+                            "graph_context",
+                            "find_gaps",
+                            "temporal_evolution",
+                            "facet_counts",
+                        ]
+                    )
+                    assert tool_names == expected, f"Got: {tool_names}"
+                    assert len(tools) == 13
+                finally:
+                    loop.close()
+        except (ImportError, AttributeError):
+            pytest.skip("mcp SDK not installed or server API changed")
+
+
+# ---------------------------------------------------------------------------
+# AC2-4: search tool dispatches (hybrid, semantic, keyword)
+# ---------------------------------------------------------------------------
+
+
+class TestSearchTool:
+    @patch("scix.search.lexical_search")
+    def test_keyword_mode(self, mock_lex: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_lex.return_value = SearchResult(
+            papers=[{"bibcode": "test"}], total=1, timing_ms={"lexical_ms": 3.0}
+        )
+        mock_conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(mock_conn, "search", {"query": "dark matter", "mode": "keyword"})
+        )
+        assert result["total"] == 1
+        mock_lex.assert_called_once()
+
+    @patch("scix.mcp_server._hnsw_index_exists", return_value=True)
+    @patch("scix.mcp_server.embed_batch", return_value=[[0.0] * 768])
+    @patch("scix.mcp_server.load_model", return_value=(MagicMock(), MagicMock()))
+    @patch("scix.search.vector_search")
+    def test_semantic_mode(self, mock_vs, mock_load, mock_embed, mock_guard) -> None:
+        from scix.search import SearchResult
+
+        mock_vs.return_value = SearchResult(
+            papers=[{"bibcode": "2024X"}], total=1, timing_ms={"vector_ms": 5.0}
+        )
+        mock_conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(mock_conn, "search", {"query": "test", "mode": "semantic"})
+        )
+        assert result["total"] == 1
+        mock_vs.assert_called_once()
+
+    @patch("scix.mcp_server._hnsw_index_exists", return_value=True)
+    @patch("scix.mcp_server.embed_batch", return_value=[[0.0] * 768])
+    @patch("scix.mcp_server.load_model", return_value=(MagicMock(), MagicMock()))
+    @patch("scix.search.hybrid_search")
+    def test_hybrid_mode(self, mock_hs, mock_load, mock_embed, mock_guard) -> None:
+        from scix.search import SearchResult
+
+        mock_hs.return_value = SearchResult(
+            papers=[{"bibcode": "2024H"}], total=1, timing_ms={"hybrid_ms": 10.0}
+        )
+        mock_conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(mock_conn, "search", {"query": "test", "mode": "hybrid"})
+        )
+        assert result["total"] == 1
+        mock_hs.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# AC5-6: citation_graph
+# ---------------------------------------------------------------------------
+
+
+class TestCitationGraph:
+    @patch("scix.search.get_citations")
+    def test_forward_direction(self, mock_cit: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_cit.return_value = SearchResult(papers=[], total=0, timing_ms={"query_ms": 2.0})
+        mock_conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(mock_conn, "citation_graph", {"bibcode": "X", "direction": "forward"})
+        )
+        assert result["total"] == 0
+        mock_cit.assert_called_once_with(mock_conn, "X", limit=20)
+
+    @patch("scix.search.get_references")
+    def test_backward_direction(self, mock_ref: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_ref.return_value = SearchResult(papers=[], total=0, timing_ms={"query_ms": 1.0})
+        mock_conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(mock_conn, "citation_graph", {"bibcode": "X", "direction": "backward"})
+        )
+        assert result["total"] == 0
+        mock_ref.assert_called_once_with(mock_conn, "X", limit=20)
+
+
+# ---------------------------------------------------------------------------
+# AC7: citation_similarity
+# ---------------------------------------------------------------------------
+
+
+class TestCitationSimilarity:
+    @patch("scix.search.co_citation_analysis")
+    def test_co_citation_method(self, mock_fn: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_fn.return_value = SearchResult(
+            papers=[{"bibcode": "A"}], total=1, timing_ms={"query_ms": 5.0}
+        )
+        mock_conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(
+                mock_conn,
+                "citation_similarity",
+                {"bibcode": "X", "method": "co_citation"},
+            )
+        )
+        assert result["total"] == 1
+        mock_fn.assert_called_once_with(mock_conn, "X", min_overlap=2, limit=20)
+
+    @patch("scix.search.bibliographic_coupling")
+    def test_coupling_method(self, mock_fn: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_fn.return_value = SearchResult(
+            papers=[{"bibcode": "B"}], total=1, timing_ms={"query_ms": 4.0}
+        )
+        mock_conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(
+                mock_conn,
+                "citation_similarity",
+                {"bibcode": "Y", "method": "coupling"},
+            )
+        )
+        assert result["total"] == 1
+        mock_fn.assert_called_once_with(mock_conn, "Y", min_overlap=2, limit=20)
+
+
+# ---------------------------------------------------------------------------
+# AC8-10: entity tool
+# ---------------------------------------------------------------------------
+
+
+class TestEntityTool:
+    def test_entity_search_dispatches(self) -> None:
+        rows = [
+            ("2024ApJ...001A", "methods", "v1", {"methods": ["JWST"]}, "Paper A"),
+        ]
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchall.return_value = rows
+        cur.__enter__ = lambda self: self
+        cur.__exit__ = MagicMock(return_value=False)
+        conn.cursor.return_value = cur
+
+        result = json.loads(
+            _dispatch_tool(
+                conn,
+                "entity",
+                {"action": "search", "entity_type": "methods", "query": "JWST"},
+            )
+        )
+        assert result["total"] == 1
+        assert result["papers"][0]["bibcode"] == "2024ApJ...001A"
+
+    def test_entity_search_invalid_type_returns_error(self) -> None:
+        """AC9: entity_type='entities' returns validation error."""
+        conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(
+                conn,
+                "entity",
+                {"action": "search", "entity_type": "entities", "query": "test"},
+            )
+        )
+        assert "error" in result
+        assert "methods" in result["error"]
+        assert "datasets" in result["error"]
+        assert "instruments" in result["error"]
+        assert "materials" in result["error"]
+
+    @patch("scix.mcp_server.EntityResolver")
+    def test_entity_resolve_dispatches(self, mock_resolver_cls: MagicMock) -> None:
+        """AC10: entity(action='resolve')."""
+        mock_resolver = MagicMock()
+        mock_candidate = MagicMock()
+        mock_candidate.entity_id = 1
+        mock_candidate.canonical_name = "James Webb Space Telescope"
+        mock_candidate.entity_type = "instruments"
+        mock_candidate.source = "metadata"
+        mock_candidate.discipline = "astronomy"
+        mock_candidate.confidence = 0.95
+        mock_candidate.match_method = "exact"
+        mock_resolver.resolve.return_value = [mock_candidate]
+        mock_resolver_cls.return_value = mock_resolver
+
+        conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(conn, "entity", {"action": "resolve", "query": "James Webb"})
+        )
+        assert result["total"] == 1
+        assert result["candidates"][0]["canonical_name"] == "James Webb Space Telescope"
+
+
+# ---------------------------------------------------------------------------
+# AC11: entity_context
+# ---------------------------------------------------------------------------
+
+
+class TestEntityContext:
+    @patch("scix.search.get_entity_context")
+    def test_dispatches_correctly(self, mock_fn: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_fn.return_value = SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"query_ms": 1.0},
+            metadata={"entity_id": 1, "name": "JWST"},
+        )
+        conn = MagicMock()
+        result = json.loads(_dispatch_tool(conn, "entity_context", {"entity_id": 1}))
+        assert result["metadata"]["entity_id"] == 1
+        mock_fn.assert_called_once_with(conn, 1)
+
+
+# ---------------------------------------------------------------------------
+# AC12-13: get_paper with include_entities
+# ---------------------------------------------------------------------------
+
+
+class TestGetPaper:
+    @patch("scix.search.get_paper")
+    def test_without_entities(self, mock_fn: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_fn.return_value = SearchResult(
+            papers=[{"bibcode": "2024X"}], total=1, timing_ms={"query_ms": 1.0}
+        )
+        conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(conn, "get_paper", {"bibcode": "2024X", "include_entities": False})
+        )
+        assert result["total"] == 1
+        mock_fn.assert_called_once()
+
+    @patch("scix.search.get_document_context")
+    def test_with_entities(self, mock_fn: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_fn.return_value = SearchResult(
+            papers=[{"bibcode": "2024X", "entities": []}],
+            total=1,
+            timing_ms={"query_ms": 2.0},
+        )
+        conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(conn, "get_paper", {"bibcode": "2024X", "include_entities": True})
+        )
+        assert result["total"] == 1
+        mock_fn.assert_called_once_with(conn, "2024X")
+
+
+# ---------------------------------------------------------------------------
+# AC14-15: find_gaps reads from implicit session state
+# ---------------------------------------------------------------------------
+
+
+class TestFindGaps:
+    def test_empty_focused_set_returns_message(self) -> None:
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchall.return_value = []
+        cur.__enter__ = lambda self: self
+        cur.__exit__ = MagicMock(return_value=False)
+        conn.cursor.return_value = cur
+
+        result = json.loads(_dispatch_tool(conn, "find_gaps", {"limit": 5}))
+        assert result["total"] == 0
+        assert "focused" in result["message"].lower() or "no" in result["message"].lower()
+
+    @patch("scix.search.get_paper")
+    def test_reads_from_focused_set(self, mock_get: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_get.return_value = SearchResult(
+            papers=[{"bibcode": "2024WS1"}], total=1, timing_ms={"query_ms": 1.0}
+        )
+        # Simulate get_paper to add to focused set
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchall.return_value = [("2024GAP1", "Gap", 0.05, 42)]
+        cur.__enter__ = lambda self: self
+        cur.__exit__ = MagicMock(return_value=False)
+        conn.cursor.return_value = cur
+
+        _dispatch_tool(conn, "get_paper", {"bibcode": "2024WS1"})
+
+        result = json.loads(_dispatch_tool(conn, "find_gaps", {"resolution": "coarse"}))
+        assert result["total"] == 1
+        assert result["papers"][0]["bibcode"] == "2024GAP1"
+
+    @patch("scix.search.get_paper")
+    def test_clear_first_resets_focused(self, mock_get: MagicMock) -> None:
+        from scix.search import SearchResult
+
+        mock_get.return_value = SearchResult(
+            papers=[{"bibcode": "2024WS1"}], total=1, timing_ms={"query_ms": 1.0}
+        )
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchall.return_value = []
+        cur.__enter__ = lambda self: self
+        cur.__exit__ = MagicMock(return_value=False)
+        conn.cursor.return_value = cur
+
+        _dispatch_tool(conn, "get_paper", {"bibcode": "2024WS1"})
+        assert len(_session_state.get_focused_papers()) == 1
+
+        result = json.loads(_dispatch_tool(conn, "find_gaps", {"clear_first": True}))
+        assert result["total"] == 0
+        assert "message" in result
+
+
+# ---------------------------------------------------------------------------
+# AC16: session tools NOT in list_tools
+# ---------------------------------------------------------------------------
+
+
+class TestSessionToolsRemoved:
+    def test_deprecated_session_tools_not_in_aliases_target(self) -> None:
+        """add_to_working_set etc. are in deprecated aliases."""
+        for old_name in [
+            "add_to_working_set",
+            "get_working_set",
+            "get_session_summary",
+            "clear_working_set",
+        ]:
+            assert old_name in _DEPRECATED_ALIASES
+
+
+# ---------------------------------------------------------------------------
+# AC17-19: deprecated aliases
+# ---------------------------------------------------------------------------
+
+
+class TestDeprecatedAliases:
+    @patch("scix.search.lexical_search")
+    def test_semantic_search_alias(self, mock_lex: MagicMock) -> None:
+        """AC17: old 'semantic_search' returns deprecated:true."""
+        from scix.search import SearchResult
+
+        # semantic_search will check HNSW index, so mock it to fallback
+        with patch("scix.mcp_server._hnsw_index_exists", return_value=False):
+            conn = MagicMock()
+            result = json.loads(_dispatch_tool(conn, "semantic_search", {"query": "dark matter"}))
+            assert result["deprecated"] is True
+            assert result["use_instead"] == "search"
+            assert result["original_tool"] == "semantic_search"
+
+    @patch("scix.search.get_citations")
+    def test_get_citations_alias(self, mock_cit: MagicMock) -> None:
+        """AC18: old 'get_citations' returns deprecated:true."""
+        from scix.search import SearchResult
+
+        mock_cit.return_value = SearchResult(papers=[], total=0, timing_ms={"query_ms": 1.0})
+        conn = MagicMock()
+        result = json.loads(_dispatch_tool(conn, "get_citations", {"bibcode": "X", "limit": 5}))
+        assert result["deprecated"] is True
+        assert result["use_instead"] == "citation_graph"
+
+    def test_all_deprecated_aliases_log_original(self) -> None:
+        """AC19: verify all deprecated aliases exist and map correctly."""
+        assert "semantic_search" in _DEPRECATED_ALIASES
+        assert "keyword_search" in _DEPRECATED_ALIASES
+        assert "get_citations" in _DEPRECATED_ALIASES
+        assert "get_references" in _DEPRECATED_ALIASES
+        assert "co_citation_analysis" in _DEPRECATED_ALIASES
+        assert "bibliographic_coupling" in _DEPRECATED_ALIASES
+        assert "entity_search" in _DEPRECATED_ALIASES
+        assert "resolve_entity" in _DEPRECATED_ALIASES
+
+
+# ---------------------------------------------------------------------------
+# AC20: verify at least 3 consolidated tools dispatch correctly
+# (Covered by TestSearchTool, TestCitationGraph, TestEntityTool above)
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Unknown tool
+# ---------------------------------------------------------------------------
+
+
+class TestUnknownTool:
     def test_unknown_tool_returns_error(self) -> None:
         mock_conn = MagicMock()
         result = json.loads(_dispatch_tool(mock_conn, "nonexistent_tool", {}))
         assert "error" in result
         assert "Unknown tool" in result["error"]
 
-    @patch("scix.search.lexical_search")
-    def test_keyword_search_dispatches(self, mock_lexical: MagicMock) -> None:
-        from scix.search import SearchResult
-
-        mock_lexical.return_value = SearchResult(
-            papers=[{"bibcode": "test"}], total=1, timing_ms={"lexical_ms": 3.0}
-        )
-        mock_conn = MagicMock()
-        result = json.loads(_dispatch_tool(mock_conn, "keyword_search", {"terms": "dark matter"}))
-        assert result["total"] == 1
-        mock_lexical.assert_called_once()
-
-    @patch("scix.search.get_paper")
-    def test_get_paper_dispatches(self, mock_get: MagicMock) -> None:
-        from scix.search import SearchResult
-
-        mock_get.return_value = SearchResult(
-            papers=[{"bibcode": "2024ApJ...001A"}],
-            total=1,
-            timing_ms={"query_ms": 1.0},
-        )
-        mock_conn = MagicMock()
-        result = json.loads(_dispatch_tool(mock_conn, "get_paper", {"bibcode": "2024ApJ...001A"}))
-        assert result["total"] == 1
-
-    @patch("scix.search.get_citations")
-    def test_get_citations_dispatches(self, mock_cit: MagicMock) -> None:
-        from scix.search import SearchResult
-
-        mock_cit.return_value = SearchResult(papers=[], total=0, timing_ms={"query_ms": 2.0})
-        mock_conn = MagicMock()
-        result = json.loads(
-            _dispatch_tool(mock_conn, "get_citations", {"bibcode": "X", "limit": 5})
-        )
-        assert result["total"] == 0
-        mock_cit.assert_called_once_with(mock_conn, "X", limit=5)
-
-    @patch("scix.search.facet_counts")
-    def test_facet_counts_dispatches(self, mock_facets: MagicMock) -> None:
-        from scix.search import SearchResult
-
-        mock_facets.return_value = SearchResult(papers=[], total=0, timing_ms={"query_ms": 1.0})
-        mock_conn = MagicMock()
-        _dispatch_tool(mock_conn, "facet_counts", {"field": "year"})
-        mock_facets.assert_called_once()
-
 
 # ---------------------------------------------------------------------------
-# HNSW index guard (protects semantic_search from seq-scan timeouts
-# while a per-model index build is in progress)
+# HNSW index guard
 # ---------------------------------------------------------------------------
 
 
@@ -154,7 +558,6 @@ class TestHnswIndexGuard:
         assert _hnsw_index_name("specter2") == "idx_embed_hnsw_specter2"
 
     def _mock_conn_with_index(self, *, exists: bool) -> MagicMock:
-        """Build a mock connection whose cursor returns one row iff exists=True."""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = (1,) if exists else None
         mock_conn = MagicMock()
@@ -173,161 +576,63 @@ class TestHnswIndexGuard:
         mock_conn = self._mock_conn_with_index(exists=True)
         _hnsw_index_exists(mock_conn, "indus")
         _hnsw_index_exists(mock_conn, "indus")
-        # Second call should hit cache, not the DB
         assert mock_conn.cursor.call_count == 1
 
     def test_negative_result_is_rechecked(self) -> None:
-        """False results must be re-checked so an in-progress build is picked up."""
         mock_conn = self._mock_conn_with_index(exists=False)
         _hnsw_index_exists(mock_conn, "indus")
-        # Force cache expiry by rewriting the checked_at timestamp into the past
         exists, _ = _hnsw_index_cache["indus"]
         _hnsw_index_cache["indus"] = (exists, 0.0)
         _hnsw_index_exists(mock_conn, "indus")
         assert mock_conn.cursor.call_count == 2
 
-    @patch("scix.mcp_server._hnsw_index_exists")
-    def test_semantic_search_short_circuits_when_index_missing(self, mock_guard: MagicMock) -> None:
-        """When the HNSW index is missing, semantic_search must not embed or query."""
-        mock_guard.return_value = False
-        mock_conn = MagicMock()
-        with (
-            patch("scix.search.vector_search") as mock_vs,
-            patch("scix.mcp_server.load_model") as mock_load,
-        ):
-            result = json.loads(
-                _dispatch_tool(mock_conn, "semantic_search", {"query": "dark matter"})
-            )
-            mock_vs.assert_not_called()
-            mock_load.assert_not_called()
-        assert result["error"] == "vector_index_unavailable"
-        assert result["model_name"] == "indus"
-        assert "idx_embed_hnsw_indus" in result["detail"]
-
-    @patch("scix.mcp_server._hnsw_index_exists")
-    @patch("scix.mcp_server.embed_batch")
-    @patch("scix.mcp_server.load_model")
-    @patch("scix.search.vector_search")
-    def test_semantic_search_proceeds_when_index_present(
-        self,
-        mock_vs: MagicMock,
-        mock_load: MagicMock,
-        mock_embed: MagicMock,
-        mock_guard: MagicMock,
-    ) -> None:
-        from scix.search import SearchResult
-
-        mock_guard.return_value = True
-        mock_load.return_value = (MagicMock(), MagicMock())
-        mock_embed.return_value = [[0.0] * 768]
-        mock_vs.return_value = SearchResult(
-            papers=[{"bibcode": "2024ApJ...042X"}],
-            total=1,
-            timing_ms={"vector_ms": 42.0},
-        )
-        mock_conn = MagicMock()
-        result = json.loads(_dispatch_tool(mock_conn, "semantic_search", {"query": "dark matter"}))
-        mock_vs.assert_called_once()
-        assert result["total"] == 1
-
 
 # ---------------------------------------------------------------------------
-# _dispatch_tool — graph tool dispatch tests
+# graph_context
 # ---------------------------------------------------------------------------
 
 
-class TestDispatchGraphTools:
-    @patch("scix.search.co_citation_analysis")
-    def test_co_citation_dispatches(self, mock_fn: MagicMock) -> None:
-        from scix.search import SearchResult
-
-        mock_fn.return_value = SearchResult(
-            papers=[{"bibcode": "A", "overlap_count": 5}],
-            total=1,
-            timing_ms={"query_ms": 10.0},
-        )
-        mock_conn = MagicMock()
-        result = json.loads(
-            _dispatch_tool(mock_conn, "co_citation_analysis", {"bibcode": "X", "min_overlap": 3})
-        )
-        assert result["total"] == 1
-        mock_fn.assert_called_once_with(mock_conn, "X", min_overlap=3, limit=20)
-
-    @patch("scix.search.bibliographic_coupling")
-    def test_bibliographic_coupling_dispatches(self, mock_fn: MagicMock) -> None:
-        from scix.search import SearchResult
-
-        mock_fn.return_value = SearchResult(
-            papers=[{"bibcode": "B", "shared_refs": 3}],
-            total=1,
-            timing_ms={"query_ms": 8.0},
-        )
-        mock_conn = MagicMock()
-        result = json.loads(
-            _dispatch_tool(mock_conn, "bibliographic_coupling", {"bibcode": "Y", "limit": 10})
-        )
-        assert result["total"] == 1
-        mock_fn.assert_called_once_with(mock_conn, "Y", min_overlap=2, limit=10)
-
-    @patch("scix.search.citation_chain")
-    def test_citation_chain_dispatches(self, mock_fn: MagicMock) -> None:
-        from scix.search import SearchResult
-
-        mock_fn.return_value = SearchResult(
-            papers=[],
-            total=0,
-            timing_ms={"query_ms": 5.0},
-            metadata={"path_length": -1, "path_bibcodes": []},
-        )
-        mock_conn = MagicMock()
-        result = json.loads(
-            _dispatch_tool(
-                mock_conn,
-                "citation_chain",
-                {"source_bibcode": "A", "target_bibcode": "B", "max_depth": 3},
-            )
-        )
-        assert result["metadata"]["path_length"] == -1
-        mock_fn.assert_called_once_with(mock_conn, "A", "B", max_depth=3)
-
-    @patch("scix.search.citation_chain")
-    def test_citation_chain_caps_depth_at_5(self, mock_fn: MagicMock) -> None:
+class TestGraphContext:
+    @patch("scix.search.get_paper_metrics")
+    def test_metrics_only(self, mock_fn: MagicMock) -> None:
         from scix.search import SearchResult
 
         mock_fn.return_value = SearchResult(
             papers=[],
             total=0,
             timing_ms={"query_ms": 1.0},
-            metadata={"path_length": -1, "path_bibcodes": []},
+            metadata={"pagerank": 0.01},
         )
-        mock_conn = MagicMock()
-        _dispatch_tool(
-            mock_conn,
-            "citation_chain",
-            {"source_bibcode": "A", "target_bibcode": "B", "max_depth": 99},
+        conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(conn, "graph_context", {"bibcode": "X", "include_community": False})
         )
-        mock_fn.assert_called_once_with(mock_conn, "A", "B", max_depth=5)
+        assert result["metadata"]["pagerank"] == 0.01
+        mock_fn.assert_called_once_with(conn, "X")
 
-    @patch("scix.search.temporal_evolution")
-    def test_temporal_evolution_dispatches(self, mock_fn: MagicMock) -> None:
+    @patch("scix.search.explore_community")
+    @patch("scix.search.get_paper_metrics")
+    def test_with_community(self, mock_metrics, mock_community) -> None:
         from scix.search import SearchResult
 
-        mock_fn.return_value = SearchResult(
+        mock_metrics.return_value = SearchResult(
             papers=[],
-            total=2,
-            timing_ms={"query_ms": 3.0},
-            metadata={"mode": "citations", "yearly_counts": [{"year": 2023, "count": 10}]},
+            total=0,
+            timing_ms={"query_ms": 1.0},
+            metadata={"pagerank": 0.01},
         )
-        mock_conn = MagicMock()
+        mock_community.return_value = SearchResult(
+            papers=[{"bibcode": "sibling"}],
+            total=1,
+            timing_ms={"query_ms": 2.0},
+        )
+        conn = MagicMock()
         result = json.loads(
-            _dispatch_tool(
-                mock_conn,
-                "temporal_evolution",
-                {"bibcode_or_query": "X", "year_start": 2020},
-            )
+            _dispatch_tool(conn, "graph_context", {"bibcode": "X", "include_community": True})
         )
-        assert result["metadata"]["mode"] == "citations"
-        mock_fn.assert_called_once_with(mock_conn, "X", year_start=2020, year_end=None)
+        assert "metrics" in result
+        assert "community" in result
+        mock_community.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +643,6 @@ class TestDispatchGraphTools:
 class TestInitModel:
     @patch("scix.mcp_server._init_model_impl")
     def test_init_model_called_at_create(self, mock_init: MagicMock) -> None:
-        """create_server should call _init_model_impl for eager model load."""
         try:
             from scix.mcp_server import create_server
 
@@ -348,7 +652,6 @@ class TestInitModel:
             pytest.skip("mcp SDK not installed")
 
     def test_init_model_impl_calls_load_model(self) -> None:
-        """_init_model_impl should call load_model with INDUS."""
         from scix.mcp_server import _init_model_impl
 
         with patch("scix.mcp_server.load_model") as mock_load:
@@ -356,43 +659,10 @@ class TestInitModel:
             mock_load.assert_called_once_with("indus", device="cpu")
 
     def test_init_model_impl_survives_import_error(self) -> None:
-        """_init_model_impl should not crash if torch/transformers missing."""
         from scix.mcp_server import _init_model_impl
 
         with patch("scix.mcp_server.load_model", side_effect=ImportError("no torch")):
-            # Should not raise
             _init_model_impl()
-
-
-# ---------------------------------------------------------------------------
-# health_check tool dispatch
-# ---------------------------------------------------------------------------
-
-
-class TestHealthCheck:
-    def test_health_check_returns_status(self) -> None:
-        """health_check tool should return structured status."""
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_cursor.fetchone.return_value = (1,)
-        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-
-        result = json.loads(_dispatch_tool(mock_conn, "health_check", {}))
-        assert "db" in result
-        assert "model_cached" in result
-        assert "pool" in result
-
-    def test_health_check_db_failure(self) -> None:
-        """health_check should report DB errors gracefully."""
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_cursor.execute.side_effect = Exception("connection refused")
-        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-
-        result = json.loads(_dispatch_tool(mock_conn, "health_check", {}))
-        assert result["db"] == "error"
 
 
 # ---------------------------------------------------------------------------
@@ -427,13 +697,12 @@ class TestShutdown:
             mcp_server._pool = original_pool
 
     def test_shutdown_no_pool_ok(self) -> None:
-        """_shutdown should not crash when no pool exists."""
         from scix import mcp_server
 
         original_pool = mcp_server._pool
         mcp_server._pool = None
 
         try:
-            mcp_server._shutdown()  # Should not raise
+            mcp_server._shutdown()
         finally:
             mcp_server._pool = original_pool

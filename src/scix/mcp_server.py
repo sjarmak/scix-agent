@@ -52,7 +52,10 @@ def _get_pool():
 
         dsn = os.environ.get("SCIX_DSN", DEFAULT_DSN)
         min_size = int(os.environ.get("SCIX_POOL_MIN", "2"))
-        max_size = int(os.environ.get("SCIX_POOL_MAX", "10"))
+        # max_size bumped from 10→20 to prevent pool exhaustion under
+        # concurrent hybrid search load (each holds a connection for 2-3
+        # sequential HNSW scans). See premortem M9.
+        max_size = int(os.environ.get("SCIX_POOL_MAX", "20"))
         timeout = float(os.environ.get("SCIX_POOL_TIMEOUT", "30.0"))
 
         _pool = ConnectionPool(
@@ -267,6 +270,10 @@ _DEPRECATED_ALIASES: dict[str, str] = {
     "bibliographic_coupling": "citation_similarity",
     "entity_search": "entity",
     "resolve_entity": "entity",
+    # entity_profile has a unique schema (raw extractions table rows). It
+    # is routed to a dedicated handler via _transform_deprecated_args, but
+    # use_instead points at get_paper(include_entities=true) as the modern
+    # equivalent for agents migrating off the old schema.
     "entity_profile": "get_paper",
     "get_paper_metrics": "graph_context",
     "explore_community": "graph_context",
@@ -277,7 +284,6 @@ _DEPRECATED_ALIASES: dict[str, str] = {
     "get_working_set": "find_gaps",
     "get_session_summary": "find_gaps",
     "clear_working_set": "find_gaps",
-    "health_check": "health_check",
     "get_citation_context": "citation_graph",
     "read_paper_section": "read_paper",
     "search_within_paper": "read_paper",
@@ -1063,11 +1069,9 @@ def _transform_deprecated_args(
         return old_name, new_args
 
     if old_name == "entity_profile":
-        new_args["include_entities"] = True
-        return "get_paper", new_args
-
-    if old_name == "health_check":
-        return "health_check", new_args
+        # entity_profile has its own dedicated handler (different schema
+        # than get_paper), routed via _dispatch_consolidated.
+        return "entity_profile", new_args
 
     return new_name, new_args
 
@@ -1222,6 +1226,12 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
 
     if name == "health_check":
         return _handle_health_check(conn)
+
+    # Legacy entity_profile — dispatched only via deprecated alias layer,
+    # not in list_tools(). Preserves original schema (raw extractions rows)
+    # so existing callers don't break on the schema change to get_paper.
+    if name == "entity_profile":
+        return _handle_entity_profile(conn, args)
 
     return json.dumps({"error": f"Unknown tool: {name}"})
 
@@ -1577,6 +1587,45 @@ def _handle_health_check(conn: psycopg.Connection) -> str:
     except Exception:
         status["db"] = "error"
     return json.dumps(status, indent=2)
+
+
+def _handle_entity_profile(conn: psycopg.Connection, args: dict[str, Any]) -> str:
+    """Legacy entity_profile handler: returns raw extractions table rows.
+
+    Preserves the pre-consolidation schema for backward compatibility with
+    external callers that still reference entity_profile. New code should
+    use get_paper(include_entities=true) instead.
+    """
+    bibcode = args.get("bibcode")
+    if not bibcode:
+        return json.dumps({"error": "bibcode is required"})
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT extraction_type, extraction_version, payload, created_at
+            FROM extractions
+            WHERE bibcode = %s
+            ORDER BY extraction_type, extraction_version
+            """,
+            (bibcode,),
+        )
+        rows = cur.fetchall()
+
+    extractions = [
+        {
+            "extraction_type": row[0],
+            "extraction_version": row[1],
+            "payload": row[2],
+            "created_at": row[3].isoformat() if row[3] else None,
+        }
+        for row in rows
+    ]
+    return json.dumps(
+        {"bibcode": bibcode, "extractions": extractions, "total": len(extractions)},
+        indent=2,
+        default=str,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -521,6 +521,45 @@ class TestDeprecatedAliases:
         assert "entity_search" in _DEPRECATED_ALIASES
         assert "resolve_entity" in _DEPRECATED_ALIASES
 
+    def test_health_check_not_deprecated(self) -> None:
+        """health_check must NOT be tagged deprecated (it is an internal tool,
+        not a renamed tool)."""
+        assert "health_check" not in _DEPRECATED_ALIASES
+
+
+class TestEntityProfileLegacy:
+    """entity_profile is a deprecated alias with a dedicated handler that
+    preserves the original schema (raw extractions rows)."""
+
+    def test_entity_profile_returns_legacy_schema(self) -> None:
+        """Legacy entity_profile returns bibcode + extractions + total,
+        NOT the get_paper/document_context shape."""
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.__enter__ = MagicMock(return_value=cursor)
+        cursor.__exit__ = MagicMock(return_value=False)
+        cursor.fetchall.return_value = [
+            ("methods", "v1", {"name": "MCMC"}, None),
+            ("datasets", "v1", {"name": "SDSS"}, None),
+        ]
+        conn.cursor.return_value = cursor
+
+        result = json.loads(_dispatch_tool(conn, "entity_profile", {"bibcode": "X"}))
+
+        # Legacy schema fields
+        assert result["bibcode"] == "X"
+        assert "extractions" in result
+        assert result["total"] == 2
+        assert result["extractions"][0]["extraction_type"] == "methods"
+        assert result["extractions"][0]["payload"] == {"name": "MCMC"}
+        # Deprecation wrapper present
+        assert result["deprecated"] is True
+        assert result["use_instead"] == "get_paper"
+        assert result["original_tool"] == "entity_profile"
+        # Must NOT have get_paper shape
+        assert "linked_entities" not in result
+        assert "title" not in result
+
 
 # ---------------------------------------------------------------------------
 # AC20: verify at least 3 consolidated tools dispatch correctly

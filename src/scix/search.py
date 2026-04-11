@@ -297,10 +297,19 @@ def _estimate_filter_selectivity(
             return 1.0
         total: float = float(row[0])
 
-        # Filtered count — cap at a cheap sequential probe
-        count_sql = f"SELECT count(*) FROM papers p WHERE TRUE {filter_clause}"
+        # Cap the probe: if we find more than (threshold * total + 1) rows,
+        # selectivity is already above threshold — no need to count further.
+        # This bounds worst-case scan to ~1% of the corpus (~320K rows on
+        # 32M) instead of a full sequential scan.
+        cap = max(1, int(SELECTIVITY_THRESHOLD * total) + 1)
+        count_sql = f"SELECT count(*) FROM (SELECT 1 FROM papers p WHERE TRUE {filter_clause} LIMIT {cap}) sub"
         cur.execute(count_sql, filter_params)
         matched: int = cur.fetchone()[0]
+
+        # If we hit the cap, we know selectivity ≥ threshold — return a
+        # value just above threshold so the caller routes to HNSW.
+        if matched >= cap:
+            return SELECTIVITY_THRESHOLD + 0.001
 
     return matched / total if total > 0 else 1.0
 

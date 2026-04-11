@@ -37,6 +37,7 @@ class _SessionData:
 
     working_set: dict[str, WorkingSetEntry] = field(default_factory=dict)
     seen_papers: set[str] = field(default_factory=set)
+    focused_papers: set[str] = field(default_factory=set)
 
 
 class SessionState:
@@ -109,6 +110,50 @@ class SessionState:
         data.working_set.clear()
         return count
 
+    # -- implicit tracking ---------------------------------------------------
+
+    def track_seen(
+        self,
+        bibcodes: list[str],
+        session_id: str = "_default",
+    ) -> None:
+        """Record bibcodes as seen (returned by any tool)."""
+        data = self._get(session_id)
+        data.seen_papers.update(bibcodes)
+
+    def track_focused(
+        self,
+        bibcode: str,
+        session_id: str = "_default",
+    ) -> None:
+        """Record a bibcode as focused (inspected via get_paper).
+
+        Also adds to seen and working set for backward compatibility.
+        """
+        data = self._get(session_id)
+        data.focused_papers.add(bibcode)
+        data.seen_papers.add(bibcode)
+        # Also keep working set in sync so existing find_gaps logic works
+        if bibcode not in data.working_set:
+            self.add_to_working_set(
+                bibcode=bibcode,
+                source_tool="get_paper",
+                source_context="auto-tracked",
+                session_id=session_id,
+            )
+
+    def get_focused_papers(self, session_id: str = "_default") -> list[str]:
+        """Return the list of focused bibcodes."""
+        data = self._get(session_id)
+        return list(data.focused_papers)
+
+    def clear_focused(self, session_id: str = "_default") -> int:
+        """Clear the focused set, returning the number removed."""
+        data = self._get(session_id)
+        count = len(data.focused_papers)
+        data.focused_papers.clear()
+        return count
+
     # -- summary ------------------------------------------------------------
 
     def get_session_summary(self, session_id: str = "_default") -> dict[str, Any]:
@@ -117,5 +162,6 @@ class SessionState:
         return {
             "session_id": session_id,
             "working_set_size": len(data.working_set),
+            "focused_papers_count": len(data.focused_papers),
             "seen_papers_count": len(data.seen_papers),
         }

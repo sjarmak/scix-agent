@@ -29,7 +29,7 @@ RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 RDFS = "http://www.w3.org/2000/01/rdf-schema#"
 UAT_NS = "http://astrothesaurus.org/uat/"
 
-UAT_SKOS_URL = "https://raw.githubusercontent.com/astrothesaurus/UAT/master/UAT.rdf"
+UAT_SKOS_URL = "https://raw.githubusercontent.com/astrothesaurus/UAT/v6.0.0/UAT.rdf"
 
 # Default download destination
 _DEFAULT_DEST = Path("data/UAT.rdf")

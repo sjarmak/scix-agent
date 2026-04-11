@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "scix": {
+      "command": "/home/ds/scix_experiments/.venv/bin/python",
+      "args": ["-m", "scix.mcp_server"],
+      "cwd": "/home/ds/scix_experiments"
+    }
+  }
+}

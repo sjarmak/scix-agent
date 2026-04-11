@@ -155,7 +155,7 @@ def vector_search(
     conn: psycopg.Connection,
     query_embedding: list[float],
     *,
-    model_name: str = "specter2",
+    model_name: str = "indus",
     filters: SearchFilters | None = None,
     limit: int = 20,
     ef_search: int = 100,
@@ -165,7 +165,7 @@ def vector_search(
 
     Args:
         query_embedding: 768-dim float vector.
-        model_name: Filter to a specific embedding model.
+        model_name: Filter to a specific embedding model (default: indus).
         ef_search: HNSW ef_search parameter (higher = more accurate, slower).
             When iterative_scan is enabled, ef_search is less critical because
             pgvector automatically expands the search to satisfy the LIMIT.
@@ -267,6 +267,113 @@ def rrf_fuse(
 
 
 # ---------------------------------------------------------------------------
+# Cardinality estimation and filter-first vector search
+# ---------------------------------------------------------------------------
+
+# Selectivity threshold: filters matching < 1% of the corpus use
+# filter-first CTE + brute-force cosine instead of HNSW iterative scan.
+SELECTIVITY_THRESHOLD = 0.01
+
+
+def _estimate_filter_selectivity(
+    conn: psycopg.Connection,
+    filters: SearchFilters,
+) -> float:
+    """Estimate the fraction of the corpus matching *filters*.
+
+    Uses pg_class.reltuples for the total corpus size (no seq scan) and a
+    fast COUNT on the filtered subset.  Returns a ratio in [0.0, 1.0].
+    A return value of 1.0 means "no filters" or "cannot estimate".
+    """
+    filter_clause, filter_params = filters.to_where_clause("p")
+    if not filter_clause:
+        return 1.0
+
+    with conn.cursor() as cur:
+        # Total corpus estimate from planner stats (instant, no scan)
+        cur.execute("SELECT GREATEST(reltuples, 1) FROM pg_class WHERE relname = 'papers'")
+        row = cur.fetchone()
+        if row is None:
+            return 1.0
+        total: float = float(row[0])
+
+        # Filtered count — cap at a cheap sequential probe
+        count_sql = f"SELECT count(*) FROM papers p WHERE TRUE {filter_clause}"
+        cur.execute(count_sql, filter_params)
+        matched: int = cur.fetchone()[0]
+
+    return matched / total if total > 0 else 1.0
+
+
+def _filter_first_vector_search(
+    conn: psycopg.Connection,
+    query_embedding: list[float],
+    *,
+    model_name: str = "indus",
+    filters: SearchFilters | None = None,
+    limit: int = 20,
+) -> SearchResult:
+    """Filter-first CTE: get matching bibcodes, then brute-force cosine.
+
+    Used when filter selectivity is very low (<1% of corpus) so that HNSW
+    iterative scan would waste I/O expanding the index.  Instead we
+    materialise the small filtered set and compute exact cosine distance.
+    """
+    t0 = time.perf_counter()
+
+    ndim = len(query_embedding)
+    vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
+    vec_cast = f"vector({ndim})"
+    filter_clause, filter_params = (filters or SearchFilters()).to_where_clause("p")
+
+    query = f"""
+        WITH filtered AS MATERIALIZED (
+            SELECT p.bibcode
+            FROM papers p
+            WHERE TRUE {filter_clause}
+        )
+        SELECT {STUB_COLUMNS},
+               1 - (pe.embedding::{vec_cast} <=> %s::{vec_cast}) AS similarity
+        FROM paper_embeddings pe
+        JOIN filtered f ON f.bibcode = pe.bibcode
+        JOIN papers p   ON p.bibcode = pe.bibcode
+        WHERE pe.model_name = %s
+        ORDER BY pe.embedding::{vec_cast} <=> %s::{vec_cast}
+        LIMIT %s
+    """
+    params: list[Any] = filter_params + [vec_str, model_name, vec_str, limit]
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
+
+    vector_ms = _elapsed_ms(t0)
+
+    papers = []
+    for row in rows:
+        stub = PaperStub.from_row(row).to_dict()
+        stub["score"] = float(row["similarity"])
+        papers.append(stub)
+
+    return SearchResult(
+        papers=papers,
+        total=len(papers),
+        timing_ms={"vector_ms": vector_ms},
+        metadata={"filter_first": True},
+    )
+
+
+def _model_has_embeddings(conn: psycopg.Connection, model_name: str) -> bool:
+    """Fast EXISTS check for whether a model has any rows in paper_embeddings."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT EXISTS(SELECT 1 FROM paper_embeddings WHERE model_name = %s LIMIT 1)",
+            (model_name,),
+        )
+        return cur.fetchone()[0]
+
+
+# ---------------------------------------------------------------------------
 # Hybrid search (vector + lexical + RRF + optional cross-encoder rerank)
 # ---------------------------------------------------------------------------
 
@@ -276,7 +383,7 @@ def hybrid_search(
     query_text: str,
     query_embedding: list[float] | None = None,
     *,
-    model_name: str = "specter2",
+    model_name: str = "indus",
     openai_embedding: list[float] | None = None,
     filters: SearchFilters | None = None,
     vector_limit: int = 60,
@@ -289,12 +396,15 @@ def hybrid_search(
     """Hybrid search combining vector and lexical via RRF, with optional reranking.
 
     If query_embedding is None, falls back to lexical-only mode (BM25-only).
-    If openai_embedding is provided, runs a second vector search with
-    text-embedding-3-large and fuses it alongside SPECTER2 results via RRF.
-    If the OpenAI vector search fails, falls back to SPECTER2+lexical only.
+    If openai_embedding is provided *and* text-embedding-3-large has rows in
+    paper_embeddings, runs a second vector search and fuses via RRF.
     If reranker is provided, re-ranks the top RRF results.
 
+    Cardinality-aware routing: when filters match <1% of the corpus, uses a
+    filter-first CTE with brute-force cosine instead of HNSW iterative scan.
+
     Args:
+        model_name: Embedding model for primary vector search (default: indus).
         openai_embedding: Optional pre-computed OpenAI text-embedding-3-large vector.
         reranker: Optional callable(query_text, papers) -> list[dict] with 'rerank_score'.
     """
@@ -306,24 +416,45 @@ def hybrid_search(
 
     results_lists: list[list[dict[str, Any]]] = [lex_result.papers]
 
-    # SPECTER2 vector search (if embeddings available)
+    # Cardinality-aware routing: estimate filter selectivity once for reuse
+    use_filter_first = False
+    if query_embedding is not None and filters is not None:
+        selectivity = _estimate_filter_selectivity(conn, filters)
+        if selectivity < SELECTIVITY_THRESHOLD:
+            use_filter_first = True
+            logger.debug(
+                "Filter selectivity %.4f < %.2f — using filter-first CTE",
+                selectivity,
+                SELECTIVITY_THRESHOLD,
+            )
+
+    # Primary vector search (if embeddings available)
     if query_embedding is not None:
-        vec_result = vector_search(
-            conn,
-            query_embedding,
-            model_name=model_name,
-            filters=filters,
-            limit=vector_limit,
-            ef_search=ef_search,
-        )
+        if use_filter_first:
+            vec_result = _filter_first_vector_search(
+                conn,
+                query_embedding,
+                model_name=model_name,
+                filters=filters,
+                limit=vector_limit,
+            )
+        else:
+            vec_result = vector_search(
+                conn,
+                query_embedding,
+                model_name=model_name,
+                filters=filters,
+                limit=vector_limit,
+                ef_search=ef_search,
+            )
         timing["vector_ms"] = vec_result.timing_ms["vector_ms"]
         results_lists.append(vec_result.papers)
     else:
         timing["vector_ms"] = 0.0
 
-    # OpenAI vector search (circuit breaker: fall back on failure)
+    # OpenAI vector search — skip entirely when model has 0 rows
     timing["openai_vector_ms"] = 0.0
-    if openai_embedding is not None:
+    if openai_embedding is not None and _model_has_embeddings(conn, "text-embedding-3-large"):
         try:
             openai_vec_result = vector_search(
                 conn,
@@ -337,9 +468,11 @@ def hybrid_search(
             results_lists.append(openai_vec_result.papers)
         except Exception:
             logger.warning(
-                "OpenAI vector search failed; falling back to SPECTER2+lexical only",
+                "OpenAI vector search failed; falling back to primary+lexical only",
                 exc_info=True,
             )
+    elif openai_embedding is not None:
+        logger.debug("Skipping OpenAI vector search: text-embedding-3-large has 0 rows")
 
     # RRF fusion
     t_fuse = time.perf_counter()

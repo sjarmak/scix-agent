@@ -18,17 +18,23 @@ from helpers import (
 )
 
 from scix.search import (
+    SELECTIVITY_THRESHOLD,
     SearchFilters,
     SearchResult,
     _elapsed_ms,
+    _estimate_filter_selectivity,
+    _filter_first_vector_search,
+    _model_has_embeddings,
     bibliographic_coupling,
     citation_chain,
     co_citation_analysis,
     facet_counts,
     get_paper,
+    hybrid_search,
     lexical_search,
     rrf_fuse,
     temporal_evolution,
+    vector_search,
 )
 
 # ---------------------------------------------------------------------------
@@ -199,6 +205,156 @@ class TestFacetFieldValidation:
     def test_sql_injection_blocked(self) -> None:
         with pytest.raises(ValueError, match="Unsupported facet field"):
             facet_counts(None, "year; DROP TABLE papers")  # type: ignore[arg-type]
+
+
+class TestHybridSearchDefaultModel:
+    """Verify that hybrid_search and vector_search default to indus."""
+
+    def test_hybrid_search_default_model(self) -> None:
+        import inspect
+
+        sig = inspect.signature(hybrid_search)
+        assert sig.parameters["model_name"].default == "indus"
+
+    def test_vector_search_default_model(self) -> None:
+        import inspect
+
+        sig = inspect.signature(vector_search)
+        assert sig.parameters["model_name"].default == "indus"
+
+
+class TestCardinalityRouting:
+    """Verify filter-first fallback triggers for selective filters."""
+
+    def test_selectivity_threshold_is_one_percent(self) -> None:
+        assert SELECTIVITY_THRESHOLD == 0.01
+
+    def test_estimate_no_filters_returns_one(self) -> None:
+        """Empty filters should return selectivity 1.0 without hitting DB."""
+        result = _estimate_filter_selectivity(None, SearchFilters())  # type: ignore[arg-type]
+        assert result == 1.0
+
+    def test_cardinality_routing_uses_filter_first(self) -> None:
+        """When selectivity < threshold, hybrid_search should use filter-first CTE."""
+        from unittest.mock import MagicMock, patch
+
+        mock_conn = MagicMock()
+
+        fake_embedding = [0.1] * 768
+        selective_filters = SearchFilters(year_min=2026, year_max=2026, doctype="article")
+
+        # Make _estimate_filter_selectivity return very low selectivity
+        # Make _model_has_embeddings return False (skip OpenAI)
+        # Make _filter_first_vector_search return a result
+        # Make lexical_search return a result
+        fake_search_result = SearchResult(
+            papers=[{"bibcode": "TEST"}],
+            total=1,
+            timing_ms={"vector_ms": 1.0},
+            metadata={"filter_first": True},
+        )
+        fake_lex_result = SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"lexical_ms": 1.0},
+        )
+
+        with (
+            patch("scix.search._estimate_filter_selectivity", return_value=0.001) as mock_est,
+            patch(
+                "scix.search._filter_first_vector_search",
+                return_value=fake_search_result,
+            ) as mock_ff,
+            patch("scix.search.lexical_search", return_value=fake_lex_result),
+            patch("scix.search._model_has_embeddings", return_value=False),
+        ):
+            result = hybrid_search(
+                mock_conn,
+                "test query",
+                query_embedding=fake_embedding,
+                filters=selective_filters,
+            )
+
+            # filter-first should have been called
+            mock_est.assert_called_once_with(mock_conn, selective_filters)
+            mock_ff.assert_called_once()
+
+            # Result should contain the fused papers
+            assert isinstance(result, SearchResult)
+            assert "vector_ms" in result.timing_ms
+
+    def test_cardinality_routing_uses_hnsw_for_broad_filters(self) -> None:
+        """When selectivity >= threshold, hybrid_search should use normal vector_search."""
+        from unittest.mock import MagicMock, patch
+
+        mock_conn = MagicMock()
+
+        fake_embedding = [0.1] * 768
+        broad_filters = SearchFilters(year_min=2020)
+
+        fake_vec_result = SearchResult(
+            papers=[{"bibcode": "TEST"}],
+            total=1,
+            timing_ms={"vector_ms": 1.0},
+            metadata={"iterative_scan": True},
+        )
+        fake_lex_result = SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"lexical_ms": 1.0},
+        )
+
+        with (
+            patch("scix.search._estimate_filter_selectivity", return_value=0.5),
+            patch("scix.search.vector_search", return_value=fake_vec_result) as mock_vs,
+            patch("scix.search.lexical_search", return_value=fake_lex_result),
+            patch("scix.search._model_has_embeddings", return_value=False),
+        ):
+            result = hybrid_search(
+                mock_conn,
+                "test query",
+                query_embedding=fake_embedding,
+                filters=broad_filters,
+            )
+
+            # Normal vector_search should have been called
+            mock_vs.assert_called_once()
+            assert isinstance(result, SearchResult)
+
+
+class TestOpenAISignalSkipped:
+    """Verify OpenAI embedding signal is skipped when model has 0 rows."""
+
+    def test_openai_skipped_when_no_rows(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        mock_conn = MagicMock()
+
+        fake_lex_result = SearchResult(
+            papers=[{"bibcode": "A"}],
+            total=1,
+            timing_ms={"lexical_ms": 1.0},
+        )
+
+        with (
+            patch("scix.search.lexical_search", return_value=fake_lex_result),
+            patch("scix.search._model_has_embeddings", return_value=False) as mock_check,
+            patch("scix.search.vector_search") as mock_vs,
+        ):
+            result = hybrid_search(
+                mock_conn,
+                "test query",
+                openai_embedding=[0.1] * 3072,
+            )
+
+            # _model_has_embeddings should be called for text-embedding-3-large
+            mock_check.assert_called_once_with(mock_conn, "text-embedding-3-large")
+
+            # vector_search should NOT be called (no primary embedding, no openai)
+            mock_vs.assert_not_called()
+
+            # OpenAI timing should be 0
+            assert result.timing_ms["openai_vector_ms"] == 0.0
 
 
 # ---------------------------------------------------------------------------

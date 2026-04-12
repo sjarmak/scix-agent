@@ -16,14 +16,15 @@
     ],
     "layer": 0,
     "scope": [
-      "migrations/026_entity_schema_hardening.sql",
-      "migrations/027_ontology_version_pinning.sql",
-      "migrations/028_staging_and_promote_harvest.sql",
-      "migrations/029_query_log.sql",
+      "migrations/028_entity_schema_hardening.sql",
+      "migrations/029_ontology_version_pinning.sql",
+      "migrations/030_staging_and_promote_harvest.sql",
+      "migrations/031_query_log.sql",
       "scripts/cleanup_harvest_zombies.py",
       "tests/test_migrations.py"
     ],
-    "status": "pending",
+    "status": "landed",
+    "branch_commit": "505fd69",
     "branch": null,
     "pipeline_stage": null,
     "pipeline_output": {},
@@ -47,7 +48,8 @@
       "src/scix/link_entities.py",
       "tests/test_link_entities_collision.py"
     ],
-    "status": "pending",
+    "status": "landed",
+    "branch_commit": "450140f",
     "branch": null,
     "pipeline_stage": null,
     "pipeline_output": {},
@@ -197,7 +199,7 @@
       "scripts/curate_entity_core.py",
       "tests/test_query_log.py",
       "tests/test_curated_core.py",
-      "migrations/030_core_promotion_log.sql"
+      "migrations/032_core_promotion_log.sql"
     ],
     "status": "pending",
     "branch": null,
@@ -213,7 +215,7 @@
     "deps": ["u01-schema-migrations", "u03-resolve-entities-service"],
     "tier": "medium",
     "acceptance": [
-      "migrations/031_fusion_mv.sql creates document_entities_canonical MV, tier_weight(tier SMALLINT) IMMUTABLE function, tier_weight_calibration_log table, and required indexes (UNIQUE on (bibcode, entity_id), (entity_id, fused_confidence DESC), (bibcode))",
+      "migrations/033_fusion_mv.sql creates document_entities_canonical MV, tier_weight(tier SMALLINT) IMMUTABLE function, tier_weight_calibration_log table, and required indexes (UNIQUE on (bibcode, entity_id), (entity_id, fused_confidence DESC), (bibcode))",
       "REFRESH MATERIALIZED VIEW CONCURRENTLY document_entities_canonical succeeds on a populated fixture (the UNIQUE index makes it eligible)",
       "src/scix/fusion_mv.py exposes `mark_dirty() -> None` and `refresh_if_due(min_interval_seconds: int = 3600) -> bool`; rate-limits to <=1 refresh/hour via a last_refresh_at row in a fusion_mv_state table",
       "On a seeded fixture with >=5 tiers of rows per (bibcode, entity_id), `SELECT fused_confidence FROM document_entities_canonical WHERE bibcode=X AND entity_id=Y` matches the closed-form `1 - exp(sum(ln(1 - c_t * tier_weight(t))))` to within 1e-9",
@@ -223,7 +225,7 @@
     ],
     "layer": 2,
     "scope": [
-      "migrations/031_fusion_mv.sql",
+      "migrations/033_fusion_mv.sql",
       "src/scix/fusion_mv.py",
       "tests/test_fusion_mv.py"
     ],

@@ -17,9 +17,9 @@ Showing 3 of up to 50 random examples.
 
 | id | canonical_name | entity_type | source |
 | --- | --- | --- | --- |
-| 462 | the | concept | uat |
-| 464 | hubble | facility | uat |
-| 463 | UV | instrument | uat |
+| 1638 | UV | instrument | uat |
+| 1637 | the | concept | uat |
+| 1639 | hubble | facility | uat |
 
 ## homograph
 
@@ -27,8 +27,8 @@ Showing 2 of up to 50 random examples.
 
 | id | canonical_name | entity_type | source |
 | --- | --- | --- | --- |
-| 466 | HST | facility | wikidata |
-| 465 | HST | facility | ads_aas |
+| 1641 | HST | facility | wikidata |
+| 1640 | HST | facility | ads_aas |
 
 ## domain_safe
 
@@ -36,8 +36,8 @@ Showing 2 of up to 50 random examples.
 
 | id | canonical_name | entity_type | source |
 | --- | --- | --- | --- |
-| 468 | CHANDRA-XRAY | facility | uat |
-| 467 | GALFA-HI | survey | uat |
+| 1643 | CHANDRA-XRAY | facility | uat |
+| 1642 | GALFA-HI | survey | uat |
 
 ## unique
 
@@ -45,5 +45,5 @@ Showing 2 of up to 50 random examples.
 
 | id | canonical_name | entity_type | source |
 | --- | --- | --- | --- |
-| 470 | QZX | unknown | uat |
-| 469 | XYZ | unknown | uat |
+| 1645 | QZX | unknown | uat |
+| 1644 | XYZ | unknown | uat |

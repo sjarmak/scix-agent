@@ -4,11 +4,16 @@ Requires ``SCIX_TEST_DSN`` to point at a non-production database. The
 tests seed 10 papers with ``test_u13_`` bibcodes, 3 curated entities,
 and aliases; then exercise:
 
-* fresh-watermark end-to-end run (AC2: <60s, tier-1 + tier-2 rows)
+* fresh-watermark end-to-end run (sanity: tier-1 + tier-2 rows)
 * forced budget trip (AC3: run completes, watermark advances, zero links)
 * catchup backfills the skipped papers (AC4)
 * two consecutive trips → alerts row with severity='page' (AC5)
 * forced-stale watermark → staleness alert (AC5)
+
+A separate ``TestIncrementalThousandPaperBudget`` class seeds a 1000-paper
+fixture (bibcode prefix ``test_u13_1k_``) and asserts AC2: incremental run
+completes in under 60 seconds, writes both tier-1 and tier-2 rows, advances
+the watermark, and leaves the breaker closed.
 
 The fixture keeps ``link_runs`` and ``alerts`` scoped via source/message
 markers so the test doesn't interfere with any other users of the test
@@ -287,20 +292,17 @@ def _latest_link_run(conn: psycopg.Connection) -> dict:
 
 
 class TestIncrementalHappyPath:
-    def test_fresh_run_links_fixture_papers_under_60s(
+    def test_fresh_run_links_fixture_papers(
         self, seeded_conn: tuple[psycopg.Connection, dict[str, int]]
     ) -> None:
         conn, _ = seeded_conn
 
-        t0 = time.monotonic()
         result = link_incremental.run_incremental(
             conn,
             budget_seconds=300.0,
             automaton_path=pathlib.Path("/nonexistent/ac_automaton.pkl"),
         )
-        elapsed = time.monotonic() - t0
 
-        assert elapsed < 60.0, f"incremental run took {elapsed:.1f}s (>60s budget)"
         assert result.status == "ok"
         assert result.papers_in_scope == len(_SEED_PAPERS)
         # Tier-1 rows via the "galaxy_survey" keyword won't match any
@@ -492,3 +494,175 @@ class TestWatermarkStaleness:
 
         alert_id = link_incremental.check_watermark_staleness(conn)
         assert alert_id is None
+
+
+# ---------------------------------------------------------------------------
+# AC2: 1000-paper fixture for the <60s wall-clock acceptance criterion
+# ---------------------------------------------------------------------------
+
+_LARGE_BIBCODE_PREFIX = "test_u13_1k_"
+_LARGE_FIXTURE_SIZE = 1000
+
+
+def _cleanup_large(conn: psycopg.Connection) -> None:
+    """Wipe everything created by the 1000-paper fixture."""
+    canonicals = [e[0] for e in _SEED_ENTITIES]
+    pattern = f"{_LARGE_BIBCODE_PREFIX}%"
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM document_entities WHERE bibcode LIKE %s",
+            (pattern,),
+        )
+        cur.execute(
+            "DELETE FROM curated_entity_core "
+            " WHERE entity_id IN ("
+            "   SELECT id FROM entities "
+            "    WHERE canonical_name = ANY(%s) AND source = %s"
+            " )",
+            (canonicals, _TEST_SOURCE),
+        )
+        cur.execute(
+            "DELETE FROM entities WHERE canonical_name = ANY(%s) AND source = %s",
+            (canonicals, _TEST_SOURCE),
+        )
+        cur.execute(
+            "DELETE FROM papers WHERE bibcode LIKE %s",
+            (pattern,),
+        )
+        cur.execute("DELETE FROM link_runs")
+        cur.execute("DELETE FROM alerts WHERE source IN ('incremental_sync','watermark_staleness')")
+    conn.commit()
+
+
+def _seed_large(conn: psycopg.Connection) -> dict[str, int]:
+    """Seed 1000 synthetic papers + the same 3 entities and aliases.
+
+    Uses ``COPY`` for the bulk paper insert so the fixture stays well under
+    the <60s ceiling on a local Postgres (target: <10s actual seed time).
+    Each paper carries an abstract that contains both ``JWST`` (alias for
+    James Webb Space Telescope) and ``ALMA`` (alias for ALMA Observatory),
+    plus a single ``ALMA`` keyword that fires the tier-1 alias path. This
+    guarantees both tier-1 and tier-2 row populations are non-empty.
+    """
+    _cleanup_large(conn)
+    name_to_id: dict[str, int] = {}
+
+    with conn.cursor() as cur:
+        # Seed entities + aliases + curated_entity_core (same as small fixture).
+        for canonical, ambiguity in _SEED_ENTITIES:
+            cur.execute(
+                "INSERT INTO entities (canonical_name, entity_type, source, ambiguity_class) "
+                "VALUES (%s, %s, %s, %s::entity_ambiguity_class) RETURNING id",
+                (canonical, "test_type", _TEST_SOURCE, ambiguity),
+            )
+            row = cur.fetchone()
+            assert row is not None
+            name_to_id[canonical] = int(row[0])
+
+        for canonical, alias in _SEED_ALIASES:
+            cur.execute(
+                "INSERT INTO entity_aliases (entity_id, alias, alias_source) "
+                "VALUES (%s, %s, %s)",
+                (name_to_id[canonical], alias, "test_seed_u13_1k"),
+            )
+
+        for canonical, entity_id in name_to_id.items():
+            cur.execute(
+                "INSERT INTO curated_entity_core (entity_id, query_hits_14d) "
+                "VALUES (%s, %s) ON CONFLICT (entity_id) DO NOTHING",
+                (entity_id, 1),
+            )
+
+        # Bulk-insert 1000 papers via COPY. Each row:
+        #   bibcode    = test_u13_1k_NNNN
+        #   abstract   = mentions JWST + ALMA so Aho-Corasick fires for both
+        #   keywords   = {'ALMA'}  -> tier-1 alias match
+        #   entry_date = staggered minute-by-minute from _BASE_ENTRY
+        abstract_template = (
+            "Synthetic test abstract {idx}. JWST observed water vapor and "
+            "ALMA imaged the protoplanetary disk."
+        )
+        with cur.copy(
+            "COPY papers (bibcode, abstract, keywords, entry_date) " "FROM STDIN WITH (FORMAT TEXT)"
+        ) as copy:
+            for i in range(_LARGE_FIXTURE_SIZE):
+                bibcode = f"{_LARGE_BIBCODE_PREFIX}{i:04d}"
+                abstract = abstract_template.format(idx=i)
+                # PostgreSQL TEXT-format array literal: {ALMA}
+                keywords_literal = "{ALMA}"
+                # entry_date column is TEXT, ADS format
+                entry_date = (_BASE_ENTRY + timedelta(minutes=i)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                # TEXT format: tab-separated, escape special chars (none here).
+                copy.write_row((bibcode, abstract, keywords_literal, entry_date))
+
+    conn.commit()
+    return name_to_id
+
+
+@pytest.fixture()
+def seeded_large_conn(
+    dsn: str,
+) -> Iterator[tuple[psycopg.Connection, dict[str, int]]]:
+    conn = psycopg.connect(dsn)
+    try:
+        ids = _seed_large(conn)
+        yield conn, ids
+    finally:
+        try:
+            _cleanup_large(conn)
+        finally:
+            conn.close()
+
+
+class TestIncrementalThousandPaperBudget:
+    """AC2: ``scripts/link_incremental.py`` runs incrementally on a
+    1000-paper fixture in <60s, writes both tier-1 and tier-2 rows,
+    advances the watermark, and leaves the breaker closed."""
+
+    def test_thousand_paper_run_under_60s(
+        self,
+        seeded_large_conn: tuple[psycopg.Connection, dict[str, int]],
+    ) -> None:
+        conn, _ = seeded_large_conn
+
+        t0 = time.monotonic()
+        result = link_incremental.run_incremental(
+            conn,
+            budget_seconds=300.0,
+            automaton_path=pathlib.Path("/nonexistent/ac_automaton.pkl"),
+        )
+        elapsed = time.monotonic() - t0
+
+        # AC2 wall-clock ceiling
+        assert elapsed < 60.0, (
+            f"incremental run on {_LARGE_FIXTURE_SIZE} papers took "
+            f"{elapsed:.1f}s (>60s ceiling)"
+        )
+        assert result.status == "ok"
+        assert result.papers_in_scope == _LARGE_FIXTURE_SIZE
+        assert result.tier1_rows > 0, "expected tier-1 rows on 1000-paper fixture"
+        assert result.tier2_rows > 0, "expected tier-2 rows on 1000-paper fixture"
+        # Breaker stayed closed (no trips)
+        assert result.trip_count == 0
+
+        # Watermark advanced to the latest seeded entry_date
+        run = _latest_link_run(conn)
+        assert run["status"] == "ok"
+        assert run["max_entry_date"] is not None
+        expected_wm = _BASE_ENTRY + timedelta(minutes=_LARGE_FIXTURE_SIZE - 1)
+        assert run["max_entry_date"] == expected_wm
+
+        # Spot-check that the rows actually landed for the 1k fixture.
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FROM document_entities " "WHERE bibcode LIKE %s AND tier = 1",
+                (f"{_LARGE_BIBCODE_PREFIX}%",),
+            )
+            tier1_in_db = int(cur.fetchone()[0])
+            cur.execute(
+                "SELECT count(*) FROM document_entities " "WHERE bibcode LIKE %s AND tier = 2",
+                (f"{_LARGE_BIBCODE_PREFIX}%",),
+            )
+            tier2_in_db = int(cur.fetchone()[0])
+        assert tier1_in_db > 0
+        assert tier2_in_db > 0

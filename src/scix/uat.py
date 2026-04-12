@@ -400,38 +400,51 @@ def map_keywords_exact(conn: psycopg.Connection, batch_size: int = 10_000) -> in
     total = 0
 
     with conn.cursor() as cur:
-        # Match preferred labels
+        # Build a materialized lookup table of all UAT labels (preferred + alternate)
+        # so we can join efficiently against papers.keywords.
         cur.execute("""
-            INSERT INTO paper_uat_mappings (bibcode, concept_id, match_type)
-            SELECT DISTINCT p.bibcode, uc.concept_id, 'exact'
-            FROM papers p,
-                 LATERAL unnest(p.keywords) AS kw
-            JOIN uat_concepts uc ON lower(kw) = lower(uc.preferred_label)
-            WHERE p.keywords IS NOT NULL
-            ON CONFLICT DO NOTHING
+            CREATE TEMP TABLE IF NOT EXISTS _uat_labels (
+                concept_id TEXT NOT NULL,
+                label_lower TEXT NOT NULL
+            ) ON COMMIT PRESERVE ROWS
         """)
-        pref_count = cur.rowcount
-        total += pref_count
-        logger.info("Mapped %d papers via preferred labels", pref_count)
-
-        # Match alternate labels via materialized flat lookup
+        cur.execute("TRUNCATE _uat_labels")
         cur.execute("""
-            INSERT INTO paper_uat_mappings (bibcode, concept_id, match_type)
-            SELECT DISTINCT p.bibcode, alt_lookup.concept_id, 'exact'
-            FROM papers p,
-                 LATERAL unnest(p.keywords) AS kw
-            JOIN (
-                SELECT concept_id, lower(al) AS alt_lower
-                FROM uat_concepts, LATERAL unnest(alternate_labels) AS al
-            ) alt_lookup ON lower(kw) = alt_lookup.alt_lower
-            WHERE p.keywords IS NOT NULL
-            ON CONFLICT DO NOTHING
+            INSERT INTO _uat_labels (concept_id, label_lower)
+            SELECT concept_id, lower(preferred_label) FROM uat_concepts
+            UNION ALL
+            SELECT concept_id, lower(al)
+            FROM uat_concepts, LATERAL unnest(alternate_labels) AS al
         """)
-        alt_count = cur.rowcount
-        total += alt_count
-        logger.info("Mapped %d papers via alternate labels", alt_count)
+        cur.execute("CREATE INDEX IF NOT EXISTS _idx_uat_labels ON _uat_labels (label_lower)")
+        conn.commit()
+        logger.info("Built UAT label lookup table (%d entries)", cur.rowcount)
 
-    conn.commit()
+    # Process in year batches to avoid OOM on 32M-paper joins
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT year FROM papers WHERE keywords IS NOT NULL ORDER BY year")
+        years = [row[0] for row in cur.fetchall()]
+
+    for year in years:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO paper_uat_mappings (bibcode, concept_id, match_type)
+                SELECT DISTINCT p.bibcode, ul.concept_id, 'exact'
+                FROM papers p,
+                     LATERAL unnest(p.keywords) AS kw
+                JOIN _uat_labels ul ON lower(kw) = ul.label_lower
+                WHERE p.keywords IS NOT NULL AND p.year = %s
+                ON CONFLICT DO NOTHING
+            """,
+                (year,),
+            )
+            batch_count = cur.rowcount
+            total += batch_count
+        conn.commit()
+        if batch_count > 0:
+            logger.info("Year %s: %d mappings (running total: %d)", year, batch_count, total)
+
     elapsed = time.monotonic() - t0
     logger.info("Total keyword mappings created: %d in %.1fs", total, elapsed)
     return total

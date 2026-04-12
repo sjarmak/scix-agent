@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Harvest Papers With Code methods into entity_dictionary.
 
-Downloads the PWC methods JSON from their production media endpoint,
+Downloads the PWC methods parquet from the HuggingFace pwc-archive dataset,
 parses ML method entries into canonical_name + aliases + description,
 and loads into entity_dictionary with entity_type='method', source='pwc'.
 """
@@ -9,13 +9,14 @@ and loads into entity_dictionary with entity_type='method', source='pwc'.
 from __future__ import annotations
 
 import argparse
-import gzip
-import json
+import io
 import logging
 import sys
 import time
 from pathlib import Path
 from typing import Any
+
+import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -26,9 +27,12 @@ from scix.http_client import ResilientClient
 
 logger = logging.getLogger(__name__)
 
-PWC_METHODS_URL = "https://production-media.paperswithcode.com/about/methods.json.gz"
+PWC_METHODS_URL = (
+    "https://huggingface.co/datasets/pwc-archive/methods"
+    "/resolve/main/data/train-00000-of-00001.parquet"
+)
 
-_DEFAULT_DEST = Path("data/methods.json.gz")
+_DEFAULT_DEST = Path("data/methods.parquet")
 
 # ---------------------------------------------------------------------------
 # Module-level client (lazy init)
@@ -57,13 +61,13 @@ def _get_client() -> ResilientClient:
 
 
 def download_methods(dest: Path | None = None) -> Path:
-    """Download the PWC methods JSON gzip from the canonical location.
+    """Download the PWC methods parquet from HuggingFace.
 
     Skips download if the destination file already exists and is non-empty.
     Uses ResilientClient with built-in retry and exponential backoff.
 
     Args:
-        dest: Path to save the downloaded file. Defaults to data/methods.json.gz.
+        dest: Path to save the downloaded file. Defaults to data/methods.parquet.
 
     Returns:
         Path to the downloaded (or existing) file.
@@ -80,7 +84,6 @@ def download_methods(dest: Path | None = None) -> Path:
 
     client = _get_client()
     response = client.get(PWC_METHODS_URL)
-    # response may be requests.Response or CachedResponse
     if hasattr(response, "content"):
         data = response.content
     else:
@@ -97,29 +100,34 @@ def download_methods(dest: Path | None = None) -> Path:
 
 
 def parse_methods(data_path: Path) -> list[dict[str, Any]]:
-    """Parse the PWC methods JSON into entity_dictionary entries.
+    """Parse the PWC methods parquet into entity_dictionary entries.
 
-    Each method object in the JSON array is expected to have at minimum
-    a ``name`` field. Optional fields: ``full_name``, ``description``,
-    ``paper``, ``introduced_year``, ``source_url``, ``main_collection``.
+    Each row is expected to have at minimum a ``name`` column. Optional
+    columns: ``full_name``, ``description``, ``paper``, ``introduced_year``,
+    ``source_url``, ``collections``.
 
     Args:
-        data_path: Path to the gzip-compressed JSON file.
+        data_path: Path to the parquet file.
 
     Returns:
         List of dicts suitable for ``dictionary.bulk_load()``.
     """
     logger.info("Parsing PWC methods from %s", data_path)
 
-    with gzip.open(data_path, "rt", encoding="utf-8") as fh:
-        raw_methods: list[dict[str, Any]] = json.load(fh)
+    df = pd.read_parquet(data_path)
 
     entries: list[dict[str, Any]] = []
     skipped = 0
 
-    for method in raw_methods:
-        name = (method.get("name") or "").strip()
-        full_name = (method.get("full_name") or "").strip()
+    def _str(val: Any) -> str:
+        """Coerce a value to stripped string, treating NaN/None as empty."""
+        if val is None or (isinstance(val, float) and pd.isna(val)):
+            return ""
+        return str(val).strip()
+
+    for row in df.itertuples(index=False):
+        name = _str(getattr(row, "name", None))
+        full_name = _str(getattr(row, "full_name", None))
 
         if not name and not full_name:
             skipped += 1
@@ -130,34 +138,37 @@ def parse_methods(data_path: Path) -> list[dict[str, Any]]:
         if name and name != canonical_name:
             aliases.append(name)
 
-        # Build metadata from available fields
         metadata: dict[str, Any] = {}
-        description = (method.get("description") or "").strip()
+        description = _str(getattr(row, "description", None))
         if description:
             metadata["description"] = description
 
-        introduced_year = method.get("introduced_year")
-        if introduced_year is not None:
-            metadata["introduced_year"] = introduced_year
+        introduced_year = getattr(row, "introduced_year", None)
+        if introduced_year is not None and not (
+            isinstance(introduced_year, float) and pd.isna(introduced_year)
+        ):
+            metadata["introduced_year"] = int(introduced_year)
 
-        source_url = (method.get("source_url") or "").strip()
+        source_url = _str(getattr(row, "source_url", None))
         if source_url:
             metadata["source_url"] = source_url
 
-        collection = method.get("main_collection")
-        if collection:
-            # collection may be a dict or string depending on schema version
-            if isinstance(collection, dict):
-                coll_name = (collection.get("name") or "").strip()
-                if coll_name:
-                    metadata["collection"] = coll_name
-            elif isinstance(collection, str) and collection.strip():
-                metadata["collection"] = collection.strip()
+        # Collections field (array of dicts with area/collection keys)
+        collections = getattr(row, "collections", None)
+        if collections is not None and hasattr(collections, "__len__") and len(collections) > 0:
+            try:
+                first = collections[0]
+                if isinstance(first, dict):
+                    coll_name = (first.get("collection") or "").strip()
+                    if coll_name:
+                        metadata["collection"] = coll_name
+            except (IndexError, TypeError):
+                pass
 
-        paper = method.get("paper")
+        paper = getattr(row, "paper", None)
         if paper and isinstance(paper, dict):
             paper_meta: dict[str, Any] = {}
-            for key in ("title", "url", "arxiv_id"):
+            for key in ("title", "url"):
                 val = paper.get(key)
                 if val and isinstance(val, str) and val.strip():
                     paper_meta[key] = val.strip()
@@ -281,7 +292,7 @@ def main() -> None:
         "--data-file",
         type=Path,
         default=None,
-        help="Path to methods.json.gz (downloads if not provided)",
+        help="Path to methods.parquet (downloads if not provided)",
     )
     parser.add_argument(
         "--dsn",

@@ -6,19 +6,19 @@
     {
       "tool": "keyword_search",
       "status": "PASS",
-      "elapsed_ms": 4123.7,
+      "elapsed_ms": 2997.6,
       "detail": "5 papers"
     },
     {
       "tool": "get_paper",
       "status": "PASS",
-      "elapsed_ms": 705.7,
+      "elapsed_ms": 607.6,
       "detail": "1 papers"
     },
     {
       "tool": "get_citations",
       "status": "PASS",
-      "elapsed_ms": 1195.8,
+      "elapsed_ms": 659.2,
       "detail": "5 papers"
     },
     {
@@ -30,55 +30,55 @@
     {
       "tool": "co_citation_analysis",
       "status": "PASS",
-      "elapsed_ms": 32394.9,
+      "elapsed_ms": 23120.0,
       "detail": "5 papers"
     },
     {
       "tool": "bibliographic_coupling",
       "status": "PASS",
-      "elapsed_ms": 98.5,
+      "elapsed_ms": 14.1,
       "detail": "0 papers"
     },
     {
       "tool": "citation_chain",
       "status": "PASS",
-      "elapsed_ms": 22.3,
+      "elapsed_ms": 16.5,
       "detail": "2 papers"
     },
     {
       "tool": "get_author_papers",
       "status": "PASS",
-      "elapsed_ms": 5683.3,
+      "elapsed_ms": 12.9,
       "detail": "50 papers"
     },
     {
       "tool": "facet_counts",
       "status": "PASS",
-      "elapsed_ms": 44284.3,
+      "elapsed_ms": 15857.8,
       "detail": "10 papers"
     },
     {
       "tool": "temporal_evolution",
       "status": "PASS",
-      "elapsed_ms": 1854.6,
+      "elapsed_ms": 42.6,
       "detail": "51 papers"
     },
     {
       "tool": "get_paper_metrics",
       "status": "PASS",
-      "elapsed_ms": 15.5,
+      "elapsed_ms": 3.7,
       "detail": "1 papers"
     },
     {
       "tool": "explore_community",
       "status": "PASS",
-      "elapsed_ms": 0.2,
-      "detail": "0 papers"
+      "elapsed_ms": 0.4,
+      "detail": "{'bibcode': '2020ScTEn.73939864B', 'metrics': {'papers': [],"
     },
     {
       "tool": "entity_search",
       "status": "PASS",
-      "elapsed_ms": 7.4,
+      "elapsed_ms": 7.2,
       "detail": "0 papers"
     },
     {
@@ -90,80 +90,80 @@
     {
       "tool": "concept_search",
       "status": "PASS",
-      "elapsed_ms": 3.0,
+      "elapsed_ms": 2.4,
       "detail": "0 papers"
     },
     {
       "tool": "get_citation_context",
       "status": "PASS",
-      "elapsed_ms": 1.9,
+      "elapsed_ms": 2.1,
       "detail": "4 papers"
     },
     {
       "tool": "read_paper_section",
       "status": "PASS",
-      "elapsed_ms": 1.1,
+      "elapsed_ms": 1.2,
       "detail": "1 papers"
     },
     {
       "tool": "search_within_paper",
       "status": "PASS",
-      "elapsed_ms": 1.2,
+      "elapsed_ms": 0.8,
       "detail": "0 papers"
     },
     {
       "tool": "get_openalex_topics",
       "status": "PASS",
-      "elapsed_ms": 0.1,
-      "detail": "{'bibcode': '1973PlSoi..39..205B', 'openalex_id': None, 'top"
+      "elapsed_ms": 2.2,
+      "detail": "1 papers"
     },
     {
       "tool": "document_context",
       "status": "PASS",
-      "elapsed_ms": 3.1,
+      "elapsed_ms": 0.8,
       "detail": "1 papers"
     },
     {
       "tool": "entity_context",
       "status": "PASS",
-      "elapsed_ms": 1.5,
+      "elapsed_ms": 1.2,
       "detail": "1 papers"
     },
     {
       "tool": "resolve_entity",
       "status": "PASS",
-      "elapsed_ms": 4.6,
+      "elapsed_ms": 4.9,
       "detail": "1 candidates"
     },
     {
       "tool": "add_to_working_set",
       "status": "PASS",
-      "elapsed_ms": 0.0,
+      "elapsed_ms": 0.1,
       "detail": "1 entries"
     },
     {
       "tool": "get_working_set",
       "status": "PASS",
       "elapsed_ms": 0.0,
-      "detail": "1 entries"
+      "detail": "2 entries"
     },
     {
       "tool": "get_session_summary",
       "status": "PASS",
       "elapsed_ms": 0.0,
-      "detail": "{'session_id': '_default', 'working_set_size': 1, 'seen_pape"
+      "detail": "{'session_id': '_default', 'working_set_size': 2, 'focused_p"
     },
     {
       "tool": "find_gaps",
       "status": "PASS",
-      "elapsed_ms": 961.7,
+      "elapsed_ms": 908.3,
       "detail": "0 papers"
     },
     {
       "tool": "clear_working_set",
       "status": "PASS",
       "elapsed_ms": 0.0,
-      "detail": "removed 1"
+      "detail": "removed 2"
     },
     {
       "tool": "health_check",

@@ -54,10 +54,10 @@ def _get_client() -> ResilientClient:
 # Sub-facet UUIDs under Techniques
 _TECHNIQUE_SUBFACET_IDS = frozenset(
     {
-        "https://doi.org/10.29172/705f7ed8-6d0e-4b5a-a65a-4a16ca09c040",  # Experimental
-        "https://doi.org/10.29172/1e0c099a-4cd7-42c4-8a0e-8aeb0e501882",  # Computational
-        "https://doi.org/10.29172/b96dac97-f930-4cfe-b895-c5e5baab0424",  # Theoretical
-        "https://doi.org/10.29172/233a6cd0-9ecb-498e-bc13-b5a8d54a0521",  # Theoretical & Computational
+        "https://doi.org/10.29172/705f7ed8-5e20-47e1-8ca4-fa7feea8ad84",  # Experimental
+        "https://doi.org/10.29172/1e0c099a-9f2a-4e47-b3f1-7faa28b6a506",  # Computational
+        "https://doi.org/10.29172/b96dac97-ab85-4320-892d-9b245caf097f",  # Theoretical
+        "https://doi.org/10.29172/233a6cd0-b7fe-491b-b5fd-85fd6b2a7c79",  # Theoretical & Computational
     }
 )
 

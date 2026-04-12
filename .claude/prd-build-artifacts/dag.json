@@ -1,21 +1,28 @@
 [
   {
-    "id": "fix-hybrid-search",
-    "name": "Fix hybrid_search defaults + cardinality routing",
-    "description": "M2 + premortem M2 amendment. Fix hybrid_search() default from specter2 to indus. Skip OpenAI signal entirely (0 rows). Add cardinality-aware query routing: estimate filter selectivity before HNSW scan, use filter-first CTE + brute-force cosine for <1% selectivity filters. This is all in search.py — no mcp_server.py changes.",
+    "id": "u01-schema-migrations",
+    "name": "Schema migrations + zombie cleanup",
+    "description": "M1 schema hardening (migration 026: tier, tier_version, ambiguity_class, link_policy, new PK). S4 ontology version pinning (migration 027: source_version, supersedes_id). D3 staging tables + promote_harvest skeleton (migration 028). M3.5.0 query_log table (migration 029). Zombie harvest_runs cleanup script for GCMD/SPASE stuck in 'running' state. All migrations must be idempotent.",
     "deps": [],
     "tier": "medium",
     "acceptance": [
-      "grep -n 'specter2' src/scix/search.py returns zero hits in default parameter values",
-      "hybrid_search() accepts model_name='indus' as default and produces results via rrf_fuse()",
-      "When filters have <1% selectivity, hybrid_search uses filter-first CTE instead of HNSW iterative scan",
-      "OpenAI embedding signal is skipped (not called) when model has 0 rows in paper_embeddings",
-      "Existing tests in tests/ pass (pytest tests/ -x)",
-      "New test: test_hybrid_search_default_model verifies indus is default",
-      "New test: test_cardinality_routing verifies filter-first fallback triggers for selective filters"
+      "Migration 026 applied to scix_test: `\\d document_entities` shows columns tier SMALLINT NOT NULL, tier_version INT NOT NULL DEFAULT 1; PK is (bibcode, entity_id, link_type, tier); entities.ambiguity_class enum has values unique/domain_safe/homograph/banned; entities.link_policy enum has values open/context_required/llm_only/banned",
+      "Integration test inserts two rows with same (bibcode, entity_id, link_type) but different tier values without collision; DELETE WHERE tier=2 removes exactly one tier's rows",
+      "Migration 027 applied: entities.source_version TEXT column exists; entities.supersedes_id BIGINT self-FK exists",
+      "Migration 028 applied: entities_staging, entity_aliases_staging, entity_identifiers_staging tables exist with same schema as production plus staging_run_id; promote_harvest(run_id BIGINT) function defined (stub body acceptable if u04 unit completes it)",
+      "Migration 029 applied: query_log table exists with columns id BIGSERIAL PK, ts TIMESTAMPTZ, tool TEXT, query TEXT, result_count INT, session_id TEXT NULL, is_test BOOL NOT NULL DEFAULT false",
+      "scripts/cleanup_harvest_zombies.py exists and when run against scix_test with a fixture zombie row in harvest_runs(status='running', started_at<now()-interval '6 hours'), marks the row as status='aborted_zombie' and prints a summary",
+      "pytest tests/test_migrations.py passes (all migrations apply cleanly on a fresh scix_test DB; re-running is a no-op)"
     ],
     "layer": 0,
-    "scope": ["src/scix/search.py", "tests/test_search.py"],
+    "scope": [
+      "migrations/026_entity_schema_hardening.sql",
+      "migrations/027_ontology_version_pinning.sql",
+      "migrations/028_staging_and_promote_harvest.sql",
+      "migrations/029_query_log.sql",
+      "scripts/cleanup_harvest_zombies.py",
+      "tests/test_migrations.py"
+    ],
     "status": "pending",
     "branch": null,
     "pipeline_stage": null,
@@ -24,19 +31,22 @@
     "pass_number": 1
   },
   {
-    "id": "dependency-hardening",
-    "name": "Pin MCP SDK + vendor UAT SKOS",
-    "description": "M10: Pin mcp SDK to >=1.2,<2.0 in requirements. Fix UAT SKOS URL — either vendor the file locally or pin to a release tag instead of master branch. Add startup self-test that validates list_tools() returns expected tool count with valid schemas.",
+    "id": "u02-collision-bug-fix",
+    "name": "Fix silent collision-drop in link_entities.py:70",
+    "description": "M2. The caching resolver in src/scix/link_entities.py around line 70 does `if key and key not in cache`, silently letting the first ontology own every ambiguous canonical name. Replace with a collision-aware cache that stores all candidates per key and surfaces ambiguity to the disambiguator. Separate commit, touches a single file + one test module.",
     "deps": [],
     "tier": "small",
     "acceptance": [
-      "requirements.txt (or pyproject.toml) pins mcp to '>=1.2,<2.0' or equivalent upper bound",
-      "UAT SKOS URL no longer references 'master' branch — uses release tag, 'main', or local vendored file",
-      "grep -rn 'master' src/scix/uat.py returns zero hits for GitHub raw URLs",
-      "Existing tests pass (pytest tests/ -x)"
+      "src/scix/link_entities.py no longer drops collisions at the cache layer; the resolver returns all candidate entities for an ambiguous canonical name",
+      "tests/test_link_entities_collision.py: a unit test creates two entities with the same lowercase canonical name (e.g. 'mercury' from SSODNet and GCMD), calls the resolver, and asserts len(candidates) >= 2",
+      "pytest tests/test_link_entities_collision.py passes with 0 failures",
+      "git log shows the fix in its own commit prefixed with `prd-build: u02-collision-bug-fix`"
     ],
     "layer": 0,
-    "scope": ["requirements.txt", "pyproject.toml", "src/scix/uat.py"],
+    "scope": [
+      "src/scix/link_entities.py",
+      "tests/test_link_entities_collision.py"
+    ],
     "status": "pending",
     "branch": null,
     "pipeline_stage": null,
@@ -45,39 +55,31 @@
     "pass_number": 1
   },
   {
-    "id": "consolidate-mcp-tools",
-    "name": "Consolidate 28 MCP tools to 13 + aliases + implicit session",
-    "description": "M1+M3+M4+M5+M6+M8: The big refactor of mcp_server.py. (1) Replace semantic_search+keyword_search with unified 'search' tool backed by hybrid_search (mode=hybrid/semantic/keyword). (2) Merge get_citations+get_references into citation_graph(direction=forward/backward/both), merge co_citation+bibliographic_coupling into citation_similarity(method=...), fold get_citation_context into citation_graph(include_context=true). (3) Merge entity_search+resolve_entity into entity(action=search/resolve), keep entity_context separate. Fix entity_type validation. (4) Eliminate add_to_working_set, get_working_set, get_session_summary, clear_working_set — replace with implicit tracking in SessionState. Add clear_first param to find_gaps. (5) Merge get_paper+document_context via include_entities flag (default false per premortem). Absorb get_openalex_topics, entity_profile. (6) Add deprecated alias dict in _dispatch_tool — old names removed from list_tools() but still dispatched with deprecation metadata. Log alias hits. list_tools() returns exactly 13 tools.",
-    "deps": ["fix-hybrid-search"],
+    "id": "u03-resolve-entities-service",
+    "name": "Canonical resolve_entities() service (M13, D5)",
+    "description": "M13 — Build the single canonical Python service src/scix/resolve_entities.py exposing `resolve_entities(bibcode, context) -> EntityLinkSet`. EntityLinkSet is a @dataclass(frozen=True) whose __init__ requires a module-private _ResolverToken sentinel. Service has four internal lanes (static-core read, jit_cache hit, live_jit stub, local_ner stub — lanes may be mock/stub at this stage, real backends come from u10). AST-level lint (libcst) walks src/ and fails if any file outside src/scix/resolve_entities.py writes document_entities or document_entities_jit_cache, or reads document_entities_canonical. Hypothesis property test asserts set-equality across all four mock lanes. Benchmark suite captures per-lane p95 latency.",
+    "deps": ["u01-schema-migrations"],
     "tier": "large",
     "acceptance": [
-      "list_tools() returns exactly 13 tools: search, concept_search, get_paper, read_paper, citation_graph, citation_similarity, citation_chain, entity, entity_context, graph_context, find_gaps, temporal_evolution, facet_counts",
-      "search(query='test', mode='hybrid') dispatches to hybrid_search and returns results",
-      "search(query='test', mode='semantic') dispatches to vector_search with indus model",
-      "search(query='test', mode='keyword') dispatches to lexical_search",
-      "citation_graph(bibcode='...', direction='forward') returns same shape as old get_citations",
-      "citation_graph(bibcode='...', direction='backward') returns same shape as old get_references",
-      "citation_similarity(bibcode='...', method='co_citation') returns same shape as old co_citation_analysis",
-      "entity(action='search', entity_type='methods', query='JWST') returns papers",
-      "entity(action='search', entity_type='entities') returns clear validation error listing valid types",
-      "entity(action='resolve', query='James Webb') returns entity candidates",
-      "entity_context(entity_id=1) returns entity card (or appropriate error for nonexistent ID)",
-      "get_paper(bibcode='...', include_entities=false) returns paper metadata only",
-      "get_paper(bibcode='...', include_entities=true) returns paper + linked entities from agent_document_context view",
-      "find_gaps() reads from implicit session state without requiring add_to_working_set calls",
-      "find_gaps(clear_first=true) resets the focused set before computing gaps",
-      "add_to_working_set, get_working_set, get_session_summary, clear_working_set are NOT in list_tools()",
-      "Calling old tool name 'semantic_search' returns results + deprecated:true + use_instead:'search' in metadata",
-      "Calling old tool name 'get_citations' returns results + deprecated:true + use_instead:'citation_graph'",
-      "All deprecated aliases log the original tool name via _log_query or similar",
-      "Existing passing tests still pass (pytest tests/ -x --ignore tests that test removed tools)",
-      "New tests verify at least 3 consolidated tools dispatch correctly"
+      "src/scix/resolve_entities.py defines `def resolve_entities(bibcode: str, context: EntityResolveContext) -> EntityLinkSet` and is the sole exported entry point",
+      "EntityLinkSet is `@dataclass(frozen=True)`; its __init__ requires a module-private `_ResolverToken` sentinel; a unit test in tests/test_resolve_entities_type_guard.py asserts `EntityLinkSet(entities=frozenset())` raises TypeError when called from outside src/scix/resolve_entities.py",
+      "scripts/ast_lint_resolver.py uses libcst to walk src/, detects any write to document_entities / document_entities_jit_cache or read from document_entities_canonical originating outside src/scix/resolve_entities.py, and exits non-zero if found; test asserts a deliberately planted violation fails the lint",
+      "Unit tests cover all four internal lanes (static, jit_cache_hit, live_jit, local_ner) with mock backends; pytest tests/test_resolve_entities.py passes",
+      "Hypothesis property test in tests/test_resolve_entities_invariant.py with >=100 randomized inputs asserts that for fixed (bibcode, candidate_set_hash, model_version), the returned EntityLinkSet has identical entity-id sets across all four lanes (confidence values may differ by <=0.01)",
+      "tests/bench_resolve_entities.py benchmark suite measures per-lane p95 latency and writes to build-artifacts/m13_latency.md; static lane p95 <= 5ms, jit_cache hit p95 <= 25ms budgets are asserted (live_jit and local_ner budgets are asserted against mocks)",
+      "All acceptance pytest runs exit with 0 failures; ast_lint_resolver.py exits 0 on current src/"
     ],
     "layer": 1,
     "scope": [
-      "src/scix/mcp_server.py",
-      "src/scix/session.py",
-      "tests/test_mcp_tools.py"
+      "src/scix/resolve_entities.py",
+      "src/scix/entity_link_set.py",
+      "src/scix/_resolver_token.py",
+      "scripts/ast_lint_resolver.py",
+      "tests/test_resolve_entities.py",
+      "tests/test_resolve_entities_type_guard.py",
+      "tests/test_resolve_entities_invariant.py",
+      "tests/test_ast_lint_resolver.py",
+      "tests/bench_resolve_entities.py"
     ],
     "status": "pending",
     "branch": null,
@@ -87,21 +89,29 @@
     "pass_number": 1
   },
   {
-    "id": "rewrite-descriptions",
-    "name": "Rewrite all 13 tool descriptions (intent-action-contrast)",
-    "description": "M7: Rewrite every tool description in list_tools() using intent-action-contrast pattern. Each description: what does the agent get, when to use vs alternatives, what NOT to use it for. No implementation details (no pgvector, HNSW, tsvector, JSONB, GIN, model identifiers). Under 80 words. Include one 'Use X instead when...' contrast sentence.",
-    "deps": ["consolidate-mcp-tools"],
+    "id": "u04-staging-promotion-hardening",
+    "name": "Staging + promote_harvest + cost ceilings (D3)",
+    "description": "Complete the promote_harvest() pg function body and wire the Python wrapper src/scix/harvest_promotion.py. Implements S4 shadow-diff as a blocking gate: >2% canonical shrinkage, >5% alias shrinkage, per-source floors, orphan-prevention (entities with >=1000 document_entities rows cannot disappear), schema mismatch rejection. Also implements D3c LLM cost ceilings (src/scix/llm_cost_ceiling.py): per-day $50 cap via a Redis-backed or Postgres-backed counter keyed by YYYY-MM-DD, per-query $0.01 cap enforced pre-call via token estimation. scripts/replay_harvest.py round-trips a snapshot back into staging.",
+    "deps": ["u01-schema-migrations"],
     "tier": "medium",
     "acceptance": [
-      "All 13 tool descriptions are under 80 words each",
-      "No tool description contains any of: pgvector, HNSW, tsvector, JSONB, GIN, cosine, vector, embedding model names",
-      "Every tool description includes a 'Use X instead when...' or equivalent contrast sentence",
-      "Descriptions follow intent-action-contrast pattern: what agent gets, when to use, when NOT to use",
-      "grep -i 'pgvector\\|hnsw\\|tsvector\\|jsonb\\|gin\\|specter\\|indus\\|text-embedding' across all descriptions returns zero hits",
-      "Existing tests pass (pytest tests/ -x)"
+      "src/scix/harvest_promotion.py exposes `promote_harvest(run_id: int) -> PromotionResult`; PromotionResult is a frozen dataclass with fields accepted: bool, reason: Optional[str], diff: dict",
+      "Unit test: a synthetic staging run with >2% canonical shrinkage fails promotion with reason containing 'canonical_shrinkage'; staging data is preserved; harvest_runs.status set to 'rejected_by_diff'",
+      "Unit test: a synthetic clean staging run is promoted atomically under pg_try_advisory_lock('entities_promotion'); entities/entity_aliases/entity_identifiers rows appear in production tables",
+      "Unit test: a staging run that would orphan an entity with >1000 document_entities rows is rejected",
+      "scripts/replay_harvest.py --source <src> --snapshot <date> loads a .jsonl.gz snapshot from data/entities/snapshots/ into staging; test asserts round-tripping produces zero diff",
+      "src/scix/llm_cost_ceiling.py exposes `check_and_reserve(estimated_cost_usd: float) -> bool` and `record_actual(actual_cost_usd: float) -> None`; unit test: a call that would exceed the $50 daily cap returns False; a call exceeding the $0.01 per-query cap returns False",
+      "pytest tests/test_promote_harvest.py tests/test_llm_cost_ceiling.py tests/test_replay_harvest.py passes"
     ],
-    "layer": 2,
-    "scope": ["src/scix/mcp_server.py"],
+    "layer": 1,
+    "scope": [
+      "src/scix/harvest_promotion.py",
+      "src/scix/llm_cost_ceiling.py",
+      "scripts/replay_harvest.py",
+      "tests/test_promote_harvest.py",
+      "tests/test_llm_cost_ceiling.py",
+      "tests/test_replay_harvest.py"
+    ],
     "status": "pending",
     "branch": null,
     "pipeline_stage": null,
@@ -110,21 +120,319 @@
     "pass_number": 1
   },
   {
-    "id": "smoke-test-suite",
-    "name": "All-tool smoke test + startup self-test",
-    "description": "M10 (test part): Add a startup self-test in mcp_server.py that validates list_tools() returns 13 tools with valid schemas on server init. Add a pytest smoke test that calls each of the 13 consolidated tools with a golden-path input and verifies non-error response. This catches total breakage of any tool on every deploy.",
-    "deps": ["consolidate-mcp-tools"],
-    "tier": "small",
+    "id": "u05-ambiguity-classification",
+    "name": "Ambiguity class annotation for all entities (M5)",
+    "description": "M5. Populate entities.ambiguity_class offline. Rules: `banned` for any canonical/alias that matches the top-20K English words at WordFreq Zipf >= 3.0 or is <= 2 characters; `homograph` for any name that collides with another entity's canonical or alias across the full graph; `domain_safe` for entities with >=6-character names unique in the graph and a single ontology of origin; `unique` otherwise. Writes updates in bulk via UPDATE ... FROM VALUES. Ships a 50-random-example spot-check audit per class.",
+    "deps": ["u01-schema-migrations"],
+    "tier": "medium",
     "acceptance": [
-      "A startup self-test runs during MCP server initialization and validates list_tools() returns exactly 13 tools",
-      "If startup self-test fails, server logs a CRITICAL error (does not silently start with broken tools)",
-      "pytest test file exists that calls each of the 13 tools with a minimal valid input",
-      "Smoke test verifies each tool returns a non-error response (no exceptions, no 'error' key in result)",
-      "pytest tests/test_smoke.py (or similar) passes",
-      "Existing tests still pass (pytest tests/ -x)"
+      "scripts/classify_entity_ambiguity.py runs against scix_test, populates entities.ambiguity_class for every row, and emits progress to stdout",
+      "src/scix/ambiguity.py exposes `classify(canonical_name: str, aliases: list[str], source_count: int, collision_count: int) -> AmbiguityClass` (pure function, unit tested)",
+      "Unit test covers all four classifications including edge cases: 2-character name -> banned; 'the' (Zipf >= 3) -> banned; 'HST' with a collision -> homograph; 'GALFA-HI' unique 8-char single-source -> domain_safe",
+      "After running on scix_test fixture data, `SELECT ambiguity_class, count(*) FROM entities GROUP BY 1` returns 4 buckets with non-null counts",
+      "build-artifacts/ambiguity_audit.md generated with 50 random spot-check examples per class (200 total), formatted as a markdown table",
+      "pytest tests/test_ambiguity.py passes with 0 failures"
+    ],
+    "layer": 1,
+    "scope": [
+      "src/scix/ambiguity.py",
+      "scripts/classify_entity_ambiguity.py",
+      "tests/test_ambiguity.py"
+    ],
+    "status": "pending",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "u06-tier1-keyword-match",
+    "name": "Tier 1 keyword -> entity exact match + audit (M3)",
+    "description": "M3. Single SQL pass joining papers.keywords against entities.canonical_name + entity_aliases.alias, writing to document_entities with tier=1, link_type='keyword_match', confidence=1.0. Then sample 200 of the resulting links stratified across ontologies and arxiv_class; label them via an LLM-judge scaffold for now (human audit lands in u11). Produces the delta report build-artifacts/tier1_audit.md.",
+    "deps": ["u01-schema-migrations", "u02-collision-bug-fix"],
+    "tier": "medium",
+    "acceptance": [
+      "scripts/link_tier1.py runs a single SQL pass and writes rows with tier=1, link_type='keyword_match', confidence=1.0 into document_entities",
+      "Against a seeded scix_test fixture with >=10 papers and >=20 entities, the script writes >=5 new tier=1 rows (production scale of >=3M is not asserted in test -- the test asserts correctness, not scale)",
+      "scripts/audit_tier1.py draws a stratified 200-sample across source + arxiv_class buckets, writes sample to build-artifacts/tier1_audit.md with columns bibcode, entity_id, canonical_name, source, arxiv_class, label_placeholder, and computes a Wilson 95% CI for the precision placeholder",
+      "pytest tests/test_tier1.py passes with 0 failures; test includes an end-to-end run against a fixture DB and asserts rows are written and audit markdown is generated"
+    ],
+    "layer": 1,
+    "scope": [
+      "scripts/link_tier1.py",
+      "scripts/audit_tier1.py",
+      "tests/test_tier1.py"
+    ],
+    "status": "pending",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "u07-query-log-and-curated-core",
+    "name": "query_log bootstrap + curated core selection (M3.5)",
+    "description": "M3.5.0/1/2. src/scix/query_log.py provides a write API the MCP server calls (structured log -> row in query_log); scripts/backfill_query_log.py replays existing MCP session logs into query_log. scripts/curate_entity_core.py runs the three-pass ranking (zero-result gap candidates -> Wikidata backfill hook -> ambiguity_class='unique' with >=1 query_log hit) and writes build-artifacts/curated_core.csv with exactly <=10,000 rows. core_lifecycle.py implements the promotion/demotion trigger with a core_promotion_log table.",
+    "deps": [
+      "u01-schema-migrations",
+      "u05-ambiguity-classification",
+      "u06-tier1-keyword-match"
+    ],
+    "tier": "medium",
+    "acceptance": [
+      "src/scix/query_log.py exposes `log_query(tool: str, query: str, result_count: int, session_id: Optional[str]=None, is_test: bool=False) -> None`; unit test asserts a row is written with ts~=now()",
+      "scripts/backfill_query_log.py takes a --source <path> argument and replays structured MCP session logs into query_log; test asserts >=N rows inserted from a fixture log file",
+      "scripts/curate_entity_core.py runs a three-pass ranking against scix_test fixture data and produces build-artifacts/curated_core.csv with columns entity_id, canonical_name, source, ambiguity_class, pass_triggered, query_hits_14d, zero_result_hits_14d; the row count is <= 10,000 (hard-enforced)",
+      "src/scix/core_lifecycle.py exposes `promote(entity_id: int) -> None` and `demote(entity_id: int) -> None`; a `core_promotion_log` table is created (migration or inline DDL); unit test asserts that promoting an 10,001st entity auto-demotes the lowest-query-hit entity",
+      "build-artifacts/curated_core_stratification.md generated with per-source counts showing at least 6 of 7 live harvesters represented in the fixture",
+      "pytest tests/test_query_log.py tests/test_curated_core.py passes with 0 failures"
     ],
     "layer": 2,
-    "scope": ["src/scix/mcp_server.py", "tests/test_smoke.py"],
+    "scope": [
+      "src/scix/query_log.py",
+      "src/scix/core_lifecycle.py",
+      "scripts/backfill_query_log.py",
+      "scripts/curate_entity_core.py",
+      "tests/test_query_log.py",
+      "tests/test_curated_core.py",
+      "migrations/030_core_promotion_log.sql"
+    ],
+    "status": "pending",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "u08-fusion-mv",
+    "name": "document_entities_canonical fusion MV (M8)",
+    "description": "M8. Build materialized view document_entities_canonical that computes fused confidence via noisy-OR: `fused = 1 - exp(SUM(ln(1 - c_t * w_t)))`. tier_weight(tier) is an IMMUTABLE SQL function. Initial placeholder weights: t1=0.98, t2=0.85, t3=0.92 (deprecated slot), t4=0.50, t5=0.88 (JIT). MV has a UNIQUE index on (bibcode, entity_id) required for REFRESH CONCURRENTLY. tier_weight_calibration_log table records each calibration version. Wire a dirty-flag-driven refresh job capped at <=1 refresh/hour. All writes/reads route through M13's resolve_entities (u03).",
+    "deps": ["u01-schema-migrations", "u03-resolve-entities-service"],
+    "tier": "medium",
+    "acceptance": [
+      "migrations/031_fusion_mv.sql creates document_entities_canonical MV, tier_weight(tier SMALLINT) IMMUTABLE function, tier_weight_calibration_log table, and required indexes (UNIQUE on (bibcode, entity_id), (entity_id, fused_confidence DESC), (bibcode))",
+      "REFRESH MATERIALIZED VIEW CONCURRENTLY document_entities_canonical succeeds on a populated fixture (the UNIQUE index makes it eligible)",
+      "src/scix/fusion_mv.py exposes `mark_dirty() -> None` and `refresh_if_due(min_interval_seconds: int = 3600) -> bool`; rate-limits to <=1 refresh/hour via a last_refresh_at row in a fusion_mv_state table",
+      "On a seeded fixture with >=5 tiers of rows per (bibcode, entity_id), `SELECT fused_confidence FROM document_entities_canonical WHERE bibcode=X AND entity_id=Y` matches the closed-form `1 - exp(sum(ln(1 - c_t * tier_weight(t))))` to within 1e-9",
+      "tier_weight_calibration_log populated with an initial 'placeholder_2026-04-12' row on migration",
+      "Query latency test: on a row with >=100 synthetic links, `SELECT * FROM document_entities_canonical WHERE entity_id=$1 ORDER BY fused_confidence DESC LIMIT 20` returns in <100ms",
+      "pytest tests/test_fusion_mv.py passes with 0 failures"
+    ],
+    "layer": 2,
+    "scope": [
+      "migrations/031_fusion_mv.sql",
+      "src/scix/fusion_mv.py",
+      "tests/test_fusion_mv.py"
+    ],
+    "status": "pending",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "u09-tier2-aho-corasick",
+    "name": "Tier 2 Aho-Corasick + S2 Adeft disambiguators (M6, S2)",
+    "description": "M6 + S2. Build a pyahocorasick automaton over curated-core entities with ambiguity_class in {unique, domain_safe, homograph}. Homographs fire only when a disambiguating long-form alias is also present in the abstract. Parallel execution via multiprocessing.shared_memory or fork+pickle. Writes tier=2 rows with confidence from a 7-feature context-vector logistic. S2: per-acronym Adeft-style char n-gram TF-IDF + logistic regression for HST, JET, HD, NGC, IC, M31, R, CORE, MAGIC, SAGE, ATLAS, CMS, IRAS, WISE, ROSAT, SOFIA, GAIA, ALMA, MARS, AI - integrated as a post-filter. All writes route through M13's resolve_entities().",
+    "deps": [
+      "u03-resolve-entities-service",
+      "u05-ambiguity-classification",
+      "u07-query-log-and-curated-core"
+    ],
+    "tier": "large",
+    "acceptance": [
+      "src/scix/aho_corasick.py exposes `build_automaton(entities: Iterable[EntityRow]) -> AhocorasickAutomaton` (pickleable) and `link_abstract(abstract: str, automaton, disambiguator=None) -> list[LinkCandidate]`",
+      "Homograph entities with a disambiguation requirement only fire when a long-form alias is co-present in the abstract; unit test: 'HST' alone in abstract -> no link; 'HST' + 'Hubble Space Telescope' -> link emitted",
+      "src/scix/adeft_disambig.py trains char n-gram TF-IDF + logistic regression per acronym from synthetic long-form positive examples; exposes `load_classifier(acronym: str) -> AdeftClassifier`; unit test asserts classifier achieves >= 90% accuracy on a held-out synthetic test set for at least 3 of the 20 acronyms",
+      "scripts/link_tier2.py runs end-to-end on a seeded scix_test fixture: builds automaton from curated core, links abstracts in parallel, writes tier=2 rows via resolve_entities() (M13); per-entity linkage cap of 25,000 papers enforced (entities over cap demoted to link_policy='llm_only')",
+      "pytest tests/test_tier2.py tests/test_adeft.py passes with 0 failures",
+      "All tier=2 writes go through src/scix/resolve_entities.py (u03's AST lint passes on this branch)"
+    ],
+    "layer": 3,
+    "scope": [
+      "src/scix/aho_corasick.py",
+      "src/scix/adeft_disambig.py",
+      "scripts/link_tier2.py",
+      "tests/test_tier2.py",
+      "tests/test_adeft.py"
+    ],
+    "status": "pending",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "u10-jit-lane",
+    "name": "JIT lane: bulkhead + cache + local NER (M11a/b/c)",
+    "description": "M11a: async bulkhead with 400ms hard budget, per-tool asyncio.Semaphore, dedicated executor pool, degrade-to-static-core on timeout/vendor error. M11b: persisted document_entities_jit_cache partitioned table (tier=5) keyed by (bibcode, candidate_set_hash, model_version), TTL 14 days via daily cleanup cron. Fire-and-forget writeback via bounded queue (depth 1024); 2 consecutive queue drops page on-call. Bulkhead-degraded responses are NOT cached. M11c: SciBERT/INDUS-NER local inference wrapper (can be a stub for CPU tests; real RTX 5090 deployment happens outside this unit), continuous 5% canary share, overflow routing (bulkhead-degrade -> local NER -> static core last-line). All lanes plug into u03's resolve_entities() via the jit_cache_hit, live_jit, local_ner internal lanes.",
+    "deps": [
+      "u03-resolve-entities-service",
+      "u08-fusion-mv",
+      "u04-staging-promotion-hardening"
+    ],
+    "tier": "large",
+    "acceptance": [
+      "migrations/032_jit_cache.sql creates document_entities_jit_cache partitioned table with tier=5 default, schema matching document_entities plus candidate_set_hash TEXT, model_version TEXT, expires_at TIMESTAMPTZ columns; partition by RANGE on expires_at",
+      "src/scix/jit/bulkhead.py: async context manager with asyncio.Semaphore(default=4), 400ms wall budget; on timeout raises BulkheadDegraded; unit test asserts: under forced 2.5s Anthropic latency, bulkhead returns degraded within 410ms; under forced vendor error, returns degraded",
+      "src/scix/jit/cache.py: get(bibcode, candidate_set_hash, model_version) returns cached EntityLinkSet or None; put() is fire-and-forget via asyncio.Queue(maxsize=1024); TTL cleanup via scripts/jit_cache_cleanup.py; unit test asserts queue saturation drops new puts and after 2 consecutive drops a pager alert is emitted",
+      "src/scix/jit/local_ner.py: wrapper exposing `run_local_ner(text: str, candidate_set: list[int]) -> EntityLinkSet`; may use a CPU stub implementation for tests (real GPU deployment is out of scope); unit test asserts p95 latency <= 275ms on stub path",
+      "src/scix/jit/router.py: routing policy - Haiku primary with 5% local-NER canary share (enforced via weighted random), overflow routes bulkhead-degrade -> local NER -> static-core fallback; unit test asserts under forced Haiku outage, routing falls back to local NER (not static-core); under forced BOTH outage, routing falls back to static-core",
+      "Bulkhead-degraded responses are explicitly NOT written to the cache; unit test forces a degraded mode and asserts document_entities_jit_cache row count is unchanged",
+      "All cache writes and live_jit calls happen only through u03's resolve_entities(); AST lint (u03) passes on this branch",
+      "pytest tests/test_jit_bulkhead.py tests/test_jit_cache.py tests/test_jit_local_ner.py tests/test_jit_router.py passes with 0 failures"
+    ],
+    "layer": 3,
+    "scope": [
+      "migrations/032_jit_cache.sql",
+      "src/scix/jit/__init__.py",
+      "src/scix/jit/bulkhead.py",
+      "src/scix/jit/cache.py",
+      "src/scix/jit/local_ner.py",
+      "src/scix/jit/router.py",
+      "scripts/jit_cache_cleanup.py",
+      "tests/test_jit_bulkhead.py",
+      "tests/test_jit_cache.py",
+      "tests/test_jit_local_ner.py",
+      "tests/test_jit_router.py"
+    ],
+    "status": "pending",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "u11-eval-harness",
+    "name": "Eval harness: audit table + LLM-judge (M9)",
+    "description": "M9. Create entity_link_audits table via migration 033, keyed by (tier, bibcode, entity_id, annotator, label, note). scripts/run_audit.py samples 125 examples per tier (500 total) stratified and lets a human annotate via a CLI. src/scix/eval/llm_judge.py runs Claude Opus over 10K random links as LLM-judge and calibrates Cohen's kappa against the human-labeled 500 set - fails the gate if kappa < 0.6. Publishes build-artifacts/eval_report.md with per-tier Wilson CIs.",
+    "deps": [
+      "u03-resolve-entities-service",
+      "u06-tier1-keyword-match",
+      "u08-fusion-mv"
+    ],
+    "tier": "medium",
+    "acceptance": [
+      "migrations/033_entity_link_audits.sql creates entity_link_audits(tier SMALLINT, bibcode TEXT, entity_id BIGINT, annotator TEXT, label TEXT CHECK (label IN ('correct','incorrect','ambiguous')), note TEXT, PRIMARY KEY (tier, bibcode, entity_id, annotator))",
+      "src/scix/eval/audit.py exposes `sample_stratified(n_per_tier: int = 125) -> list[AuditCandidate]`",
+      "src/scix/eval/llm_judge.py exposes `judge(links: list[LinkRow]) -> list[JudgeLabel]` and `cohens_kappa(human: list[Label], judge: list[Label]) -> float`; unit test with synthetic labels asserts kappa computation is correct",
+      "scripts/run_audit.py --fixture runs end-to-end against scix_test and writes build-artifacts/eval_report.md with Wilson 95% CIs per tier",
+      "Wilson CI computation is unit-tested against a known-value case (e.g. 95/100 -> [0.887, 0.978])",
+      "pytest tests/test_audit.py tests/test_llm_judge.py passes with 0 failures"
+    ],
+    "layer": 3,
+    "scope": [
+      "migrations/033_entity_link_audits.sql",
+      "src/scix/eval/__init__.py",
+      "src/scix/eval/audit.py",
+      "src/scix/eval/llm_judge.py",
+      "src/scix/eval/wilson.py",
+      "scripts/run_audit.py",
+      "tests/test_audit.py",
+      "tests/test_llm_judge.py"
+    ],
+    "status": "pending",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "u12-m4-three-way-eval",
+    "name": "M4 three-way eval + M4.5 lane consistency",
+    "description": "M4: on the same 50-query set + >=20 agent graph-walk tasks, compare (a) hybrid baseline, (b) hybrid + static-core filter, (c) hybrid + JIT enrichment. Report nDCG@10, Recall@20, MRR deltas per configuration to build-artifacts/m4_inhouse_eval.md. M4.5: for the same 50 bibcodes, compute per-bibcode Jaccard over entity-id sets from (citation_chain, hybrid_search[enrich_entities=True], SELECT FROM document_entities_canonical). Subtract lane_delta_set (Wikidata-backfill structurally-unreachable entities) from both numerator and denominator. Gate at 5% at the 90th-percentile of adjusted Jaccard divergence.",
+    "deps": ["u08-fusion-mv", "u09-tier2-aho-corasick", "u10-jit-lane"],
+    "tier": "large",
+    "acceptance": [
+      "scripts/eval_three_way.py runs against scix_test fixture with 50 seeded queries + 20 graph-walk tasks, outputs build-artifacts/m4_inhouse_eval.md with nDCG@10, Recall@20, MRR for each of the three configurations",
+      "In-house-authored disclaimer printed at top of build-artifacts/m4_inhouse_eval.md",
+      "scripts/eval_lane_consistency.py computes per-bibcode Jaccard for 50 bibcodes across the three lanes; writes build-artifacts/m45_consistency.md with raw Jaccard, adjusted Jaccard (lane_delta_set subtracted), aggregate distribution, and divergence breakdown by lane pair",
+      "build-artifacts/m45_lane_delta.md exists with one row per structurally-unreachable entity and the reason",
+      "Gate: 90th-percentile of adjusted per-bibcode Jaccard divergence is computed and the gate status (pass/fail at 5%) is printed; test asserts computation correctness on a fixture with known divergence",
+      "pytest tests/test_m4_eval.py tests/test_m45_lane_consistency.py passes with 0 failures"
+    ],
+    "layer": 4,
+    "scope": [
+      "scripts/eval_three_way.py",
+      "scripts/eval_lane_consistency.py",
+      "src/scix/eval/metrics.py",
+      "src/scix/eval/lane_delta.py",
+      "tests/test_m4_eval.py",
+      "tests/test_m45_lane_consistency.py"
+    ],
+    "status": "pending",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "u13-incremental-sync",
+    "name": "Incremental daily-sync integration + circuit breaker (M10)",
+    "description": "M10. scripts/link_incremental.py runs Tier 1 + Tier 2 inline on new papers from the daily-sync watermark. Loads pre-built automaton from data/entities/ac_automaton.pkl. Circuit breaker: if linkage exceeds 5 min budget, completes sync without entity links and schedules a catch-up job. link_runs watermark table tracks progress. Circuit breaker paged after 2 consecutive trips; watermark-staleness alert when now()-max_entry_date > 24h. All writes route through u03's resolve_entities().",
+    "deps": ["u03-resolve-entities-service", "u09-tier2-aho-corasick"],
+    "tier": "medium",
+    "acceptance": [
+      "migrations/034_link_runs_watermark.sql creates link_runs(run_id BIGSERIAL PK, max_entry_date TIMESTAMPTZ, timestamp TIMESTAMPTZ DEFAULT now(), rows_linked INT)",
+      "scripts/link_incremental.py runs an incremental linker from the last watermark; test: 1000-paper fixture incremental run completes in <60s; writes tier=1 and tier=2 rows via resolve_entities()",
+      "src/scix/circuit_breaker.py exposes a CircuitBreaker class with budget_seconds and open/half-open/closed states; unit test: forced 10-minute delay trips the breaker and the sync completes without links; watermark advances",
+      "Catch-up job `scripts/link_catchup.py` runs and backfills the missed papers; test asserts all skipped papers now have links",
+      "Alerting: 2 consecutive circuit-breaker trips write a row to alerts table with severity='page'; watermark-staleness check fires alert under forced stale watermark",
+      "pytest tests/test_incremental_sync.py tests/test_circuit_breaker.py passes with 0 failures"
+    ],
+    "layer": 4,
+    "scope": [
+      "migrations/034_link_runs_watermark.sql",
+      "src/scix/circuit_breaker.py",
+      "scripts/link_incremental.py",
+      "scripts/link_catchup.py",
+      "tests/test_incremental_sync.py",
+      "tests/test_circuit_breaker.py"
+    ],
+    "status": "pending",
+    "branch": null,
+    "pipeline_stage": null,
+    "pipeline_output": {},
+    "eviction_context": null,
+    "pass_number": 1
+  },
+  {
+    "id": "u14-should-haves",
+    "name": "Should-haves: S1 + S3 + S5 + M12 docs",
+    "description": "S1: compute citation_consistency signal per (bibcode, entity_id) - fraction of outbound citations that also link to the same entity. Add column document_entities.citation_consistency. S3: MCP-internal helper src/scix/query_expansion.py mapping query string -> entity IDs via NN on entity-description embeddings (90K vectors indexed once). S5: migration 035 entity_link_disputes table, src/scix/feedback.py exposing report_incorrect_link() API. M12 docs: docs/mcp_dual_lane_contract.md describing which MCP tools consume the static lane and which consume JIT.",
+    "deps": [
+      "u03-resolve-entities-service",
+      "u06-tier1-keyword-match",
+      "u08-fusion-mv"
+    ],
+    "tier": "medium",
+    "acceptance": [
+      "migrations/035_citation_consistency_and_disputes.sql adds document_entities.citation_consistency REAL column and creates entity_link_disputes(id BIGSERIAL PK, bibcode TEXT, entity_id BIGINT, reason TEXT, reported_at TIMESTAMPTZ DEFAULT now(), tier SMALLINT)",
+      "src/scix/citation_consistency.py computes the fraction of outbound citations that link to the same entity; script populates the column in batch; unit test on a 5-paper fixture asserts correctness vs closed-form",
+      "src/scix/query_expansion.py exposes `expand(query: str, k: int = 5) -> list[int]`; test asserts latency < 20ms on a 100-vector fixture index and top-k ranking is deterministic for identical input",
+      "src/scix/feedback.py exposes `report_incorrect_link(bibcode: str, entity_id: int, reason: str, tier: int) -> None` and writes a row to entity_link_disputes; unit test asserts row written",
+      "docs/mcp_dual_lane_contract.md exists and documents: static-lane consumers (citation_chain, co_citation_analysis, bibliographic_coupling, community_detection), JIT-lane consumers (hybrid_search[enrich_entities=True], vector_search, bm25_search), and the M13 contract",
+      "pytest tests/test_citation_consistency.py tests/test_query_expansion.py tests/test_feedback.py passes with 0 failures"
+    ],
+    "layer": 4,
+    "scope": [
+      "migrations/035_citation_consistency_and_disputes.sql",
+      "src/scix/citation_consistency.py",
+      "src/scix/query_expansion.py",
+      "src/scix/feedback.py",
+      "docs/mcp_dual_lane_contract.md",
+      "tests/test_citation_consistency.py",
+      "tests/test_query_expansion.py",
+      "tests/test_feedback.py"
+    ],
     "status": "pending",
     "branch": null,
     "pipeline_stage": null,

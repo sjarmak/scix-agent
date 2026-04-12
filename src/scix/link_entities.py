@@ -44,42 +44,79 @@ class _CachingResolver:
     Loads the full entity+alias mapping on first use so subsequent lookups
     are pure dict hits (no per-mention queries). Used by the batch linking
     pipeline for performance.
+
+    Collision handling: multiple entities can share the same lowercase
+    canonical name (e.g. SSODNet "Mercury" the planet vs. GCMD "Mercury"
+    the chemical element). The cache stores ALL candidates per key as a
+    list; `resolve_all()` exposes the full set so a disambiguator can see
+    the ambiguity, while `resolve()` returns the highest-priority candidate
+    (canonical matches first, then aliases) for back-compat with the
+    single-match batch linker.
     """
 
     def __init__(self, conn: psycopg.Connection) -> None:
         self._conn = conn
-        self._cache: dict[str, ResolverMatch] | None = None
+        self._cache: dict[str, list[ResolverMatch]] | None = None
 
-    def _build_cache(self) -> dict[str, ResolverMatch]:
-        cache: dict[str, ResolverMatch] = {}
+    def _build_cache(self) -> dict[str, list[ResolverMatch]]:
+        cache: dict[str, list[ResolverMatch]] = {}
         with self._conn.cursor() as cur:
             cur.execute("SELECT id, canonical_name FROM entities")
             for row in cur.fetchall():
                 entity_id, name = row
+                if name is None:
+                    continue
                 key = name.strip().lower()
-                if key and key not in cache:
-                    cache[key] = ResolverMatch(
+                if not key:
+                    continue
+                cache.setdefault(key, []).append(
+                    ResolverMatch(
                         entity_id=entity_id,
                         confidence=1.0,
                         match_method="canonical_exact",
                     )
+                )
             cur.execute("SELECT entity_id, alias FROM entity_aliases")
             for row in cur.fetchall():
                 entity_id, alias = row
+                if alias is None:
+                    continue
                 key = alias.strip().lower()
-                if key and key not in cache:
-                    cache[key] = ResolverMatch(
+                if not key:
+                    continue
+                cache.setdefault(key, []).append(
+                    ResolverMatch(
                         entity_id=entity_id,
                         confidence=0.9,
                         match_method="alias_exact",
                     )
+                )
         return cache
 
-    def resolve(self, mention: str) -> ResolverMatch | None:
+    def resolve_all(self, mention: str) -> list[ResolverMatch]:
+        """Return ALL candidate matches for a mention.
+
+        Surfaces ambiguity so callers/disambiguators can see collisions
+        (e.g. "Mercury" the planet vs. the element). Candidates are
+        ordered by insertion: canonical matches before alias matches.
+        """
         if self._cache is None:
             self._cache = self._build_cache()
         key = mention.strip().lower()
-        return self._cache.get(key)
+        if not key:
+            return []
+        return list(self._cache.get(key, ()))
+
+    def resolve(self, mention: str) -> ResolverMatch | None:
+        """Return the highest-priority candidate, or None.
+
+        Canonical matches outrank alias matches because they are inserted
+        into the candidate list first. When there are multiple canonical
+        collisions, the first-loaded one wins — use `resolve_all()` to see
+        every candidate and route ambiguity through a disambiguator.
+        """
+        candidates = self.resolve_all(mention)
+        return candidates[0] if candidates else None
 
 
 # Backward-compatible alias used by tests
@@ -222,6 +259,10 @@ def link_entities_batch(
 
         if not dry_run and insert_params:
             with conn.cursor() as cur:
+                # noqa: resolver-lint
+                # Layer-0 batch writer predates M13. u10 will route this
+                # through scix.resolve_entities; keep the direct write until
+                # then and flag it so ast_lint_resolver.py doesn't block CI.
                 cur.executemany(
                     """
                     INSERT INTO document_entities
@@ -229,7 +270,7 @@ def link_entities_batch(
                          match_method, evidence)
                     VALUES (%s, %s, %s, %s, %s, %s)
                     ON CONFLICT (bibcode, entity_id, link_type) DO NOTHING
-                    """,
+                    """,  # noqa: resolver-lint
                     insert_params,
                 )
             conn.commit()

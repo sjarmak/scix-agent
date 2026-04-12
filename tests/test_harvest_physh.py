@@ -34,8 +34,8 @@ from harvest_physh import (
 _DOI = "https://doi.org/10.29172"
 
 # Sub-facet IDs matching the constants in harvest_physh
-_EXPERIMENTAL_FACET = f"{_DOI}/705f7ed8-6d0e-4b5a-a65a-4a16ca09c040"
-_COMPUTATIONAL_FACET = f"{_DOI}/1e0c099a-4cd7-42c4-8a0e-8aeb0e501882"
+_EXPERIMENTAL_FACET = f"{_DOI}/705f7ed8-5e20-47e1-8ca4-fa7feea8ad84"
+_COMPUTATIONAL_FACET = f"{_DOI}/1e0c099a-9f2a-4e47-b3f1-7faa28b6a506"
 
 # Concept IDs
 _NUMERICAL_TECHNIQUES = f"{_DOI}/aaaa0001-0000-0000-0000-000000000001"

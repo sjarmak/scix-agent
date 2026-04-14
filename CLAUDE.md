@@ -29,19 +29,31 @@ Each record contains: bibcode, title, abstract, authors, affiliations, keywords,
 ## Project Structure
 
 ```
-src/scix/                     — Python package
-  field_mapping.py            — JSONL→SQL field mapping + transform_record()
-  db.py                       — DB helpers (connection, IndexManager, IngestLog)
-  ingest.py                   — Ingestion pipeline (JSONL→PostgreSQL via COPY)
-scripts/
-  setup_db.sh                 — Idempotent database creation + schema application
-  ingest.py                   — CLI for ingestion pipeline
-migrations/
-  001_initial_schema.sql      — papers, citation_edges, paper_embeddings, extractions
-  002_ingest_log.sql          — Ingestion progress tracking
-tests/                        — pytest suite (53 tests)
-ads_metadata_year_*.py        — ADS API harvest scripts (by year range)
-ads_metadata_by_year_picard/  — Raw JSONL data files (~100GB)
+src/scix/                     — Python package (47 modules)
+  mcp_server.py               — MCP server (22 tools)
+  search.py                   — Hybrid search with RRF fusion
+  db.py                       — DB helpers (connection pool, IndexManager, IngestLog)
+  ingest.py                   — JSONL→PostgreSQL via COPY
+  field_mapping.py            — ADS JSONL→SQL field mapping + transforms
+  embed.py                    — SPECTER2 embedding pipeline
+  graph_metrics.py            — PageRank, HITS, community detection
+  extract.py                  — LLM entity extraction
+  session.py                  — Agent working set management
+  sources/                    — OpenAlex, ar5iv, S2 source modules
+  jit/                        — JIT entity resolution (cache, router, NER)
+  eval/                       — Retrieval evaluation framework
+scripts/                      — CLI tools (78 scripts)
+migrations/                   — PostgreSQL schema (44 migrations)
+tests/                        — pytest suite (107 test files)
+docs/                         — Documentation
+  prd/                        — Product requirement docs
+  premortem/                  — Premortem risk analyses
+  ADR/                        — Architecture decision records
+  paper_outline.md            — ADASS 2026 paper outline
+  briefing.md                 — Technical briefing document
+  figures/                    — Data visualizations
+results/                      — Evaluation results (JSON + reports)
+ads_metadata_by_year_picard/  — Raw JSONL data files (~100GB, gitignored)
 ```
 
 ## Security
@@ -66,6 +78,7 @@ pytest tests/  # integration tests now run against scix_test
 ## Agent Autonomy
 
 When running as a Gas City worker (GC_AGENT env var is set):
+
 - Execute autonomously — do NOT ask for confirmation before proceeding
 - Do NOT present plans and wait for approval — plan internally then execute
 - Close beads (`bd close <id>`) when work is complete
@@ -98,13 +111,13 @@ When running as a Gas City worker (GC_AGENT env var is set):
 
 ### Embedding Landscape (March 2026 MTEB)
 
-| Model | nDCG@10 | Dims | Context | Cost | License |
-|-------|---------|------|---------|------|---------|
-| Gemini Embedding 001 | 67.7 | 3072 (flex->768) | - | ~$0.15/1M tok | Proprietary |
-| Qwen3-Embedding-8B | ~67 | 7168 (flex) | 32K | FREE | Apache 2.0 |
-| Cohere Embed v4 | ~65 | 1536 (flex) | 128K | $0.10/1M tok | Proprietary |
-| Voyage 3.5 | ~65 | 2048 (flex) | 32K | $0.06/1M tok | Proprietary |
-| text-embedding-3-large | ~63 | 3072 (flex) | 8K | $0.13/1M tok | Proprietary |
+| Model                  | nDCG@10 | Dims             | Context | Cost          | License     |
+| ---------------------- | ------- | ---------------- | ------- | ------------- | ----------- |
+| Gemini Embedding 001   | 67.7    | 3072 (flex->768) | -       | ~$0.15/1M tok | Proprietary |
+| Qwen3-Embedding-8B     | ~67     | 7168 (flex)      | 32K     | FREE          | Apache 2.0  |
+| Cohere Embed v4        | ~65     | 1536 (flex)      | 128K    | $0.10/1M tok  | Proprietary |
+| Voyage 3.5             | ~65     | 2048 (flex)      | 32K     | $0.06/1M tok  | Proprietary |
+| text-embedding-3-large | ~63     | 3072 (flex)      | 8K      | $0.13/1M tok  | Proprietary |
 
 - Matryoshka representations: models can be truncated to smaller dims with 98.37% quality at 8.3% size
 - For chunk-level full-text retrieval: Voyage 3.5 ($0.06/1M) or self-hosted Qwen3-Embedding-0.6B (Apache 2.0)

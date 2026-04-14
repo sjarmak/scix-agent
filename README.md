@@ -50,16 +50,12 @@ scripts/                      -- CLI tools (78 scripts)
   eval_*.py                   -- Evaluation scripts
   link_*.py                   -- Entity linking scripts
   setup_db.sh                 -- Idempotent database creation
-migrations/                   -- PostgreSQL schema (44 migrations)
+schema.sql                    -- Consolidated PostgreSQL schema
 tests/                        -- pytest suite (107 test files)
 docs/                         -- Documentation
-  prd/                        -- Product requirement docs
-  premortem/                  -- Premortem risk analyses
   ADR/                        -- Architecture decision records
   paper_outline.md            -- ADASS 2026 paper outline
-  briefing.md                 -- Technical briefing document
   figures/                    -- Data visualizations
-results/                      -- Evaluation results (JSON + reports)
 ```
 
 ## Setup
@@ -99,7 +95,7 @@ cp .env.example .env
 ### Database
 
 ```bash
-# Create database and apply all migrations
+# Create database and apply schema
 scripts/setup_db.sh
 
 # Ingest ADS metadata

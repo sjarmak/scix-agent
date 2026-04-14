@@ -1,7 +1,0 @@
-{
-  "database": "dolt",
-  "backend": "dolt",
-  "dolt_mode": "embedded",
-  "dolt_database": "scix_experiments",
-  "project_id": "47d071e8-3879-474f-8bcf-26137ab1bf7a"
-}

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Setup the scix PostgreSQL database and apply all migrations.
-# Idempotent: safe to re-run — tracks applied migrations in schema_migrations.
+# Setup the scix PostgreSQL database and apply the schema.
+# Idempotent: all CREATE statements use IF NOT EXISTS.
 #
 # For peer auth (default on Ubuntu):
 #   bash scripts/setup_db.sh
@@ -12,7 +12,12 @@ set -euo pipefail
 
 DB_NAME="${SCIX_DB_NAME:-scix}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-MIGRATIONS_DIR="${SCRIPT_DIR}/../migrations"
+SCHEMA_FILE="${SCRIPT_DIR}/../schema.sql"
+
+if [ ! -f "$SCHEMA_FILE" ]; then
+    echo "ERROR: schema.sql not found at ${SCHEMA_FILE}"
+    exit 1
+fi
 
 # Build psql args
 PSQL_ARGS=()
@@ -45,56 +50,9 @@ else
     echo "    Database already exists: ${DB_NAME}"
 fi
 
-# 2. Ensure pgvector extension
-run_psql -d "${DB_NAME}" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
+# 2. Apply schema (all statements are IF NOT EXISTS)
+echo "    Applying schema.sql..."
+run_psql -d "${DB_NAME}" -f "$SCHEMA_FILE" > /dev/null 2>&1
 
-# 3. Ensure schema_migrations table exists (bootstrap — before applying any migration)
-run_psql -d "${DB_NAME}" -c "
-CREATE TABLE IF NOT EXISTS schema_migrations (
-    version INT PRIMARY KEY,
-    applied_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    filename TEXT NOT NULL
-);"
-
-# 4. Apply migrations in numeric order
-APPLIED=0
-SKIPPED=0
-
-for migration_file in $(ls "${MIGRATIONS_DIR}"/*.sql | sort -t/ -k999 -V); do
-    filename="$(basename "$migration_file")"
-    # Extract version number from prefix (e.g., 001_initial_schema.sql -> 1)
-    version=$(echo "$filename" | grep -oP '^\d+' | sed 's/^0*//' )
-    if [ -z "$version" ]; then
-        echo "    WARN: Could not parse version from ${filename}, skipping"
-        continue
-    fi
-
-    # Check if already recorded in schema_migrations
-    already_applied=$(run_psql -d "${DB_NAME}" -tAc "SELECT 1 FROM schema_migrations WHERE version = ${version};" 2>/dev/null || echo "")
-    if [ "$already_applied" = "1" ]; then
-        SKIPPED=$((SKIPPED + 1))
-        continue
-    fi
-
-    # Apply migration — all migrations use IF NOT EXISTS so re-application is safe
-    echo "    Applying: ${filename} (version ${version})"
-    if run_psql -d "${DB_NAME}" -f "$migration_file" > /dev/null 2>&1; then
-        # Record in schema_migrations
-        run_psql -d "${DB_NAME}" -c "INSERT INTO schema_migrations (version, filename) VALUES (${version}, '${filename}') ON CONFLICT (version) DO NOTHING;"
-        APPLIED=$((APPLIED + 1))
-    else
-        # Try again with output visible for debugging
-        echo "    WARN: Error applying ${filename}, retrying with output..."
-        if run_psql -d "${DB_NAME}" -f "$migration_file"; then
-            run_psql -d "${DB_NAME}" -c "INSERT INTO schema_migrations (version, filename) VALUES (${version}, '${filename}') ON CONFLICT (version) DO NOTHING;"
-            APPLIED=$((APPLIED + 1))
-        else
-            echo "    ERROR: Failed to apply ${filename}"
-            exit 1
-        fi
-    fi
-done
-
-echo "==> Done. Applied ${APPLIED} migrations, skipped ${SKIPPED} (already applied)."
-echo "    Database '${DB_NAME}' is ready."
+echo "==> Done. Database '${DB_NAME}' is ready."
 echo "    Connect with: psql -d ${DB_NAME}"

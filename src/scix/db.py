@@ -37,6 +37,32 @@ def is_production_dsn(dsn: str | None) -> bool:
     return isinstance(dbname, str) and dbname in _PRODUCTION_DB_NAMES
 
 
+def redact_dsn(dsn: str) -> str:
+    """Return a DSN string safe for logging: drops passwords and secrets.
+
+    For key=value DSNs, keeps only ``dbname``/``host``/``port``/``user``.
+    For URI DSNs, replaces ``user:password@`` with ``user:***@`` and drops
+    the query string.
+    """
+    if "://" in dsn:
+        scheme, _, rest = dsn.partition("://")
+        rest = rest.split("?", 1)[0]
+        if "@" in rest:
+            userinfo, _, host_and_path = rest.partition("@")
+            user = userinfo.split(":", 1)[0]
+            rest = f"{user}:***@{host_and_path}"
+        return f"{scheme}://{rest}"
+
+    safe_keys = {"dbname", "host", "port", "user"}
+    parts: list[str] = []
+    for token in dsn.split():
+        if "=" in token:
+            key, _, value = token.partition("=")
+            if key.strip() in safe_keys:
+                parts.append(f"{key.strip()}={value.strip()}")
+    return " ".join(parts) if parts else "<redacted>"
+
+
 def get_connection(dsn: str | None = None, autocommit: bool = False) -> psycopg.Connection:
     """Open a connection to the scix database."""
     conn = psycopg.connect(dsn or DEFAULT_DSN)

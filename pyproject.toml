@@ -2,6 +2,7 @@
 name = "scix-experiments"
 version = "0.1.0"
 description = "AI/ML experiments on scientific literature — making knowledge navigable by agents"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
     "requests>=2.31",

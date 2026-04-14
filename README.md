@@ -156,4 +156,6 @@ The default DSN (`dbname=scix`) points at the production database with 32M paper
 
 ## License
 
-Research use. See ADS terms of service for data usage.
+Apache License 2.0. See [LICENSE](LICENSE) for details.
+
+ADS metadata is subject to the [ADS terms of service](https://ui.adsabs.harvard.edu/help/terms/).

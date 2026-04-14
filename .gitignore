@@ -54,6 +54,9 @@ Thumbs.db
 # Brainstorm artifacts (local working files)
 .brainstorm/
 
+# MCP config (machine-specific paths)
+.mcp.json
+
 # Claude Code ephemeral state
 .claude/rfc-dag.state.json
 .claude/rfc-dag.log.md

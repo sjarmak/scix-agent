@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from contextlib import contextmanager
 from typing import Any, Generator
 
@@ -33,6 +34,13 @@ from scix.entity_resolver import EntityResolver
 from scix.session import SessionState, WorkingSetEntry
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Server-level session identity (stable for the lifetime of the process)
+# ---------------------------------------------------------------------------
+
+_server_session_id: str = str(uuid.uuid4())
+_is_test_session: bool = bool(os.environ.get("SCIX_TEST_DSN"))
 
 # ---------------------------------------------------------------------------
 # Connection pool (singleton, lazy-initialized)
@@ -166,6 +174,63 @@ def _hnsw_index_exists(conn: psycopg.Connection, model_name: str) -> bool:
     return exists
 
 
+# Priority-ordered list of argument keys that carry the user query text.
+_QUERY_ARG_KEYS: tuple[str, ...] = (
+    "query",
+    "bibcode",
+    "author_name",
+    "source_bibcode",
+    "bibcode_or_query",
+    "entity_name",
+    "entity_id",
+    "field",
+    "search_query",
+)
+
+
+def _extract_query_text(params: dict[str, Any]) -> str | None:
+    """Extract the most meaningful query string from tool arguments.
+
+    Returns the value of the first recognised key found in *params*,
+    or ``None`` if no query-like argument is present.
+    """
+    for key in _QUERY_ARG_KEYS:
+        val = params.get(key)
+        if val is not None:
+            return str(val)
+    return None
+
+
+def _extract_result_count(result_json: str) -> int:
+    """Best-effort extraction of result count from a tool's JSON output.
+
+    Checks, in order:
+      1. ``total`` (explicit count from SearchResult)
+      2. ``len(papers)``
+      3. ``len(results)``
+
+    Returns 0 on parse failure or when the result represents an error.
+    """
+    try:
+        data = json.loads(result_json)
+    except (json.JSONDecodeError, TypeError):
+        return 0
+    if not isinstance(data, dict):
+        return 0
+    if "error" in data:
+        return 0
+    if "total" in data:
+        try:
+            return int(data["total"])
+        except (TypeError, ValueError):
+            return 0
+    if "papers" in data and isinstance(data["papers"], list):
+        return len(data["papers"])
+    if "results" in data and isinstance(data["results"], list):
+        return len(data["results"])
+    return 0
+
+
 def _log_query(
     conn: psycopg.Connection,
     tool_name: str,
@@ -173,17 +238,41 @@ def _log_query(
     latency_ms: float,
     success: bool,
     error_msg: str | None = None,
+    *,
+    result_json: str | None = None,
+    session_id: str | None = None,
+    is_test: bool = False,
 ) -> None:
-    """Write a row to query_log. Best-effort: failures are logged, not raised."""
+    """Write a row to query_log with both legacy and migration-031 columns.
+
+    Best-effort: failures are logged, not raised.
+    """
     try:
         params_json = json.dumps(params, default=str)
+        query_text = _extract_query_text(params)
+        result_count = _extract_result_count(result_json) if result_json else 0
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO query_log (tool_name, params_json, latency_ms, success, error_msg)
-                VALUES (%s, %s::jsonb, %s, %s, %s)
+                INSERT INTO query_log (
+                    tool_name, params_json, latency_ms, success, error_msg,
+                    tool, query, result_count, session_id, is_test
+                )
+                VALUES (%s, %s::jsonb, %s, %s, %s,
+                        %s, %s, %s, %s, %s)
                 """,
-                (tool_name, params_json, latency_ms, success, error_msg),
+                (
+                    tool_name,
+                    params_json,
+                    latency_ms,
+                    success,
+                    error_msg,
+                    tool_name,
+                    query_text,
+                    result_count,
+                    session_id,
+                    is_test,
+                ),
             )
         conn.commit()
     except Exception:
@@ -921,6 +1010,7 @@ def create_server(_run_self_test: bool = True):
             t0 = time.monotonic()
             success = True
             error_msg: str | None = None
+            result_json: str = "{}"
             try:
                 result_json = _dispatch_tool(conn, name, arguments)
             except Exception as exc:
@@ -930,7 +1020,17 @@ def create_server(_run_self_test: bool = True):
                 raise
             finally:
                 latency_ms = (time.monotonic() - t0) * 1000
-                _log_query(conn, name, arguments, latency_ms, success, error_msg)
+                _log_query(
+                    conn,
+                    name,
+                    arguments,
+                    latency_ms,
+                    success,
+                    error_msg,
+                    result_json=result_json,
+                    session_id=_server_session_id,
+                    is_test=_is_test_session,
+                )
             return [TextContent(type="text", text=result_json)]
 
     if _run_self_test:

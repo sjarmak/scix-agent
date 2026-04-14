@@ -8,7 +8,11 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from scix.mcp_server import _log_query
+from scix.mcp_server import (
+    _extract_query_text,
+    _extract_result_count,
+    _log_query,
+)
 
 # ---------------------------------------------------------------------------
 # Migration DDL verification
@@ -271,3 +275,232 @@ class TestAnalyzeQueryLog:
         assert "top_queries" in report
         assert "failure_rate_by_tool" in report
         assert "entity_type_requests" in report
+
+
+# ---------------------------------------------------------------------------
+# _extract_query_text unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestExtractQueryText:
+    """Verify query text extraction from tool arguments."""
+
+    def test_extracts_query_field(self) -> None:
+        assert _extract_query_text({"query": "dark matter"}) == "dark matter"
+
+    def test_extracts_bibcode_field(self) -> None:
+        assert _extract_query_text({"bibcode": "2024ApJ...001A"}) == "2024ApJ...001A"
+
+    def test_extracts_author_name_field(self) -> None:
+        assert _extract_query_text({"author_name": "Einstein, A."}) == "Einstein, A."
+
+    def test_extracts_source_bibcode_field(self) -> None:
+        assert (
+            _extract_query_text({"source_bibcode": "2024A", "target_bibcode": "2025B"}) == "2024A"
+        )
+
+    def test_extracts_bibcode_or_query_field(self) -> None:
+        assert _extract_query_text({"bibcode_or_query": "exoplanets"}) == "exoplanets"
+
+    def test_extracts_field_for_facet(self) -> None:
+        assert _extract_query_text({"field": "arxiv_class"}) == "arxiv_class"
+
+    def test_prefers_query_over_bibcode(self) -> None:
+        """query takes priority when both are present."""
+        assert _extract_query_text({"query": "dark matter", "bibcode": "2024ApJ"}) == "dark matter"
+
+    def test_empty_args_returns_none(self) -> None:
+        assert _extract_query_text({}) is None
+
+    def test_no_known_fields_returns_none(self) -> None:
+        assert _extract_query_text({"limit": 10, "filters": {}}) is None
+
+
+# ---------------------------------------------------------------------------
+# _extract_result_count unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestExtractResultCount:
+    """Verify result count extraction from result JSON strings."""
+
+    def test_extracts_total_from_search_result(self) -> None:
+        result = json.dumps({"papers": [{"bibcode": "X"}], "total": 42})
+        assert _extract_result_count(result) == 42
+
+    def test_extracts_count_from_papers_list(self) -> None:
+        """When no 'total' key, count the papers list."""
+        result = json.dumps({"papers": [{"bibcode": "A"}, {"bibcode": "B"}]})
+        assert _extract_result_count(result) == 2
+
+    def test_returns_zero_for_error(self) -> None:
+        result = json.dumps({"error": "timeout"})
+        assert _extract_result_count(result) == 0
+
+    def test_returns_zero_for_empty_result(self) -> None:
+        result = json.dumps({"papers": [], "total": 0})
+        assert _extract_result_count(result) == 0
+
+    def test_returns_zero_for_unparseable_json(self) -> None:
+        assert _extract_result_count("not json") == 0
+
+    def test_extracts_results_list(self) -> None:
+        """Some tools return 'results' instead of 'papers'."""
+        result = json.dumps({"results": [1, 2, 3]})
+        assert _extract_result_count(result) == 3
+
+
+# ---------------------------------------------------------------------------
+# _log_query migration-031 column tests
+# ---------------------------------------------------------------------------
+
+
+class TestLogQueryMigration031Columns:
+    """Verify that _log_query populates the migration-031 instrumentation columns."""
+
+    def test_log_query_populates_tool_column(self) -> None:
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        _log_query(
+            mock_conn,
+            "search",
+            {"query": "dark matter"},
+            5.0,
+            True,
+            None,
+            result_json='{"papers": [], "total": 0}',
+            session_id="test-session-1",
+            is_test=True,
+        )
+
+        mock_cur.execute.assert_called_once()
+        sql_arg = mock_cur.execute.call_args[0][0]
+        # Verify all migration-031 columns are in the INSERT
+        assert "tool" in sql_arg
+        assert "query" in sql_arg
+        assert "result_count" in sql_arg
+        assert "session_id" in sql_arg
+        assert "is_test" in sql_arg
+        params = mock_cur.execute.call_args[0][1]
+        # tool_name (legacy)
+        assert params[0] == "search"
+        # Find session_id and is_test in params
+        # The exact positions depend on the INSERT column order
+
+    def test_log_query_extracts_query_from_params(self) -> None:
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        _log_query(
+            mock_conn,
+            "search",
+            {"query": "dark matter"},
+            5.0,
+            True,
+            None,
+            result_json='{"papers": [{"bibcode": "X"}], "total": 1}',
+            session_id="s1",
+            is_test=False,
+        )
+
+        params = mock_cur.execute.call_args[0][1]
+        # params_json is second element
+        # Find the query text in the params tuple
+        assert "dark matter" in params, f"Expected 'dark matter' in params: {params}"
+
+    def test_log_query_extracts_result_count(self) -> None:
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        _log_query(
+            mock_conn,
+            "search",
+            {"query": "q"},
+            5.0,
+            True,
+            None,
+            result_json='{"papers": [{"bibcode": "X"}], "total": 7}',
+            session_id=None,
+            is_test=False,
+        )
+
+        params = mock_cur.execute.call_args[0][1]
+        assert 7 in params, f"Expected result_count=7 in params: {params}"
+
+    def test_log_query_passes_session_id(self) -> None:
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        _log_query(
+            mock_conn,
+            "get_paper",
+            {"bibcode": "2024ApJ"},
+            2.0,
+            True,
+            None,
+            result_json='{"papers": []}',
+            session_id="sess-abc",
+            is_test=False,
+        )
+
+        params = mock_cur.execute.call_args[0][1]
+        assert "sess-abc" in params, f"Expected session_id in params: {params}"
+
+    def test_log_query_passes_is_test(self) -> None:
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        _log_query(
+            mock_conn,
+            "search",
+            {"query": "q"},
+            1.0,
+            True,
+            None,
+            result_json='{"total": 0}',
+            session_id=None,
+            is_test=True,
+        )
+
+        params = mock_cur.execute.call_args[0][1]
+        assert True in params, f"Expected is_test=True in params: {params}"
+
+    def test_log_query_still_swallows_exceptions(self) -> None:
+        """Logging failures must not propagate even with new columns."""
+        mock_conn = MagicMock()
+        mock_conn.cursor.side_effect = RuntimeError("db down")
+
+        # Should not raise
+        _log_query(
+            mock_conn,
+            "test",
+            {},
+            0.0,
+            True,
+            None,
+            result_json="{}",
+            session_id=None,
+            is_test=False,
+        )
+
+    def test_log_query_backward_compatible_without_new_args(self) -> None:
+        """Old callers that don't pass new args should still work."""
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        # Call without the new keyword args — should not raise
+        _log_query(mock_conn, "get_paper", {"bibcode": "X"}, 5.2, True, None)
+        mock_cur.execute.assert_called_once()

@@ -18,14 +18,14 @@ Key capabilities:
 
 Single PostgreSQL 16 instance with pgvector 0.8.2. No separate search engine or vector database.
 
-| Dimension       | Value                         |
-| --------------- | ----------------------------- |
-| Papers          | 32.4M (1800--2026)            |
-| With abstracts  | 23.3M (72%)                   |
-| With full text  | 6.0M (19%)                    |
-| Citation edges  | 299M                          |
-| Edge resolution | 99.6%                         |
-| Embeddings      | INDUS (768d) + OpenAI (1024d) |
+| Dimension       | Value                                       |
+| --------------- | ------------------------------------------- |
+| Papers          | 32.4M (1800--2026)                          |
+| With abstracts  | 23.3M (72%)                                 |
+| With full text  | 6.0M ingested (17.9M available via ADS API) |
+| Citation edges  | 299M                                        |
+| Edge resolution | 99.6%                                       |
+| Embeddings      | INDUS (768d) + OpenAI (1024d)               |
 
 **Discipline coverage** (papers may belong to multiple):
 
@@ -38,16 +38,16 @@ Single PostgreSQL 16 instance with pgvector 0.8.2. No separate search engine or 
 
 **Content coverage:**
 
-| Field        | Coverage |
-| ------------ | -------- |
-| Title        | >99%     |
-| Affiliations | 96%      |
-| DOI          | 87%      |
-| Abstract     | 72%      |
-| Cited papers | 54%      |
-| Keywords     | 49%      |
-| References   | 40%      |
-| Full text    | 19%      |
+| Field        | Coverage                     |
+| ------------ | ---------------------------- |
+| Title        | >99%                         |
+| Affiliations | 96%                          |
+| DOI          | 87%                          |
+| Abstract     | 72%                          |
+| Cited papers | 54%                          |
+| Keywords     | 49%                          |
+| References   | 40%                          |
+| Full text    | 19% ingested (55% available) |
 
 ## Project Structure
 

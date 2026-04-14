@@ -35,7 +35,7 @@ src/scix/                     — Python package (47 modules)
   db.py                       — DB helpers (connection pool, IndexManager, IngestLog)
   ingest.py                   — JSONL→PostgreSQL via COPY
   field_mapping.py            — ADS JSONL→SQL field mapping + transforms
-  embed.py                    — SPECTER2 embedding pipeline
+  embed.py                    — INDUS / SPECTER2 embedding pipeline
   graph_metrics.py            — PageRank, HITS, community detection
   extract.py                  — LLM entity extraction
   session.py                  — Agent working set management
@@ -96,18 +96,18 @@ When running as a Gas City worker (GC_AGENT env var is set):
 ### Project Identity
 
 - Agent-native navigation layer on full 32.4M-paper ADS corpus, 299M citation edges
-- PostgreSQL + pgvector, 22 MCP tools, hybrid search (SPECTER2 + text-embedding-3-large + BM25 via RRF)
+- PostgreSQL + pgvector, 22 MCP tools, hybrid search (INDUS + text-embedding-3-large + BM25 via RRF)
 - Leiden community detection at multiple resolutions, entity extraction pipeline
 - Targeting ADASS 2026 paper
 - Embedding pipeline running: multiprocessing GPU pipeline doing binary COPY at 2-5K rec/s
-- 24M papers already embedded with SPECTER2
+- 32M papers embedded with INDUS
 
 ### Dual-Model Embedding Strategy (Decided)
 
-- **SPECTER2** (768d): citation-proximity paper similarity — domain-specific, outperforms larger general models on scientific similarity despite lower MTEB scores
+- **INDUS** (nasa-impact/nasa-smd-ibm-st-v2, 768d): domain-specific scientific similarity — trained on 2.66M ADS title-abstract pairs, outperforms larger general models on scientific retrieval
 - **text-embedding-3-large** (3072d, flex to 1024d): asymmetric query-document retrieval — general-purpose, strong on diverse queries
 - Fused via RRF — this is the decided architecture, not up for debate
-- INDUS-SDE-ST v0.2 is worth evaluating as a third model (trained on 2.66M ADS title-abstract pairs) but does NOT replace either existing model
+- SPECTER2 was the original model; INDUS replaced it as the primary dense signal for the full 32M corpus
 
 ### Embedding Landscape (March 2026 MTEB)
 
@@ -131,7 +131,7 @@ When running as a Gas City worker (GC_AGENT env var is set):
 - HNSW sufficient up to 5M vectors (m=16, ef_construction=64, ef_search=100, iterative_scan=relaxed)
 - For 30M+ vectors: pgvectorscale StreamingDiskANN — SSD-backed index, 471 QPS at 99% recall on 50M vectors, 28x lower p95 latency than Pinecone, 75% less cost
 - halfvec (float16) is safe; binary quantization causes >40% nDCG@10 loss on scientific retrieval — use only as first-pass filter
-- Store at 768d in pgvector — fits block-size limits, no TOAST overhead, matches SPECTER2 native output
+- Store at 768d in pgvector — fits block-size limits, no TOAST overhead, matches INDUS native output
 
 ### Hybrid Search (Implemented)
 

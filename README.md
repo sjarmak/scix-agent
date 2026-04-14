@@ -8,7 +8,7 @@ Instead of returning ranked lists, the system exposes the structural topology of
 
 Key capabilities:
 
-- **Hybrid search**: SPECTER2 (doc-to-doc similarity) + text-embedding-3-large (query-to-doc retrieval) + BM25 fused via Reciprocal Rank Fusion
+- **Hybrid search**: INDUS (domain-specific scientific similarity) + text-embedding-3-large (query-to-doc retrieval) + BM25 fused via Reciprocal Rank Fusion
 - **Graph intelligence**: PageRank, HITS, Leiden community detection at multiple resolutions on the full citation graph
 - **Entity extraction**: LLM-based extraction of methods, datasets, instruments from abstracts and full text
 - **Session state**: Working sets that let agents accumulate and reason over papers across a research session
@@ -18,14 +18,14 @@ Key capabilities:
 
 Single PostgreSQL 16 instance with pgvector 0.8.2. No separate search engine or vector database.
 
-| Dimension       | Value                            |
-| --------------- | -------------------------------- |
-| Papers          | 32,390,237 (1800--2026)          |
-| With abstracts  | ~23.3M (72%)                     |
-| Citation edges  | 299,336,889                      |
-| Edge resolution | 99.6%                            |
-| Database size   | ~162 GB                          |
-| Embeddings      | SPECTER2 (768d) + OpenAI (1024d) |
+| Dimension       | Value                         |
+| --------------- | ----------------------------- |
+| Papers          | 32,390,237 (1800--2026)       |
+| With abstracts  | ~23.3M (72%)                  |
+| Citation edges  | 299,336,889                   |
+| Edge resolution | 99.6%                         |
+| Database size   | ~162 GB                       |
+| Embeddings      | INDUS (768d) + OpenAI (1024d) |
 
 ## Project Structure
 
@@ -36,7 +36,7 @@ src/scix/                     -- Python package (47 modules)
   db.py                       -- DB helpers (connection pool, IndexManager, IngestLog)
   ingest.py                   -- JSONL -> PostgreSQL via COPY
   field_mapping.py            -- ADS JSONL -> SQL field mapping + transforms
-  embed.py                    -- SPECTER2 embedding pipeline
+  embed.py                    -- INDUS / SPECTER2 embedding pipeline
   graph_metrics.py            -- PageRank, HITS, community detection
   extract.py                  -- LLM entity extraction
   session.py                  -- Agent working set management
@@ -129,20 +129,43 @@ The default DSN (`dbname=scix`) points at the production database with 32M paper
 
 ## MCP Tools
 
-| Category | Tools                                                                                                                          |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Search   | `semantic_search`, `hybrid_search`, `lexical_search`, `faceted_search`                                                         |
-| Paper    | `get_paper`, `get_citations`, `get_references`                                                                                 |
-| Graph    | `co_citation_analysis`, `bibliographic_coupling`, `citation_chain`, `temporal_evolution`, `graph_metrics`, `explore_community` |
-| Entity   | `entity_search`, `entity_profile`                                                                                              |
-| Session  | `add_to_working_set`, `get_working_set`, `get_session_summary`, `find_gaps`, `clear_working_set`, `concept_search`             |
+**Search & Discovery**
 
-## Key Technical Decisions
+| Tool             | Description                                                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `search`         | Search the corpus by natural-language query. Modes: hybrid (INDUS + OpenAI + BM25 via RRF), semantic, or keyword.        |
+| `concept_search` | Retrieve papers tagged with a Unified Astronomy Thesaurus (UAT) concept, with optional expansion to descendant concepts. |
+| `facet_counts`   | Distribution of paper counts grouped by year, doctype, arxiv_class, database, bibgroup, or property.                     |
 
-- **PostgreSQL-only**: Everything in one instance -- avoids sync complexity between datastores. At 32M papers, well within PostgreSQL's comfort zone.
-- **Dual-model embeddings**: SPECTER2 for citation-proximity similarity, text-embedding-3-large for asymmetric query-document retrieval. Fused via RRF.
-- **Full corpus**: Ingesting only a 6-year window resolves 17.8% of citation edges. The full 1800-2026 corpus resolves 99.6%. Graph analytics on partial corpora are fundamentally misleading.
-- **Halfvec quantization**: Float16 cuts HNSW index memory in half with <1% recall loss.
+**Paper Access**
+
+| Tool         | Description                                                                                                                                    |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_paper`  | Full metadata for a paper by bibcode: title, abstract, authors, affiliations, keywords, citation counts. Optionally includes linked entities.  |
+| `read_paper` | Read or search inside a paper's full-text body. Supports section selection (introduction, methods, results, etc.) and in-paper keyword search. |
+
+**Citation Graph**
+
+| Tool                  | Description                                                                                                                                         |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `citation_graph`      | Walk the citation graph: forward (papers that cite it), backward (references), or both. Optionally includes surrounding citation context sentences. |
+| `citation_similarity` | Find structurally related papers via co-citation (cited together) or bibliographic coupling (shared references).                                    |
+| `citation_chain`      | Trace the shortest citation path between two papers (BFS up to 5 hops).                                                                             |
+| `temporal_evolution`  | Citations-per-year for a paper, or publications-per-year for a search query.                                                                        |
+
+**Entities**
+
+| Tool             | Description                                                                                                                                                           |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `entity`         | Look up scientific entities (methods, datasets, instruments, materials). Search for papers mentioning an entity, or resolve a free-text mention to canonical records. |
+| `entity_context` | Full profile of a known entity by ID: canonical name, type, external identifiers, aliases, related entities, paper count.                                             |
+
+**Graph Analytics & Session**
+
+| Tool            | Description                                                                                                                                                                         |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `graph_context` | Citation-graph analytics for a paper: PageRank, HITS hub/authority, community membership at coarse/medium/fine resolution. Optionally returns sibling papers in the same community. |
+| `find_gaps`     | Surface papers in unexplored communities that cite papers you already inspected. Reads from implicit session state across `get_paper` calls.                                        |
 
 ## Performance
 

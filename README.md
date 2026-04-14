@@ -1,6 +1,6 @@
 # SciX Experiments
 
-Agent-navigable knowledge layer on the full NASA ADS corpus. Transforms 32.4M scientific papers and 299M citation edges into infrastructure that AI agents can navigate programmatically via a 22-tool MCP server.
+Agent-navigable knowledge layer on the full NASA ADS/SciX corpus. Transforms 32.4M scientific papers and 299M citation edges into infrastructure that AI agents can navigate programmatically via a 22-tool MCP server.
 
 ## What This Does
 
@@ -35,7 +35,7 @@ src/scix/                     -- Python package (47 modules)
   search.py                   -- Hybrid search with RRF fusion
   db.py                       -- DB helpers (connection pool, IndexManager, IngestLog)
   ingest.py                   -- JSONL -> PostgreSQL via COPY
-  field_mapping.py            -- ADS JSONL -> SQL field mapping + transforms
+  field_mapping.py            -- ADS/SciX JSONL -> SQL field mapping + transforms
   embed.py                    -- INDUS / SPECTER2 embedding pipeline
   graph_metrics.py            -- PageRank, HITS, community detection
   extract.py                  -- LLM entity extraction
@@ -88,7 +88,7 @@ pip install -e ".[graph]"
 ```bash
 cp .env.example .env
 # Edit .env with your credentials:
-#   ADS_API_KEY=<your ADS API key>
+#   ADS_API_KEY=<your NASA ADS/SciX API key>
 #   SCIX_DSN=dbname=scix
 ```
 
@@ -98,7 +98,7 @@ cp .env.example .env
 # Create database and apply schema
 scripts/setup_db.sh
 
-# Ingest ADS metadata
+# Ingest ADS/SciX metadata
 python scripts/ingest.py ads_metadata_by_year_picard/
 ```
 
@@ -176,4 +176,4 @@ MCP tool latency at 32M papers:
 
 Apache License 2.0. See [LICENSE](LICENSE) for details.
 
-ADS metadata is subject to the [ADS terms of service](https://ui.adsabs.harvard.edu/help/terms/).
+NASA ADS/SciX metadata is subject to the [ADS terms of service](https://ui.adsabs.harvard.edu/help/terms/).

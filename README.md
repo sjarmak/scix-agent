@@ -20,12 +20,34 @@ Single PostgreSQL 16 instance with pgvector 0.8.2. No separate search engine or 
 
 | Dimension       | Value                         |
 | --------------- | ----------------------------- |
-| Papers          | 32,390,237 (1800--2026)       |
-| With abstracts  | ~23.3M (72%)                  |
-| Citation edges  | 299,336,889                   |
+| Papers          | 32.4M (1800--2026)            |
+| With abstracts  | 23.3M (72%)                   |
+| With full text  | 6.0M (19%)                    |
+| Citation edges  | 299M                          |
 | Edge resolution | 99.6%                         |
-| Database size   | ~162 GB                       |
 | Embeddings      | INDUS (768d) + OpenAI (1024d) |
+
+**Discipline coverage** (papers may belong to multiple):
+
+| Collection    | Papers |
+| ------------- | ------ |
+| Physics       | 17.1M  |
+| Earth science | 13.1M  |
+| General       | 5.8M   |
+| Astronomy     | 3.0M   |
+
+**Content coverage:**
+
+| Field        | Coverage |
+| ------------ | -------- |
+| Title        | >99%     |
+| Affiliations | 96%      |
+| DOI          | 87%      |
+| Abstract     | 72%      |
+| Cited papers | 54%      |
+| Keywords     | 49%      |
+| References   | 40%      |
+| Full text    | 19%      |
 
 ## Project Structure
 

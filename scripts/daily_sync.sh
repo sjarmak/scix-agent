@@ -14,6 +14,21 @@ set -euo pipefail
 REPO_DIR="/home/ds/projects/scix_experiments"
 cd "$REPO_DIR"
 
+# ─── Log rotation ─────────────────────────────────────────────────────────────
+# Rotate logs/daily_sync.log when it exceeds 5 MB. Keeps 7 generations.
+# The cron entry appends via `>> logs/daily_sync.log`; this block renames the
+# current file *before* the run writes much. The already-open FD inherited from
+# cron continues writing to the renamed inode, so today's output lands in .log.1
+# while tomorrow's run starts fresh in .log.
+LOG_FILE="logs/daily_sync.log"
+mkdir -p logs
+if [ -f "$LOG_FILE" ] && [ "$(stat -c %s "$LOG_FILE" 2>/dev/null || echo 0)" -gt 5242880 ]; then
+    for i in 6 5 4 3 2 1; do
+        [ -f "${LOG_FILE}.$i" ] && mv "${LOG_FILE}.$i" "${LOG_FILE}.$((i+1))"
+    done
+    mv "$LOG_FILE" "${LOG_FILE}.1"
+fi
+
 # ─── Environment ──────────────────────────────────────────────────────────────
 
 if [ -f .env ]; then
@@ -27,15 +42,18 @@ fi
 source .venv/bin/activate
 
 HARVEST_DIR="data/daily_harvest"
-LOG_PREFIX="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+BACKFILL_DAYS="${BACKFILL_DAYS:-21}"
+
+# Fresh timestamp per log line (not captured once at script start).
+ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 echo "═══════════════════════════════════════════════════════════════"
-echo "[$LOG_PREFIX] Daily sync starting"
+echo "[$(ts)] Daily sync starting"
 echo "═══════════════════════════════════════════════════════════════"
 
 # ─── Step 1: Harvest new records from ADS ─────────────────────────────────────
 
-echo "[$LOG_PREFIX] Step 1/5: Harvesting new records from ADS..."
+echo "[$(ts)] Step 1/5: Harvesting new records from ADS..."
 python3 scripts/harvest_daily.py --output-dir "$HARVEST_DIR" -v
 
 # Find today's harvest file
@@ -43,55 +61,59 @@ TODAY=$(date -u +%Y-%m-%d)
 HARVEST_FILE="$HARVEST_DIR/ads_daily_${TODAY}.jsonl.gz"
 
 if [ ! -f "$HARVEST_FILE" ]; then
-    echo "[$LOG_PREFIX] No harvest file produced — no new records today."
+    echo "[$(ts)] No harvest file produced — no new records today."
     RECORD_COUNT=0
 else
     RECORD_COUNT=$(zcat "$HARVEST_FILE" | wc -l)
-    echo "[$LOG_PREFIX] Harvested $RECORD_COUNT records"
+    echo "[$(ts)] Harvested $RECORD_COUNT records"
 fi
 
 # ─── Step 2: Ingest new records into PostgreSQL ───────────────────────────────
 
 if [ "$RECORD_COUNT" -gt 0 ]; then
-    echo "[$LOG_PREFIX] Step 2/5: Ingesting into PostgreSQL..."
+    echo "[$(ts)] Step 2/5: Ingesting into PostgreSQL..."
     python3 scripts/ingest.py --file "$HARVEST_FILE" --no-drop-indexes -v
 else
-    echo "[$LOG_PREFIX] Step 2/5: Skipped (no new records)"
+    echo "[$(ts)] Step 2/5: Skipped (no new records)"
 fi
 
 # ─── Step 3: Backfill body/refs for papers ADS has since processed ────────────
 # When arxiv papers are first indexed, ADS often hasn't finished extracting
 # full text or reference lists yet. This step re-fetches recent papers from
 # ADS to pick up body text or references that became available after initial
-# harvest. Only records that actually gained body or edges are re-ingested.
+# harvest. Window is wider than the harvest because body extraction at ADS can
+# lag reference extraction by weeks. Only records that actually gained body or
+# edges are re-ingested.
 
-echo "[$LOG_PREFIX] Step 3/5: Backfilling body/references from ADS..."
-python3 scripts/backfill_recent_from_ads.py --output-dir "$HARVEST_DIR" --days 7 -v
+echo "[$(ts)] Step 3/5: Backfilling body/references from ADS (last ${BACKFILL_DAYS}d)..."
+python3 scripts/backfill_recent_from_ads.py --output-dir "$HARVEST_DIR" --days "$BACKFILL_DAYS" -v
 
 BACKFILL_FILE="$HARVEST_DIR/ads_backfill_${TODAY}.jsonl.gz"
+BACKFILL_COUNT=0
 
 # ─── Step 4: Ingest backfill file (if any records gained body or edges) ──────
 
 if [ -f "$BACKFILL_FILE" ]; then
     BACKFILL_COUNT=$(zcat "$BACKFILL_FILE" | wc -l)
-    echo "[$LOG_PREFIX] Step 4/5: Ingesting $BACKFILL_COUNT enriched records..."
+    echo "[$(ts)] Step 4/5: Ingesting $BACKFILL_COUNT enriched records..."
     python3 scripts/ingest.py --file "$BACKFILL_FILE" --no-drop-indexes -v
 else
-    echo "[$LOG_PREFIX] Step 4/5: Skipped (no records gained body or edges)"
+    echo "[$(ts)] Step 4/5: Skipped (no records gained body or edges)"
 fi
 
 # ─── Step 5: Embed new papers with INDUS ─────────────────────────────────────
+# Run whenever harvest OR backfill produced rows. embed.py filters to
+# unembedded papers internally, so it's a cheap no-op when there's nothing new.
 
-if [ "$RECORD_COUNT" -gt 0 ]; then
-    echo "[$LOG_PREFIX] Step 5/5: Embedding new papers (INDUS)..."
+if [ "$RECORD_COUNT" -gt 0 ] || [ "$BACKFILL_COUNT" -gt 0 ]; then
+    echo "[$(ts)] Step 5/5: Embedding new papers (INDUS)..."
     python3 scripts/embed.py --model indus --batch-size 256 --device cuda -v
 else
-    echo "[$LOG_PREFIX] Step 5/5: Skipped (no new records to embed)"
+    echo "[$(ts)] Step 5/5: Skipped (no new records to embed)"
 fi
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
 
-END_PREFIX="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "═══════════════════════════════════════════════════════════════"
-echo "[$END_PREFIX] Daily sync complete ($RECORD_COUNT records)"
+echo "[$(ts)] Daily sync complete (harvest=$RECORD_COUNT, backfill=$BACKFILL_COUNT)"
 echo "═══════════════════════════════════════════════════════════════"

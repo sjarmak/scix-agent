@@ -34,6 +34,7 @@ NEW_MIGRATIONS = [
     "029_ontology_version_pinning.sql",
     "030_staging_and_promote_harvest.sql",
     "031_query_log.sql",
+    "043_consolidate_promote_harvest.sql",
 ]
 
 
@@ -306,23 +307,40 @@ class TestMigration030:
             assert _column_exists(conn, t, "staging_run_id"), t
 
     def test_promote_harvest_function_exists(self, conn: psycopg.Connection) -> None:
+        """After migration 043, promote_harvest has the full v2 signature.
+
+        The original 030 stub (BIGINT -> INTEGER) is superseded; verify
+        the canonical function exists with the consolidated signature.
+        """
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT p.proname, pg_get_function_arguments(p.oid)
+                SELECT p.proname, pg_get_function_arguments(p.oid),
+                       pg_get_function_result(p.oid)
                   FROM pg_proc p
                   JOIN pg_namespace n ON n.oid = p.pronamespace
                  WHERE n.nspname = 'public'
                    AND p.proname = 'promote_harvest'
                 """)
-            row = cur.fetchone()
-        assert row is not None, "promote_harvest function missing"
-        _name, args = row
+            rows = cur.fetchall()
+        assert len(rows) >= 1, "promote_harvest function missing"
+        # Find the consolidated version (returns jsonb, not integer)
+        jsonb_rows = [r for r in rows if r[2] == "jsonb"]
+        assert (
+            len(jsonb_rows) == 1
+        ), f"expected exactly one promote_harvest returning jsonb, got {rows}"
+        _name, args, _ret = jsonb_rows[0]
         assert "bigint" in args.lower()
 
-    def test_promote_harvest_stub_callable(self, conn: psycopg.Connection) -> None:
+    def test_promote_harvest_v2_absent(self, conn: psycopg.Connection) -> None:
+        """After migration 043, promote_harvest_v2 must not exist."""
         with conn.cursor() as cur:
-            cur.execute("SELECT promote_harvest(0::bigint)")
-            assert cur.fetchone()[0] == 0
+            cur.execute("""
+                SELECT 1 FROM pg_proc p
+                  JOIN pg_namespace n ON n.oid = p.pronamespace
+                 WHERE n.nspname = 'public'
+                   AND p.proname = 'promote_harvest_v2'
+                """)
+            assert cur.fetchone() is None, "promote_harvest_v2 should have been dropped"
 
 
 # ---------------------------------------------------------------------------

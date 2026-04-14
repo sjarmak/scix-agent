@@ -33,11 +33,16 @@ from typing import Any
 from bs4 import BeautifulSoup, Tag
 
 from scix.db import DEFAULT_DSN, is_production_dsn, redact_dsn
+from scix.sources.licensing import SnippetPayload, enforce_snippet_budget
 
 logger = logging.getLogger(__name__)
 
 AR5IV_BASE_URL = "https://arxiv.org/html"
 SOURCE_TAG = "ar5iv"
+
+# Sources whose body text is LaTeX-derived and subject to ADR-006
+# internal-use-only restrictions (snippet budget enforcement).
+LATEX_DERIVED_SOURCES: frozenset[str] = frozenset({"ar5iv", "arxiv_local"})
 
 # Valid arXiv ID formats:
 #   New-style: 2301.12345, 2301.12345v2
@@ -169,6 +174,42 @@ class Ar5ivConfig:
 def _build_canonical_url(arxiv_id: str) -> str:
     """Build the canonical arXiv abstract URL for attribution."""
     return f"https://arxiv.org/abs/{arxiv_id}"
+
+
+def get_body_snippet(
+    parsed: "ParsedFulltext",
+    arxiv_id: str,
+    *,
+    budget: int | None = None,
+) -> SnippetPayload:
+    """Return a snippet-budget-enforced body payload for user-facing emission.
+
+    Reconstructs the body text by joining section texts from the parsed
+    fulltext, then applies :func:`enforce_snippet_budget` with the canonical
+    arXiv URL. This is the single user-facing body emission point for ar5iv
+    parsed content (ADR-006).
+
+    Parameters
+    ----------
+    parsed : ParsedFulltext
+        The parsed fulltext (from :class:`Ar5ivParser`).
+    arxiv_id : str
+        The arXiv identifier (e.g. ``"2301.12345"``). Used to build the
+        canonical URL.
+    budget : int or None
+        Optional explicit snippet budget override. Defaults to the value
+        from :data:`~scix.sources.licensing.DEFAULT_SNIPPET_BUDGET` or the
+        ``SCIX_LATEX_SNIPPET_BUDGET`` env var.
+
+    Returns
+    -------
+    SnippetPayload
+        Frozen payload with the trimmed snippet, canonical URL, truncation
+        flag, original length, and resolved budget.
+    """
+    body = "\n\n".join(s.text for s in parsed.sections if s.text)
+    canonical_url = _build_canonical_url(arxiv_id)
+    return enforce_snippet_budget(body, canonical_url, budget=budget)
 
 
 # ---------------------------------------------------------------------------

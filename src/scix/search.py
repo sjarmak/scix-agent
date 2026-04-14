@@ -7,6 +7,7 @@ callers can always access result.timing_ms to understand latency breakdown.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -16,6 +17,8 @@ import psycopg
 from psycopg.rows import dict_row
 
 from scix.db import IterativeScanMode, configure_iterative_scan
+from scix.sources.ar5iv import LATEX_DERIVED_SOURCES, _ARXIV_ID_RE, _build_canonical_url
+from scix.sources.licensing import enforce_snippet_budget
 from scix.stubs import PaperStub
 
 logger = logging.getLogger(__name__)
@@ -1711,4 +1714,231 @@ def search_within_paper(
         total=1,
         timing_ms={"query_ms": query_ms},
         metadata={"has_body": True},
+    )
+
+
+# ---------------------------------------------------------------------------
+# papers_fulltext read path (ADR-006 snippet budget enforcement)
+# ---------------------------------------------------------------------------
+
+
+def _get_arxiv_id_for_bibcode(
+    conn: psycopg.Connection,
+    bibcode: str,
+) -> str | None:
+    """Look up the arXiv identifier from the papers.identifier array.
+
+    Returns the first identifier matching an arXiv ID pattern, or None.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT identifier FROM papers WHERE bibcode = %s",
+            (bibcode,),
+        )
+        row = cur.fetchone()
+
+    if row is None:
+        return None
+
+    identifiers = row.get("identifier") or []
+    for ident in identifiers:
+        if _ARXIV_ID_RE.match(ident):
+            return ident
+    return None
+
+
+def apply_snippet_budget_if_needed(
+    *,
+    body_text: str,
+    source: str,
+    bibcode: str,
+    arxiv_id: str | None,
+) -> dict[str, Any]:
+    """Conditionally apply snippet budget based on source provenance.
+
+    For LaTeX-derived sources (ar5iv, arxiv_local), enforces the snippet
+    budget and attaches a canonical_url per ADR-006. For non-LaTeX sources,
+    returns the body text unmodified.
+
+    Parameters
+    ----------
+    body_text : str
+        The body text to potentially truncate.
+    source : str
+        The source tag from papers_fulltext (e.g. 'ar5iv', 'ads_body').
+    bibcode : str
+        The paper's bibcode.
+    arxiv_id : str or None
+        The arXiv ID for building canonical_url. Required for LaTeX-derived
+        sources; raises ValueError if None for those sources.
+
+    Returns
+    -------
+    dict
+        Keys: snippet, truncated, canonical_url (if LaTeX-derived),
+        original_length, budget.
+    """
+    if source in LATEX_DERIVED_SOURCES:
+        if not arxiv_id:
+            raise ValueError(
+                f"LaTeX-derived source '{source}' for bibcode '{bibcode}' "
+                f"requires an arxiv_id to build canonical_url"
+            )
+        canonical_url = _build_canonical_url(arxiv_id)
+        payload = enforce_snippet_budget(body_text, canonical_url)
+        return {
+            "snippet": payload.snippet,
+            "truncated": payload.truncated,
+            "canonical_url": payload.canonical_url,
+            "original_length": payload.original_length,
+            "budget": payload.budget,
+        }
+
+    # Non-LaTeX source: pass through without truncation
+    return {
+        "snippet": body_text,
+        "truncated": False,
+        "canonical_url": None,
+        "original_length": len(body_text),
+    }
+
+
+def read_fulltext(
+    conn: psycopg.Connection,
+    bibcode: str,
+    *,
+    section: str = "full",
+    char_offset: int = 0,
+    limit: int = 5000,
+) -> SearchResult:
+    """Read structured fulltext from papers_fulltext with ADR-006 enforcement.
+
+    For LaTeX-derived sources (ar5iv, arxiv_local), the body text is
+    passed through :func:`enforce_snippet_budget` and the response includes
+    ``canonical_url``. For non-LaTeX sources, the body text is returned
+    as-is with standard pagination.
+
+    Parameters
+    ----------
+    conn : psycopg.Connection
+    bibcode : str
+        ADS bibcode.
+    section : str
+        Section name or 'full' for the entire body.
+    char_offset : int
+        Character offset for pagination (non-LaTeX sources only; LaTeX
+        sources are always returned from the start within budget).
+    limit : int
+        Maximum characters to return (non-LaTeX sources only).
+
+    Returns
+    -------
+    SearchResult
+        papers list contains a single dict with section_text (or snippet
+        for LaTeX sources), source, and optional canonical_url.
+    """
+    t0 = time.perf_counter()
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT bibcode, source, sections, parser_version "
+            "FROM papers_fulltext WHERE bibcode = %s",
+            (bibcode,),
+        )
+        row = cur.fetchone()
+
+    query_ms = _elapsed_ms(t0)
+
+    if row is None:
+        return SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"query_ms": query_ms},
+            metadata={"error": f"No fulltext found for: {bibcode}"},
+        )
+
+    source = row["source"]
+    sections_raw = row["sections"]
+
+    # Parse sections JSON
+    if isinstance(sections_raw, str):
+        sections_data = json.loads(sections_raw)
+    else:
+        sections_data = sections_raw  # already parsed by psycopg JSONB
+
+    # Reconstruct body text from sections
+    section_lower = section.lower()
+    if section_lower == "full":
+        body_parts = [s["text"] for s in sections_data if s.get("text")]
+        body_text = "\n\n".join(body_parts)
+        section_name = "full"
+    else:
+        matched = [
+            s
+            for s in sections_data
+            if s.get("heading", "").lower().strip().endswith(section_lower)
+            or section_lower in s.get("heading", "").lower()
+        ]
+        if matched:
+            section_name = matched[0].get("heading", section_lower)
+            body_text = matched[0].get("text", "")
+        else:
+            available = [s.get("heading", "") for s in sections_data]
+            return SearchResult(
+                papers=[],
+                total=0,
+                timing_ms={"query_ms": query_ms},
+                metadata={
+                    "error": f"Section '{section}' not found in fulltext",
+                    "available_sections": available,
+                    "source": source,
+                },
+            )
+
+    if source in LATEX_DERIVED_SOURCES:
+        # LaTeX-derived: enforce snippet budget (ADR-006)
+        arxiv_id = _get_arxiv_id_for_bibcode(conn, bibcode)
+        budget_result = apply_snippet_budget_if_needed(
+            body_text=body_text,
+            source=source,
+            bibcode=bibcode,
+            arxiv_id=arxiv_id,
+        )
+        return SearchResult(
+            papers=[
+                {
+                    "bibcode": bibcode,
+                    "source": source,
+                    "section_name": section_name,
+                    "section_text": budget_result["snippet"],
+                    "truncated": budget_result["truncated"],
+                    "canonical_url": budget_result["canonical_url"],
+                    "original_length": budget_result["original_length"],
+                    "parser_version": row["parser_version"],
+                }
+            ],
+            total=1,
+            timing_ms={"query_ms": query_ms},
+            metadata={"source": source, "latex_derived": True},
+        )
+
+    # Non-LaTeX source: standard pagination
+    total_chars = len(body_text)
+    section_text = body_text[char_offset : char_offset + limit]
+
+    return SearchResult(
+        papers=[
+            {
+                "bibcode": bibcode,
+                "source": source,
+                "section_name": section_name,
+                "section_text": section_text,
+                "char_offset": char_offset,
+                "total_chars": total_chars,
+                "parser_version": row["parser_version"],
+            }
+        ],
+        total=1,
+        timing_ms={"query_ms": query_ms},
+        metadata={"source": source, "latex_derived": False},
     )

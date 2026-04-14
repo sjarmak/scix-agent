@@ -1,95 +1,33 @@
-"""Harvest promotion: shadow-diff gated atomic promotion from staging tables
-into production entity tables.
+-- 043_consolidate_promote_harvest.sql
+-- Consolidate promote_harvest: drop the migration-030 stub and install the
+-- full v2 body as the canonical promote_harvest function.
+--
+-- Background: migration 030 shipped a promote_harvest(BIGINT) RETURNS INTEGER
+-- stub.  The u04 work unit implemented the real logic as promote_harvest_v2()
+-- (installed lazily by Python at runtime) to avoid colliding with the stub.
+-- This migration makes promote_harvest the single canonical function and
+-- removes promote_harvest_v2.
+--
+-- Idempotent: uses CREATE OR REPLACE and DROP IF EXISTS.
 
-Implements D3 "Dependency Hardening" from the entity-enrichment PRD:
+BEGIN;
 
-- `>2%` canonical shrinkage rejection.
-- `>5%` alias shrinkage rejection.
-- Per-source row-count floors.
-- Orphan prevention for entities with `>=1000` `document_entities` rows.
-- Schema mismatch rejection (staging column set must be a subset of target).
-- Atomic under `pg_try_advisory_lock('entities_promotion')`.
-- Uses the canonical `promote_harvest` SQL function (installed by
-  migration 043, consolidating the 030 stub and the former v2 body).
+-- ---------------------------------------------------------------------------
+-- 1. Drop the old stub (BIGINT -> INTEGER signature)
+-- ---------------------------------------------------------------------------
 
-The Python entry point `promote_harvest(run_id)` returns a frozen
-`PromotionResult` dataclass.
-"""
+DROP FUNCTION IF EXISTS promote_harvest(BIGINT);
 
-from __future__ import annotations
+-- ---------------------------------------------------------------------------
+-- 2. Drop promote_harvest_v2 if it was previously installed by Python
+-- ---------------------------------------------------------------------------
 
-import json
-import logging
-from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional
+DROP FUNCTION IF EXISTS promote_harvest_v2(BIGINT, JSONB, NUMERIC, NUMERIC, INTEGER);
 
-import psycopg
+-- ---------------------------------------------------------------------------
+-- 3. Install the canonical promote_harvest with full signature
+-- ---------------------------------------------------------------------------
 
-from scix.db import DEFAULT_DSN, get_connection
-
-logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Configuration constants
-# ---------------------------------------------------------------------------
-
-#: Per-source minimum staged row-count floors (from PRD §D3b).
-#: Sources not listed default to 0 (no floor).
-PER_SOURCE_FLOORS: dict[str, int] = {
-    "VizieR": 55000,
-    "GCMD": 9000,
-    "PwC": 7500,
-    "ASCL": 3500,
-    "PhySH": 3500,
-    "AAS": 600,
-    "SPASE": 200,
-    # Known-broken harvesters have floor 0 — documented so operators can see
-    # them in config and re-enable once fixed.
-    "SsODNet": 0,
-    "CMR": 0,
-    "SBDB": 0,
-}
-
-#: Harvesters whose floors are 0 because their upstream API is currently broken.
-KNOWN_BROKEN_SOURCES: frozenset[str] = frozenset({"SsODNet", "CMR", "SBDB"})
-
-#: Maximum allowed canonical (entities) shrinkage fraction — reject above this.
-DEFAULT_CANONICAL_SHRINKAGE_MAX: float = 0.02
-
-#: Maximum allowed alias shrinkage fraction — reject above this.
-DEFAULT_ALIAS_SHRINKAGE_MAX: float = 0.05
-
-#: Entities with at least this many document_entities rows cannot disappear.
-ORPHAN_THRESHOLD: int = 1000
-
-
-# ---------------------------------------------------------------------------
-# Result type
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class PromotionResult:
-    """Outcome of a `promote_harvest(run_id)` call."""
-
-    accepted: bool
-    reason: Optional[str]
-    diff: dict = field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# SQL — promote_harvest function body
-# ---------------------------------------------------------------------------
-
-
-#: Ensures the canonical promote_harvest function exists (CREATE OR REPLACE).
-#: Migration 043 installs this permanently; this fallback covers the case
-#: where the migration has not yet been applied.
-#:
-#: Signature: `promote_harvest(run_id BIGINT, floors JSONB, canonical_max
-#: NUMERIC, alias_max NUMERIC, orphan_threshold INTEGER)` returning JSONB.
-_PROMOTE_HARVEST_SQL = r"""
 CREATE OR REPLACE FUNCTION promote_harvest(
     run_id            BIGINT,
     floors            JSONB   DEFAULT '{}'::jsonb,
@@ -131,8 +69,6 @@ BEGIN
     END IF;
 
     -- 2. Schema compatibility check ----------------------------------------
-    -- Every non-metadata column present on entities_staging must also exist on
-    -- public.entities (or be one of the staging-only bookkeeping columns).
     FOR schema_rec IN
         SELECT column_name
           FROM information_schema.columns
@@ -167,9 +103,6 @@ BEGIN
     SELECT COUNT(*) INTO alias_staging_tot
       FROM entity_aliases_staging WHERE staging_run_id = run_id;
 
-    -- Only compare against production rows for the sources present in this
-    -- staging run. Gives per-source granularity and avoids penalizing a
-    -- single-source run against the total corpus.
     WITH run_sources AS (
         SELECT DISTINCT source FROM entities_staging WHERE staging_run_id = run_id
     )
@@ -185,7 +118,6 @@ BEGIN
       JOIN entities e ON ea.entity_id = e.id
       JOIN run_sources rs ON rs.source = e.source;
 
-    -- Shrinkage (negative value means growth; positive means shrinkage).
     IF prod_entity_total > 0 THEN
         canonical_shrink := (prod_entity_total - staging_total)::NUMERIC
                             / prod_entity_total;
@@ -195,7 +127,6 @@ BEGIN
                         / prod_alias_total;
     END IF;
 
-    -- Per-source breakdown + floor enforcement
     FOR src_rec IN
         SELECT source, COUNT(*) AS n
           FROM entities_staging
@@ -218,11 +149,6 @@ BEGIN
     END LOOP;
 
     -- 4. Orphan check -------------------------------------------------------
-    -- Entities currently in production (for sources present in this run)
-    -- with >= orphan_threshold document_entities rows must have a matching
-    -- natural key in the staging run. Otherwise promoting the run would
-    -- implicitly "retire" them (they would no longer be reinforced by the
-    -- harvest and their provenance would drift).
     FOR orphan_rec IN
         WITH run_sources AS (
             SELECT DISTINCT source FROM entities_staging WHERE staging_run_id = run_id
@@ -256,7 +182,7 @@ BEGIN
             );
     END LOOP;
 
-    -- 5. Build the diff object for later inspection ------------------------
+    -- 5. Build the diff object ----------------------------------------------
     result := jsonb_build_object(
         'staging_entity_count', staging_total,
         'staging_alias_count', alias_staging_tot,
@@ -344,7 +270,6 @@ BEGIN
     )
     SELECT COUNT(*) INTO n_promoted_ent FROM ins;
 
-    -- Aliases: resolve target entity via the natural key on the staging row.
     WITH resolved AS (
         SELECT DISTINCT e.id AS entity_id, sa.alias, sa.alias_source
           FROM entity_aliases_staging sa
@@ -408,92 +333,10 @@ EXCEPTION WHEN OTHERS THEN
     RAISE;
 END
 $fn$;
-"""
 
+COMMENT ON FUNCTION promote_harvest(BIGINT, JSONB, NUMERIC, NUMERIC, INTEGER) IS
+    'Atomic promote of *_staging rows into public entity tables with '
+    'shadow-diff gating (shrinkage, floor, orphan checks). '
+    'Consolidates migration 030 stub + promote_harvest_v2 into single function.';
 
-# ---------------------------------------------------------------------------
-# Python wrapper
-# ---------------------------------------------------------------------------
-
-
-def ensure_promote_function(conn: psycopg.Connection) -> None:
-    """Install (or replace) the canonical `promote_harvest` SQL function."""
-    with conn.cursor() as cur:
-        cur.execute(_PROMOTE_HARVEST_SQL)
-    conn.commit()
-
-
-def promote_harvest(
-    run_id: int,
-    *,
-    dsn: Optional[str] = None,
-    floors: Optional[Mapping[str, int]] = None,
-    canonical_shrinkage_max: float = DEFAULT_CANONICAL_SHRINKAGE_MAX,
-    alias_shrinkage_max: float = DEFAULT_ALIAS_SHRINKAGE_MAX,
-    orphan_threshold: int = ORPHAN_THRESHOLD,
-) -> PromotionResult:
-    """Promote a staging harvest run into production entity tables.
-
-    Args:
-        run_id: The `harvest_runs.id` whose staging rows to promote.
-        dsn: Database DSN (defaults to `SCIX_DSN` env var).
-        floors: Per-source minimum row-count floors. Defaults to
-            :data:`PER_SOURCE_FLOORS`.
-        canonical_shrinkage_max: Maximum tolerated canonical shrinkage
-            fraction (default 0.02 = 2%).
-        alias_shrinkage_max: Maximum tolerated alias shrinkage fraction
-            (default 0.05 = 5%).
-        orphan_threshold: Minimum `document_entities` count that makes an
-            existing entity non-orphanable (default 1000).
-
-    Returns:
-        A frozen :class:`PromotionResult`.
-    """
-    effective_floors: dict[str, int] = dict(PER_SOURCE_FLOORS)
-    if floors is not None:
-        effective_floors.update(floors)
-
-    floors_json = json.dumps(effective_floors)
-
-    conn = get_connection(dsn or DEFAULT_DSN, autocommit=False)
-    try:
-        ensure_promote_function(conn)
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT promote_harvest(%s::bigint, %s::jsonb, %s::numeric, "
-                "%s::numeric, %s::integer)",
-                (
-                    run_id,
-                    floors_json,
-                    canonical_shrinkage_max,
-                    alias_shrinkage_max,
-                    orphan_threshold,
-                ),
-            )
-            row = cur.fetchone()
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-    payload: dict[str, Any] = row[0] if row and row[0] is not None else {}
-    accepted = bool(payload.get("accepted", False))
-    reason = payload.get("reason")
-    diff = payload.get("diff") or {}
-
-    logger.info("promote_harvest run_id=%s accepted=%s reason=%s", run_id, accepted, reason)
-    return PromotionResult(accepted=accepted, reason=reason, diff=diff)
-
-
-__all__ = [
-    "PER_SOURCE_FLOORS",
-    "KNOWN_BROKEN_SOURCES",
-    "DEFAULT_CANONICAL_SHRINKAGE_MAX",
-    "DEFAULT_ALIAS_SHRINKAGE_MAX",
-    "ORPHAN_THRESHOLD",
-    "PromotionResult",
-    "ensure_promote_function",
-    "promote_harvest",
-]
+COMMIT;

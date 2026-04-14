@@ -9,11 +9,11 @@ Computes per-bibcode Jaccard across three entity-resolution lanes:
 2. **hybrid_search[enrich_entities=True]** — the resolver static lane,
    which is what the hybrid-search enrichment call reads under the
    hood.
-3. **document_entities_canonical SELECT** — per u12 the PRD endorses
-   calling ``resolve_entities(mode='static')`` instead of a raw SELECT,
-   so this lane also goes through the resolver. The point of having
-   both "2" and "3" is to test the M13 contract and expose any
-   discrepancy if a future refactor introduces one.
+3. **JIT resolver lane** — calls ``resolve_entities(mode='jit')`` to
+   exercise the just-in-time resolution path. The point of having
+   both "2" (static) and "3" (JIT) is to surface any divergence
+   between the two resolver modes; if a future refactor introduces
+   a discrepancy, it will show up here.
 
 The report adjusts every Jaccard by subtracting the Wikidata-backfill
 ``lane_delta_set`` (empty at u12 — TODO in
@@ -176,13 +176,13 @@ def hybrid_search_entities(bibcode: str) -> frozenset[int]:
 
 
 def static_canonical_entities(bibcode: str) -> frozenset[int]:
-    """Lane C — canonical static read.
+    """Lane C — JIT resolver read.
 
-    u12 PRD note: we call resolve_entities(mode='static') rather than
-    SELECTing from ``document_entities_canonical`` directly. That keeps
-    the M13 single-entry-point lint happy and — importantly — also
-    tests that contract: if a future refactor introduces a divergence
-    between the resolver and the raw MV, it will show up here.
+    Uses ``resolve_entities(mode='jit')`` to exercise the just-in-time
+    resolution path. Comparing this lane against lanes A and B (both
+    ``mode='static'``) surfaces any divergence between the two resolver
+    modes. The M13 single-entry-point contract is preserved because
+    both modes route through ``resolve_entities``.
     """
     return _entities(bibcode, "jit")
 

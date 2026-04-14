@@ -9,10 +9,32 @@ from typing import Literal
 
 import psycopg
 from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_DSN = os.environ.get("SCIX_DSN", "dbname=scix")
+
+_PRODUCTION_DB_NAMES: frozenset[str] = frozenset({"scix"})
+
+
+def is_production_dsn(dsn: str | None) -> bool:
+    """Return True if DSN appears to point at a production database.
+
+    Delegates parsing to libpq via ``psycopg.conninfo.conninfo_to_dict`` so
+    key=value, URI (``postgresql://``, ``postgres://``), and spaces-around-=
+    variants are all handled uniformly. Returns False for empty/None inputs —
+    callers must resolve the effective DSN (via ``DEFAULT_DSN`` fallback)
+    BEFORE calling this, or an unset dsn will silently slip past the guard.
+    """
+    if not dsn:
+        return False
+    try:
+        params = conninfo_to_dict(dsn)
+    except psycopg.ProgrammingError:
+        return False
+    dbname = params.get("dbname")
+    return isinstance(dbname, str) and dbname in _PRODUCTION_DB_NAMES
 
 
 def get_connection(dsn: str | None = None, autocommit: bool = False) -> psycopg.Connection:

@@ -11,8 +11,9 @@ Resumability and progress tracking reuse the project's existing IngestLog
 
 SAFETY:
     * Refuses to target a production DSN unless LoaderConfig.yes_production
-      is explicitly set. Production detection uses tests/helpers.is_production_dsn
-      if available, or a local copy of the same rule (dbname=scix).
+      is explicitly set. The guard resolves the effective DSN (falling back to
+      scix.db.DEFAULT_DSN when cfg.dsn is None) so a missing --dsn flag cannot
+      silently connect to production via SCIX_DSN defaulting.
     * Uses binary COPY into a staging TEMP table + INSERT ... ON CONFLICT so a
       partial load can be resumed. Bibcodes absent from papers are skipped
       (counted in records_skipped) so the FK never fires a row-level error.
@@ -29,43 +30,26 @@ from pathlib import Path
 
 import psycopg
 
-from scix.db import IndexDef, IndexManager, IngestLog, get_connection
+from scix.db import (
+    DEFAULT_DSN,
+    IndexDef,
+    IndexManager,
+    IngestLog,
+    get_connection,
+    is_production_dsn,
+)
 from scix.ingest import open_jsonl
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Production DSN guard (local, so the loader does not import from tests/)
-# ---------------------------------------------------------------------------
-
-_PRODUCTION_DB_NAMES: frozenset[str] = frozenset({"scix"})
-
-
-def is_production_dsn(dsn: str) -> bool:
-    """Return True if DSN appears to point at a production database.
-
-    Recognises both key=value DSNs (e.g. ``host=foo dbname=scix``) and URI
-    DSNs (e.g. ``postgresql://host/scix``). This is a superset of the rule in
-    ``tests/helpers.is_production_dsn`` and is deliberately conservative:
-    when in doubt, treat as production so ``--yes-production`` must be passed
-    explicitly.
-    """
-    # URI form: postgresql[ql]://[user[:pass]@]host[:port]/<dbname>[?...]
-    # Extract the path component after the final slash, stripping any query.
-    if "://" in dsn:
-        _, _, after = dsn.partition("://")
-        if "/" in after:
-            path = after.split("/", 1)[1]
-            dbname = path.split("?", 1)[0].strip("/")
-            if dbname in _PRODUCTION_DB_NAMES:
-                return True
-    # key=value form (psycopg's native DSN).
-    for token in dsn.split():
-        if "=" in token:
-            key, _, value = token.partition("=")
-            if key.strip() == "dbname" and value.strip() in _PRODUCTION_DB_NAMES:
-                return True
-    return False
+# Re-export for backwards compatibility with tests/test_ads_body_unit.py
+__all__ = [
+    "AdsBodyLoader",
+    "LoaderConfig",
+    "LoaderStats",
+    "ProductionGuardError",
+    "is_production_dsn",
+]
 
 
 def _redact_dsn(dsn: str) -> str:
@@ -276,10 +260,16 @@ class AdsBodyLoader:
     def _check_production_guard(self) -> None:
         """Refuse to run against production unless explicitly authorized.
 
+        Resolves the same effective DSN that ``get_connection`` will use
+        (cfg.dsn → DEFAULT_DSN → libpq defaults). Without this fallback, a
+        caller that omits ``--dsn`` would bypass the guard: the cfg value
+        would be None, the guard would see an empty string, and the actual
+        connection would fall through to ``DEFAULT_DSN = "dbname=scix"``.
+
         Raises ProductionGuardError with a DSN-redacted message so passwords
         in the DSN never leak into logs or error messages.
         """
-        effective_dsn = self._cfg.dsn or ""
+        effective_dsn = self._cfg.dsn or DEFAULT_DSN
         if is_production_dsn(effective_dsn) and not self._cfg.yes_production:
             raise ProductionGuardError(
                 "Refusing to run ADS body loader against production DSN "

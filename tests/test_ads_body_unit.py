@@ -16,7 +16,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from scix.ads_body import (  # noqa: E402
+    AdsBodyLoader,
     LoaderConfig,
+    ProductionGuardError,
     _parse_entry_date,
     _parse_record,
     _redact_dsn,
@@ -58,6 +60,31 @@ class TestIsProductionDsn:
     )
     def test_allows_non_production(self, dsn: str) -> None:
         assert is_production_dsn(dsn) is False
+
+    def test_none_is_not_production(self) -> None:
+        # Callers must resolve cfg.dsn -> DEFAULT_DSN BEFORE calling this;
+        # None here means "no DSN supplied", not "points at prod".
+        assert is_production_dsn(None) is False
+
+    @pytest.mark.parametrize(
+        "dsn",
+        [
+            "dbname = scix",
+            "dbname= scix",
+            "dbname =scix",
+            "host=h  dbname = scix  user=ds",
+        ],
+    )
+    def test_spaces_around_equals_still_flagged(self, dsn: str) -> None:
+        # libpq accepts whitespace around '=' in key=value DSNs; our prior
+        # hand-rolled parser missed this, creating a guard bypass. The
+        # canonical scix.db implementation delegates to conninfo_to_dict.
+        assert is_production_dsn(dsn) is True
+
+    def test_malformed_dsn_returns_false(self) -> None:
+        # conninfo_to_dict raises on garbage; we treat that as "not provably
+        # production" and rely on the downstream connect() to fail loudly.
+        assert is_production_dsn("this is not a dsn =====") is False
 
 
 # ---------------------------------------------------------------------------
@@ -173,3 +200,70 @@ class TestLoaderConfig:
         assert cfg.dry_run is False
         assert cfg.yes_production is False
         assert cfg.drop_indexes is False
+
+
+# ---------------------------------------------------------------------------
+# Production guard — C1 regression: dsn=None must resolve via DEFAULT_DSN
+# ---------------------------------------------------------------------------
+
+
+class TestProductionGuardDsnResolution:
+    """Regression tests for the None-dsn bypass found in convergence review.
+
+    Before the fix, LoaderConfig(dsn=None) would leave the guard with an
+    empty effective DSN (which `is_production_dsn` correctly reports as
+    non-production) while the actual psycopg.connect() fell through to
+    DEFAULT_DSN (= "dbname=scix" by default), silently connecting to prod.
+    The guard must resolve the SAME fallback chain as get_connection.
+
+    These tests call ``_check_production_guard`` directly so guard logic
+    is exercised in isolation — no psycopg.connect() side effects.
+    """
+
+    def test_none_dsn_falls_back_to_default_dsn(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        import scix.ads_body as ads_body_module
+
+        monkeypatch.setattr(ads_body_module, "DEFAULT_DSN", "dbname=scix")
+        cfg = LoaderConfig(dsn=None, jsonl_path=tmp_path / "x.jsonl")
+        loader = AdsBodyLoader(cfg)
+        with pytest.raises(ProductionGuardError, match="production"):
+            loader._check_production_guard()
+
+    def test_none_dsn_with_non_prod_default_is_allowed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        import scix.ads_body as ads_body_module
+
+        monkeypatch.setattr(ads_body_module, "DEFAULT_DSN", "dbname=scix_test")
+        cfg = LoaderConfig(dsn=None, jsonl_path=tmp_path / "x.jsonl")
+        loader = AdsBodyLoader(cfg)
+        # Should not raise — guard only fires on production DSNs.
+        loader._check_production_guard()
+
+    def test_yes_production_overrides_none_dsn(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        import scix.ads_body as ads_body_module
+
+        monkeypatch.setattr(ads_body_module, "DEFAULT_DSN", "dbname=scix")
+        cfg = LoaderConfig(dsn=None, jsonl_path=tmp_path / "x.jsonl", yes_production=True)
+        loader = AdsBodyLoader(cfg)
+        # yes_production=True explicitly authorizes production; guard passes.
+        loader._check_production_guard()
+
+    def test_explicit_production_dsn_still_blocked(self, tmp_path: Path) -> None:
+        # Sanity: the original guard for cfg.dsn="dbname=scix" still fires.
+        cfg = LoaderConfig(dsn="dbname=scix", jsonl_path=tmp_path / "x.jsonl")
+        with pytest.raises(ProductionGuardError):
+            AdsBodyLoader(cfg)._check_production_guard()
+
+    def test_explicit_uri_production_dsn_blocked(self, tmp_path: Path) -> None:
+        # H1 coverage: URI-form production DSN must also be blocked.
+        cfg = LoaderConfig(
+            dsn="postgresql://user:pw@host:5432/scix",
+            jsonl_path=tmp_path / "x.jsonl",
+        )
+        with pytest.raises(ProductionGuardError):
+            AdsBodyLoader(cfg)._check_production_guard()

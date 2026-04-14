@@ -146,13 +146,12 @@ The default DSN (`dbname=scix`) points at the production database with 32M paper
 
 ## Performance
 
-| Operation                        | Throughput / Latency   |
-| -------------------------------- | ---------------------- |
-| JSONL ingestion                  | ~2.2K papers/sec       |
-| SPECTER2 embedding               | 508 rec/sec (RTX 5090) |
-| Semantic search (HNSW)           | p95 < 10ms             |
-| Hybrid search (3-signal RRF)     | p95 < 200ms            |
-| PageRank (32M nodes, 299M edges) | ~10 min                |
+MCP tool latency at 32M papers:
+
+| Operation                    | Latency     |
+| ---------------------------- | ----------- |
+| Semantic search (HNSW)       | p95 < 10ms  |
+| Hybrid search (3-signal RRF) | p95 < 200ms |
 
 ## License
 

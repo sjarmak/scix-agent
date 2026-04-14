@@ -3,24 +3,34 @@
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 
 import psycopg
 import psycopg.errors
 
+# Make src/ importable so we can share the canonical production-DSN guard
+# with the library code (src/scix/db.py). Keeping a separate implementation
+# in this file caused a URI-form bypass (tests/helpers saw only key=value
+# DSNs; src/scix/ads_body used a superset parser) until 2026-04-13.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT / "src"))
+
+from scix.db import is_production_dsn as _is_production_dsn  # noqa: E402
+
 # Default DSN for read-only tests; destructive tests MUST use SCIX_TEST_DSN.
 DSN = os.environ.get("SCIX_DSN", "dbname=scix")
 
-_PRODUCTION_DB_NAMES = {"scix"}
 
+def is_production_dsn(dsn: str | None) -> bool:
+    """Return True if DSN appears to point at a production database.
 
-def is_production_dsn(dsn: str) -> bool:
-    """Return True if DSN appears to point at a production database."""
-    for token in dsn.split():
-        if "=" in token:
-            key, _, value = token.partition("=")
-            if key.strip() == "dbname" and value.strip() in _PRODUCTION_DB_NAMES:
-                return True
-    return False
+    Thin re-export of ``scix.db.is_production_dsn`` — kept as a function so
+    the many ``from helpers import is_production_dsn`` call sites across the
+    test suite continue to resolve without edits.
+    """
+    return _is_production_dsn(dsn)
 
 
 def get_test_dsn() -> str | None:
@@ -35,6 +45,7 @@ def get_test_dsn() -> str | None:
     if is_production_dsn(test_dsn):
         return None
     return test_dsn
+
 
 # Per-query timeout in seconds (configurable for slow environments)
 STMT_TIMEOUT_S = int(os.environ.get("SCIX_TEST_TIMEOUT", "60"))

@@ -207,6 +207,73 @@ def test_curate_entity_core_three_pass(seeded_db, tmp_path: Path) -> None:
     assert TEST_SOURCE_A in strat_text or TEST_SOURCE_B in strat_text
 
 
+def test_curate_populate_writes_to_core_table(seeded_db, tmp_path: Path) -> None:
+    """AC: curated_entity_core table populated when populate=True."""
+    from scripts.curate_entity_core import run_curation
+
+    conn, ent_ids = seeded_db
+
+    csv_path = tmp_path / "curated_core.csv"
+    strat_path = tmp_path / "curated_core_stratification.md"
+
+    # Clean any prior curated_entity_core rows for our test entities.
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            DELETE FROM curated_entity_core
+             WHERE entity_id IN (
+                SELECT id FROM entities WHERE source IN (%s, %s)
+             )
+            """,
+            (TEST_SOURCE_A, TEST_SOURCE_B),
+        )
+    conn.commit()
+
+    rows = run_curation(
+        conn,
+        csv_path=csv_path,
+        strat_path=strat_path,
+        window_days=14,
+        max_n=10_000,
+        populate=True,
+    )
+
+    our_rows = [r for r in rows if r.source in (TEST_SOURCE_A, TEST_SOURCE_B)]
+    assert len(our_rows) > 0, "expected curated rows from seeded data"
+
+    # Verify rows actually landed in the table.
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT entity_id, query_hits_14d
+              FROM curated_entity_core
+             WHERE entity_id = ANY(%s)
+            """,
+            (list(ent_ids.values()),),
+        )
+        db_rows = {int(r[0]): int(r[1]) for r in cur.fetchall()}
+
+    for r in our_rows:
+        assert (
+            r.entity_id in db_rows
+        ), f"entity {r.entity_id} ({r.canonical_name}) not in curated_entity_core"
+        expected_hits = r.query_hits_14d + r.zero_result_hits_14d
+        assert db_rows[r.entity_id] == expected_hits
+
+    # Verify promotion_log entries exist.
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM core_promotion_log
+             WHERE entity_id = ANY(%s) AND action = 'promote'
+               AND reason LIKE 'curate_%%'
+            """,
+            (list(ent_ids.values()),),
+        )
+        (log_count,) = cur.fetchone()
+    assert log_count >= len(our_rows), "expected promotion log entries for all curated rows"
+
+
 def test_promote_auto_demotes_at_cap(seeded_db, monkeypatch) -> None:
     """AC4: promoting past CORE_MAX auto-demotes the lowest-hit member."""
     conn, ent_ids = seeded_db
@@ -235,9 +302,7 @@ def test_promote_auto_demotes_at_cap(seeded_db, monkeypatch) -> None:
         (size,) = cur.fetchone()
     assert size >= 5
 
-    # Identify the lowest-hit member among our seeds (should be gamma_ray=1).
-    lowest_entity_id = ent_ids["u07_gamma_ray"]
-
+    # Lowest-hit member among our seeds is gamma_ray=1.
     # Promote an 11th (6th relative to cap=5) entity — should auto-demote the
     # lowest-hit one among our seeds. Because scix_test may have other rows
     # from prior test runs in curated_entity_core, we scope assertions to

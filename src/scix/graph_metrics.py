@@ -566,36 +566,77 @@ def compute_hits(graph: Any) -> tuple[list[float], list[float]]:
     return hub_scores, authority_scores
 
 
+_PARTITION_TYPES = frozenset({"modularity", "CPM"})
+
+
+def _resolve_partition_class(partition_type: str) -> Any:
+    """Map a partition type name to a leidenalg partition class.
+
+    Args:
+        partition_type: One of 'modularity' (RBConfigurationVertexPartition)
+            or 'CPM' (CPMVertexPartition). CPM is recommended by CWTS for
+            resolution-limit-free community detection.
+
+    Returns:
+        The leidenalg partition class.
+
+    Raises:
+        ValueError: If partition_type is not recognized.
+    """
+    if partition_type not in _PARTITION_TYPES:
+        raise ValueError(
+            f"Invalid partition_type: {partition_type!r}. "
+            f"Must be one of {sorted(_PARTITION_TYPES)}"
+        )
+    leidenalg = _import_leidenalg()
+    if partition_type == "CPM":
+        return leidenalg.CPMVertexPartition
+    return leidenalg.RBConfigurationVertexPartition
+
+
 def compute_leiden(
     graph: Any,
     resolution: float,
     seed: int = 42,
+    partition_type: str = "modularity",
 ) -> list[int]:
     """Run Leiden community detection on an undirected projection of the graph.
 
     Args:
-        graph: Directed igraph.Graph (will be converted to undirected).
-        resolution: Resolution parameter for RBConfigurationVertexPartition.
-            Higher values yield more, smaller communities.
+        graph: igraph.Graph (directed or undirected; directed graphs are
+            converted to undirected via edge collapse).
+        resolution: Resolution parameter. For 'modularity'
+            (RBConfigurationVertexPartition), higher values yield more, smaller
+            communities. For 'CPM' (CPMVertexPartition), the resolution is an
+            absolute edge-density threshold — communities must have internal
+            density above this value.
         seed: Random seed for reproducibility.
+        partition_type: Partition quality function. 'modularity' uses
+            RBConfigurationVertexPartition; 'CPM' uses CPMVertexPartition
+            (recommended by CWTS for resolution-limit-free detection).
 
     Returns:
         Membership list (list[int]) indexed by vertex ID.
     """
-    leidenalg = _import_leidenalg()
+    partition_class = _resolve_partition_class(partition_type)
 
     t0 = time.perf_counter()
-    undirected = graph.as_undirected(mode="collapse")
+    if graph.is_directed():
+        undirected = graph.as_undirected(mode="collapse")
+    else:
+        undirected = graph
+    leidenalg = _import_leidenalg()
     partition = leidenalg.find_partition(
         undirected,
-        leidenalg.RBConfigurationVertexPartition,
+        partition_class,
         resolution_parameter=resolution,
         seed=seed,
     )
     membership: list[int] = list(partition.membership)
     n_communities = len(set(membership))
     logger.info(
-        "Leiden (res=%.4f) found %d communities in %.1fms",
+        "Leiden (%s, res=%.4f) found %d communities in %.1fms",
+        partition_type,
         resolution,
         n_communities,
         _elapsed_ms(t0),
@@ -616,6 +657,7 @@ def calibrate_resolution(
     high: float = 1.0,
     max_iter: int = 8,
     seed: int = 42,
+    partition_type: str = "modularity",
 ) -> float:
     """Binary search (log-scale) for a Leiden resolution yielding ~target_communities.
 
@@ -630,6 +672,7 @@ def calibrate_resolution(
         high: Upper bound of resolution search space.
         max_iter: Maximum binary search iterations.
         seed: Random seed for Leiden.
+        partition_type: 'modularity' or 'CPM'.
 
     Returns:
         Best resolution found (float).
@@ -644,7 +687,7 @@ def calibrate_resolution(
     for i in range(max_iter):
         log_mid = (log_low + log_high) / 2
         mid = 10**log_mid
-        membership = compute_leiden(graph, resolution=mid, seed=seed)
+        membership = compute_leiden(graph, resolution=mid, seed=seed, partition_type=partition_type)
         n_communities = len(set(membership))
         diff = abs(n_communities - target_communities)
 
@@ -686,6 +729,154 @@ def calibrate_resolution(
         best_diff,
     )
     return best_res
+
+
+# ---------------------------------------------------------------------------
+# Resolution sweep and partition comparison
+# ---------------------------------------------------------------------------
+
+
+def sweep_resolutions(
+    graph: Any,
+    resolutions: list[float],
+    seed: int = 42,
+    partition_type: str = "modularity",
+    reference_labels: list[int] | None = None,
+) -> list[dict[str, Any]]:
+    """Run Leiden at multiple resolutions and collect quality metrics at each.
+
+    For each resolution, computes: community count, size statistics,
+    conductance, coverage, and optionally NMI against reference labels.
+
+    The graph is converted to undirected once and reused across all runs.
+
+    Args:
+        graph: igraph.Graph (directed or undirected).
+        resolutions: List of resolution parameter values to sweep.
+        seed: Random seed for Leiden.
+        partition_type: 'modularity' (RBConfigurationVertexPartition) or
+            'CPM' (CPMVertexPartition).
+        reference_labels: Optional ground-truth labels (one per vertex).
+            When provided, NMI is computed for each partition.
+
+    Returns:
+        List of dicts, one per resolution, each containing:
+            resolution, n_communities, membership, size_stats,
+            conductance, coverage, and optionally nmi.
+    """
+    if partition_type not in _PARTITION_TYPES:
+        raise ValueError(
+            f"Invalid partition_type: {partition_type!r}. "
+            f"Must be one of {sorted(_PARTITION_TYPES)}"
+        )
+
+    if not resolutions:
+        return []
+
+    t0 = time.perf_counter()
+
+    # Convert to undirected once for all runs
+    if graph.is_directed():
+        undirected = graph.as_undirected(mode="collapse")
+    else:
+        undirected = graph
+
+    partition_class = _resolve_partition_class(partition_type)
+    leidenalg = _import_leidenalg()
+
+    results: list[dict[str, Any]] = []
+    for res_val in resolutions:
+        t_run = time.perf_counter()
+        partition = leidenalg.find_partition(
+            undirected,
+            partition_class,
+            resolution_parameter=res_val,
+            seed=seed,
+        )
+        membership: list[int] = list(partition.membership)
+        n_communities = len(set(membership))
+
+        size_stats = community_size_stats(membership)
+        conductance = compute_conductance(undirected, membership)
+        coverage = compute_coverage(undirected, membership)
+
+        entry: dict[str, Any] = {
+            "resolution": res_val,
+            "n_communities": n_communities,
+            "membership": membership,
+            "size_stats": size_stats,
+            "conductance": conductance,
+            "coverage": coverage,
+            "elapsed_ms": round(_elapsed_ms(t_run), 1),
+        }
+
+        if reference_labels is not None:
+            entry["nmi"] = compute_nmi(membership, reference_labels)
+
+        results.append(entry)
+        logger.info(
+            "Sweep (%s, res=%.6f): %d communities, coverage=%.4f, "
+            "conductance_mean=%.4f in %.1fms",
+            partition_type,
+            res_val,
+            n_communities,
+            coverage,
+            conductance["mean"],
+            entry["elapsed_ms"],
+        )
+
+    logger.info(
+        "Resolution sweep complete: %d resolutions in %.1fms",
+        len(resolutions),
+        _elapsed_ms(t0),
+    )
+    return results
+
+
+def compare_partitions(
+    partitions: dict[str, list[int]],
+) -> dict[str, Any]:
+    """Compute pairwise NMI between named partitions.
+
+    Useful for understanding how community structure changes across
+    resolutions or partition types (e.g., modularity vs CPM).
+
+    Args:
+        partitions: {name: membership_list} for each partition to compare.
+            All membership lists must have the same length.
+
+    Returns:
+        Dictionary with:
+            partition_names: list of partition names (sorted by insertion order).
+            community_counts: {name: n_communities} for each partition.
+            nmi_matrix: {name_a: {name_b: nmi_score}} for all pairs.
+
+    Raises:
+        ValueError: If partitions dict is empty.
+    """
+    if not partitions:
+        raise ValueError("partitions dict must not be empty")
+
+    names = list(partitions.keys())
+    community_counts = {name: len(set(m)) for name, m in partitions.items()}
+
+    nmi_matrix: dict[str, dict[str, float]] = {}
+    for name_a in names:
+        nmi_matrix[name_a] = {}
+        for name_b in names:
+            if name_a == name_b:
+                nmi_matrix[name_a][name_b] = 1.0
+            elif name_b in nmi_matrix and name_a in nmi_matrix[name_b]:
+                # Reuse symmetric result
+                nmi_matrix[name_a][name_b] = nmi_matrix[name_b][name_a]
+            else:
+                nmi_matrix[name_a][name_b] = compute_nmi(partitions[name_a], partitions[name_b])
+
+    return {
+        "partition_names": names,
+        "community_counts": community_counts,
+        "nmi_matrix": nmi_matrix,
+    }
 
 
 # ---------------------------------------------------------------------------

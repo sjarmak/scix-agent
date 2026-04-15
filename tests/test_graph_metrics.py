@@ -17,6 +17,7 @@ from scix.graph_metrics import (
     assign_small_component_communities,
     calibrate_resolution,
     community_size_stats,
+    compare_partitions,
     compute_conductance,
     compute_coverage,
     compute_hits,
@@ -26,6 +27,7 @@ from scix.graph_metrics import (
     extract_giant_component,
     extract_taxonomic_community,
     filter_isolated_nodes,
+    sweep_resolutions,
 )
 
 # ---------------------------------------------------------------------------
@@ -745,3 +747,196 @@ class TestComputeCoverage:
         membership = [0] * 10
         coverage = compute_coverage(undirected, membership)
         assert coverage == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Sweep resolutions tests
+# ---------------------------------------------------------------------------
+
+
+class TestSweepResolutions:
+    def test_returns_results_for_each_resolution(self) -> None:
+        """Sweep should return one result dict per resolution value."""
+        graph = _two_clique_graph(clique_size=10)
+        resolutions = [0.01, 0.1, 1.0]
+        results = sweep_resolutions(graph, resolutions=resolutions, seed=42)
+        assert len(results) == 3
+        assert [r["resolution"] for r in results] == resolutions
+
+    def test_result_keys(self) -> None:
+        """Each result should contain all expected quality metric keys."""
+        graph = _two_clique_graph(clique_size=10)
+        results = sweep_resolutions(graph, resolutions=[1.0], seed=42)
+        result = results[0]
+        expected_keys = {
+            "resolution",
+            "n_communities",
+            "membership",
+            "size_stats",
+            "conductance",
+            "coverage",
+        }
+        assert expected_keys.issubset(result.keys())
+
+    def test_higher_resolution_more_communities(self) -> None:
+        """Higher resolutions should yield at least as many communities."""
+        graph = _two_clique_graph(clique_size=15)
+        results = sweep_resolutions(graph, resolutions=[0.01, 1.0, 10.0], seed=42)
+        n_comms = [r["n_communities"] for r in results]
+        for i in range(len(n_comms) - 1):
+            assert n_comms[i + 1] >= n_comms[i], (
+                f"Resolution {results[i + 1]['resolution']} yielded {n_comms[i + 1]} "
+                f"communities, expected >= {n_comms[i]}"
+            )
+
+    def test_cpm_partition_type(self) -> None:
+        """Sweep with CPM partition type should run without error."""
+        graph = _two_clique_graph(clique_size=10)
+        results = sweep_resolutions(
+            graph,
+            resolutions=[0.01, 0.1],
+            partition_type="CPM",
+            seed=42,
+        )
+        assert len(results) == 2
+        for r in results:
+            assert r["n_communities"] >= 1
+
+    def test_cpm_detects_two_cliques(self) -> None:
+        """CPM on two cliques should find 2 communities at appropriate resolution."""
+        graph = _two_clique_graph(clique_size=10)
+        # For CPM, resolution is edge density threshold.
+        # Internal edges in a 10-clique: 9*10/2 = 45 for undirected, density ~ 1.0
+        # So a resolution near 0.5 should separate two cliques joined by 1 bridge.
+        results = sweep_resolutions(
+            graph,
+            resolutions=[0.5],
+            partition_type="CPM",
+            seed=42,
+        )
+        assert results[0]["n_communities"] == 2
+
+    def test_modularity_partition_type(self) -> None:
+        """Sweep with modularity (RB) partition type should be the default."""
+        graph = _two_clique_graph(clique_size=10)
+        results_default = sweep_resolutions(graph, resolutions=[1.0], seed=42)
+        results_explicit = sweep_resolutions(
+            graph, resolutions=[1.0], partition_type="modularity", seed=42
+        )
+        # Same partition type -> same result
+        assert results_default[0]["n_communities"] == results_explicit[0]["n_communities"]
+
+    def test_invalid_partition_type_raises(self) -> None:
+        """Invalid partition type should raise ValueError."""
+        graph = _two_clique_graph(clique_size=5)
+        with pytest.raises(ValueError, match="partition_type"):
+            sweep_resolutions(graph, resolutions=[1.0], partition_type="invalid")
+
+    def test_empty_resolutions_returns_empty(self) -> None:
+        """Empty resolution list should return empty results."""
+        graph = _two_clique_graph(clique_size=5)
+        results = sweep_resolutions(graph, resolutions=[], seed=42)
+        assert results == []
+
+    def test_coverage_in_expected_range(self) -> None:
+        """Coverage should be between 0 and 1 for all sweep results."""
+        graph = _two_clique_graph(clique_size=10)
+        results = sweep_resolutions(graph, resolutions=[0.1, 1.0, 5.0], seed=42)
+        for r in results:
+            assert 0.0 <= r["coverage"] <= 1.0
+
+    def test_conductance_keys_present(self) -> None:
+        """Conductance summary should have the standard keys."""
+        graph = _two_clique_graph(clique_size=10)
+        results = sweep_resolutions(graph, resolutions=[1.0], seed=42)
+        cond = results[0]["conductance"]
+        assert "mean" in cond
+        assert "median" in cond
+        assert "n_communities" in cond
+
+    def test_reference_labels_produce_nmi(self) -> None:
+        """When reference_labels are provided, NMI should be computed."""
+        graph = _two_clique_graph(clique_size=10)
+        # Reference: nodes 0-9 = class 0, nodes 10-19 = class 1
+        ref_labels = [0] * 10 + [1] * 10
+        results = sweep_resolutions(graph, resolutions=[1.0], seed=42, reference_labels=ref_labels)
+        assert "nmi" in results[0]
+        # Two cliques should have high NMI with correct reference
+        assert results[0]["nmi"] > 0.8
+
+    def test_no_reference_labels_no_nmi(self) -> None:
+        """Without reference_labels, NMI should not be in results."""
+        graph = _two_clique_graph(clique_size=10)
+        results = sweep_resolutions(graph, resolutions=[1.0], seed=42)
+        assert "nmi" not in results[0]
+
+
+# ---------------------------------------------------------------------------
+# Compare partitions tests
+# ---------------------------------------------------------------------------
+
+
+class TestComparePartitions:
+    def test_pairwise_nmi_matrix(self) -> None:
+        """Should return an NxN matrix of NMI values for N partitions."""
+        partitions = {
+            "coarse": [0, 0, 0, 1, 1, 1],
+            "fine": [0, 0, 1, 2, 2, 3],
+        }
+        result = compare_partitions(partitions)
+        assert "nmi_matrix" in result
+        matrix = result["nmi_matrix"]
+        # 2 partitions -> 2x2 matrix
+        assert len(matrix) == 2
+        assert all(len(row) == 2 for row in matrix.values())
+
+    def test_diagonal_is_one(self) -> None:
+        """Self-NMI should be 1.0."""
+        partitions = {
+            "a": [0, 0, 1, 1],
+            "b": [0, 1, 0, 1],
+        }
+        result = compare_partitions(partitions)
+        for name, row in result["nmi_matrix"].items():
+            assert row[name] == pytest.approx(1.0, abs=1e-6)
+
+    def test_symmetric(self) -> None:
+        """NMI(a, b) should equal NMI(b, a)."""
+        partitions = {
+            "a": [0, 0, 1, 1, 2, 2],
+            "b": [0, 1, 1, 2, 2, 0],
+        }
+        result = compare_partitions(partitions)
+        matrix = result["nmi_matrix"]
+        assert matrix["a"]["b"] == pytest.approx(matrix["b"]["a"], abs=1e-10)
+
+    def test_partition_names_in_result(self) -> None:
+        """Result should list partition names."""
+        partitions = {
+            "coarse": [0, 0, 1, 1],
+            "medium": [0, 1, 2, 3],
+            "fine": [0, 1, 2, 3],
+        }
+        result = compare_partitions(partitions)
+        assert result["partition_names"] == ["coarse", "medium", "fine"]
+
+    def test_community_counts_in_result(self) -> None:
+        """Result should include community counts per partition."""
+        partitions = {
+            "a": [0, 0, 0, 1],
+            "b": [0, 1, 2, 3],
+        }
+        result = compare_partitions(partitions)
+        assert result["community_counts"]["a"] == 2
+        assert result["community_counts"]["b"] == 4
+
+    def test_single_partition(self) -> None:
+        """A single partition should produce a 1x1 NMI matrix of 1.0."""
+        partitions = {"only": [0, 0, 1, 1]}
+        result = compare_partitions(partitions)
+        assert result["nmi_matrix"]["only"]["only"] == pytest.approx(1.0)
+
+    def test_empty_partitions_raises(self) -> None:
+        """Empty partitions dict should raise ValueError."""
+        with pytest.raises(ValueError, match="partitions"):
+            compare_partitions({})

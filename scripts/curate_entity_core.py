@@ -41,6 +41,7 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from scix import core_lifecycle  # noqa: E402
 from scix.db import DEFAULT_DSN, get_connection  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -266,6 +267,27 @@ def _write_stratification(rows: list[CoreRow], path: Path) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _populate_core_table(rows: list[CoreRow], conn: psycopg.Connection) -> int:
+    """Promote each curated row into ``curated_entity_core`` via
+    :func:`core_lifecycle.promote`. Returns the number of rows promoted.
+
+    Each promote() commits individually (incremental). On interruption,
+    already-promoted rows persist; re-running is safe (upsert idempotent).
+    """
+    promoted = 0
+    for r in rows:
+        hits = r.query_hits_14d + r.zero_result_hits_14d
+        core_lifecycle.promote(
+            r.entity_id,
+            query_hits_14d=hits,
+            reason=f"curate_{r.pass_triggered}",
+            conn=conn,
+        )
+        promoted += 1
+    logger.info("Populated curated_entity_core: %d rows promoted", promoted)
+    return promoted
+
+
 def run_curation(
     conn: psycopg.Connection,
     csv_path: Path,
@@ -273,8 +295,13 @@ def run_curation(
     window_days: int = DEFAULT_WINDOW_DAYS,
     max_n: int = DEFAULT_MAX,
     is_test: bool = False,
+    populate: bool = False,
 ) -> list[CoreRow]:
-    """Run the three-pass curation. Returns the final (ranked, capped) rows."""
+    """Run the three-pass curation. Returns the final (ranked, capped) rows.
+
+    When *populate* is True, also upsert results into the
+    ``curated_entity_core`` table via :mod:`scix.core_lifecycle`.
+    """
     logger.info("Pass 1: gap candidates (window=%dd)", window_days)
     p1 = _pass1_gap_candidates(conn, window_days, is_test)
     logger.info("  -> %d", len(p1))
@@ -294,6 +321,10 @@ def run_curation(
     _write_csv(capped, csv_path)
     _write_stratification(capped, strat_path)
     logger.info("Wrote %d rows -> %s", len(capped), csv_path)
+
+    if populate:
+        _populate_core_table(capped, conn)
+
     return capped
 
 
@@ -313,6 +344,11 @@ def main() -> int:
         action="store_true",
         help="Treat rows with is_test=true as curation inputs (default: false)",
     )
+    parser.add_argument(
+        "--populate",
+        action="store_true",
+        help="Also upsert curated rows into curated_entity_core table",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -327,6 +363,7 @@ def main() -> int:
             window_days=args.window_days,
             max_n=args.max_n,
             is_test=args.include_test_traffic,
+            populate=args.populate,
         )
         print(f"Curated {len(rows)} rows")
     finally:

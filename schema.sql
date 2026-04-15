@@ -1264,8 +1264,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_dataset_ctx_id
 
 COMMIT;
 
--- 025_converge_entity_dictionary.sql
--- 025_converge_entity_dictionary.sql
+-- 044_converge_entity_dictionary.sql
+-- 044_converge_entity_dictionary.sql
 -- Migrate entity_dictionary entries into the entities + entity_aliases +
 -- entity_identifiers graph so the linking pipeline can resolve against all
 -- ontology sources (ASCL, PhySH, PwC, VizieR, AAS) — not just GCMD/SPASE.

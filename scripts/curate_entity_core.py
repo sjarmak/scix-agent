@@ -72,10 +72,15 @@ class CoreRow:
 
 
 def _pass1_gap_candidates(
-    conn: psycopg.Connection, window_days: int, is_test: bool
+    conn: psycopg.Connection,
+    window_days: int,
+    is_test: bool,
+    session_id: str | None = None,
 ) -> list[CoreRow]:
     """Bind zero-result queries to existing entities via canonical/alias match."""
-    sql = """
+    session_clause = " AND session_id = %s" if session_id is not None else ""
+    session_params: tuple = (session_id,) if session_id is not None else ()
+    sql = f"""
         WITH zero_q AS (
             SELECT lower(trim(query)) AS q, COUNT(*) AS n
               FROM query_log
@@ -83,6 +88,7 @@ def _pass1_gap_candidates(
                AND result_count = 0
                AND query IS NOT NULL
                AND is_test = %s
+               {session_clause}
              GROUP BY lower(trim(query))
         ),
         matched AS (
@@ -111,7 +117,7 @@ def _pass1_gap_candidates(
     """
     rows: list[CoreRow] = []
     with conn.cursor() as cur:
-        cur.execute(sql, (window_days, is_test))
+        cur.execute(sql, (window_days, is_test, *session_params))
         for entity_id, canonical, source, ambig, zero_hits in cur.fetchall():
             rows.append(
                 CoreRow(
@@ -127,9 +133,7 @@ def _pass1_gap_candidates(
     return rows
 
 
-def _pass2_wikidata_backfill(
-    conn: psycopg.Connection, window_days: int, is_test: bool
-) -> list[CoreRow]:
+def _pass2_wikidata_backfill() -> list[CoreRow]:
     """Pass 2: Wikidata gap closer. No-op stub — N2 future work.
 
     TODO(u07/N2): For gap candidates whose query string does not match any
@@ -140,9 +144,14 @@ def _pass2_wikidata_backfill(
 
 
 def _pass3_unique_with_hits(
-    conn: psycopg.Connection, window_days: int, is_test: bool
+    conn: psycopg.Connection,
+    window_days: int,
+    is_test: bool,
+    session_id: str | None = None,
 ) -> list[CoreRow]:
-    sql = """
+    session_clause = " AND session_id = %s" if session_id is not None else ""
+    session_params: tuple = (session_id,) if session_id is not None else ()
+    sql = f"""
         WITH hit_q AS (
             SELECT lower(trim(query)) AS q, COUNT(*) AS n
               FROM query_log
@@ -150,6 +159,7 @@ def _pass3_unique_with_hits(
                AND result_count > 0
                AND query IS NOT NULL
                AND is_test = %s
+               {session_clause}
              GROUP BY lower(trim(query))
         ),
         matched AS (
@@ -181,7 +191,7 @@ def _pass3_unique_with_hits(
     """
     rows: list[CoreRow] = []
     with conn.cursor() as cur:
-        cur.execute(sql, (window_days, is_test))
+        cur.execute(sql, (window_days, is_test, *session_params))
         for entity_id, canonical, source, ambig, hits in cur.fetchall():
             rows.append(
                 CoreRow(
@@ -296,22 +306,31 @@ def run_curation(
     max_n: int = DEFAULT_MAX,
     is_test: bool = False,
     populate: bool = False,
+    session_id: str | None = None,
 ) -> list[CoreRow]:
     """Run the three-pass curation. Returns the final (ranked, capped) rows.
 
     When *populate* is True, also upsert results into the
     ``curated_entity_core`` table via :mod:`scix.core_lifecycle`.
+
+    When *session_id* is set, pass1 and pass3 only consider query_log rows
+    whose ``session_id`` matches — used to curate a reproducible snapshot
+    from a seed bootstrap run without mixing in concurrent organic traffic.
     """
-    logger.info("Pass 1: gap candidates (window=%dd)", window_days)
-    p1 = _pass1_gap_candidates(conn, window_days, is_test)
+    logger.info(
+        "Pass 1: gap candidates (window=%dd%s)",
+        window_days,
+        f", session={session_id}" if session_id else "",
+    )
+    p1 = _pass1_gap_candidates(conn, window_days, is_test, session_id)
     logger.info("  -> %d", len(p1))
 
     logger.info("Pass 2: Wikidata backfill (stub)")
-    p2 = _pass2_wikidata_backfill(conn, window_days, is_test)
+    p2 = _pass2_wikidata_backfill()
     logger.info("  -> %d", len(p2))
 
     logger.info("Pass 3: unique + >=1 hit")
-    p3 = _pass3_unique_with_hits(conn, window_days, is_test)
+    p3 = _pass3_unique_with_hits(conn, window_days, is_test, session_id)
     logger.info("  -> %d", len(p3))
 
     merged = _merge(p1 + p2 + p3)
@@ -349,6 +368,11 @@ def main() -> int:
         action="store_true",
         help="Also upsert curated rows into curated_entity_core table",
     )
+    parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Restrict pass1/pass3 to query_log rows tagged with this session_id",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -364,6 +388,7 @@ def main() -> int:
             max_n=args.max_n,
             is_test=args.include_test_traffic,
             populate=args.populate,
+            session_id=args.session_id,
         )
         print(f"Curated {len(rows)} rows")
     finally:

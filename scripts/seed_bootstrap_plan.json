@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "tool": "keyword_search",
+  "per_source_target": 500,
+  "sources": [
+    "vizier",
+    "gcmd",
+    "pwc",
+    "ascl",
+    "physh",
+    "aas",
+    "spase",
+    "ssodnet",
+    "ads_data"
+  ]
+}

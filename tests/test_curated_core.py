@@ -346,6 +346,75 @@ def test_promote_auto_demotes_at_cap(seeded_db, monkeypatch) -> None:
     assert ent_ids["u07_theta_plasma"] in present
 
 
+def test_session_id_filter_isolates_seeded_traffic(seeded_db, tmp_path: Path) -> None:
+    """--session-id filter restricts curation to one seed run's rows."""
+    from scripts.curate_entity_core import run_curation
+
+    conn, ent_ids = seeded_db
+
+    # Tag a second batch of rows under a different session_id so the
+    # filter has something to exclude. Use u07_gamma_ray (unique, 1 hit in
+    # the default fixture) as a pass3 candidate under OTHER_TAG.
+    OTHER_TAG = "u07-other-seed"
+    # Defensive cleanup in case a prior run leaked before the finally block.
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM query_log WHERE session_id = %s", (OTHER_TAG,))
+        cur.execute(
+            """
+            INSERT INTO query_log (tool_name, success, tool, query,
+                                   result_count, session_id, is_test)
+            VALUES ('search', TRUE, 'search', %s, 1, %s, FALSE)
+            """,
+            ("u07_gamma_ray", OTHER_TAG),
+        )
+    conn.commit()
+
+    try:
+        csv_a = tmp_path / "core_a.csv"
+        strat_a = tmp_path / "strat_a.md"
+        rows_a = run_curation(
+            conn,
+            csv_path=csv_a,
+            strat_path=strat_a,
+            window_days=14,
+            max_n=10_000,
+            session_id=U07_TAG,
+        )
+        csv_b = tmp_path / "core_b.csv"
+        strat_b = tmp_path / "strat_b.md"
+        rows_b = run_curation(
+            conn,
+            csv_path=csv_b,
+            strat_path=strat_b,
+            window_days=14,
+            max_n=10_000,
+            session_id=OTHER_TAG,
+        )
+
+        # Restrict assertions to our test fixtures — the scix_test DB may
+        # hold leftover rows from other tests.
+        ids_a = {r.entity_id for r in rows_a if r.source in (TEST_SOURCE_A, TEST_SOURCE_B)}
+        ids_b = {r.entity_id for r in rows_b if r.source in (TEST_SOURCE_A, TEST_SOURCE_B)}
+
+        # Session A has the default fixture's hits.
+        assert ent_ids["u07_alpha_hydrogen"] in ids_a
+        assert ent_ids["u07_delta_wave"] in ids_a  # pass1 zero-result
+        assert ent_ids["u07_zeta_spectrum"] in ids_a  # top pass3 hitter
+
+        # Session B has ONLY the gamma hit, and NOT the A fixture rows.
+        # gamma_ray has 1 hit under both A and B, so it appears in both
+        # ids_a and ids_b — the distinguisher is that alpha/delta/zeta
+        # are in A but not in B.
+        assert ent_ids["u07_gamma_ray"] in ids_b
+        assert ent_ids["u07_alpha_hydrogen"] not in ids_b
+        assert ent_ids["u07_delta_wave"] not in ids_b
+        assert ent_ids["u07_zeta_spectrum"] not in ids_b
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM query_log WHERE session_id = %s", (OTHER_TAG,))
+        conn.commit()
+
+
 def test_demote_removes_and_logs(seeded_db) -> None:
     conn, ent_ids = seeded_db
     core_lifecycle.promote(ent_ids["u07_alpha_hydrogen"], query_hits_14d=5, conn=conn)

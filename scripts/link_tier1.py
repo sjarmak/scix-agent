@@ -52,6 +52,7 @@ WITH canonical_matches AS (
     CROSS JOIN LATERAL unnest(p.keywords) AS k
     JOIN entities e ON lower(e.canonical_name) = lower(k)
     WHERE p.keywords IS NOT NULL
+      AND COALESCE(e.link_policy::text, 'open') = 'open'
 ),
 alias_matches AS (
     SELECT
@@ -64,6 +65,7 @@ alias_matches AS (
     JOIN entity_aliases ea ON lower(ea.alias) = lower(k)
     JOIN entities e ON e.id = ea.entity_id
     WHERE p.keywords IS NOT NULL
+      AND COALESCE(e.link_policy::text, 'open') = 'open'
 ),
 all_matches AS (
     SELECT * FROM canonical_matches
@@ -96,7 +98,7 @@ SELECT
     entity_id,
     'keyword_match'                                                       AS link_type,
     1::smallint                                                           AS tier,
-    1                                                                     AS tier_version,
+    2                                                                     AS tier_version,  -- bumped from 1: link_policy filter applied; DELETE old rows before re-running
     1.0::real                                                             AS confidence,
     'keyword_exact_lower'                                                 AS match_method,
     jsonb_build_object('keyword', matched_keyword, 'match_source', match_source) AS evidence
@@ -113,6 +115,16 @@ def run_tier1_link(conn: psycopg.Connection, *, dry_run: bool = False) -> int:
     is rolled back and the candidate count is returned instead.
     """
     with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM entities WHERE link_policy IS NULL")
+        row = cur.fetchone()
+        null_count: int = row[0] if row is not None else 0
+        if null_count > 1000:
+            logger.warning(
+                "%d entities have NULL link_policy — run "
+                "scripts/set_link_policy.py first for best precision",
+                null_count,
+            )
+
         cur.execute(TIER1_INSERT_SQL)
         inserted = cur.rowcount or 0
 

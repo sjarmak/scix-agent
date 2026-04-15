@@ -94,6 +94,10 @@ _SEED_PAPERS: list[tuple[str, list[str], list[str]]] = [
     ("test_u06_0010", ["astro-ph.IM"], ["VLA", "radio"]),
     ("test_u06_0011", ["astro-ph.GA"], ["HST"]),  # alias-match only
     ("test_u06_0012", ["astro-ph.HE"], ["nothing_matches_here"]),
+    # Papers with keywords matching policy-filtered entities:
+    ("test_u06_0013", ["astro-ph.GA"], ["banned_entity_kw"]),
+    ("test_u06_0014", ["astro-ph.GA"], ["ctx_req_entity_kw"]),
+    ("test_u06_0015", ["astro-ph.GA"], ["null_policy_entity_kw"]),
 ]
 
 # (canonical_name, source)
@@ -125,6 +129,14 @@ _SEED_ENTITIES: list[tuple[str, str]] = [
     ("unrelated_epsilon", "unit_test_b"),
 ]
 
+# Entities with link_policy set — used to test filtering in link_tier1.
+# (canonical_name, source, link_policy)  link_policy=None means NULL in DB.
+_SEED_POLICY_ENTITIES: list[tuple[str, str, str | None]] = [
+    ("banned_entity_kw", "unit_test_c", "banned"),
+    ("ctx_req_entity_kw", "unit_test_c", "context_required"),
+    ("null_policy_entity_kw", "unit_test_c", None),
+]
+
 # (entity_canonical_name, alias)
 _SEED_ALIASES: list[tuple[str, str]] = [
     ("Hubble Space Telescope", "HST"),
@@ -134,7 +146,7 @@ _SEED_ALIASES: list[tuple[str, str]] = [
 def _cleanup(conn: psycopg.Connection) -> None:
     """Remove only the fixture rows, leaving any other data intact."""
     bibcodes = [p[0] for p in _SEED_PAPERS]
-    canonical_names = [e[0] for e in _SEED_ENTITIES]
+    canonical_names = [e[0] for e in _SEED_ENTITIES] + [e[0] for e in _SEED_POLICY_ENTITIES]
     with conn.cursor() as cur:
         cur.execute(
             "DELETE FROM document_entities WHERE bibcode = ANY(%s)",
@@ -143,7 +155,7 @@ def _cleanup(conn: psycopg.Connection) -> None:
         # entity_aliases cascade on entities delete
         cur.execute(
             "DELETE FROM entities WHERE canonical_name = ANY(%s) "
-            "AND source IN ('unit_test_a','unit_test_b')",
+            "AND source IN ('unit_test_a','unit_test_b','unit_test_c')",
             (canonical_names,),
         )
         cur.execute(
@@ -178,6 +190,14 @@ def _seed(conn: psycopg.Connection) -> None:
                 "INSERT INTO entity_aliases (entity_id, alias, alias_source) "
                 "VALUES (%s, %s, %s)",
                 (name_to_id[canonical], alias, "test_seed"),
+            )
+        # Entities with link_policy pre-set (for filtering tests)
+        for name, source, policy in _SEED_POLICY_ENTITIES:
+            cur.execute(
+                "INSERT INTO entities "
+                "(canonical_name, entity_type, source, link_policy) "
+                "VALUES (%s, %s, %s, %s::entity_link_policy) RETURNING id",
+                (name, "test_type", source, policy),
             )
     conn.commit()
 
@@ -240,6 +260,40 @@ class TestLinkTier1EndToEnd:
         # at least one evidence row should reference alias match
         evidence_sources = {r[0].get("match_source") for r in rows}
         assert "alias" in evidence_sources
+
+    def test_tier_version_is_2(self, seeded_conn: psycopg.Connection) -> None:
+        link_tier1.run_tier1_link(seeded_conn, dry_run=False)
+        with seeded_conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT tier_version FROM document_entities "
+                "WHERE bibcode LIKE 'test_u06_%' AND tier = 1"
+            )
+            versions = {r[0] for r in cur.fetchall()}
+        assert versions == {2}, f"expected tier_version=2, got {versions}"
+
+    @pytest.mark.parametrize(
+        "bibcode, expected_count, reason",
+        [
+            ("test_u06_0013", 0, "link_policy='banned' should not be linked"),
+            ("test_u06_0014", 0, "link_policy='context_required' should not be linked"),
+            ("test_u06_0015", 1, "NULL link_policy should be linked (defaults to open)"),
+        ],
+    )
+    def test_link_policy_filtering(
+        self,
+        seeded_conn: psycopg.Connection,
+        bibcode: str,
+        expected_count: int,
+        reason: str,
+    ) -> None:
+        link_tier1.run_tier1_link(seeded_conn, dry_run=False)
+        with seeded_conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FROM document_entities " "WHERE bibcode = %s AND tier = 1",
+                (bibcode,),
+            )
+            count = cur.fetchone()[0]
+        assert count == expected_count, reason
 
     def test_dry_run_does_not_persist(self, seeded_conn: psycopg.Connection) -> None:
         count = link_tier1.run_tier1_link(seeded_conn, dry_run=True)

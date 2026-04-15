@@ -1495,6 +1495,43 @@ def get_citation_context(
 
 
 # ---------------------------------------------------------------------------
+# ADR-006 guard: detect LaTeX-derived provenance for papers.body
+# ---------------------------------------------------------------------------
+
+
+def _check_body_latex_provenance(
+    conn: psycopg.Connection,
+    bibcode: str,
+) -> str | None:
+    """Check if a bibcode has LaTeX-derived fulltext in papers_fulltext.
+
+    If papers_fulltext has a row for this bibcode with a source in
+    LATEX_DERIVED_SOURCES (ar5iv, arxiv_local), returns the source tag.
+    Otherwise returns None.
+
+    This is a defense-in-depth guard for read_paper_section and
+    search_within_paper, which read from papers.body. Currently
+    papers.body is ADS-only, but if LaTeX-derived text were ever
+    promoted to papers.body, this guard ensures ADR-006 snippet budget
+    enforcement is applied.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT source FROM papers_fulltext WHERE bibcode = %s",
+            (bibcode,),
+        )
+        row = cur.fetchone()
+
+    if row is None:
+        return None
+
+    source = row["source"]
+    if source in LATEX_DERIVED_SOURCES:
+        return source
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Paper section reading (body + section_parser)
 # ---------------------------------------------------------------------------
 
@@ -1604,6 +1641,41 @@ def read_paper_section(
     total_chars = len(text)
     section_text = text[char_offset : char_offset + limit]
 
+    # ADR-006 guard: check if this bibcode's body is LaTeX-derived.
+    # Currently papers.body is ADS-only, but if ar5iv text were ever
+    # promoted to papers.body, this guard prevents ADR-006 bypass.
+    latex_source = _check_body_latex_provenance(conn, bibcode)
+    if latex_source is not None:
+        arxiv_id = _get_arxiv_id_for_bibcode(conn, bibcode)
+        budget_result = apply_snippet_budget_if_needed(
+            body_text=section_text,
+            source=latex_source,
+            bibcode=bibcode,
+            arxiv_id=arxiv_id,
+        )
+        return SearchResult(
+            papers=[
+                {
+                    "bibcode": bibcode,
+                    "title": title,
+                    "section_name": section_name,
+                    "section_text": budget_result["snippet"],
+                    "has_body": True,
+                    "char_offset": char_offset,
+                    "total_chars": total_chars,
+                    "canonical_url": budget_result["canonical_url"],
+                }
+            ],
+            total=1,
+            timing_ms={"query_ms": query_ms},
+            metadata={
+                "has_body": True,
+                "available_sections": [s[0] for s in sections],
+                "adr006_guarded": True,
+                "source": latex_source,
+            },
+        )
+
     return SearchResult(
         papers=[
             {
@@ -1701,6 +1773,31 @@ def search_within_paper(
             )
 
     headline = row["headline"] or ""
+
+    # ADR-006 guard: check if this bibcode's body is LaTeX-derived.
+    latex_source = _check_body_latex_provenance(conn, bibcode)
+    if latex_source is not None:
+        arxiv_id = _get_arxiv_id_for_bibcode(conn, bibcode)
+        budget_result = apply_snippet_budget_if_needed(
+            body_text=headline,
+            source=latex_source,
+            bibcode=bibcode,
+            arxiv_id=arxiv_id,
+        )
+        return SearchResult(
+            papers=[
+                {
+                    "bibcode": row["bibcode"],
+                    "title": row["title"],
+                    "headline": budget_result["snippet"],
+                    "has_body": True,
+                    "canonical_url": budget_result["canonical_url"],
+                }
+            ],
+            total=1,
+            timing_ms={"query_ms": query_ms},
+            metadata={"has_body": True, "adr006_guarded": True, "source": latex_source},
+        )
 
     return SearchResult(
         papers=[

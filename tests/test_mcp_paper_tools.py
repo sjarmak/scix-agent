@@ -39,11 +39,20 @@ Our results confirm previous findings and extend them to higher redshifts.
 SAMPLE_ABSTRACT = "We study dark matter halos in galaxy clusters using HST observations."
 
 
-def _mock_cursor_with_row(row):
-    """Create a mock connection whose cursor returns a single row."""
+def _mock_cursor_with_row(row, extra_rows=None):
+    """Create a mock connection whose cursor returns rows in sequence.
+
+    The first ``fetchone()`` returns *row*. If *extra_rows* is provided,
+    subsequent ``fetchone()`` calls return those values in order. If
+    *extra_rows* is ``None``, subsequent calls return ``None`` (matches
+    the ADR-006 guard query returning no papers_fulltext row).
+    """
     mock_conn = MagicMock()
     mock_cursor = MagicMock()
-    mock_cursor.fetchone.return_value = row
+    if extra_rows is not None:
+        mock_cursor.fetchone.side_effect = [row] + extra_rows
+    else:
+        mock_cursor.fetchone.side_effect = [row, None]
     mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
     mock_cursor.__exit__ = MagicMock(return_value=False)
     mock_conn.cursor.return_value = mock_cursor
@@ -495,9 +504,7 @@ class TestGetEntityContext:
             "source": "metadata",
             "identifiers": [{"scheme": "nasa_mission", "id": "osiris-rex"}],
             "aliases": ["Origins Spectral Interpretation", "OSIRIS REx"],
-            "relationships": [
-                {"predicate": "observes", "object_id": 99, "confidence": 0.95}
-            ],
+            "relationships": [{"predicate": "observes", "object_id": 99, "confidence": 0.95}],
             "citing_paper_count": 1523,
         }
         conn = self._make_conn_with_row(row)
@@ -584,9 +591,7 @@ class TestDispatchEntityContext:
             timing_ms={"query_ms": 0.8},
         )
         mock_conn = MagicMock()
-        result = json.loads(
-            _dispatch_tool(mock_conn, "entity_context", {"entity_id": 42})
-        )
+        result = json.loads(_dispatch_tool(mock_conn, "entity_context", {"entity_id": 42}))
         assert result["total"] == 1
         assert result["papers"][0]["canonical_name"] == "OSIRIS-REx"
         mock_fn.assert_called_once_with(mock_conn, 42)
@@ -594,17 +599,13 @@ class TestDispatchEntityContext:
     def test_missing_entity_id_returns_error(self) -> None:
         """Missing entity_id returns clear error."""
         mock_conn = MagicMock()
-        result = json.loads(
-            _dispatch_tool(mock_conn, "entity_context", {})
-        )
+        result = json.loads(_dispatch_tool(mock_conn, "entity_context", {}))
         assert "error" in result
 
     def test_invalid_entity_id_returns_error(self) -> None:
         """Non-integer entity_id returns clear error."""
         mock_conn = MagicMock()
-        result = json.loads(
-            _dispatch_tool(mock_conn, "entity_context", {"entity_id": "abc"})
-        )
+        result = json.loads(_dispatch_tool(mock_conn, "entity_context", {"entity_id": "abc"}))
         assert "error" in result
 
 
@@ -633,16 +634,12 @@ class TestDispatchResolveEntity:
             ),
         ]
         mock_conn = MagicMock()
-        result = json.loads(
-            _dispatch_tool(mock_conn, "resolve_entity", {"query": "OSIRIS-REx"})
-        )
+        result = json.loads(_dispatch_tool(mock_conn, "resolve_entity", {"query": "OSIRIS-REx"}))
         assert result["total"] == 1
         assert result["candidates"][0]["canonical_name"] == "OSIRIS-REx"
         assert result["candidates"][0]["confidence"] == 1.0
         assert result["candidates"][0]["match_method"] == "exact_canonical"
-        mock_instance.resolve.assert_called_once_with(
-            "OSIRIS-REx", discipline=None, fuzzy=False
-        )
+        mock_instance.resolve.assert_called_once_with("OSIRIS-REx", discipline=None, fuzzy=False)
 
     @patch("scix.mcp_server.EntityResolver")
     def test_dispatch_with_discipline(self, MockResolver: MagicMock) -> None:
@@ -654,9 +651,7 @@ class TestDispatchResolveEntity:
             "resolve_entity",
             {"query": "Mars", "discipline": "astronomy", "fuzzy": True},
         )
-        mock_instance.resolve.assert_called_once_with(
-            "Mars", discipline="astronomy", fuzzy=True
-        )
+        mock_instance.resolve.assert_called_once_with("Mars", discipline="astronomy", fuzzy=True)
 
     @patch("scix.mcp_server.EntityResolver")
     def test_dispatch_no_match(self, MockResolver: MagicMock) -> None:
@@ -672,15 +667,11 @@ class TestDispatchResolveEntity:
     def test_empty_query_returns_error(self) -> None:
         """Empty query is rejected before DB call."""
         mock_conn = MagicMock()
-        result = json.loads(
-            _dispatch_tool(mock_conn, "resolve_entity", {"query": ""})
-        )
+        result = json.loads(_dispatch_tool(mock_conn, "resolve_entity", {"query": ""}))
         assert "error" in result
 
     def test_whitespace_query_returns_error(self) -> None:
         """Whitespace-only query is rejected."""
         mock_conn = MagicMock()
-        result = json.loads(
-            _dispatch_tool(mock_conn, "resolve_entity", {"query": "   "})
-        )
+        result = json.loads(_dispatch_tool(mock_conn, "resolve_entity", {"query": "   "}))
         assert "error" in result

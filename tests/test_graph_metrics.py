@@ -1,7 +1,7 @@
 """Tests for graph metrics computation.
 
-Unit tests verify PageRank, HITS, Leiden, and calibration using small synthetic
-graphs. No database required.
+Unit tests verify PageRank, HITS, Leiden, calibration, and community quality
+metrics using small synthetic graphs. No database required.
 """
 
 from __future__ import annotations
@@ -16,8 +16,12 @@ from scix.graph_metrics import (
     _VALID_RESOLUTIONS,
     assign_small_component_communities,
     calibrate_resolution,
+    community_size_stats,
+    compute_conductance,
+    compute_coverage,
     compute_hits,
     compute_leiden,
+    compute_nmi,
     compute_pagerank,
     extract_giant_component,
     extract_taxonomic_community,
@@ -587,3 +591,157 @@ class TestExtractTaxonomicCommunity:
 
     def test_non_astroph_single(self) -> None:
         assert extract_taxonomic_community(["cs.AI"]) == "cs.AI"
+
+
+# ---------------------------------------------------------------------------
+# NMI tests
+# ---------------------------------------------------------------------------
+
+
+class TestComputeNmi:
+    def test_identical_labels(self) -> None:
+        """NMI of identical partitions should be 1.0."""
+        labels = [0, 0, 1, 1, 2, 2]
+        assert pytest.approx(compute_nmi(labels, labels), abs=1e-6) == 1.0
+
+    def test_independent_labels(self) -> None:
+        """NMI of independent partitions should be close to 0."""
+        # Large enough to converge toward 0
+        a = [i % 3 for i in range(300)]
+        b = [i % 5 for i in range(300)]
+        nmi = compute_nmi(a, b)
+        assert nmi < 0.1, f"Expected near-zero NMI for independent partitions, got {nmi}"
+
+    def test_symmetric(self) -> None:
+        """NMI(A, B) == NMI(B, A)."""
+        a = [0, 0, 1, 1, 2, 2]
+        b = [0, 1, 1, 2, 2, 0]
+        assert pytest.approx(compute_nmi(a, b), abs=1e-10) == compute_nmi(b, a)
+
+    def test_single_cluster(self) -> None:
+        """If one partition has a single cluster, NMI should be 0."""
+        a = [0, 0, 0, 0]
+        b = [0, 1, 2, 3]
+        nmi = compute_nmi(a, b)
+        assert nmi == pytest.approx(0.0, abs=1e-10)
+
+    def test_empty_labels(self) -> None:
+        """Empty label lists should return 0."""
+        assert compute_nmi([], []) == 0.0
+
+    def test_returns_float_in_range(self) -> None:
+        """NMI should always be in [0, 1]."""
+        a = [0, 0, 1, 1, 2, 2, 3, 3]
+        b = [0, 1, 0, 1, 2, 3, 2, 3]
+        nmi = compute_nmi(a, b)
+        assert 0.0 <= nmi <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Community size stats tests
+# ---------------------------------------------------------------------------
+
+
+class TestCommunitySizeStats:
+    def test_basic_stats(self) -> None:
+        """Two equal communities of 5 each."""
+        membership = [0, 0, 0, 0, 0, 1, 1, 1, 1, 1]
+        stats = community_size_stats(membership)
+        assert stats["n_communities"] == 2
+        assert stats["min_size"] == 5
+        assert stats["max_size"] == 5
+        assert stats["mean_size"] == 5.0
+        assert stats["median_size"] == 5.0
+        assert stats["singletons"] == 0
+
+    def test_singleton_communities(self) -> None:
+        """Each node in its own community."""
+        membership = [0, 1, 2, 3, 4]
+        stats = community_size_stats(membership)
+        assert stats["n_communities"] == 5
+        assert stats["singletons"] == 5
+        assert stats["min_size"] == 1
+        assert stats["max_size"] == 1
+
+    def test_unequal_communities(self) -> None:
+        """One large community and one small one."""
+        membership = [0] * 90 + [1] * 10
+        stats = community_size_stats(membership)
+        assert stats["n_communities"] == 2
+        assert stats["max_size"] == 90
+        assert stats["min_size"] == 10
+        assert stats["pct_in_top10"] == 100.0
+
+    def test_empty_membership(self) -> None:
+        """Empty membership list."""
+        stats = community_size_stats([])
+        assert stats["n_communities"] == 0
+        assert stats["singletons"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Conductance tests
+# ---------------------------------------------------------------------------
+
+
+class TestComputeConductance:
+    def test_two_cliques_low_conductance(self) -> None:
+        """Two well-separated cliques should have low conductance."""
+        graph = _two_clique_graph(clique_size=10)
+        undirected = graph.as_undirected(mode="collapse")
+        membership = compute_leiden(graph, resolution=1.0, seed=42)
+        conductance = compute_conductance(undirected, membership)
+        # Well-separated cliques => very low mean conductance
+        assert conductance["mean"] < 0.1
+
+    def test_single_community_zero_conductance(self) -> None:
+        """A single community covering the whole graph has 0 conductance."""
+        graph = _two_clique_graph(clique_size=5)
+        undirected = graph.as_undirected(mode="collapse")
+        membership = [0] * 10
+        conductance = compute_conductance(undirected, membership)
+        # Only one community => no inter-community edges => conductance = 0
+        assert conductance["mean"] == pytest.approx(0.0)
+
+    def test_conductance_keys(self) -> None:
+        """Result should contain expected keys."""
+        graph = _two_clique_graph(clique_size=5)
+        undirected = graph.as_undirected(mode="collapse")
+        membership = compute_leiden(graph, resolution=1.0, seed=42)
+        conductance = compute_conductance(undirected, membership)
+        assert "mean" in conductance
+        assert "median" in conductance
+        assert "max" in conductance
+        assert "n_communities" in conductance
+
+
+# ---------------------------------------------------------------------------
+# Coverage tests
+# ---------------------------------------------------------------------------
+
+
+class TestComputeCoverage:
+    def test_two_cliques_high_coverage(self) -> None:
+        """Two well-separated cliques should have high coverage (most edges intra-community)."""
+        graph = _two_clique_graph(clique_size=10)
+        undirected = graph.as_undirected(mode="collapse")
+        membership = compute_leiden(graph, resolution=1.0, seed=42)
+        coverage = compute_coverage(undirected, membership)
+        # Only 1 inter-community edge out of many
+        assert coverage > 0.95
+
+    def test_all_singleton_communities_zero_coverage(self) -> None:
+        """If every node is its own community, no intra-community edges exist."""
+        graph = _two_clique_graph(clique_size=5)
+        undirected = graph.as_undirected(mode="collapse")
+        membership = list(range(10))
+        coverage = compute_coverage(undirected, membership)
+        assert coverage == pytest.approx(0.0)
+
+    def test_single_community_full_coverage(self) -> None:
+        """One community covering everything has coverage = 1."""
+        graph = _two_clique_graph(clique_size=5)
+        undirected = graph.as_undirected(mode="collapse")
+        membership = [0] * 10
+        coverage = compute_coverage(undirected, membership)
+        assert coverage == pytest.approx(1.0)

@@ -1,10 +1,16 @@
-"""Precompute graph metrics (PageRank, HITS, Leiden communities) on the citation graph."""
+"""Precompute graph metrics (PageRank, HITS, Leiden communities) on the citation graph.
+
+Also provides community quality metrics (NMI, conductance, coverage) for
+evaluating partition quality against external labels or structural criteria.
+"""
 
 from __future__ import annotations
 
 import io
 import logging
+import math
 import time
+from collections import Counter
 from typing import Any
 
 import psycopg
@@ -29,6 +35,172 @@ _CHUNK_SIZE = 100_000
 def _elapsed_ms(t0: float) -> float:
     """Milliseconds elapsed since t0 (from time.perf_counter)."""
     return round((time.perf_counter() - t0) * 1000, 2)
+
+
+# ---------------------------------------------------------------------------
+# Community quality metrics
+# ---------------------------------------------------------------------------
+
+
+def compute_nmi(labels_a: list[int], labels_b: list[int]) -> float:
+    """Normalized Mutual Information with arithmetic mean normalization.
+
+    Computes 2*MI(A,B) / (H(A) + H(B)) where MI is mutual information and
+    H is Shannon entropy. Returns a value in [0, 1] where 1 means perfect
+    agreement and 0 means independence.
+
+    Args:
+        labels_a: Integer partition labels for each element.
+        labels_b: Integer partition labels for each element (same length).
+
+    Returns:
+        NMI score in [0, 1].
+    """
+    n = len(labels_a)
+    if n == 0:
+        return 0.0
+
+    contingency: dict[tuple[int, int], int] = Counter(zip(labels_a, labels_b))
+    counts_a: dict[int, int] = Counter(labels_a)
+    counts_b: dict[int, int] = Counter(labels_b)
+
+    mi = 0.0
+    for (a, b), nij in contingency.items():
+        if nij == 0:
+            continue
+        ni = counts_a[a]
+        nj = counts_b[b]
+        mi += (nij / n) * math.log(n * nij / (ni * nj))
+
+    h_a = -sum((c / n) * math.log(c / n) for c in counts_a.values() if c > 0)
+    h_b = -sum((c / n) * math.log(c / n) for c in counts_b.values() if c > 0)
+
+    if h_a + h_b == 0:
+        return 1.0 if mi == 0 else 0.0
+    return 2.0 * mi / (h_a + h_b)
+
+
+def community_size_stats(membership: list[int]) -> dict[str, Any]:
+    """Compute descriptive statistics for community sizes.
+
+    Args:
+        membership: Community ID for each node (list indexed by vertex ID).
+
+    Returns:
+        Dictionary with keys: n_communities, min_size, max_size, mean_size,
+        median_size, std_size, singletons, pct_in_top10.
+    """
+    if not membership:
+        return {
+            "n_communities": 0,
+            "min_size": 0,
+            "max_size": 0,
+            "mean_size": 0.0,
+            "median_size": 0.0,
+            "std_size": 0.0,
+            "singletons": 0,
+            "pct_in_top10": 0.0,
+        }
+
+    import numpy as np
+
+    sizes = list(Counter(membership).values())
+    arr = np.array(sizes)
+    return {
+        "n_communities": len(sizes),
+        "min_size": int(arr.min()),
+        "max_size": int(arr.max()),
+        "mean_size": round(float(arr.mean()), 1),
+        "median_size": round(float(np.median(arr)), 1),
+        "std_size": round(float(arr.std()), 1),
+        "singletons": int(np.sum(arr == 1)),
+        "pct_in_top10": round(float(np.sort(arr)[-10:].sum() / arr.sum() * 100), 1),
+    }
+
+
+def compute_conductance(
+    graph: Any,
+    membership: list[int],
+) -> dict[str, float]:
+    """Compute conductance for each community and return summary statistics.
+
+    Conductance of community S = |edges leaving S| / min(vol(S), vol(V-S))
+    where vol(S) is the sum of degrees of nodes in S.
+
+    Lower conductance means a better-separated community.
+
+    Args:
+        graph: Undirected igraph.Graph.
+        membership: Community ID for each vertex.
+
+    Returns:
+        Dictionary with mean, median, max conductance and n_communities evaluated.
+    """
+    import numpy as np
+
+    comm_to_nodes: dict[int, list[int]] = {}
+    for vid, cid in enumerate(membership):
+        comm_to_nodes.setdefault(cid, []).append(vid)
+
+    degrees = graph.degree()
+    total_vol = sum(degrees)
+
+    # Single O(E) pass: count cut edges per community
+    cut_edges_per_comm: dict[int, int] = Counter()
+    for edge in graph.es:
+        cs, ct = membership[edge.source], membership[edge.target]
+        if cs != ct:
+            cut_edges_per_comm[cs] += 1
+            cut_edges_per_comm[ct] += 1
+
+    conductances: list[float] = []
+    for cid, nodes in comm_to_nodes.items():
+        vol_s = sum(degrees[v] for v in nodes)
+        vol_complement = total_vol - vol_s
+
+        if vol_s == 0 or vol_complement == 0:
+            conductances.append(0.0)
+            continue
+
+        denominator = min(vol_s, vol_complement)
+        conductances.append(cut_edges_per_comm.get(cid, 0) / denominator)
+
+    if not conductances:
+        return {"mean": 0.0, "median": 0.0, "max": 0.0, "n_communities": 0}
+
+    arr = np.array(conductances)
+    return {
+        "mean": round(float(arr.mean()), 6),
+        "median": round(float(np.median(arr)), 6),
+        "max": round(float(arr.max()), 6),
+        "n_communities": len(conductances),
+    }
+
+
+def compute_coverage(graph: Any, membership: list[int]) -> float:
+    """Compute coverage: fraction of edges that are intra-community.
+
+    Coverage = (intra-community edges) / (total edges).
+    A value of 1.0 means all edges are within communities (perfect partition).
+    A value of 0.0 means all edges cross community boundaries.
+
+    Args:
+        graph: Undirected igraph.Graph.
+        membership: Community ID for each vertex.
+
+    Returns:
+        Coverage fraction in [0, 1].
+    """
+    total_edges = graph.ecount()
+    if total_edges == 0:
+        return 0.0
+
+    intra = 0
+    for edge in graph.es:
+        if membership[edge.source] == membership[edge.target]:
+            intra += 1
+
+    return intra / total_edges
 
 
 # ---------------------------------------------------------------------------

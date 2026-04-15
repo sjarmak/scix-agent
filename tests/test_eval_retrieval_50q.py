@@ -21,7 +21,6 @@ from eval_retrieval_50q import (
     recall_at_k,
 )
 
-
 # ---------------------------------------------------------------------------
 # DCG / nDCG
 # ---------------------------------------------------------------------------
@@ -119,9 +118,7 @@ class TestMRR:
 
 
 class TestAggregation:
-    def _make_eval(
-        self, method: str, ndcg: float, seed: str = "test"
-    ) -> QueryEval:
+    def _make_eval(self, method: str, ndcg: float, seed: str = "test") -> QueryEval:
         return QueryEval(
             seed_bibcode=seed,
             method=method,
@@ -161,9 +158,7 @@ class TestAggregation:
 
 
 class TestSignificance:
-    def _make_eval(
-        self, method: str, ndcg: float, seed: str
-    ) -> QueryEval:
+    def _make_eval(self, method: str, ndcg: float, seed: str) -> QueryEval:
         return QueryEval(
             seed_bibcode=seed,
             method=method,
@@ -194,3 +189,154 @@ class TestSignificance:
         result = paired_difference_test(evals, "a", "b")
         assert result["n_pairs"] == 10
         assert result["mean_diff"] > 0
+
+
+# ---------------------------------------------------------------------------
+# Full-corpus mode helpers
+# ---------------------------------------------------------------------------
+
+
+class TestFullCorpusMethods:
+    """Tests for the FULL_CORPUS_METHODS constant and method routing."""
+
+    def test_full_corpus_methods_exist(self) -> None:
+        from eval_retrieval_50q import FULL_CORPUS_METHODS
+
+        assert "indus" in FULL_CORPUS_METHODS
+        assert "lexical" in FULL_CORPUS_METHODS
+        assert "hybrid_indus" in FULL_CORPUS_METHODS
+
+    def test_full_corpus_methods_excludes_pilot_only(self) -> None:
+        """Full-corpus mode should not include specter2/nomic (no full embeddings)."""
+        from eval_retrieval_50q import FULL_CORPUS_METHODS
+
+        assert "specter2" not in FULL_CORPUS_METHODS
+        assert "nomic" not in FULL_CORPUS_METHODS
+        assert "hybrid_specter2" not in FULL_CORPUS_METHODS
+
+
+class TestMakeLexicalQuery:
+    """Tests for _make_lexical_query robustness."""
+
+    def test_basic_extraction(self) -> None:
+        from eval_retrieval_50q import _make_lexical_query
+
+        seed = {"title": "Dark matter halos in galaxy clusters"}
+        query = _make_lexical_query(seed)
+        assert "dark" in query
+        assert "matter" in query
+        assert "halos" in query
+
+    def test_html_stripping(self) -> None:
+        from eval_retrieval_50q import _make_lexical_query
+
+        seed = {"title": "The <sub>13</sub>CO emission from molecular clouds"}
+        query = _make_lexical_query(seed)
+        # HTML tags should be stripped, not leaked into query
+        assert "<sub>" not in query
+        assert "emission" in query
+
+    def test_max_terms_limit(self) -> None:
+        from eval_retrieval_50q import _make_lexical_query
+
+        seed = {
+            "title": "Spectroscopic observations revealing chemical abundances "
+            "metallicity gradients stellar populations evolutionary sequences"
+        }
+        query = _make_lexical_query(seed, max_terms=4)
+        assert len(query.split()) <= 4
+
+    def test_empty_title(self) -> None:
+        from eval_retrieval_50q import _make_lexical_query
+
+        assert _make_lexical_query({"title": ""}) == ""
+        assert _make_lexical_query({}) == ""
+
+
+class TestGenerateReport:
+    """Tests for report generation with full-corpus metadata."""
+
+    def test_report_contains_corpus_label(self) -> None:
+        from eval_retrieval_50q import EvalSummary, generate_report
+
+        summary = EvalSummary(
+            method="indus",
+            n_queries=50,
+            mean_ndcg_10=0.45,
+            mean_recall_10=0.30,
+            mean_recall_20=0.50,
+            mean_precision_10=0.38,
+            mean_mrr=0.72,
+            mean_latency_ms=120.0,
+            std_ndcg_10=0.15,
+        )
+        seeds = [
+            {
+                "bibcode": "2024TEST",
+                "title": "Test",
+                "n_neighbors": 15,
+                "year": 2024,
+            }
+        ]
+        report = generate_report(
+            [summary],
+            [],
+            seeds,
+            [],
+            corpus_label="32.4M full corpus",
+        )
+        assert "32.4M full corpus" in report
+
+    def test_report_default_corpus_label(self) -> None:
+        from eval_retrieval_50q import EvalSummary, generate_report
+
+        summary = EvalSummary(
+            method="indus",
+            n_queries=1,
+            mean_ndcg_10=0.45,
+            mean_recall_10=0.30,
+            mean_recall_20=0.50,
+            mean_precision_10=0.38,
+            mean_mrr=0.72,
+            mean_latency_ms=120.0,
+            std_ndcg_10=0.15,
+        )
+        seeds = [
+            {
+                "bibcode": "2024TEST",
+                "title": "Test",
+                "n_neighbors": 15,
+                "year": 2024,
+            }
+        ]
+        report = generate_report([summary], [], seeds, [])
+        assert "10K stratified sample" in report
+
+
+class TestSignificancePairs:
+    """Tests for _significance_pairs method-pair filtering."""
+
+    def test_full_corpus_pairs(self) -> None:
+        from eval_retrieval_50q import FULL_CORPUS_METHODS, _significance_pairs
+
+        pairs = _significance_pairs(FULL_CORPUS_METHODS)
+        # Should include hybrid_indus vs indus, hybrid_indus vs lexical,
+        # indus vs lexical
+        assert ("hybrid_indus", "indus") in pairs
+        assert ("hybrid_indus", "lexical") in pairs
+        assert ("indus", "lexical") in pairs
+        # Should NOT include specter2 pairs
+        assert all("specter2" not in p[0] and "specter2" not in p[1] for p in pairs)
+
+    def test_pilot_methods_pairs(self) -> None:
+        from eval_retrieval_50q import METHODS, _significance_pairs
+
+        pairs = _significance_pairs(METHODS)
+        assert ("hybrid_indus", "indus") in pairs
+        assert ("hybrid_specter2", "specter2") in pairs
+
+    def test_single_method_no_pairs(self) -> None:
+        from eval_retrieval_50q import _significance_pairs
+
+        pairs = _significance_pairs(["indus"])
+        assert pairs == []

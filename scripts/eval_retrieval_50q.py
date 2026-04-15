@@ -43,6 +43,7 @@ from scix.db import get_connection
 from scix.search import (
     SearchFilters,
     SearchResult,
+    hybrid_search,
     lexical_search,
     rrf_fuse,
     vector_search,
@@ -455,6 +456,231 @@ def retrieve_hybrid(
 
 
 # ---------------------------------------------------------------------------
+# Full-corpus retrieval (uses search.py production infrastructure)
+# ---------------------------------------------------------------------------
+
+
+def select_seed_papers_full_corpus(
+    conn: psycopg.Connection,
+    n_seeds: int,
+    min_neighbors: int = 10,
+) -> list[dict[str, Any]]:
+    """Select seed papers with rich citation networks from the full corpus.
+
+    Picks papers that have INDUS embeddings, a non-null abstract, and
+    at least `min_neighbors` citation neighbors in the full corpus.
+    Stratified by citation count tier.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            WITH neighbor_counts AS (
+                SELECT bibcode, COUNT(*) as n_neighbors
+                FROM (
+                    SELECT source_bibcode as bibcode
+                    FROM citation_edges
+                    UNION ALL
+                    SELECT target_bibcode as bibcode
+                    FROM citation_edges
+                ) edges
+                GROUP BY bibcode
+                HAVING COUNT(*) >= %s
+            ),
+            candidates AS (
+                SELECT p.bibcode, p.title, p.abstract, p.year,
+                       p.citation_count, nc.n_neighbors,
+                       NTILE(5) OVER (ORDER BY p.citation_count) as cite_tier
+                FROM papers p
+                JOIN neighbor_counts nc ON nc.bibcode = p.bibcode
+                JOIN paper_embeddings pe ON pe.bibcode = p.bibcode
+                    AND pe.model_name = 'indus'
+                WHERE p.abstract IS NOT NULL
+                  AND length(p.title) > 20
+            )
+            SELECT bibcode, title, abstract, year, citation_count,
+                   n_neighbors, cite_tier
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY cite_tier ORDER BY random()
+                ) as rn
+                FROM candidates
+            ) ranked
+            WHERE rn <= %s
+            ORDER BY cite_tier, random()
+            LIMIT %s
+        """,
+            [min_neighbors, n_seeds // 5 + 2, n_seeds],
+        )
+        seeds = cur.fetchall()
+
+    logger.info(
+        "Selected %d full-corpus seed papers (min %d neighbors, %d requested)",
+        len(seeds),
+        min_neighbors,
+        n_seeds,
+    )
+    return seeds
+
+
+def get_citation_ground_truth_full_corpus(
+    conn: psycopg.Connection,
+    seed_bibcode: str,
+    max_relevant: int = 500,
+) -> set[str]:
+    """Get citation-based ground truth from the full corpus.
+
+    Returns bibcodes of papers that cite or are cited by the seed.
+    Capped at `max_relevant` to avoid outlier seeds with thousands of
+    citations dominating the recall denominator.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            (SELECT target_bibcode as bibcode FROM citation_edges
+             WHERE source_bibcode = %s
+             LIMIT %s)
+            UNION
+            (SELECT source_bibcode as bibcode FROM citation_edges
+             WHERE target_bibcode = %s
+             LIMIT %s)
+        """,
+            [seed_bibcode, max_relevant, seed_bibcode, max_relevant],
+        )
+        return {row[0] for row in cur.fetchall()}
+
+
+def retrieve_vector_full_corpus(
+    conn: psycopg.Connection,
+    seed_bibcode: str,
+    model_name: str,
+    limit: int = 60,
+) -> tuple[list[str], float]:
+    """Retrieve by vector similarity on the full corpus via search.py.
+
+    Fetches the seed embedding and calls the production vector_search.
+    Returns (list of bibcodes excluding seed, latency_ms).
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT embedding FROM paper_embeddings WHERE bibcode = %s AND model_name = %s",
+            [seed_bibcode, model_name],
+        )
+        row = cur.fetchone()
+        if row is None:
+            return [], 0.0
+
+    # Parse the stored embedding string into a float list
+    emb_raw = row["embedding"]
+    if isinstance(emb_raw, str):
+        embedding = [float(x) for x in emb_raw.strip("[]").split(",")]
+    else:
+        embedding = list(emb_raw)
+
+    result = vector_search(conn, embedding, model_name=model_name, limit=limit + 1)
+    bibs = [p["bibcode"] for p in result.papers if p["bibcode"] != seed_bibcode]
+    return bibs[:limit], result.timing_ms.get("vector_ms", 0.0)
+
+
+def retrieve_lexical_full_corpus(
+    conn: psycopg.Connection,
+    query_text: str,
+    seed_bibcode: str,
+    limit: int = 60,
+) -> tuple[list[str], float]:
+    """Retrieve by lexical search on the full corpus via search.py.
+
+    Uses plainto_tsquery with scix_english config on the full papers table.
+    Returns (list of bibcodes excluding seed, latency_ms).
+    """
+    result = lexical_search(conn, query_text, limit=limit + 1)
+    bibs = [p["bibcode"] for p in result.papers if p["bibcode"] != seed_bibcode]
+    return bibs[:limit], result.timing_ms.get("lexical_ms", 0.0)
+
+
+def retrieve_hybrid_full_corpus(
+    conn: psycopg.Connection,
+    query_text: str,
+    seed_bibcode: str,
+    model_name: str,
+    rrf_k: int = 60,
+    limit: int = 60,
+    top_n: int = 20,
+) -> tuple[list[str], float]:
+    """Hybrid retrieval on the full corpus: lexical + vector via RRF.
+
+    Uses the production hybrid_search from search.py.
+    Returns (list of bibcodes excluding seed, latency_ms).
+    """
+    # Get seed embedding for vector component
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT embedding FROM paper_embeddings WHERE bibcode = %s AND model_name = %s",
+            [seed_bibcode, model_name],
+        )
+        row = cur.fetchone()
+
+    if row is None:
+        # Fall back to lexical-only
+        return retrieve_lexical_full_corpus(conn, query_text, seed_bibcode, limit)
+
+    emb_raw = row["embedding"]
+    if isinstance(emb_raw, str):
+        embedding = [float(x) for x in emb_raw.strip("[]").split(",")]
+    else:
+        embedding = list(emb_raw)
+
+    result = hybrid_search(
+        conn,
+        query_text,
+        query_embedding=embedding,
+        model_name=model_name,
+        vector_limit=limit,
+        lexical_limit=limit,
+        rrf_k=rrf_k,
+        top_n=top_n,
+    )
+    bibs = [p["bibcode"] for p in result.papers if p["bibcode"] != seed_bibcode]
+    total_ms = sum(result.timing_ms.values())
+    return bibs[:top_n], total_ms
+
+
+def evaluate_single_full_corpus(
+    conn: psycopg.Connection,
+    seed: dict[str, Any],
+    relevant: set[str],
+    method: str,
+) -> QueryEval | None:
+    """Evaluate a single query-method pair on the full corpus."""
+    bibcode = seed["bibcode"]
+    lex_query = _make_lexical_query(seed)
+
+    if method == "lexical":
+        retrieved, latency = retrieve_lexical_full_corpus(conn, lex_query, bibcode)
+    elif method.startswith("hybrid_"):
+        mname = method.replace("hybrid_", "")
+        retrieved, latency = retrieve_hybrid_full_corpus(conn, lex_query, bibcode, mname)
+    else:
+        # Vector-only (indus)
+        retrieved, latency = retrieve_vector_full_corpus(conn, bibcode, method)
+
+    if not retrieved:
+        return None
+
+    return QueryEval(
+        seed_bibcode=bibcode,
+        method=method,
+        ndcg_10=round(ndcg_at_k(retrieved, relevant, 10), 4),
+        recall_10=round(recall_at_k(retrieved, relevant, 10), 4),
+        recall_20=round(recall_at_k(retrieved, relevant, 20), 4),
+        precision_10=round(precision_at_k(retrieved, relevant, 10), 4),
+        mrr_val=round(mrr(retrieved, relevant), 4),
+        relevant_count=len(relevant),
+        retrieved_count=len(retrieved),
+        latency_ms=round(latency, 1),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Evaluation runner
 # ---------------------------------------------------------------------------
 
@@ -586,13 +812,14 @@ def generate_report(
     evals: list[QueryEval],
     seeds: list[dict[str, Any]],
     significance: list[dict[str, Any]],
+    corpus_label: str = "10K stratified sample from 32.4M ADS papers",
 ) -> str:
     """Generate markdown report for the paper."""
     lines = [
         "# 50-Query Retrieval Evaluation",
         "",
         f"**Date**: {time.strftime('%Y-%m-%d %H:%M:%S')}",
-        f"**Corpus**: 10K stratified sample from 32.4M ADS papers",
+        f"**Corpus**: {corpus_label}",
         f"**Queries**: {len(seeds)} seed papers with citation-based ground truth",
         f"**Ground truth**: Citation network (references + citing papers) within sample",
         "",
@@ -703,71 +930,25 @@ def generate_report(
 
 METHODS = ["specter2", "indus", "nomic", "lexical", "hybrid_specter2", "hybrid_indus"]
 
+# Full-corpus methods: only INDUS has 32M embeddings; specter2/nomic are pilot-only
+FULL_CORPUS_METHODS = ["indus", "lexical", "hybrid_indus"]
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="50-query retrieval evaluation")
-    parser.add_argument("--seed-papers", type=int, default=50)
-    parser.add_argument("--min-neighbors", type=int, default=5)
-    parser.add_argument(
-        "--random-seed", type=int, default=42, help="Random seed for reproducibility"
-    )
-    parser.add_argument("--output", type=str, default=None)
-    parser.add_argument("--json-output", type=str, default=None)
-    parser.add_argument(
-        "--methods",
-        nargs="+",
-        default=METHODS,
-        help=f"Methods to evaluate (default: {METHODS})",
-    )
-    args = parser.parse_args()
 
-    conn = get_connection()
+def _run_eval_loop(
+    conn: psycopg.Connection,
+    seeds: list[dict[str, Any]],
+    ground_truth: dict[str, set[str]],
+    methods: list[str],
+    full_corpus: bool,
+) -> list[QueryEval]:
+    """Run the evaluation loop for all methods and seeds.
 
-    # Verify pilot sample exists
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = '_pilot_sample')"
-        )
-        if not cur.fetchone()[0]:
-            logger.error("_pilot_sample table not found. Run pilot_embed_compare.py first.")
-            sys.exit(1)
-
-    # Set random seed for reproducibility
-    with conn.cursor() as cur:
-        cur.execute("SELECT setseed(%s)", [args.random_seed / 2**31])
-
-    # Step 1: Select seed papers
-    logger.info("Selecting %d seed papers (random_seed=%d)...", args.seed_papers, args.random_seed)
-    seeds = select_seed_papers(conn, args.seed_papers, min_neighbors=args.min_neighbors)
-
-    if len(seeds) < args.seed_papers:
-        logger.warning(
-            "Only found %d seeds (requested %d). Lowering min_neighbors might help.",
-            len(seeds),
-            args.seed_papers,
-        )
-
-    # Step 2: Build ground truth
-    logger.info("Building citation-based ground truth...")
-    ground_truth: dict[str, set[str]] = {}
-    for seed in seeds:
-        gt = get_citation_ground_truth(conn, seed["bibcode"])
-        ground_truth[seed["bibcode"]] = gt
-
-    gt_sizes = [len(gt) for gt in ground_truth.values()]
-    logger.info(
-        "Ground truth: min=%d, max=%d, mean=%.1f relevant docs per query",
-        min(gt_sizes),
-        max(gt_sizes),
-        sum(gt_sizes) / len(gt_sizes),
-    )
-
-    # Step 3: Run evaluation
+    Dispatches to pilot-sample or full-corpus retrieval depending on mode.
+    """
     all_evals: list[QueryEval] = []
 
-    for method in args.methods:
+    for method in methods:
         logger.info("Evaluating method: %s", method)
-        model_name = method if method in ("specter2", "indus", "nomic") else None
 
         # Reconnect per method to handle connection drops
         try:
@@ -782,11 +963,19 @@ def main() -> None:
                 continue
 
             try:
-                result = evaluate_single(conn, seed, relevant, method, model_name)
+                if full_corpus:
+                    result = evaluate_single_full_corpus(conn, seed, relevant, method)
+                else:
+                    model_name = method if method in ("specter2", "indus", "nomic") else None
+                    result = evaluate_single(conn, seed, relevant, method, model_name)
             except psycopg.OperationalError:
                 logger.warning("Connection error, reconnecting...")
                 conn = get_conn()
-                result = evaluate_single(conn, seed, relevant, method, model_name)
+                if full_corpus:
+                    result = evaluate_single_full_corpus(conn, seed, relevant, method)
+                else:
+                    model_name = method if method in ("specter2", "indus", "nomic") else None
+                    result = evaluate_single(conn, seed, relevant, method, model_name)
             if result is not None:
                 all_evals.append(result)
 
@@ -801,36 +990,53 @@ def main() -> None:
                 mean_ndcg,
             )
 
-    # Step 4: Aggregate
-    summaries = aggregate_results(all_evals)
+    return all_evals
 
-    # Step 5: Significance tests (hybrid vs best single model)
-    significance_tests = []
-    for pair in [
+
+def _significance_pairs(methods: list[str]) -> list[tuple[str, str]]:
+    """Return method pairs for significance testing based on available methods."""
+    pairs: list[tuple[str, str]] = []
+    candidate_pairs = [
         ("hybrid_specter2", "specter2"),
         ("hybrid_specter2", "lexical"),
         ("hybrid_indus", "indus"),
+        ("hybrid_indus", "lexical"),
         ("specter2", "indus"),
         ("specter2", "nomic"),
         ("specter2", "lexical"),
-    ]:
-        result = paired_difference_test(all_evals, pair[0], pair[1])
-        result["comparison"] = f"{pair[0]} vs {pair[1]}"
-        significance_tests.append(result)
+        ("indus", "lexical"),
+    ]
+    method_set = set(methods)
+    for a, b in candidate_pairs:
+        if a in method_set and b in method_set:
+            pairs.append((a, b))
+    return pairs
 
-    # Step 6: Output
-    report = generate_report(summaries, all_evals, seeds, significance_tests)
 
-    if args.output:
-        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.output).write_text(report)
-        logger.info("Report written to %s", args.output)
+def _write_outputs(
+    summaries: list[EvalSummary],
+    all_evals: list[QueryEval],
+    seeds: list[dict[str, Any]],
+    significance_tests: list[dict[str, Any]],
+    output: str | None,
+    json_output: str | None,
+    corpus_label: str,
+) -> None:
+    """Write markdown and JSON outputs."""
+    report = generate_report(
+        summaries, all_evals, seeds, significance_tests, corpus_label=corpus_label
+    )
+
+    if output:
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        Path(output).write_text(report)
+        logger.info("Report written to %s", output)
     else:
         print(report)
 
-    # JSON output for downstream use
-    if args.json_output:
+    if json_output:
         json_data = {
+            "corpus": corpus_label,
             "summaries": [
                 {
                     "method": s.method,
@@ -860,13 +1066,13 @@ def main() -> None:
             ],
             "significance": significance_tests,
         }
-        Path(args.json_output).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.json_output).write_text(json.dumps(json_data, indent=2))
-        logger.info("JSON results written to %s", args.json_output)
+        Path(json_output).parent.mkdir(parents=True, exist_ok=True)
+        Path(json_output).write_text(json.dumps(json_data, indent=2))
+        logger.info("JSON results written to %s", json_output)
 
     # Print summary table to stdout
     print("\n" + "=" * 80)
-    print("RETRIEVAL EVALUATION RESULTS")
+    print(f"RETRIEVAL EVALUATION RESULTS ({corpus_label})")
     print("=" * 80)
     print(
         f"\n{'Method':<18} {'nDCG@10':>10} {'R@10':>8} {'R@20':>8} "
@@ -880,6 +1086,123 @@ def main() -> None:
             f"{s.mean_mrr:>8.4f} {s.mean_latency_ms:>8.0f}"
         )
     print("=" * 80)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="50-query retrieval evaluation")
+    parser.add_argument("--seed-papers", type=int, default=50)
+    parser.add_argument("--min-neighbors", type=int, default=5)
+    parser.add_argument(
+        "--random-seed", type=int, default=42, help="Random seed for reproducibility"
+    )
+    parser.add_argument("--output", type=str, default=None)
+    parser.add_argument("--json-output", type=str, default=None)
+    parser.add_argument(
+        "--methods",
+        nargs="+",
+        default=None,
+        help="Methods to evaluate (default depends on mode)",
+    )
+    parser.add_argument(
+        "--full-corpus",
+        action="store_true",
+        help="Run evaluation on the full 32M corpus using INDUS HNSW + BM25. "
+        "Default methods: indus, lexical, hybrid_indus.",
+    )
+    args = parser.parse_args()
+
+    full_corpus: bool = args.full_corpus
+
+    # Resolve methods
+    if args.methods is not None:
+        methods = args.methods
+    elif full_corpus:
+        methods = list(FULL_CORPUS_METHODS)
+    else:
+        methods = list(METHODS)
+
+    conn = get_connection()
+
+    if full_corpus:
+        logger.info("Running FULL-CORPUS evaluation (32M papers, INDUS + BM25)")
+        corpus_label = "32.4M full corpus"
+        min_neighbors = max(args.min_neighbors, 10)  # full corpus needs higher bar
+    else:
+        # Verify pilot sample exists
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT EXISTS(SELECT 1 FROM information_schema.tables "
+                "WHERE table_name = '_pilot_sample')"
+            )
+            if not cur.fetchone()[0]:
+                logger.error("_pilot_sample table not found. " "Run pilot_embed_compare.py first.")
+                sys.exit(1)
+        corpus_label = "10K stratified sample from 32.4M ADS papers"
+        min_neighbors = args.min_neighbors
+
+    # Set random seed for reproducibility
+    with conn.cursor() as cur:
+        cur.execute("SELECT setseed(%s)", [args.random_seed / 2**31])
+
+    # Step 1: Select seed papers
+    logger.info(
+        "Selecting %d seed papers (random_seed=%d)...",
+        args.seed_papers,
+        args.random_seed,
+    )
+    if full_corpus:
+        seeds = select_seed_papers_full_corpus(conn, args.seed_papers, min_neighbors=min_neighbors)
+    else:
+        seeds = select_seed_papers(conn, args.seed_papers, min_neighbors=min_neighbors)
+
+    if len(seeds) < args.seed_papers:
+        logger.warning(
+            "Only found %d seeds (requested %d). Lowering min_neighbors might help.",
+            len(seeds),
+            args.seed_papers,
+        )
+
+    # Step 2: Build ground truth
+    logger.info("Building citation-based ground truth...")
+    ground_truth: dict[str, set[str]] = {}
+    for seed in seeds:
+        if full_corpus:
+            gt = get_citation_ground_truth_full_corpus(conn, seed["bibcode"])
+        else:
+            gt = get_citation_ground_truth(conn, seed["bibcode"])
+        ground_truth[seed["bibcode"]] = gt
+
+    gt_sizes = [len(gt) for gt in ground_truth.values()]
+    logger.info(
+        "Ground truth: min=%d, max=%d, mean=%.1f relevant docs per query",
+        min(gt_sizes),
+        max(gt_sizes),
+        sum(gt_sizes) / len(gt_sizes),
+    )
+
+    # Step 3: Run evaluation
+    all_evals = _run_eval_loop(conn, seeds, ground_truth, methods, full_corpus)
+
+    # Step 4: Aggregate
+    summaries = aggregate_results(all_evals)
+
+    # Step 5: Significance tests
+    significance_tests = []
+    for pair in _significance_pairs(methods):
+        result = paired_difference_test(all_evals, pair[0], pair[1])
+        result["comparison"] = f"{pair[0]} vs {pair[1]}"
+        significance_tests.append(result)
+
+    # Step 6: Output
+    _write_outputs(
+        summaries,
+        all_evals,
+        seeds,
+        significance_tests,
+        args.output,
+        args.json_output,
+        corpus_label,
+    )
 
     conn.close()
 

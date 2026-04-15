@@ -22,7 +22,6 @@ from __future__ import annotations
 import gc
 import json
 import logging
-import math
 import sys
 import time
 from collections import Counter
@@ -36,6 +35,7 @@ from psycopg.rows import dict_row
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scix.db import get_connection
+from scix.graph_metrics import community_size_stats, compute_nmi
 
 logging.basicConfig(
     level=logging.INFO,
@@ -51,46 +51,9 @@ RESULTS_DIR.mkdir(exist_ok=True)
 # Helpers
 # ---------------------------------------------------------------------------
 
-
-def _nmi(labels_a: list[int], labels_b: list[int]) -> float:
-    """NMI with arithmetic mean normalization: 2*MI / (H(A) + H(B))."""
-    n = len(labels_a)
-    if n == 0:
-        return 0.0
-
-    contingency: dict[tuple[int, int], int] = Counter(zip(labels_a, labels_b))
-    counts_a: dict[int, int] = Counter(labels_a)
-    counts_b: dict[int, int] = Counter(labels_b)
-
-    mi = 0.0
-    for (a, b), nij in contingency.items():
-        if nij == 0:
-            continue
-        ni = counts_a[a]
-        nj = counts_b[b]
-        mi += (nij / n) * math.log(n * nij / (ni * nj))
-
-    h_a = -sum((c / n) * math.log(c / n) for c in counts_a.values() if c > 0)
-    h_b = -sum((c / n) * math.log(c / n) for c in counts_b.values() if c > 0)
-
-    if h_a + h_b == 0:
-        return 1.0 if mi == 0 else 0.0
-    return 2.0 * mi / (h_a + h_b)
-
-
-def _community_size_stats(membership: list[int]) -> dict[str, Any]:
-    sizes = list(Counter(membership).values())
-    arr = np.array(sizes)
-    return {
-        "n_communities": len(sizes),
-        "min_size": int(arr.min()),
-        "max_size": int(arr.max()),
-        "mean_size": round(float(arr.mean()), 1),
-        "median_size": round(float(np.median(arr)), 1),
-        "std_size": round(float(arr.std()), 1),
-        "singletons": int(np.sum(arr == 1)),
-        "pct_in_top10": round(float(np.sort(arr)[-10:].sum() / arr.sum() * 100), 1),
-    }
+# NMI and community_size_stats are now in src/scix/graph_metrics.py
+_nmi = compute_nmi
+_community_size_stats = community_size_stats
 
 
 def _percentile_distribution(membership: list[int]) -> list[dict[str, Any]]:
@@ -144,7 +107,9 @@ def phase_b_leiden(conn: psycopg.Connection, results: dict[str, Any]) -> None:
     with conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM giant_node_map")
         (n_giant,) = cur.fetchone()
-    logger.info("Giant component: %d nodes (mapping built in %.1fs)", n_giant, time.perf_counter() - t_map)
+    logger.info(
+        "Giant component: %d nodes (mapping built in %.1fs)", n_giant, time.perf_counter() - t_map
+    )
 
     results["giant_component_nodes"] = n_giant
 
@@ -190,16 +155,24 @@ def phase_b_leiden(conn: psycopg.Connection, results: dict[str, Any]) -> None:
     graph_dir = igraph.Graph(n=n_giant, edges=edges.tolist(), directed=True)
     del edges
     gc.collect()
-    logger.info("Directed igraph built in %.1fs (%d V, %d E)",
-                time.perf_counter() - t_graph, graph_dir.vcount(), graph_dir.ecount())
+    logger.info(
+        "Directed igraph built in %.1fs (%d V, %d E)",
+        time.perf_counter() - t_graph,
+        graph_dir.vcount(),
+        graph_dir.ecount(),
+    )
 
     logger.info("Converting to undirected (collapse mode)...")
     t_undir = time.perf_counter()
     graph = graph_dir.as_undirected(mode="collapse")
     del graph_dir
     gc.collect()
-    logger.info("Undirected: %d V, %d E in %.1fs",
-                graph.vcount(), graph.ecount(), time.perf_counter() - t_undir)
+    logger.info(
+        "Undirected: %d V, %d E in %.1fs",
+        graph.vcount(),
+        graph.ecount(),
+        time.perf_counter() - t_undir,
+    )
 
     # --- Run Leiden at 3 resolutions ---
     resolution_map = {"coarse": 0.001, "medium": 0.01, "fine": 0.1}
@@ -215,8 +188,9 @@ def phase_b_leiden(conn: psycopg.Connection, results: dict[str, Any]) -> None:
         )
         membership = list(partition.membership)
         elapsed_leiden = time.perf_counter() - t_leiden
-        logger.info("Leiden %s: %d communities in %.1fs",
-                     res_name, len(set(membership)), elapsed_leiden)
+        logger.info(
+            "Leiden %s: %d communities in %.1fs", res_name, len(set(membership)), elapsed_leiden
+        )
 
         stats = _community_size_stats(membership)
         dist = _percentile_distribution(membership)
@@ -356,8 +330,13 @@ def phase_c_quality(conn: psycopg.Connection, results: dict[str, Any]) -> None:
                 "min_purity": round(float(arr.min()), 4),
                 "max_purity": round(float(arr.max()), 4),
             }
-            logger.info("%s purity: mean=%.3f, median=%.3f (%d communities)",
-                        res_name, arr.mean(), np.median(arr), len(purities))
+            logger.info(
+                "%s purity: mean=%.3f, median=%.3f (%d communities)",
+                res_name,
+                arr.mean(),
+                np.median(arr),
+                len(purities),
+            )
 
     results["phase_c_seconds"] = round(time.perf_counter() - t0, 1)
     logger.info("Phase C complete in %.1fs", results["phase_c_seconds"])
@@ -384,9 +363,10 @@ def _write_report(results: dict[str, Any]) -> None:
         a(f"- **Edges (resolved citations):** {fg['edges']:,}")
         a(f"- **Total edges in DB:** {fg['edges_total']:,}")
         dangling = fg.get("edges_dangling", fg["edges_total"] - fg["edges"])
-        a(f"- **Dangling edges:** {dangling:,} "
-          f"({dangling / fg['edges_total'] * 100:.1f}%)")
-        a(f"- **Edge resolution:** {fg.get('edge_resolution_pct', round(fg['edges'] / fg['edges_total'] * 100, 2))}%")
+        a(f"- **Dangling edges:** {dangling:,} " f"({dangling / fg['edges_total'] * 100:.1f}%)")
+        a(
+            f"- **Edge resolution:** {fg.get('edge_resolution_pct', round(fg['edges'] / fg['edges_total'] * 100, 2))}%"
+        )
         a(f"- **Isolated nodes (degree=0):** {results.get('isolated_nodes', 'N/A'):,}")
         a("")
 
@@ -394,9 +374,11 @@ def _write_report(results: dict[str, Any]) -> None:
         comp = results["components"]
         a("## Connected Components\n")
         a(f"- **Total components:** {comp['total_components']:,}")
-        a(f"- **Giant component:** {comp['giant_component_nodes']:,} nodes "
-          f"({comp['giant_component_pct_of_total']}% of total, "
-          f"{comp['giant_component_pct_of_connected']}% of connected)")
+        a(
+            f"- **Giant component:** {comp['giant_component_nodes']:,} nodes "
+            f"({comp['giant_component_pct_of_total']}% of total, "
+            f"{comp['giant_component_pct_of_connected']}% of connected)"
+        )
         if "giant_component_edges" in comp:
             a(f"- **Giant component edges:** {comp['giant_component_edges']:,}")
         elif "giant_component_edges" in results:
@@ -426,7 +408,9 @@ def _write_report(results: dict[str, Any]) -> None:
     a("## Leiden Community Detection\n")
     has_leiden = any(f"leiden_{rn}" in results for rn in ("coarse", "medium", "fine"))
     if has_leiden:
-        a("| Resolution | Value | Communities | Singletons | Max Size | Mean Size | Top-10 % | Time |")
+        a(
+            "| Resolution | Value | Communities | Singletons | Max Size | Mean Size | Top-10 % | Time |"
+        )
         a("|-----------|-------|------------|-----------|---------|----------|---------|------|")
         for rn in ("coarse", "medium", "fine"):
             key = f"leiden_{rn}"
@@ -434,9 +418,11 @@ def _write_report(results: dict[str, Any]) -> None:
                 continue
             s = results[key]["stats"]
             elapsed = results[key].get("elapsed_seconds", "—")
-            a(f"| {rn} | {results[key]['resolution']} | {s['n_communities']:,} | "
-              f"{s['singletons']:,} | {s['max_size']:,} | {s['mean_size']} | "
-              f"{s['pct_in_top10']}% | {elapsed}s |")
+            a(
+                f"| {rn} | {results[key]['resolution']} | {s['n_communities']:,} | "
+                f"{s['singletons']:,} | {s['max_size']:,} | {s['mean_size']} | "
+                f"{s['pct_in_top10']}% | {elapsed}s |"
+            )
     else:
         a("*Not yet computed.*\n")
     a("")
@@ -463,9 +449,11 @@ def _write_report(results: dict[str, Any]) -> None:
             if key not in results:
                 continue
             p = results[key]
-            a(f"| {rn} | {p['mean_purity']} | {p['median_purity']} | "
-              f"{p['std_purity']} | {p['min_purity']} | {p['max_purity']} | "
-              f"{p['n_communities_evaluated']} |")
+            a(
+                f"| {rn} | {p['mean_purity']} | {p['median_purity']} | "
+                f"{p['std_purity']} | {p['min_purity']} | {p['max_purity']} | "
+                f"{p['n_communities_evaluated']} |"
+            )
         a("")
 
     a(f"\n*Total elapsed: {results.get('elapsed_seconds', 'N/A')}s*\n")
@@ -510,12 +498,18 @@ def main() -> None:
         row = cur.fetchone()
         total, non_giant, giant_candidates = row
 
-    logger.info("DB state: %d total, %d non-giant (-1), %d giant candidates (NULL)",
-                total, non_giant, giant_candidates)
+    logger.info(
+        "DB state: %d total, %d non-giant (-1), %d giant candidates (NULL)",
+        total,
+        non_giant,
+        giant_candidates,
+    )
 
     if giant_candidates == 0:
-        logger.error("No giant-component candidates found (community_id_coarse IS NULL). "
-                      "Run measure_components_only.py or measure_graph_quality.py Phase A first.")
+        logger.error(
+            "No giant-component candidates found (community_id_coarse IS NULL). "
+            "Run measure_components_only.py or measure_graph_quality.py Phase A first."
+        )
         sys.exit(1)
 
     # Phase B: Leiden

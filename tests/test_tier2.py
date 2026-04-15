@@ -18,6 +18,7 @@ from __future__ import annotations
 import pathlib
 import pickle
 import sys
+import tempfile
 from typing import Iterator
 
 import psycopg
@@ -25,7 +26,6 @@ import pytest
 
 from scix.aho_corasick import (
     EntityRow,
-    LinkCandidate,
     build_automaton,
     link_abstract,
 )
@@ -416,3 +416,61 @@ class TestLinkTier2EndToEnd:
             )
             n = cur.fetchone()[0]
         assert n == 0
+
+
+# ---------------------------------------------------------------------------
+# Summary report tests
+# ---------------------------------------------------------------------------
+
+
+class TestTier2Summary:
+    def test_write_summary_creates_file(self) -> None:
+        stats = link_tier2.Tier2Stats(
+            papers_scanned=100,
+            candidates_generated=50,
+            rows_inserted=42,
+            entities_demoted=2,
+            entities_with_links=10,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outpath = pathlib.Path(tmpdir) / "tier2_summary.md"
+            link_tier2.write_tier2_summary(stats, outpath, wall_seconds=123.4)
+            assert outpath.exists()
+            content = outpath.read_text()
+            assert "100" in content  # papers_scanned
+            assert "42" in content  # rows_inserted
+            assert "2" in content  # entities_demoted
+            assert "10" in content  # entities_with_links
+            assert "2m 3s" in content  # wall time formatting
+
+    def test_write_summary_contains_sections(self) -> None:
+        stats = link_tier2.Tier2Stats(
+            papers_scanned=23_000_000,
+            candidates_generated=500_000,
+            rows_inserted=450_000,
+            entities_demoted=0,
+            entities_with_links=500,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outpath = pathlib.Path(tmpdir) / "tier2_summary.md"
+            link_tier2.write_tier2_summary(stats, outpath, wall_seconds=3661.0)
+            content = outpath.read_text()
+            assert "# Tier 2 Aho-Corasick Linker Summary" in content
+            assert "Papers scanned" in content
+            assert "Rows inserted" in content
+            assert "Entities demoted" in content
+            assert "1h 1m 1s" in content
+
+    def test_write_summary_dry_run_label(self) -> None:
+        stats = link_tier2.Tier2Stats(
+            papers_scanned=10,
+            candidates_generated=5,
+            rows_inserted=3,
+            entities_demoted=0,
+            entities_with_links=2,
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outpath = pathlib.Path(tmpdir) / "tier2_summary.md"
+            link_tier2.write_tier2_summary(stats, outpath, wall_seconds=1.0, dry_run=True)
+            content = outpath.read_text()
+            assert "DRY RUN" in content

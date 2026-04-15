@@ -36,6 +36,7 @@ import multiprocessing as mp
 import os
 import pathlib
 import sys
+import time
 from dataclasses import dataclass
 from typing import Iterable, Iterator, Optional, Sequence
 
@@ -227,6 +228,61 @@ class Tier2Stats:
     entities_with_links: int
 
 
+def _format_wall_time(seconds: float) -> str:
+    """Format seconds into a human-readable ``1h 2m 3s`` string."""
+    total = int(seconds)
+    h, remainder = divmod(total, 3600)
+    m, s = divmod(remainder, 60)
+    parts: list[str] = []
+    if h:
+        parts.append(f"{h}h")
+    if m:
+        parts.append(f"{m}m")
+    parts.append(f"{s}s")
+    return " ".join(parts)
+
+
+def write_tier2_summary(
+    stats: Tier2Stats,
+    output_path: pathlib.Path,
+    *,
+    wall_seconds: float,
+    dry_run: bool = False,
+) -> None:
+    """Write a Markdown summary of the Tier-2 run to ``output_path``.
+
+    Parameters
+    ----------
+    stats
+        End-of-run stats from :func:`run_tier2_link`.
+    output_path
+        Path to the output ``.md`` file.
+    wall_seconds
+        Elapsed wall time in seconds.
+    dry_run
+        If True, the summary is marked as a dry run.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    wall_str = _format_wall_time(wall_seconds)
+    mode_label = " (DRY RUN)" if dry_run else ""
+
+    lines = [
+        f"# Tier 2 Aho-Corasick Linker Summary{mode_label}",
+        "",
+        "| Metric | Value |",
+        "| --- | --- |",
+        f"| Papers scanned | {stats.papers_scanned:,} |",
+        f"| Candidates generated | {stats.candidates_generated:,} |",
+        f"| Rows inserted | {stats.rows_inserted:,} |",
+        f"| Entities with links | {stats.entities_with_links:,} |",
+        f"| Entities demoted | {stats.entities_demoted:,} |",
+        f"| Wall time | {wall_str} |",
+        "",
+    ]
+    output_path.write_text("\n".join(lines))
+    logger.info("Summary written to %s", output_path)
+
+
 # SQL lives as a module-level constant so the AST lint only scans it
 # once. All three inserts/updates that touch document_entities or
 # entities.link_policy are marked noqa.
@@ -342,10 +398,19 @@ def run_tier2_link(
             initargs=(automaton,),
         )
 
+    log_interval = 50_000  # log every N papers scanned
+
     try:
         with conn.cursor() as insert_cur:
             for batch in iter_paper_batches(conn, bibcode_prefix):
                 papers_scanned += len(batch)
+                if papers_scanned % log_interval < len(batch):
+                    logger.info(
+                        "  progress: %d papers scanned, %d rows pending, %d demoted",
+                        papers_scanned,
+                        rows_inserted,
+                        len(demoted),
+                    )
 
                 if pool is not None:
                     results = pool.map(_worker_link, batch)
@@ -454,6 +519,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     dsn = args.db_url or os.environ.get("SCIX_TEST_DSN") or DEFAULT_DSN
     conn = get_connection(dsn)
+    t0 = time.monotonic()
     try:
         stats = run_tier2_link(
             conn,
@@ -462,6 +528,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             max_per_entity=args.max_per_entity,
             dry_run=args.dry_run,
         )
+        wall_seconds = time.monotonic() - t0
     finally:
         conn.close()
 
@@ -471,6 +538,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         f"{verb} {stats.rows_inserted} rows "
         f"({stats.entities_with_links} entities, {stats.entities_demoted} demoted)"
     )
+
+    summary_path = REPO_ROOT / "build-artifacts" / "tier2_summary.md"
+    write_tier2_summary(stats, summary_path, wall_seconds=wall_seconds, dry_run=args.dry_run)
     return 0
 
 

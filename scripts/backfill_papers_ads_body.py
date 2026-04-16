@@ -108,8 +108,18 @@ def _check_production_guard(cfg: BackfillConfig) -> None:
 # Core backfill logic
 # ---------------------------------------------------------------------------
 
+# PostgreSQL tsvector has a hard 1 MB limit.  A handful of papers have body
+# text exceeding this (e.g. 1.49 MB) — the GENERATED tsv column would fail
+# on INSERT.  Filter them out; they can still be searched via the raw
+# papers.body column if needed.
+_TSVECTOR_MAX_BYTES = 1_048_575
+
 # Count papers with body text (total source rows).
-_COUNT_SOURCE_SQL = "SELECT count(*) FROM papers WHERE body IS NOT NULL AND body != ''"
+_COUNT_SOURCE_SQL = (
+    "SELECT count(*) FROM papers"
+    " WHERE body IS NOT NULL AND body != ''"
+    f" AND length(body) <= {_TSVECTOR_MAX_BYTES}"
+)
 
 # Count existing rows in papers_ads_body (for reporting already-present).
 _COUNT_TARGET_SQL = "SELECT count(*) FROM papers_ads_body"
@@ -121,11 +131,12 @@ _BATCH_INSERT_SQL = """
     INSERT INTO papers_ads_body (bibcode, body_text, body_length, harvested_at)
     SELECT bibcode, body, length(body), now()
     FROM papers
-    WHERE body IS NOT NULL AND body != '' AND bibcode > %s
+    WHERE body IS NOT NULL AND body != ''
+          AND length(body) <= {max_bytes} AND bibcode > %s
     ORDER BY bibcode
     LIMIT %s
     ON CONFLICT (bibcode) DO NOTHING
-"""
+""".format(max_bytes=_TSVECTOR_MAX_BYTES)
 
 # Fetch the max bibcode from the batch we just tried to insert, for cursor
 # pagination. We query papers directly (not papers_ads_body) because
@@ -133,11 +144,12 @@ _BATCH_INSERT_SQL = """
 _CURSOR_SQL = """
     SELECT max(bibcode) FROM (
         SELECT bibcode FROM papers
-        WHERE body IS NOT NULL AND body != '' AND bibcode > %s
+        WHERE body IS NOT NULL AND body != ''
+              AND length(body) <= {max_bytes} AND bibcode > %s
         ORDER BY bibcode
         LIMIT %s
     ) sub
-"""
+""".format(max_bytes=_TSVECTOR_MAX_BYTES)
 
 
 def run_backfill(cfg: BackfillConfig) -> BackfillStats:

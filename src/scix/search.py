@@ -150,6 +150,68 @@ def lexical_search(
 
 
 # ---------------------------------------------------------------------------
+# Body lexical search (GIN expression index on papers.body tsvector)
+# ---------------------------------------------------------------------------
+
+# Matches the partial-index predicate in migration 039 — bodies above the
+# tsvector limit are not indexed and the expression cannot be evaluated.
+_BODY_TSVECTOR_MAX_BYTES = 1_048_575
+
+
+def lexical_search_body(
+    conn: psycopg.Connection,
+    query_text: str,
+    *,
+    filters: SearchFilters | None = None,
+    limit: int = 20,
+) -> SearchResult:
+    """Body-text full-text search using the GIN expression index on papers.body.
+
+    Uses the built-in 'english' config (matching the index expression in
+    migration 039). Rows with NULL or oversized bodies are skipped to match
+    the partial-index predicate, ensuring the planner uses the GIN index.
+    """
+    t0 = time.perf_counter()
+
+    filter_clause, filter_params = (filters or SearchFilters()).to_where_clause("p")
+
+    query = f"""
+        SELECT {STUB_COLUMNS},
+               ts_rank_cd(
+                   to_tsvector('english', p.body),
+                   plainto_tsquery('english', %s),
+                   32
+               ) AS rank
+        FROM papers p
+        WHERE p.body IS NOT NULL
+          AND length(p.body) <= {_BODY_TSVECTOR_MAX_BYTES}
+          AND to_tsvector('english', p.body) @@ plainto_tsquery('english', %s)
+        {filter_clause}
+        ORDER BY rank DESC
+        LIMIT %s
+    """
+    params: list[Any] = [query_text, query_text] + filter_params + [limit]
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
+
+    body_lexical_ms = _elapsed_ms(t0)
+
+    papers = []
+    for row in rows:
+        stub = PaperStub.from_row(row).to_dict()
+        stub["score"] = float(row["rank"])
+        papers.append(stub)
+
+    return SearchResult(
+        papers=papers,
+        total=len(papers),
+        timing_ms={"body_lexical_ms": body_lexical_ms},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Vector search (pgvector cosine similarity with tunable ef_search)
 # ---------------------------------------------------------------------------
 
@@ -404,6 +466,7 @@ def hybrid_search(
     top_n: int = 20,
     ef_search: int = 100,
     reranker: Any | None = None,
+    include_body: bool = True,
 ) -> SearchResult:
     """Hybrid search combining vector and lexical via RRF, with optional reranking.
 
@@ -419,14 +482,30 @@ def hybrid_search(
         model_name: Embedding model for primary vector search (default: indus).
         openai_embedding: Optional pre-computed OpenAI text-embedding-3-large vector.
         reranker: Optional callable(query_text, papers) -> list[dict] with 'rerank_score'.
+        include_body: When True (default), runs body BM25 as a 4th RRF signal
+            against the GIN expression index on papers.body. Set to False to
+            skip when body coverage is irrelevant or for benchmarking.
     """
     timing: dict[str, float] = {}
 
-    # Lexical search
+    # Lexical search (title + abstract tsvector)
     lex_result = lexical_search(conn, query_text, filters=filters, limit=lexical_limit)
     timing["lexical_ms"] = lex_result.timing_ms["lexical_ms"]
 
     results_lists: list[list[dict[str, Any]]] = [lex_result.papers]
+
+    # Body BM25 (full-text via GIN expression index on papers.body)
+    timing["body_lexical_ms"] = 0.0
+    if include_body:
+        try:
+            body_result = lexical_search_body(
+                conn, query_text, filters=filters, limit=lexical_limit
+            )
+            timing["body_lexical_ms"] = body_result.timing_ms["body_lexical_ms"]
+            if body_result.papers:
+                results_lists.append(body_result.papers)
+        except Exception:
+            logger.warning("Body BM25 search failed; continuing without it", exc_info=True)
 
     # Cardinality-aware routing: estimate filter selectivity once for reuse
     use_filter_first = False

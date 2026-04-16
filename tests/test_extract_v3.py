@@ -482,12 +482,13 @@ class TestSelectCohortV3:
         sql = mock_cur.execute.call_args[0][0]
         assert "citation_count DESC" in sql
 
-    def test_with_body_joins_papers_ads_body(self) -> None:
+    def test_with_body_selects_papers_body(self) -> None:
         mock_conn = self._mock_conn([])
         select_cohort_v3(mock_conn, limit=5, with_body=True)
         mock_cur = mock_conn.cursor.return_value.__enter__.return_value
         sql = mock_cur.execute.call_args[0][0]
-        assert "papers_ads_body" in sql
+        assert "body" in sql
+        assert "papers_ads_body" not in sql
 
 
 # ---------------------------------------------------------------------------

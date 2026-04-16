@@ -1254,20 +1254,19 @@ def select_cohort_v3(
 ) -> list[ExtractionRequest]:
     """Select papers for v3 extraction, optionally including body text.
 
-    When *with_body* is True, joins ``papers_ads_body`` to fetch the
-    full-text body (available for ~6M papers).  Papers are ordered by
-    citation_count DESC so the highest-impact papers are extracted first.
+    When *with_body* is True, reads ``papers.body`` directly (available
+    for ~14.9M papers).  Papers are ordered by citation_count DESC so the
+    highest-impact papers are extracted first.
 
     Returns papers with non-null abstract longer than 100 characters.
     """
     if with_body:
         sql = """
-            SELECT p.bibcode, p.title, p.abstract, b.body
-            FROM papers p
-            LEFT JOIN papers_ads_body b ON b.bibcode = p.bibcode
-            WHERE p.abstract IS NOT NULL
-              AND length(p.abstract) > 100
-            ORDER BY p.citation_count DESC NULLS LAST
+            SELECT bibcode, title, abstract, body
+            FROM papers
+            WHERE abstract IS NOT NULL
+              AND length(abstract) > 100
+            ORDER BY citation_count DESC NULLS LAST
             LIMIT %s
         """
     else:

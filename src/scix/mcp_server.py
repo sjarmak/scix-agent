@@ -491,11 +491,23 @@ def startup_self_test(server: Any = None) -> dict[str, Any]:
             f"startup_self_test: server has no ListToolsRequest handler: {exc}"
         ) from exc
 
-    loop = asyncio.new_event_loop()
     try:
-        result = loop.run_until_complete(handler(ListToolsRequest(method="tools/list")))
-    finally:
-        loop.close()
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            result = pool.submit(
+                asyncio.run, handler(ListToolsRequest(method="tools/list"))
+            ).result(timeout=10)
+    else:
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(handler(ListToolsRequest(method="tools/list")))
+        finally:
+            loop.close()
 
     # Real MCP server handlers wrap the ListToolsResult in a ServerResult
     # envelope (`.root.tools`); raw test fixtures may return `.tools`

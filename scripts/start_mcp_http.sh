@@ -27,12 +27,20 @@ for arg in "$@"; do
     esac
 done
 
-# Generate a token if not set
+# Generate a token if not set. Written to a 0600 file, NEVER echoed to
+# stdout — stdout typically ends up in world-readable log files (/tmp/*.out,
+# journald, CI artifacts) and has a way of leaking into chat transcripts.
+TOKEN_FILE="${MCP_TOKEN_FILE:-${HOME}/.config/scix-mcp/token}"
 if [ -z "${MCP_AUTH_TOKEN:-}" ] && [ -z "${MCP_NO_AUTH:-}" ]; then
     MCP_AUTH_TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
     export MCP_AUTH_TOKEN
+    mkdir -p "$(dirname "$TOKEN_FILE")"
+    (umask 077 && printf '%s\n' "$MCP_AUTH_TOKEN" > "$TOKEN_FILE")
+    chmod 600 "$TOKEN_FILE"
     echo "════════════════════════════════════════════════════════════"
-    echo "  Generated MCP_AUTH_TOKEN: $MCP_AUTH_TOKEN"
+    echo "  Generated new MCP_AUTH_TOKEN and wrote it to:"
+    echo "    $TOKEN_FILE   (mode 0600)"
+    echo "  Read it with:  cat $TOKEN_FILE"
     echo "════════════════════════════════════════════════════════════"
 fi
 
@@ -84,16 +92,24 @@ if [ "$NO_TUNNEL" = false ] && [ -x "$CLOUDFLARED" ]; then
     if [ -n "$TUNNEL_URL" ]; then
         echo "  Tunnel URL: $TUNNEL_URL"
         echo ""
-        echo "  Share this Claude Desktop / Claude Code config:"
-        echo ""
-        echo '  {'
-        echo '    "mcpServers": {'
-        echo '      "scix": {'
-        echo "        \"url\": \"${TUNNEL_URL}/mcp/\","
-        echo "        \"headers\": {\"Authorization\": \"Bearer ${MCP_AUTH_TOKEN:-<no-auth>}\"}"
-        echo '      }'
-        echo '    }'
-        echo '  }'
+        # Write the full MCP client config to a 0600 file instead of echoing
+        # to stdout. stdout is world-readable once redirected to /tmp/*.out.
+        CONFIG_FILE="${MCP_CONFIG_FILE:-${HOME}/.config/scix-mcp/client-config.json}"
+        mkdir -p "$(dirname "$CONFIG_FILE")"
+        (umask 077 && cat > "$CONFIG_FILE" <<EOF
+{
+  "mcpServers": {
+    "scix": {
+      "url": "${TUNNEL_URL}/mcp/",
+      "headers": {"Authorization": "Bearer ${MCP_AUTH_TOKEN:-<no-auth>}"}
+    }
+  }
+}
+EOF
+        )
+        chmod 600 "$CONFIG_FILE"
+        echo "  Client config written to: $CONFIG_FILE  (mode 0600)"
+        echo "  View it with:             cat $CONFIG_FILE"
     else
         echo "  Cloudflare Tunnel did not produce a URL in 30s."
         echo "  Check $CF_LOG for details."

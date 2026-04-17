@@ -30,6 +30,7 @@ Claude Desktop / Claude Code config:
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import time
@@ -57,7 +58,8 @@ class _AuthWrap:
         if scope["type"] == "http" and self._token is not None:
             headers = dict(scope.get("headers", []))
             auth = headers.get(b"authorization", b"").decode()
-            if auth != f"Bearer {self._token}":
+            expected = f"Bearer {self._token}"
+            if not hmac.compare_digest(auth, expected):
                 response = JSONResponse({"error": "unauthorized"}, status_code=401)
                 await response(scope, receive, send)
                 return
@@ -166,10 +168,13 @@ def _build_app() -> Starlette:
             "or MCP_NO_AUTH=1 to disable (local dev only)."
         )
 
+    # Middleware order (inside-out): handler -> rate_limit -> auth -> network.
+    # Auth runs first on the ingress side so unauthenticated floods can't
+    # allocate rate-limit buckets keyed on attacker-chosen bearer values.
     mcp_app: ASGIApp = session_manager.handle_request
+    mcp_app = _RateLimitWrap(mcp_app)
     if not no_auth:
         mcp_app = _AuthWrap(mcp_app, auth_token)
-    mcp_app = _RateLimitWrap(mcp_app)
 
     async def health(request: Request) -> Response:
         return JSONResponse({"status": "ok", "server": "scix-mcp"})

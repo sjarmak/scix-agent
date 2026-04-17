@@ -1,0 +1,80 @@
+# SciX MCP hardened stack: Python server + Cloudflare named tunnel in
+# isolated containers. The Python server runs as uid 1001 with a
+# read-only root fs; cloudflared runs in its own container with no
+# access to the host FS or the DB.
+#
+# Required env (see deploy/.env.example):
+#   MCP_AUTH_TOKEN       — bearer token (rotate by setting this env)
+#   SCIX_DSN             — postgres DSN
+#   CF_TUNNEL_TOKEN      — Cloudflare named-tunnel token (dashboard-generated)
+#   HF_CACHE_DIR         — host path to ~/.cache/huggingface (mounted RO)
+
+services:
+  scix-mcp:
+    image: scix-mcp:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: scix-mcp
+    restart: unless-stopped
+    environment:
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?set MCP_AUTH_TOKEN in .env}
+      MCP_PORT: "8000"
+      MCP_HOST: "0.0.0.0"
+      SCIX_DSN: ${SCIX_DSN:?set SCIX_DSN in .env}
+    # Talk to the host's PostgreSQL on localhost:5432 via host-gateway.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Read-only root filesystem — anything that needs to write gets an
+    # explicit tmpfs. Rules out "attacker plants a file in /usr/lib".
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    # Drop all kernel caps we don't need. Container still works for pure
+    # socket + DB + filesystem-read workloads.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Mount the HF model cache read-only so INDUS can load without
+    # internet access (HF_HUB_OFFLINE=1 is set in the image).
+    volumes:
+      - ${HF_CACHE_DIR:?set HF_CACHE_DIR in .env}:/home/scix/.cache/huggingface:ro
+    # Resource limits so a runaway query can't eat the whole host.
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4g
+    # Bind only to loopback on the host; cloudflared reaches us over the
+    # internal compose network, not via a published port.
+    expose:
+      - "8000"
+    networks:
+      - mcp
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: scix-cloudflared
+    restart: unless-stopped
+    # Named-tunnel mode: token comes from the CF dashboard when you create
+    # a tunnel and add a public hostname pointing at http://scix-mcp:8000.
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN:?set CF_TUNNEL_TOKEN in .env}
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    depends_on:
+      scix-mcp:
+        condition: service_healthy
+    networks:
+      - mcp
+
+networks:
+  mcp:
+    driver: bridge
+    # Isolate from the default network; only named services can reach each other.
+    internal: false

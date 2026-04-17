@@ -1,16 +1,15 @@
 ---
 name: scix-mcp
-description: Use the SciX MCP server for scientific literature research over 32M NASA ADS papers — hybrid semantic+lexical search (INDUS + body BM25 via RRF), citation graph traversal (299M edges, PageRank, communities), entity extraction, and session-aware working sets. Invoke when the user asks about astronomy/astrophysics papers, citations, authors, or wants to explore the scientific literature.
-origin: scix-experiments
+description: Use the SciX MCP server for scientific literature research across arXiv and the NASA SMD disciplines (astrophysics, planetary science, earth science, heliophysics, and biological & physical sciences as they relate to space science). Provides hybrid semantic+lexical search (INDUS + body BM25 via RRF), citation graph traversal (299M edges, PageRank, communities), entity extraction, and session-aware working sets. Invoke when the user asks about scientific papers, citations, authors, or wants to explore the literature in these domains.
 ---
 
 # SciX MCP — Scientific Literature Research
 
-A local-intelligence MCP over the full NASA ADS corpus (32M papers, 299M citation edges, 14.9M paper bodies). Adds dense semantic retrieval, citation graph analytics, and entity extraction on top of ADS metadata.
+A local-intelligence MCP over the full NASA ADS / SciX corpus (32M papers, 299M citation edges, 14.9M paper bodies) spanning arXiv and the NASA SMD disciplines: astrophysics, planetary science, earth science, heliophysics, and biological & physical sciences as they relate to space science. Adds dense semantic retrieval, citation graph analytics, and entity extraction on top of the underlying metadata.
 
 ## When to Activate
 
-- User asks to find papers on a topic (astronomy, astrophysics, space science)
+- User asks to find papers on a topic across arXiv or any NASA SMD discipline (astrophysics, planetary science, earth science, heliophysics, biological & physical sciences)
 - User wants to trace citations or references of a paper
 - User asks about an author's work, research lineage, or impact
 - User asks "what's the state of research on X" — multi-hop exploration
@@ -147,12 +146,3 @@ Local stdio (if running the server locally):
 - **Body text:** 14.9M papers (~47% coverage, ~65K chars avg)
 - **Entity dictionary:** ~90K entities (instruments, datasets, methods, objects, missions, software)
 - **Body GIN index:** 37 GB partial expression index on `papers.body`
-
-## Differences from `nasa-ads-mcp`
-
-The public `prtc/nasa-ads-mcp` is a thin API wrapper (10 tools, stateless, every call hits ADS). SciX MCP is a local-intelligence layer:
-- Hybrid semantic+lexical search (nasa-ads-mcp has Solr keyword only)
-- Full citation graph analytics (nasa-ads-mcp has citation_count only)
-- Entity extraction + knowledge graph (nasa-ads-mcp has none)
-- Sub-second local latency (nasa-ads-mcp bound by ADS API round-trips)
-- Body full-text search (nasa-ads-mcp has none)

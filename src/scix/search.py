@@ -170,6 +170,12 @@ def lexical_search_body(
     Uses the built-in 'english' config (matching the index expression in
     migration 039). Rows with NULL or oversized bodies are skipped to match
     the partial-index predicate, ensuring the planner uses the GIN index.
+
+    Ranking uses the title+abstract tsvector (papers.tsv) rather than
+    recomputing to_tsvector on the full body text — the body expression
+    index handles the match filter, but ts_rank_cd on 65KB bodies is
+    prohibitively slow (~400s per query). Since body results are fused
+    via RRF with other signals, approximate ordering is sufficient.
     """
     t0 = time.perf_counter()
 
@@ -177,11 +183,7 @@ def lexical_search_body(
 
     query = f"""
         SELECT {STUB_COLUMNS},
-               ts_rank_cd(
-                   to_tsvector('english', p.body),
-                   plainto_tsquery('english', %s),
-                   32
-               ) AS rank
+               ts_rank_cd(p.tsv, plainto_tsquery('english', %s), 32) AS rank
         FROM papers p
         WHERE p.body IS NOT NULL
           AND length(p.body) <= {_BODY_TSVECTOR_MAX_BYTES}

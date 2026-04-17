@@ -36,10 +36,12 @@ _ROW_PASSTHROUGH_KEYS: tuple[str, ...] = (
 
 def _copy_row_fields(response: dict[str, Any], row: dict[str, Any]) -> None:
     for key in _ROW_PASSTHROUGH_KEYS:
-        value = row.get(key)
-        if value is not None or key == "source":
-            if key in row:
-                response[key] = value
+        if key not in row:
+            continue
+        value = row[key]
+        if value is None and key != "source":
+            continue
+        response[key] = value
 
 
 def _resolve_publisher(
@@ -66,7 +68,12 @@ def _apply_cross_bibcode_snippet_cap(
     if requested_bibcode == response.get("source_bibcode"):
         return
 
-    canonical = response.get("canonical_url") or f"https://arxiv.org/abs/{response.get('source_bibcode', '')}"
+    canonical = response.get("canonical_url")
+    if not canonical:
+        source_bibcode = response.get("source_bibcode")
+        if not source_bibcode:
+            return
+        canonical = f"https://arxiv.org/abs/{source_bibcode}"
     for field in ("body", "snippet"):
         text = response.get(field)
         if isinstance(text, str) and len(text) > MAX_SNIPPET_CHARS:
@@ -130,9 +137,9 @@ def build_read_paper_response(
 
     elif (not hit) and sibling_result.get("miss_with_hint"):
         response["source"] = "abstract"
-        response["fulltext_available_under_sibling"] = sibling_result[
-            "fulltext_available_under_sibling"
-        ]
+        response["fulltext_available_under_sibling"] = sibling_result.get(
+            "fulltext_available_under_sibling", ""
+        )
         response["hint"] = sibling_result.get("hint", "")
         if abstract_text is not None and "abstract" not in response:
             response["abstract"] = abstract_text

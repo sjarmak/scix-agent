@@ -264,11 +264,3 @@ def parse_ads_body(
         "patterns_tried": patterns_tried,
     }
     return sections, metadata
-
-
-__all__ = [
-    "PARSER_VERSION",
-    "Section",
-    "compute_confidence",
-    "parse_ads_body",
-]

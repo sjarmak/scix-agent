@@ -38,8 +38,9 @@ if [ -f .env ]; then
     set +a
 fi
 
-# Activate venv
-source .venv/bin/activate
+# Use venv python directly — the activate script has a stale VIRTUAL_ENV
+# path (/home/ds/scix_experiments/.venv) from before the projects/ move.
+PYTHON=".venv/bin/python3"
 
 HARVEST_DIR="data/daily_harvest"
 BACKFILL_DAYS="${BACKFILL_DAYS:-21}"
@@ -54,7 +55,7 @@ echo "════════════════════════�
 # ─── Step 1: Harvest new records from ADS ─────────────────────────────────────
 
 echo "[$(ts)] Step 1/5: Harvesting new records from ADS..."
-python3 scripts/harvest_daily.py --output-dir "$HARVEST_DIR" -v
+$PYTHON scripts/harvest_daily.py --output-dir "$HARVEST_DIR" -v
 
 # Find today's harvest file
 TODAY=$(date -u +%Y-%m-%d)
@@ -72,7 +73,7 @@ fi
 
 if [ "$RECORD_COUNT" -gt 0 ]; then
     echo "[$(ts)] Step 2/5: Ingesting into PostgreSQL..."
-    python3 scripts/ingest.py --file "$HARVEST_FILE" --no-drop-indexes -v
+    $PYTHON scripts/ingest.py --file "$HARVEST_FILE" --no-drop-indexes -v
 else
     echo "[$(ts)] Step 2/5: Skipped (no new records)"
 fi
@@ -86,7 +87,7 @@ fi
 # edges are re-ingested.
 
 echo "[$(ts)] Step 3/5: Backfilling body/references from ADS (last ${BACKFILL_DAYS}d)..."
-python3 scripts/backfill_recent_from_ads.py --output-dir "$HARVEST_DIR" --days "$BACKFILL_DAYS" -v
+$PYTHON scripts/backfill_recent_from_ads.py --output-dir "$HARVEST_DIR" --days "$BACKFILL_DAYS" -v
 
 BACKFILL_FILE="$HARVEST_DIR/ads_backfill_${TODAY}.jsonl.gz"
 BACKFILL_COUNT=0
@@ -96,7 +97,7 @@ BACKFILL_COUNT=0
 if [ -f "$BACKFILL_FILE" ]; then
     BACKFILL_COUNT=$(zcat "$BACKFILL_FILE" | wc -l)
     echo "[$(ts)] Step 4/5: Ingesting $BACKFILL_COUNT enriched records..."
-    python3 scripts/ingest.py --file "$BACKFILL_FILE" --no-drop-indexes -v
+    $PYTHON scripts/ingest.py --file "$BACKFILL_FILE" --no-drop-indexes -v
 else
     echo "[$(ts)] Step 4/5: Skipped (no records gained body or edges)"
 fi
@@ -107,7 +108,7 @@ fi
 
 if [ "$RECORD_COUNT" -gt 0 ] || [ "$BACKFILL_COUNT" -gt 0 ]; then
     echo "[$(ts)] Step 5/5: Embedding new papers (INDUS)..."
-    python3 scripts/embed.py --model indus --batch-size 256 --device cuda -v
+    $PYTHON scripts/embed.py --model indus --batch-size 256 --device cuda -v
 else
     echo "[$(ts)] Step 5/5: Skipped (no new records to embed)"
 fi

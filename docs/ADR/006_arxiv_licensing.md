@@ -86,3 +86,32 @@ Every response that includes LaTeX-derived snippet text must carry `canonical_ur
 - PRD Build 5 epic: bead `scix_experiments-wqr`
 - Work unit W4 (ar5iv fetch + parser): bead `scix_experiments-wqr.5`
 - Work unit W6 (arXiv S3 src/ bulk ingest): bead `scix_experiments-wqr.7`
+
+## Addendum (2026-04-17): Serving LaTeX-derived text under a published bibcode
+
+This addendum extends the original decision to cover a specific emission pattern that was not explicitly addressed in the 2026-04-13 text: returning LaTeX-derived body text in response to a request for a *published* bibcode (e.g., an ApJ or MNRAS bibcode) whose underlying row in `papers_fulltext` was actually ingested from an arXiv LaTeX source (`ar5iv` or `arxiv_local`).
+
+This is the "cross-bibcode LaTeX propagation" case. A preprint is posted to arXiv, later published in a journal under a different bibcode, and the only full-text row SciX holds is the LaTeX-derived one keyed to the arXiv bibcode. Agents that call `read_paper` with the *published* bibcode still deserve access to the content, but the license posture established above does not relax just because the request arrived under a different identifier.
+
+### Rules
+
+(a) **Snippet budget is invariant.** The <=500 character snippet budget (configurable via `SCIX_LATEX_SNIPPET_BUDGET`, see Enforcement §2 above) applies unchanged regardless of which bibcode the request arrived under. A request for the published bibcode that resolves to a LaTeX-derived row gets the same 500-character ceiling as a direct request for the arXiv bibcode. No propagation discount, no bulk mode, no exception.
+
+(b) **`canonical_url` points to the arXiv record, not the publisher DOI.** When the served row is LaTeX-derived, the emitted `canonical_url` must be `https://arxiv.org/abs/{arxiv_id}` — the source of the text we actually parsed and emitted — and not the publisher DOI landing page for the published bibcode. The reader's "go read this at the source" link must match the source of the bytes. Linking to the publisher from arXiv-derived text would misattribute the redistribution origin and breaks the arXiv license contract that makes internal use legal in the first place.
+
+(c) **Responses carry a `source_bibcode` field.** The response envelope must include a `source_bibcode` field exposing the bibcode of the row the text actually came from. If `source_bibcode != requested_bibcode`, the agent can see the propagation happened and reason about it (e.g., display both identifiers, warn the user, decide whether to trust the match). Hiding the origin behind a silent substitution is not acceptable — the agent must be able to observe that a cross-bibcode fetch occurred.
+
+(d) **`LATEX_DERIVED_SOURCES` constant.** Propagation is gated by a single named constant:
+
+```python
+LATEX_DERIVED_SOURCES = {"ar5iv", "arxiv_local"}
+```
+
+Only rows whose `source` column is in `LATEX_DERIVED_SOURCES` are eligible for cross-bibcode propagation. This keeps the policy decision in one place and makes audit trivial: if a new LaTeX-derived source is added (say, a future `arxiv_s3` bulk path), it gets added to the constant and inherits the propagation policy. Anything not in the set is non-propagating by default.
+
+(e) **Non-LaTeX sources never propagate across bibcodes.** Rows whose `source` is `s2orc`, `ads_body`, or `docling` are explicitly **not** eligible for cross-bibcode propagation. A request for a published bibcode whose only available full-text row is one of these sources must return a **miss-with-hint** — a structured response indicating the text exists under a different bibcode but cannot be served under the requested one — rather than serving the content. This floor exists because those sources carry different licensing postures than the arXiv LaTeX path: S2ORC text is governed by Semantic Scholar's ODC-BY terms keyed to specific paper records, ADS body text is governed by publisher agreements keyed to the published bibcode, and Docling output is derived from publisher PDFs whose licenses are per-paper and do not transfer. None of those licenses grant a cross-bibcode redistribution right, so we do not assume one.
+
+### Rationale
+
+The cross-bibcode case is common enough to matter (a significant fraction of corpus papers have arXiv preprint + journal publication pairs) and legally narrow enough to handle with a named allowlist rather than a general policy. arXiv's non-exclusive distribution license attaches to the arXiv record, which is stable across the preprint-to-publication lifecycle; the text we redistribute under that license does not stop being arXiv-licensed just because the paper later appeared in a journal. The `canonical_url` and `source_bibcode` requirements preserve provenance so downstream agents, reviewers, and users can see exactly what was served and why. The non-LaTeX floor keeps the policy conservative: when in doubt about license transferability, miss rather than over-serve.
+

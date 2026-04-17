@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -1087,6 +1088,113 @@ def citation_chain(
     )
 
 
+ANCHORS_PER_BUCKET = 5
+MAX_BUCKET_YEARS = 30
+_NO_COMMUNITY_SENTINEL = -1
+
+
+def _fetch_query_mode_buckets(
+    conn: psycopg.Connection,
+    query: str,
+    yearly_counts: list[dict[str, int]],
+    ts_config: str,
+    anchors_per_bucket: int = ANCHORS_PER_BUCKET,
+) -> list[dict[str, Any]]:
+    """For each year, fetch top-K papers matching the query ranked by PageRank.
+
+    Returns per-year bucket dicts with shape:
+        {"year": int, "count": int,
+         "anchors": list[PaperStub.to_dict() + pagerank],
+         "communities": list[{"community_id", "label", "anchor_count"}]}
+
+    `anchor_count` counts community members within this bucket's anchor list
+    (capped at ``anchors_per_bucket``), not the community's total paper count.
+
+    Runs a single CTE with ``ROW_NUMBER() OVER (PARTITION BY year)`` rather
+    than N per-year queries, so cost is O(1) round-trips regardless of year
+    span. Bucket ordering matches the input ``yearly_counts`` ordering.
+
+    The communities list is populated only for papers whose
+    ``community_id_medium`` is real (non-NULL, non-sentinel). When the Leiden
+    giant-component run has not been persisted (bead scix_experiments-8r3),
+    this degrades gracefully to an empty list per bucket. Communities with no
+    matching row in the ``communities`` table are omitted rather than emitted
+    with a null label.
+    """
+    if not yearly_counts:
+        return []
+
+    years = [yc["year"] for yc in yearly_counts]
+    count_by_year = {yc["year"]: yc["count"] for yc in yearly_counts}
+
+    anchor_sql = f"""
+        WITH ranked AS (
+            SELECT {STUB_COLUMNS},
+                   pm.pagerank,
+                   pm.community_id_medium,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY p.year
+                       ORDER BY pm.pagerank DESC NULLS LAST,
+                                p.citation_count DESC NULLS LAST
+                   ) AS rn
+            FROM papers p
+            LEFT JOIN paper_metrics pm ON pm.bibcode = p.bibcode
+            WHERE p.tsv @@ plainto_tsquery(%s, %s)
+              AND p.year = ANY(%s)
+        )
+        SELECT * FROM ranked WHERE rn <= %s
+    """
+
+    anchors_by_year: dict[int, list[dict[str, Any]]] = {y: [] for y in years}
+    community_counts_by_year: dict[int, Counter[int]] = {y: Counter() for y in years}
+    all_community_ids: set[int] = set()
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(anchor_sql, [ts_config, query, years, anchors_per_bucket])
+        for row in cur.fetchall():
+            year = row["year"]
+            stub = PaperStub.from_row(row).to_dict()
+            stub["pagerank"] = row["pagerank"]
+            anchors_by_year[year].append(stub)
+
+            cid = row["community_id_medium"]
+            if cid is not None and cid != _NO_COMMUNITY_SENTINEL:
+                community_counts_by_year[year][cid] += 1
+                all_community_ids.add(cid)
+
+        label_map: dict[int, str] = {}
+        if all_community_ids:
+            cur.execute(
+                "SELECT community_id, label FROM communities "
+                "WHERE resolution = 'medium' AND community_id = ANY(%s) "
+                "AND label IS NOT NULL",
+                (list(all_community_ids),),
+            )
+            label_map = {r["community_id"]: r["label"] for r in cur.fetchall()}
+
+    buckets: list[dict[str, Any]] = []
+    for year in years:
+        communities = [
+            {
+                "community_id": cid,
+                "label": label_map[cid],
+                "anchor_count": cnt,
+            }
+            for cid, cnt in community_counts_by_year[year].most_common()
+            if cid in label_map
+        ]
+        buckets.append(
+            {
+                "year": year,
+                "count": count_by_year[year],
+                "anchors": anchors_by_year[year],
+                "communities": communities,
+            }
+        )
+
+    return buckets
+
+
 def temporal_evolution(
     conn: psycopg.Connection,
     bibcode_or_query: str,
@@ -1094,16 +1202,22 @@ def temporal_evolution(
     year_start: int | None = None,
     year_end: int | None = None,
     ts_config: str = "scix_english",
+    anchors_per_bucket: int = ANCHORS_PER_BUCKET,
 ) -> SearchResult:
     """Show temporal trends: citations received by a paper, or publication volume for a query.
 
     Mode detection:
     - If bibcode_or_query matches an existing paper bibcode, shows citations per year.
-    - Otherwise, treats it as a search query and shows matching publications per year.
+    - Otherwise, treats it as a search query and shows publications per year
+      plus per-year "buckets" with anchor papers (ranked by PageRank) and
+      dominant communities — so a single call yields a usable temporal
+      narrative instead of raw counts.
+
+    Query-mode bucket generation is capped at the ``MAX_BUCKET_YEARS`` most
+    recent years to bound work regardless of the matched year span.
     """
     t0 = time.perf_counter()
 
-    # Detect mode: try to look up as a bibcode first
     with conn.cursor() as cur:
         cur.execute("SELECT 1 FROM papers WHERE bibcode = %s", (bibcode_or_query,))
         is_bibcode = cur.fetchone() is not None
@@ -1118,7 +1232,6 @@ def temporal_evolution(
         year_params.append(year_end)
 
     if is_bibcode:
-        # Citations received per year
         sql = f"""
             SELECT p.year, COUNT(*) AS count
             FROM citation_edges ce
@@ -1131,7 +1244,6 @@ def temporal_evolution(
         params: list[Any] = [bibcode_or_query] + year_params
         mode = "citations"
     else:
-        # Publication volume matching query
         sql = f"""
             SELECT p.year, COUNT(*) AS count
             FROM papers p
@@ -1149,13 +1261,34 @@ def temporal_evolution(
 
     query_ms = _elapsed_ms(t0)
 
-    yearly_counts = [{"year": row["year"], "count": row["count"]} for row in rows]
+    yearly_counts = [
+        {"year": row["year"], "count": row["count"]} for row in rows if row["year"] is not None
+    ]
+
+    metadata: dict[str, Any] = {
+        "mode": mode,
+        "bibcode_found": is_bibcode,
+        "yearly_counts": yearly_counts,
+    }
+
+    timing: dict[str, float] = {"query_ms": query_ms}
+    if not is_bibcode and yearly_counts:
+        t_buckets = time.perf_counter()
+        bucket_input = yearly_counts[-MAX_BUCKET_YEARS:]
+        metadata["buckets"] = _fetch_query_mode_buckets(
+            conn,
+            bibcode_or_query,
+            bucket_input,
+            ts_config,
+            anchors_per_bucket=anchors_per_bucket,
+        )
+        timing["buckets_ms"] = _elapsed_ms(t_buckets)
 
     return SearchResult(
         papers=[],
         total=len(yearly_counts),
-        timing_ms={"query_ms": query_ms},
-        metadata={"mode": mode, "bibcode_found": is_bibcode, "yearly_counts": yearly_counts},
+        timing_ms=timing,
+        metadata=metadata,
     )
 
 
@@ -2226,10 +2359,7 @@ def read_fulltext_with_sibling_fallback(
                 "served_from_sibling_bibcode": sibling,
                 "canonical_url": fetch_canonical_url(sibling),
             }
-        if (
-            non_latex_hint_sibling is None
-            and source in _NON_LATEX_FULLTEXT_SOURCES
-        ):
+        if non_latex_hint_sibling is None and source in _NON_LATEX_FULLTEXT_SOURCES:
             non_latex_hint_sibling = sibling
 
     # Rule 4: no LaTeX hit, but a non-LaTeX sibling exists

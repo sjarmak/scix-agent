@@ -34,6 +34,9 @@ mcp = [
 analysis = [
     "matplotlib>=3.7",
 ]
+docling = [
+    "docling>=2.0",
+]
 graph = [
     "python-igraph>=0.11",
     "leidenalg>=0.10",

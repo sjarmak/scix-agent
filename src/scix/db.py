@@ -34,7 +34,7 @@ def is_production_dsn(dsn: str | None) -> bool:
     except psycopg.ProgrammingError:
         return False
     dbname = params.get("dbname")
-    return isinstance(dbname, str) and dbname in _PRODUCTION_DB_NAMES
+    return isinstance(dbname, str) and dbname.lower() in _PRODUCTION_DB_NAMES
 
 
 def redact_dsn(dsn: str) -> str:

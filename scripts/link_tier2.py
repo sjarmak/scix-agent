@@ -17,7 +17,7 @@ End-to-end pipeline:
 
 Usage::
 
-    python scripts/link_tier2.py                      # prod DSN
+    python scripts/link_tier2.py --allow-prod         # prod DSN (guard required)
     SCIX_TEST_DSN=dbname=scix_test \\
       python scripts/link_tier2.py --bibcode-prefix test_u09_ --workers 1
 
@@ -54,7 +54,7 @@ from scix.aho_corasick import (  # noqa: E402
     build_automaton,
     link_abstract,
 )
-from scix.db import DEFAULT_DSN, get_connection  # noqa: E402
+from scix.db import DEFAULT_DSN, get_connection, is_production_dsn, redact_dsn  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -504,6 +504,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Per-entity linkage cap; over-cap entities are demoted to llm_only",
     )
     parser.add_argument("--dry-run", action="store_true", default=False)
+    parser.add_argument(
+        "--allow-prod",
+        action="store_true",
+        help="Allow running against the production database.",
+    )
     parser.add_argument("--verbose", "-v", action="store_true", default=False)
     return parser
 
@@ -518,6 +523,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     )
 
     dsn = args.db_url or os.environ.get("SCIX_TEST_DSN") or DEFAULT_DSN
+    if is_production_dsn(dsn) and not args.allow_prod:
+        logger.error(
+            "refusing to run against production DSN %s — pass --allow-prod to override",
+            redact_dsn(dsn),
+        )
+        return 2
+
     conn = get_connection(dsn)
     t0 = time.monotonic()
     try:

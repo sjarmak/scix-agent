@@ -20,6 +20,7 @@ import pickle
 import sys
 import tempfile
 from typing import Iterator
+from unittest import mock
 
 import psycopg
 import pytest
@@ -474,3 +475,57 @@ class TestTier2Summary:
             link_tier2.write_tier2_summary(stats, outpath, wall_seconds=1.0, dry_run=True)
             content = outpath.read_text()
             assert "DRY RUN" in content
+
+
+# ---------------------------------------------------------------------------
+# Production guard tests (no DB required)
+# ---------------------------------------------------------------------------
+
+
+class TestProductionGuard:
+    """Verify --allow-prod guard on link_tier2.main()."""
+
+    def test_refuses_production_dsn_without_allow_prod(self) -> None:
+        """main() must exit non-zero when DSN is production and --allow-prod is absent."""
+        rc = link_tier2.main(["--db-url", "dbname=scix"])
+        assert rc == 2
+
+    def test_accepts_non_production_dsn_without_flag(self) -> None:
+        """main() should not reject a non-production DSN even without --allow-prod.
+
+        We pass --dry-run and --bibcode-prefix to avoid any real DB work;
+        the guard check happens before the connection attempt, so a
+        connection error is expected if SCIX_TEST_DSN is unset. We only
+        need to verify the guard does NOT reject.
+        """
+        # Use a clearly non-production DSN. Connection will fail but the
+        # guard should pass (rc != 2).
+        try:
+            rc = link_tier2.main(["--db-url", "dbname=scix_test", "--dry-run"])
+        except psycopg.OperationalError:
+            # Connection failure is fine — means we passed the guard.
+            return
+        # If we somehow connected (scix_test running), any rc != 2 is fine.
+        assert rc != 2
+
+    def test_allows_production_dsn_with_flag(self) -> None:
+        """main() should pass the guard when --allow-prod is given, even for
+        a production DSN. We mock get_connection so no real DB call is made."""
+        mock_conn = mock.MagicMock()
+        mock_conn.cursor.return_value.__enter__ = mock.MagicMock(
+            return_value=mock.MagicMock(fetchall=mock.MagicMock(return_value=[]))
+        )
+        mock_conn.cursor.return_value.__exit__ = mock.MagicMock(return_value=False)
+
+        with mock.patch("link_tier2.get_connection", return_value=mock_conn):
+            rc = link_tier2.main(
+                [
+                    "--db-url",
+                    "dbname=scix",
+                    "--allow-prod",
+                    "--dry-run",
+                    "--bibcode-prefix",
+                    "NONEXISTENT_",
+                ]
+            )
+        assert rc != 2

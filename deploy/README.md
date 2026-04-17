@@ -92,6 +92,26 @@ or the plain-docker wrapper (no compose needed):
 ./deploy/run.sh stop     # tear down
 ```
 
+### Postgres on the host
+
+The containers expect postgres to be reachable from the docker bridge
+gateway (`host.docker.internal`, 172.17.0.1 on Linux). Two configurations
+are supported:
+
+1. **Recommended: postgres listens on the bridge gateway.** Set
+   `listen_addresses = 'localhost,172.17.0.1'` in `postgresql.conf` and add
+   a `pg_hba.conf` entry for `172.17.0.0/16` with `scram-sha-256`. Restart
+   postgres. The container connects directly.
+2. **Fallback: pg_docker_proxy.** If you can't edit postgres config (e.g.
+   no sudo), `./deploy/run.sh` auto-starts `scripts/pg_docker_proxy.py`
+   which listens on 172.17.0.1:5432 and forwards to 127.0.0.1:5432, making
+   postgres reachable to containers. The proxy is a foreground python
+   process owned by the invoking user; it does not survive reboot unless
+   `./deploy/run.sh` is re-run.
+
+Either way, the `SCIX_DSN` in `deploy/.env` stays the same:
+`host=host.docker.internal dbname=scix user=scix_reader password=...`
+
 ## Client config
 
 ```json

@@ -41,6 +41,7 @@ case "$action" in
     stop|down)
         docker rm -f "$CF_CTR" "$PY_CTR" 2>/dev/null || true
         docker network rm "$NET" 2>/dev/null || true
+        pkill -f "pg_docker_proxy.py" 2>/dev/null || true
         echo "Stack stopped."
         exit 0
         ;;
@@ -60,6 +61,31 @@ esac
 
 echo "[$(date +%H:%M:%S)] Building $IMAGE..."
 docker build -f "$DEPLOY_DIR/Dockerfile" -t "$IMAGE" "$REPO_DIR"
+
+# Start the postgres bridge-gateway proxy if not already running.
+# Needed on hosts where postgres listens only on 127.0.0.1 — the proxy
+# lets host.docker.internal (docker0 gateway = 172.17.0.1) reach 5432 on
+# behalf of containers. See scripts/pg_docker_proxy.py.
+PG_PROXY_LOG="${HOME}/.config/scix-mcp/pg_docker_proxy.log"
+if ! pgrep -f "pg_docker_proxy.py" >/dev/null 2>&1; then
+    echo "[$(date +%H:%M:%S)] Starting pg_docker_proxy..."
+    mkdir -p "$(dirname "$PG_PROXY_LOG")"
+    (umask 077 && : > "$PG_PROXY_LOG")
+    PY_BIN="$REPO_DIR/.venv/bin/python3"
+    [ -x "$PY_BIN" ] || PY_BIN="python3"
+    nohup "$PY_BIN" "$REPO_DIR/scripts/pg_docker_proxy.py" > "$PG_PROXY_LOG" 2>&1 &
+    disown $! 2>/dev/null || true
+    # Wait briefly for the listener to come up
+    for i in $(seq 1 10); do
+        if ss -tln 2>/dev/null | grep -q '172.17.0.1:5432'; then
+            echo "[$(date +%H:%M:%S)] pg_docker_proxy listening on 172.17.0.1:5432"
+            break
+        fi
+        sleep 0.5
+    done
+else
+    echo "[$(date +%H:%M:%S)] pg_docker_proxy already running."
+fi
 
 # Make sure we start from a clean slate.
 docker rm -f "$CF_CTR" "$PY_CTR" 2>/dev/null || true

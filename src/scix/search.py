@@ -2142,3 +2142,104 @@ def read_fulltext(
         timing_ms={"query_ms": query_ms},
         metadata={"source": source, "latex_derived": False},
     )
+
+
+# ---------------------------------------------------------------------------
+# Sibling-fallback fulltext lookup (pure, injected-fetcher)
+# ---------------------------------------------------------------------------
+
+# Explicit module-level contract for this function. This re-binding is
+# intentional: the same frozenset is also imported from scix.sources.ar5iv
+# at the top of this module, but stating it here makes the contract of
+# read_fulltext_with_sibling_fallback self-evident.
+LATEX_DERIVED_SOURCES = frozenset({"ar5iv", "arxiv_local"})
+
+# Non-LaTeX fulltext sources. A sibling hit from one of these triggers a
+# "miss-with-hint" response rather than propagating the row, because the
+# caller should invoke read_paper(bibcode=<sibling>) directly.
+_NON_LATEX_FULLTEXT_SOURCES = frozenset({"s2orc", "ads_body", "docling"})
+
+
+def read_fulltext_with_sibling_fallback(
+    bibcode: str,
+    fetch_row,  # Callable[[str], dict | None]
+    fetch_aliases,  # Callable[[str], Iterable[str]]
+    fetch_canonical_url,  # Callable[[str], str | None]
+) -> dict:
+    """Resolve a fulltext row for ``bibcode``, falling back to siblings.
+
+    This is a **pure** function: it performs no IO and holds no DB
+    connections. All side-effects (DB reads, URL construction) are
+    delegated to three injected callables.
+
+    Semantics (PRD R3):
+
+    1. Direct hit — ``fetch_row(bibcode)`` returns a row ⇒ return
+       ``{"hit": True, "row": row, "sibling": None}``.
+    2. Otherwise resolve ``fetch_aliases(bibcode)``, de-duplicate while
+       preserving order, and exclude the requested bibcode itself
+       (cycle-guard).
+    3. For each sibling, ``srow = fetch_row(sibling)``. If ``srow`` is
+       present and its ``source`` is a LaTeX-derived source, return the
+       sibling's row with ``served_from_sibling_bibcode`` and
+       ``canonical_url`` populated.
+    4. Else, if any sibling has a hit in a non-LaTeX source
+       ({'s2orc','ads_body','docling'}), return a miss-with-hint
+       response that tells the caller which sibling bibcode to read.
+       The sibling's ``row`` is NOT propagated.
+    5. Else, return ``{"hit": False, "miss_with_hint": False}``.
+
+    The function never recurses and never calls ``fetch_row`` on the
+    requested bibcode more than once, even if ``fetch_aliases`` returns
+    the requested bibcode in its alias list.
+    """
+    # Rule 1: direct hit
+    row = fetch_row(bibcode)
+    if row is not None:
+        return {"hit": True, "row": row, "sibling": None}
+
+    # Rule 2: resolve aliases, de-duplicate (preserve order), drop self
+    raw_aliases = fetch_aliases(bibcode) or ()
+    seen: set[str] = {bibcode}
+    siblings: list[str] = []
+    for alias in raw_aliases:
+        if alias in seen:
+            continue
+        seen.add(alias)
+        siblings.append(alias)
+
+    # Rule 3 / 4: walk siblings, preferring LaTeX-derived hits, but
+    # recording the first non-LaTeX hint we encounter so we can return
+    # it if no LaTeX sibling is found.
+    non_latex_hint_sibling: str | None = None
+
+    for sibling in siblings:
+        srow = fetch_row(sibling)
+        if srow is None:
+            continue
+        source = srow.get("source") if isinstance(srow, dict) else None
+        if source in LATEX_DERIVED_SOURCES:
+            return {
+                "hit": True,
+                "row": srow,
+                "sibling": sibling,
+                "served_from_sibling_bibcode": sibling,
+                "canonical_url": fetch_canonical_url(sibling),
+            }
+        if (
+            non_latex_hint_sibling is None
+            and source in _NON_LATEX_FULLTEXT_SOURCES
+        ):
+            non_latex_hint_sibling = sibling
+
+    # Rule 4: no LaTeX hit, but a non-LaTeX sibling exists
+    if non_latex_hint_sibling is not None:
+        return {
+            "hit": False,
+            "miss_with_hint": True,
+            "fulltext_available_under_sibling": non_latex_hint_sibling,
+            "hint": f"call read_paper(bibcode={non_latex_hint_sibling})",
+        }
+
+    # Rule 5: complete miss
+    return {"hit": False, "miss_with_hint": False}

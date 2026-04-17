@@ -1,0 +1,15 @@
+# Publisher suppress list (PRD R16)
+#
+# Runtime-loadable list of publisher identifiers to suppress from search
+# results and other user-facing outputs. The loader re-reads this file on
+# every call, so edits take effect without a redeploy or restart.
+#
+# Matching is case-insensitive. Entries are compared against the `publisher`
+# field on paper records.
+#
+# Example:
+# suppressed_publishers:
+#   - "Example Predatory Press"
+#   - "Another Suppressed Publisher"
+
+suppressed_publishers: []

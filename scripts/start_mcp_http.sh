@@ -39,6 +39,11 @@ fi
 # Use read-only DB role for HTTP connections
 export SCIX_DSN="host=localhost dbname=scix user=scix_reader password=scix_reader_local_only"
 
+# Use local HuggingFace cache only — no network calls on startup (faster,
+# avoids rate limits). Model is already downloaded to ~/.cache/huggingface/.
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+
 echo "[$(date -u +%H:%M:%S)] Starting MCP HTTP server on port $MCP_PORT..."
 export MCP_PORT
 MCP_HOST="127.0.0.1" $PYTHON -m scix.mcp_server_http &

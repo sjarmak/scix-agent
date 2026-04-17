@@ -197,7 +197,6 @@ def _build_app() -> Starlette:
             Mount("/mcp", app=mcp_app),
         ],
         lifespan=lifespan,
-        redirect_slashes=False,
     )
 
 

@@ -1595,13 +1595,23 @@ def _check_body_latex_provenance(
     papers.body is ADS-only, but if LaTeX-derived text were ever
     promoted to papers.body, this guard ensures ADR-006 snippet budget
     enforcement is applied.
+
+    If the papers_fulltext table is absent (migration 041 not yet
+    applied), the guard short-circuits to None — there is no provenance
+    record to inspect, so by definition no body can be flagged as
+    LaTeX-derived. This keeps read_paper / search_within_paper usable
+    against papers.body alone.
     """
-    with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(
-            "SELECT source FROM papers_fulltext WHERE bibcode = %s",
-            (bibcode,),
-        )
-        row = cur.fetchone()
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "SELECT source FROM papers_fulltext WHERE bibcode = %s",
+                (bibcode,),
+            )
+            row = cur.fetchone()
+    except psycopg.errors.UndefinedTable:
+        conn.rollback()
+        return None
 
     if row is None:
         return None
@@ -2017,13 +2027,25 @@ def read_fulltext(
     """
     t0 = time.perf_counter()
 
-    with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(
-            "SELECT bibcode, source, sections, parser_version "
-            "FROM papers_fulltext WHERE bibcode = %s",
-            (bibcode,),
+    try:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "SELECT bibcode, source, sections, parser_version "
+                "FROM papers_fulltext WHERE bibcode = %s",
+                (bibcode,),
+            )
+            row = cur.fetchone()
+    except psycopg.errors.UndefinedTable:
+        conn.rollback()
+        return SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"query_ms": _elapsed_ms(t0)},
+            metadata={
+                "error": "Structured fulltext store is unavailable on this deployment",
+                "fallback_hint": "Use read_paper without 'section' argument to read papers.body directly",
+            },
         )
-        row = cur.fetchone()
 
     query_ms = _elapsed_ms(t0)
 

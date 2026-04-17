@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import psycopg
+
 from scix.search import (
     _check_body_latex_provenance,
     read_paper_section,
@@ -88,6 +90,24 @@ class TestCheckBodyLatexProvenance:
         conn = _make_single_cursor_conn(None)
         result = _check_body_latex_provenance(conn, "2024ApJ...001A")
         assert result is None
+
+    def test_returns_none_when_papers_fulltext_table_missing(self) -> None:
+        """If papers_fulltext table is absent (migration 041 not yet applied),
+        the guard returns None and rolls back the failed transaction so the
+        caller's session stays usable."""
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.__enter__ = MagicMock(return_value=cur)
+        cur.__exit__ = MagicMock(return_value=False)
+        cur.execute.side_effect = psycopg.errors.UndefinedTable(
+            'relation "papers_fulltext" does not exist'
+        )
+        conn.cursor.return_value = cur
+
+        result = _check_body_latex_provenance(conn, "2024ApJ...001A")
+
+        assert result is None
+        conn.rollback.assert_called_once()
 
     def test_returns_none_for_ads_body_source(self) -> None:
         """papers_fulltext with source='ads_body' is not LaTeX-derived."""

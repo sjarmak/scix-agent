@@ -32,6 +32,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from scix.sources.ar5iv import LATEX_DERIVED_SOURCES
+
 # ---------------------------------------------------------------------------
 # Types
 # ---------------------------------------------------------------------------
@@ -78,10 +80,9 @@ class RouteDecision:
 # Constants
 # ---------------------------------------------------------------------------
 
-# LaTeX-derived sibling sources eligible for serve_sibling (ADR-006).
-# Non-LaTeX siblings (s2orc, ads_body, docling) fall through to subsequent
-# rules rather than being served as siblings.
-LATEX_SIBLING_SOURCES: frozenset[str] = frozenset({"ar5iv", "arxiv_local"})
+# Alias for the canonical ADR-006 set. Non-LaTeX siblings (s2orc, ads_body,
+# docling) fall through to subsequent rules rather than being served as siblings.
+LATEX_SIBLING_SOURCES: frozenset[str] = LATEX_DERIVED_SOURCES
 
 # Doctypes eligible for Tier 3 (Docling on OpenAlex PDFs).
 R2_ELIGIBLE_DOCTYPES: frozenset[str] = frozenset({"article", "eprint", "review"})

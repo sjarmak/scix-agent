@@ -2281,15 +2281,12 @@ def read_fulltext(
 # Sibling-fallback fulltext lookup (pure, injected-fetcher)
 # ---------------------------------------------------------------------------
 
-# Explicit module-level contract for this function. This re-binding is
-# intentional: the same frozenset is also imported from scix.sources.ar5iv
-# at the top of this module, but stating it here makes the contract of
-# read_fulltext_with_sibling_fallback self-evident.
-LATEX_DERIVED_SOURCES = frozenset({"ar5iv", "arxiv_local"})
+# LATEX_DERIVED_SOURCES is imported from scix.sources.ar5iv at the top of
+# this module — canonical definition per ADR-006.
 
-# Non-LaTeX fulltext sources. A sibling hit from one of these triggers a
-# "miss-with-hint" response rather than propagating the row, because the
-# caller should invoke read_paper(bibcode=<sibling>) directly.
+# Non-LaTeX sibling sources fall through to a "miss-with-hint" response; the
+# caller should invoke read_paper(bibcode=<sibling>) directly rather than
+# receiving row data under a different bibcode.
 _NON_LATEX_FULLTEXT_SOURCES = frozenset({"s2orc", "ads_body", "docling"})
 
 

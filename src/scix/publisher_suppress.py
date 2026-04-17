@@ -57,12 +57,11 @@ def load_suppress_list(path: Union[str, Path, None] = None) -> frozenset[str]:
     """
     config_path = Path(path) if path is not None else _default_config_path()
 
-    if not config_path.exists():
-        return frozenset()
-
     try:
         with config_path.open("r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh)
+    except FileNotFoundError:
+        return frozenset()
     except yaml.YAMLError as exc:
         raise ValueError(
             f"Malformed YAML in publisher suppress list at {config_path}: {exc}"

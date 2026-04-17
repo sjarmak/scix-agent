@@ -41,42 +41,14 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+
+from scix.sources.ar5iv import Section
 
 logger = logging.getLogger(__name__)
 
 PARSER_VERSION: str = "ads_body_regex@v1"
 
-
-# ---------------------------------------------------------------------------
-# Public data model
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Section:
-    """A parsed body section.
-
-    Attributes
-    ----------
-    heading:
-        Heading text as matched (numbering stripped, trailing whitespace
-        removed).
-    level:
-        Nesting level. The Tier 1 regex parser only detects top-level
-        headings, so ``level`` is always ``1`` in v1. The field exists so
-        downstream consumers have a stable shape across parsers.
-    text:
-        Body text that falls under this heading, up to (but not including)
-        the next heading or end-of-body.
-    offset:
-        Zero-based character offset of the heading within the input body.
-    """
-
-    heading: str
-    level: int
-    text: str
-    offset: int
+__all__ = ["PARSER_VERSION", "Section", "compute_confidence", "parse_ads_body"]
 
 
 # ---------------------------------------------------------------------------

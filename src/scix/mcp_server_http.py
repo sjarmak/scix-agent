@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -63,6 +64,86 @@ class _AuthWrap:
         await self._inner(scope, receive, send)
 
 
+class _RateLimitWrap:
+    """ASGI middleware — token-bucket rate limiter per bearer token (or per IP).
+
+    Limits:
+      - 60 requests / minute sustained rate
+      - 10 requests / second burst capacity
+
+    Buckets are stored in-memory with periodic TTL cleanup (no Redis needed).
+    Returns HTTP 429 with a Retry-After header when a client exceeds the limit.
+    """
+
+    _RATE: float = 60.0 / 60.0  # 1 token per second (60/min)
+    _BURST: float = 10.0  # max bucket capacity
+    _CLEANUP_INTERVAL: float = 300.0  # purge stale entries every 5 min
+
+    def __init__(self, inner: ASGIApp) -> None:
+        self._inner = inner
+        # {client_key: (tokens, last_refill_time)}
+        self._buckets: dict[str, tuple[float, float]] = {}
+        self._last_cleanup: float = time.monotonic()
+
+    @staticmethod
+    def _client_key(scope: Scope) -> str:
+        """Extract a rate-limit key: bearer token if present, else client IP."""
+        headers = dict(scope.get("headers", []))
+        auth = headers.get(b"authorization", b"").decode()
+        if auth.startswith("Bearer "):
+            return f"tok:{auth[7:]}"
+        client = scope.get("client")
+        ip = client[0] if client else "unknown"
+        return f"ip:{ip}"
+
+    def _consume(self, key: str) -> float | None:
+        """Try to consume one token.  Returns None on success, or seconds
+        until a token is available on failure."""
+        now = time.monotonic()
+        tokens, last = self._buckets.get(key, (self._BURST, now))
+        # refill
+        elapsed = now - last
+        tokens = min(self._BURST, tokens + elapsed * self._RATE)
+        if tokens >= 1.0:
+            self._buckets[key] = (tokens - 1.0, now)
+            return None
+        # how long until 1 token is available?
+        wait = (1.0 - tokens) / self._RATE
+        self._buckets[key] = (tokens, now)
+        return wait
+
+    def _maybe_cleanup(self) -> None:
+        now = time.monotonic()
+        if now - self._last_cleanup < self._CLEANUP_INTERVAL:
+            return
+        self._last_cleanup = now
+        stale = [
+            k for k, (_, ts) in self._buckets.items() if now - ts > 120.0
+        ]
+        for k in stale:
+            del self._buckets[k]
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self._inner(scope, receive, send)
+            return
+
+        self._maybe_cleanup()
+        key = self._client_key(scope)
+        retry_after = self._consume(key)
+
+        if retry_after is not None:
+            response = JSONResponse(
+                {"error": "rate limit exceeded"},
+                status_code=429,
+                headers={"Retry-After": str(int(retry_after) + 1)},
+            )
+            await response(scope, receive, send)
+            return
+
+        await self._inner(scope, receive, send)
+
+
 def _build_app() -> Starlette:
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
@@ -88,6 +169,7 @@ def _build_app() -> Starlette:
     mcp_app: ASGIApp = session_manager.handle_request
     if not no_auth:
         mcp_app = _AuthWrap(mcp_app, auth_token)
+    mcp_app = _RateLimitWrap(mcp_app)
 
     async def health(request: Request) -> Response:
         return JSONResponse({"status": "ok", "server": "scix-mcp"})

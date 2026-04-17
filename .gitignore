@@ -75,3 +75,4 @@ Thumbs.db
 # Cache
 .cache/
 deploy/.env
+CLAUDE.local.md

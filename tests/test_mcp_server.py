@@ -16,6 +16,7 @@ import pytest
 
 from scix.mcp_server import (
     _DEPRECATED_ALIASES,
+    _coerce_year,
     _dispatch_tool,
     _hnsw_index_cache,
     _hnsw_index_exists,
@@ -43,6 +44,34 @@ def _reset_session():
 # ---------------------------------------------------------------------------
 # _parse_filters
 # ---------------------------------------------------------------------------
+
+
+class TestCoerceYear:
+    def test_none_returns_none(self) -> None:
+        assert _coerce_year(None, "year_start") is None
+
+    def test_int_passthrough(self) -> None:
+        assert _coerce_year(2024, "year_start") == 2024
+
+    def test_string_numeric_coerced(self) -> None:
+        assert _coerce_year("2024", "year_start") == 2024
+
+    def test_non_numeric_string_raises(self) -> None:
+        with pytest.raises(ValueError, match="year_start must be an integer"):
+            _coerce_year("not-a-year", "year_start")
+
+    def test_below_min_raises(self) -> None:
+        with pytest.raises(ValueError, match="year_end must be in"):
+            _coerce_year(1800, "year_end")
+
+    def test_above_max_raises(self) -> None:
+        with pytest.raises(ValueError, match="year_start must be in"):
+            _coerce_year(2200, "year_start")
+
+    def test_injection_string_raises(self) -> None:
+        """A crafted SQL-looking value must not reach the DB."""
+        with pytest.raises(ValueError):
+            _coerce_year("2020; DROP TABLE papers", "year_start")
 
 
 class TestParseFilters:

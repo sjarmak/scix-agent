@@ -311,6 +311,29 @@ def _parse_filters(filters: dict[str, Any] | None = None) -> search.SearchFilter
     )
 
 
+_MIN_YEAR = 1900
+_MAX_YEAR = 2100
+
+
+def _coerce_year(raw: Any, name: str) -> int | None:
+    """Coerce an optional year argument from the MCP schema to a bounded int.
+
+    MCP inputSchema validation is advisory; callers can send strings, floats,
+    or out-of-range ints. Enforce the contract at the dispatch boundary so
+    malformed input surfaces as a clean ValueError rather than a downstream
+    psycopg type error or a multi-century SQL scan.
+    """
+    if raw is None:
+        return None
+    try:
+        year = int(raw)
+    except (TypeError, ValueError) as err:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from err
+    if not _MIN_YEAR <= year <= _MAX_YEAR:
+        raise ValueError(f"{name} must be in [{_MIN_YEAR}, {_MAX_YEAR}], got {year}")
+    return year
+
+
 # ---------------------------------------------------------------------------
 # Session state (singleton for the server process)
 # ---------------------------------------------------------------------------
@@ -498,6 +521,7 @@ def startup_self_test(server: Any = None) -> dict[str, Any]:
 
     if loop and loop.is_running():
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             result = pool.submit(
                 asyncio.run, handler(ListToolsRequest(method="tools/list"))
@@ -956,16 +980,18 @@ def create_server(_run_self_test: bool = True):
                     },
                 },
             ),
-            # --- temporal_evolution (unchanged) ---
+            # --- temporal_evolution ---
             Tool(
                 name="temporal_evolution",
                 description=(
                     "Show how activity around a topic or paper evolves over time. Given a "
                     "bibcode, returns citations-per-year for that paper. Given search "
-                    "terms, returns publications-per-year matching that query. Useful for "
-                    "tracking rising or fading topics and paper impact trajectories. Use "
-                    "facet_counts instead when you want a single distribution by year "
-                    "without a topic or bibcode anchor."
+                    "terms, returns publications-per-year plus per-year 'buckets' with "
+                    "top anchor papers (ranked by PageRank) and dominant communities, so "
+                    "a single call yields a usable temporal narrative instead of raw "
+                    "counts. Useful for tracking rising or fading topics and paper impact "
+                    "trajectories. Use facet_counts instead when you want a single "
+                    "distribution by year without a topic or bibcode anchor."
                 ),
                 inputSchema={
                     "type": "object",
@@ -1272,11 +1298,15 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
 
     # --- temporal_evolution ---
     if name == "temporal_evolution":
+        year_start = _coerce_year(args.get("year_start"), "year_start")
+        year_end = _coerce_year(args.get("year_end"), "year_end")
+        if year_start is not None and year_end is not None and year_end < year_start:
+            raise ValueError(f"year_end ({year_end}) must be >= year_start ({year_start})")
         result = search.temporal_evolution(
             conn,
             args["bibcode_or_query"],
-            year_start=args.get("year_start"),
-            year_end=args.get("year_end"),
+            year_start=year_start,
+            year_end=year_end,
         )
         return _result_to_json(result)
 

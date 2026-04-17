@@ -594,3 +594,82 @@ class TestTemporalEvolutionIntegration:
         result = temporal_evolution(conn, "NONEXISTENT_XYZ_999")
         assert result.metadata["mode"] == "publications"
         assert result.metadata["bibcode_found"] is False
+
+    def test_query_mode_returns_buckets_with_anchors(self, conn) -> None:
+        """Query-mode must return per-year buckets with anchor papers — the core fix for o30."""
+        if not has_papers(conn) or not has_tsv_column(conn):
+            pytest.skip("No papers or tsv column")
+        result = temporal_evolution(conn, "galaxy formation", year_start=2022, year_end=2024)
+        assert result.metadata["mode"] == "publications"
+        buckets = result.metadata.get("buckets", [])
+        if not buckets:
+            pytest.skip("No matching publications for query in year range")
+        assert "buckets" in result.metadata
+        assert isinstance(buckets, list)
+
+        for bucket in buckets:
+            assert set(bucket.keys()) >= {"year", "count", "anchors", "communities"}
+            assert isinstance(bucket["year"], int)
+            assert bucket["count"] >= 1
+            assert isinstance(bucket["anchors"], list)
+            assert isinstance(bucket["communities"], list)
+
+            for anchor in bucket["anchors"]:
+                assert "bibcode" in anchor
+                assert "title" in anchor
+                assert "year" in anchor
+            assert len(bucket["anchors"]) <= 5
+
+    def test_query_mode_anchors_ordered_by_pagerank(self, conn) -> None:
+        """Anchors within a bucket must be ranked by pagerank DESC NULLS LAST."""
+        if not has_papers(conn) or not has_tsv_column(conn):
+            pytest.skip("No papers or tsv column")
+        result = temporal_evolution(conn, "black hole", year_start=2023, year_end=2024)
+        for bucket in result.metadata.get("buckets", []):
+            anchors = bucket["anchors"]
+            if len(anchors) < 2:
+                continue
+            ranks = [a.get("pagerank") if a.get("pagerank") is not None else -1.0 for a in anchors]
+            assert ranks == sorted(
+                ranks, reverse=True
+            ), f"anchors for year {bucket['year']} not ordered by pagerank: {ranks}"
+
+    def test_query_mode_buckets_respect_year_range(self, conn) -> None:
+        if not has_papers(conn) or not has_tsv_column(conn):
+            pytest.skip("No papers or tsv column")
+        result = temporal_evolution(conn, "galaxy", year_start=2023, year_end=2024)
+        for bucket in result.metadata.get("buckets", []):
+            assert 2023 <= bucket["year"] <= 2024
+
+    def test_bibcode_mode_no_buckets(self, conn) -> None:
+        """Bibcode mode is unchanged — still returns yearly_counts only, no buckets."""
+        if not has_papers(conn) or not has_citation_edges(conn):
+            pytest.skip("No papers or citation edges")
+        bibcode = get_cited_bibcode(conn)
+        if not bibcode:
+            pytest.skip("No cited bibcode found")
+        result = temporal_evolution(conn, bibcode)
+        assert result.metadata["mode"] == "citations"
+        assert "yearly_counts" in result.metadata
+        assert "buckets" not in result.metadata
+
+    def test_query_mode_anchors_do_not_exceed_bucket_count(self, conn) -> None:
+        """len(anchors) must never exceed the bucket's total count."""
+        if not has_papers(conn) or not has_tsv_column(conn):
+            pytest.skip("No papers or tsv column")
+        result = temporal_evolution(conn, "galaxy formation", year_start=2022, year_end=2024)
+        for bucket in result.metadata.get("buckets", []):
+            assert len(bucket["anchors"]) <= bucket["count"], (
+                f"year {bucket['year']}: {len(bucket['anchors'])} anchors "
+                f"but only {bucket['count']} matching papers"
+            )
+
+    def test_query_mode_communities_have_labels(self, conn) -> None:
+        """Communities in buckets must always carry a non-null label (None is filtered out)."""
+        if not has_papers(conn) or not has_tsv_column(conn):
+            pytest.skip("No papers or tsv column")
+        result = temporal_evolution(conn, "galaxy formation", year_start=2022, year_end=2024)
+        for bucket in result.metadata.get("buckets", []):
+            for community in bucket["communities"]:
+                assert community["label"] is not None
+                assert community["anchor_count"] >= 1

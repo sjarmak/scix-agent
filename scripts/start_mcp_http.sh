@@ -62,25 +62,37 @@ fi
 # Start Cloudflare Tunnel
 if [ "$NO_TUNNEL" = false ] && [ -x "$CLOUDFLARED" ]; then
     echo "[$(date -u +%H:%M:%S)] Starting Cloudflare Tunnel..."
-    $CLOUDFLARED tunnel --url http://127.0.0.1:$MCP_PORT --no-autoupdate 2>&1 &
+    CF_LOG="/tmp/cloudflared-mcp.log"
+    $CLOUDFLARED tunnel --url http://127.0.0.1:$MCP_PORT --no-autoupdate > "$CF_LOG" 2>&1 &
     CF_PID=$!
 
-    # Wait for tunnel URL
-    sleep 5
+    # Wait for tunnel URL to appear in the log
+    TUNNEL_URL=""
+    for i in $(seq 1 30); do
+        TUNNEL_URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$CF_LOG" 2>/dev/null | head -1)
+        if [ -n "$TUNNEL_URL" ]; then break; fi
+        sleep 1
+    done
+
     echo ""
     echo "════════════════════════════════════════════════════════════"
-    echo "  Share this Claude Desktop / Claude Code config:"
-    echo ""
-    echo '  {'
-    echo '    "mcpServers": {'
-    echo '      "scix": {'
-    echo "        \"url\": \"<TUNNEL_URL>/mcp/\","
-    echo "        \"headers\": {\"Authorization\": \"Bearer ${MCP_AUTH_TOKEN:-<no-auth>}\"}"
-    echo '      }'
-    echo '    }'
-    echo '  }'
-    echo ""
-    echo "  (Replace <TUNNEL_URL> with the https://...trycloudflare.com URL above)"
+    if [ -n "$TUNNEL_URL" ]; then
+        echo "  Tunnel URL: $TUNNEL_URL"
+        echo ""
+        echo "  Share this Claude Desktop / Claude Code config:"
+        echo ""
+        echo '  {'
+        echo '    "mcpServers": {'
+        echo '      "scix": {'
+        echo "        \"url\": \"${TUNNEL_URL}/mcp/\","
+        echo "        \"headers\": {\"Authorization\": \"Bearer ${MCP_AUTH_TOKEN:-<no-auth>}\"}"
+        echo '      }'
+        echo '    }'
+        echo '  }'
+    else
+        echo "  Cloudflare Tunnel did not produce a URL in 30s."
+        echo "  Check $CF_LOG for details."
+    fi
     echo "════════════════════════════════════════════════════════════"
 elif [ "$NO_TUNNEL" = false ]; then
     echo "WARNING: cloudflared not found at $CLOUDFLARED — skipping tunnel"

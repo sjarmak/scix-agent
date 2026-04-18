@@ -48,18 +48,40 @@ class SearchResult:
 
 @dataclass(frozen=True)
 class SearchFilters:
-    """Optional filters applied to search queries."""
+    """Optional filters applied to search queries.
+
+    Scalar column filters (year, doctype, etc.) emit WHERE fragments via
+    ``to_where_clause``. Entity-graph filters (``entity_types`` /
+    ``entity_ids``) emit a correlated EXISTS fragment against
+    ``document_entities_canonical`` via ``to_entity_filter_clause`` — kept
+    separate so callers can control where the JOIN is anchored in complex
+    query shapes (e.g. CTE-based filter-first vector search).
+
+    Empty sequences are normalized to ``None`` so accidental ``filters={}``
+    payloads from agents do not silently drop every result. Lists are
+    coerced to tuples so the frozen dataclass remains hashable/immutable.
+    """
 
     year_min: int | None = None
     year_max: int | None = None
     arxiv_class: str | None = None
     doctype: str | None = None
     first_author: str | None = None
+    entity_types: tuple[str, ...] | None = None
+    entity_ids: tuple[int, ...] | None = None
+
+    def __post_init__(self) -> None:
+        # Normalize sequences to tuples; empty -> None.
+        object.__setattr__(
+            self, "entity_types", _normalize_seq(self.entity_types, "entity_types", str)
+        )
+        object.__setattr__(self, "entity_ids", _normalize_seq(self.entity_ids, "entity_ids", int))
 
     def to_where_clause(self, table_alias: str = "p") -> tuple[str, list[Any]]:
         """Generate a WHERE clause fragment and parameter list.
 
         Returns ("AND ... AND ...", [param1, param2, ...]) or ("", []) if no filters.
+        Entity-graph filters are emitted separately via ``to_entity_filter_clause``.
         """
         clauses: list[str] = []
         params: list[Any] = []
@@ -83,6 +105,70 @@ class SearchFilters:
         if not clauses:
             return "", []
         return " AND " + " AND ".join(clauses), params
+
+    def to_entity_filter_clause(self, table_alias: str = "p") -> tuple[str, list[Any]]:
+        """Generate an EXISTS clause restricting *table_alias*.bibcode to papers
+        linked to the configured entities.
+
+        Uses the ``document_entities_canonical`` materialized view which has
+        ``(bibcode)`` and ``(entity_id, fused_confidence DESC)`` indexes; the
+        ``entities`` table has a btree on ``entity_type``. The per-paper
+        semi-join is cheap because the outer search has already narrowed
+        candidates (lexical/vector LIMIT). Returns ("", []) when neither
+        filter is set.
+        """
+        if self.entity_types is None and self.entity_ids is None:
+            return "", []
+
+        inner_conds: list[str] = [f"dec.bibcode = {table_alias}.bibcode"]
+        params: list[Any] = []
+
+        if self.entity_ids is not None:
+            inner_conds.append("dec.entity_id = ANY(%s)")
+            params.append(list(self.entity_ids))
+
+        # Only JOIN entities when an entity_type filter is set — keeps the
+        # plan simple for the id-only path.
+        if self.entity_types is not None:
+            join = " JOIN entities e ON e.id = dec.entity_id"
+            inner_conds.append("e.entity_type = ANY(%s)")
+            params.append(list(self.entity_types))
+        else:
+            join = ""
+
+        where = " AND ".join(inner_conds)
+        clause = (
+            f" AND EXISTS ("
+            f"SELECT 1 FROM document_entities_canonical dec{join} "
+            f"WHERE {where})"
+        )
+        return clause, params
+
+
+def _normalize_seq(value: Any, name: str, element_type: type) -> tuple[Any, ...] | None:
+    """Coerce a sequence to a tuple; None/empty => None; validate element types.
+
+    Rejects bare strings/bytes (which are iterable but rarely the intent when
+    the field expects a sequence of items), and explicitly rejects booleans
+    when ``element_type`` is ``int`` so ``True`` is not silently coerced to 1.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)) or not hasattr(value, "__iter__"):
+        raise TypeError(
+            f"{name} must be a sequence of {element_type.__name__}, " f"got {type(value).__name__}"
+        )
+    seq = tuple(value)
+    if not seq:
+        return None
+    for item in seq:
+        if element_type is int and isinstance(item, bool):
+            raise TypeError(f"{name} items must be int, got bool")
+        if not isinstance(item, element_type):
+            raise TypeError(
+                f"{name} items must be {element_type.__name__}, got {type(item).__name__}"
+            )
+    return seq
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +202,9 @@ def lexical_search(
     """
     t0 = time.perf_counter()
 
-    filter_clause, filter_params = (filters or SearchFilters()).to_where_clause("p")
+    effective = filters or SearchFilters()
+    filter_clause, filter_params = effective.to_where_clause("p")
+    entity_clause, entity_params = effective.to_entity_filter_clause("p")
 
     # plainto_tsquery is more robust than websearch_to_tsquery for programmatic use:
     # it doesn't fail on unmatched quotes or special chars in user input.
@@ -126,10 +214,11 @@ def lexical_search(
         FROM papers p
         WHERE p.tsv @@ plainto_tsquery('{ts_config}', %s)
         {filter_clause}
+        {entity_clause}
         ORDER BY rank DESC
         LIMIT %s
     """
-    params: list[Any] = [query_text, query_text] + filter_params + [limit]
+    params: list[Any] = [query_text, query_text] + filter_params + entity_params + [limit]
 
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(query, params)
@@ -180,7 +269,9 @@ def lexical_search_body(
     """
     t0 = time.perf_counter()
 
-    filter_clause, filter_params = (filters or SearchFilters()).to_where_clause("p")
+    effective = filters or SearchFilters()
+    filter_clause, filter_params = effective.to_where_clause("p")
+    entity_clause, entity_params = effective.to_entity_filter_clause("p")
 
     query = f"""
         SELECT {STUB_COLUMNS},
@@ -190,10 +281,11 @@ def lexical_search_body(
           AND length(p.body) <= {_BODY_TSVECTOR_MAX_BYTES}
           AND to_tsvector('english', p.body) @@ plainto_tsquery('english', %s)
         {filter_clause}
+        {entity_clause}
         ORDER BY rank DESC
         LIMIT %s
     """
-    params: list[Any] = [query_text, query_text] + filter_params + [limit]
+    params: list[Any] = [query_text, query_text] + filter_params + entity_params + [limit]
 
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(query, params)
@@ -248,14 +340,16 @@ def vector_search(
     ndim = len(query_embedding)
     vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
     vec_cast = f"vector({ndim})"
-    filter_clause, filter_params = (filters or SearchFilters()).to_where_clause("p")
+    effective = filters or SearchFilters()
+    filter_clause, filter_params = effective.to_where_clause("p")
+    entity_clause, entity_params = effective.to_entity_filter_clause("p")
 
     with conn.cursor() as cur:
         # Tune HNSW probe depth for this transaction
         cur.execute(f"SET LOCAL hnsw.ef_search = {int(ef_search)}")
 
     # Auto-enable iterative scan for filtered queries on pgvector >= 0.8.0
-    has_filters = bool(filter_clause)
+    has_filters = bool(filter_clause) or bool(entity_clause)
     scan_mode = iterative_scan
     if scan_mode is None and has_filters:
         scan_mode = "relaxed_order"
@@ -273,10 +367,11 @@ def vector_search(
         JOIN papers p ON p.bibcode = pe.bibcode
         WHERE pe.model_name = %s
         {filter_clause}
+        {entity_clause}
         ORDER BY pe.embedding::{vec_cast} <=> %s::{vec_cast}
         LIMIT %s
     """
-    params: list[Any] = [vec_str, model_name] + filter_params + [vec_str, limit]
+    params: list[Any] = [vec_str, model_name] + filter_params + entity_params + [vec_str, limit]
 
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(query, params)
@@ -354,7 +449,8 @@ def _estimate_filter_selectivity(
     A return value of 1.0 means "no filters" or "cannot estimate".
     """
     filter_clause, filter_params = filters.to_where_clause("p")
-    if not filter_clause:
+    entity_clause, entity_params = filters.to_entity_filter_clause("p")
+    if not filter_clause and not entity_clause:
         return 1.0
 
     with conn.cursor() as cur:
@@ -370,8 +466,12 @@ def _estimate_filter_selectivity(
         # This bounds worst-case scan to ~1% of the corpus (~320K rows on
         # 32M) instead of a full sequential scan.
         cap = max(1, int(SELECTIVITY_THRESHOLD * total) + 1)
-        count_sql = f"SELECT count(*) FROM (SELECT 1 FROM papers p WHERE TRUE {filter_clause} LIMIT {cap}) sub"
-        cur.execute(count_sql, filter_params)
+        count_sql = (
+            f"SELECT count(*) FROM ("
+            f"SELECT 1 FROM papers p WHERE TRUE {filter_clause} {entity_clause} LIMIT {cap}"
+            f") sub"
+        )
+        cur.execute(count_sql, filter_params + entity_params)
         matched: int = cur.fetchone()[0]
 
         # If we hit the cap, we know selectivity ≥ threshold — return a
@@ -401,13 +501,16 @@ def _filter_first_vector_search(
     ndim = len(query_embedding)
     vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
     vec_cast = f"vector({ndim})"
-    filter_clause, filter_params = (filters or SearchFilters()).to_where_clause("p")
+    effective = filters or SearchFilters()
+    filter_clause, filter_params = effective.to_where_clause("p")
+    entity_clause, entity_params = effective.to_entity_filter_clause("p")
 
     query = f"""
         WITH filtered AS MATERIALIZED (
             SELECT p.bibcode
             FROM papers p
             WHERE TRUE {filter_clause}
+            {entity_clause}
         )
         SELECT {STUB_COLUMNS},
                1 - (pe.embedding::{vec_cast} <=> %s::{vec_cast}) AS similarity
@@ -418,7 +521,7 @@ def _filter_first_vector_search(
         ORDER BY pe.embedding::{vec_cast} <=> %s::{vec_cast}
         LIMIT %s
     """
-    params: list[Any] = filter_params + [vec_str, model_name, vec_str, limit]
+    params: list[Any] = filter_params + entity_params + [vec_str, model_name, vec_str, limit]
 
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(query, params)
@@ -1314,7 +1417,9 @@ def facet_counts(
     allowed_simple = {"year", "doctype"}
     allowed_array = {"arxiv_class", "database", "bibgroup", "property"}
 
-    filter_clause, filter_params = (filters or SearchFilters()).to_where_clause("p")
+    effective = filters or SearchFilters()
+    filter_clause, filter_params = effective.to_where_clause("p")
+    entity_clause, entity_params = effective.to_entity_filter_clause("p")
 
     if facet_field in allowed_simple:
         sql = f"""
@@ -1322,22 +1427,24 @@ def facet_counts(
             FROM papers p
             WHERE p.{facet_field} IS NOT NULL
             {filter_clause}
+            {entity_clause}
             GROUP BY p.{facet_field}
             ORDER BY cnt DESC
             LIMIT %s
         """
-        params: list[Any] = filter_params + [limit]
+        params: list[Any] = filter_params + entity_params + [limit]
     elif facet_field in allowed_array:
         sql = f"""
             SELECT elem AS val, count(*) AS cnt
             FROM papers p, unnest(p.{facet_field}) AS elem
             WHERE TRUE
             {filter_clause}
+            {entity_clause}
             GROUP BY elem
             ORDER BY cnt DESC
             LIMIT %s
         """
-        params = filter_params + [limit]
+        params = filter_params + entity_params + [limit]
     else:
         raise ValueError(
             f"Unsupported facet field: {facet_field}. "
@@ -1569,8 +1676,7 @@ def explore_community(
         )
     if resolution not in _VALID_RESOLUTIONS:
         raise ValueError(
-            f"invalid resolution: {resolution!r}. "
-            f"Must be one of {sorted(_VALID_RESOLUTIONS)}"
+            f"invalid resolution: {resolution!r}. " f"Must be one of {sorted(_VALID_RESOLUTIONS)}"
         )
     # Taxonomic has a single resolution regardless of the requested value.
     lookup_resolution = "coarse" if signal == "taxonomic" else resolution

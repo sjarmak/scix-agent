@@ -100,6 +100,93 @@ class TestSearchFilters:
             f.year_min = 2024  # type: ignore[misc]
 
 
+class TestEntityFilters:
+    """xz4.1.27: entity_types / entity_ids filters on SearchFilters."""
+
+    def test_defaults_are_none(self) -> None:
+        f = SearchFilters()
+        assert f.entity_types is None
+        assert f.entity_ids is None
+
+    def test_entity_types_accepts_list(self) -> None:
+        f = SearchFilters(entity_types=["instrument", "mission"])
+        # Normalized to tuple for frozen immutability.
+        assert f.entity_types == ("instrument", "mission")
+
+    def test_entity_ids_accepts_list(self) -> None:
+        f = SearchFilters(entity_ids=[1, 2, 3])
+        assert f.entity_ids == (1, 2, 3)
+
+    def test_empty_list_treated_as_none(self) -> None:
+        """Empty lists should NOT filter out everything — treat as no-filter."""
+        f = SearchFilters(entity_types=[], entity_ids=[])
+        assert f.entity_types is None
+        assert f.entity_ids is None
+        clause, params = f.to_entity_filter_clause("p")
+        assert clause == ""
+        assert params == []
+
+    def test_no_entity_filter_clause_when_none(self) -> None:
+        f = SearchFilters()
+        clause, params = f.to_entity_filter_clause("p")
+        assert clause == ""
+        assert params == []
+
+    def test_entity_ids_only_clause(self) -> None:
+        f = SearchFilters(entity_ids=[42, 99])
+        clause, params = f.to_entity_filter_clause("p")
+        assert clause.startswith(" AND EXISTS")
+        assert "document_entities_canonical" in clause
+        assert "dec.bibcode = p.bibcode" in clause
+        assert "dec.entity_id = ANY(%s)" in clause
+        assert params == [[42, 99]]
+
+    def test_entity_types_only_clause(self) -> None:
+        f = SearchFilters(entity_types=["instrument"])
+        clause, params = f.to_entity_filter_clause("p")
+        assert "EXISTS" in clause
+        assert "entities" in clause
+        assert "e.entity_type = ANY(%s)" in clause
+        assert params == [["instrument"]]
+
+    def test_combined_entity_filters(self) -> None:
+        f = SearchFilters(entity_types=["instrument"], entity_ids=[42])
+        clause, params = f.to_entity_filter_clause("p")
+        assert clause.startswith(" AND EXISTS")
+        # Both constraints must appear.
+        assert "entity_id = ANY(%s)" in clause
+        assert "entity_type = ANY(%s)" in clause
+        # Order: entity_ids then entity_types.
+        assert params == [[42], ["instrument"]]
+
+    def test_custom_table_alias_in_entity_clause(self) -> None:
+        f = SearchFilters(entity_ids=[1])
+        clause, _ = f.to_entity_filter_clause("papers")
+        assert "dec.bibcode = papers.bibcode" in clause
+
+    def test_entity_types_validates_str(self) -> None:
+        with pytest.raises(TypeError, match="entity_types"):
+            SearchFilters(entity_types=[1, 2])  # type: ignore[list-item]
+
+    def test_entity_ids_validates_int(self) -> None:
+        with pytest.raises(TypeError, match="entity_ids"):
+            SearchFilters(entity_ids=["a", "b"])  # type: ignore[list-item]
+
+    def test_frozen_entity_filters(self) -> None:
+        f = SearchFilters(entity_ids=[1])
+        with pytest.raises(AttributeError):
+            f.entity_ids = (2,)  # type: ignore[misc]
+
+    def test_to_where_clause_unaffected(self) -> None:
+        """Entity filters must NOT leak into to_where_clause — they live on a separate method."""
+        f = SearchFilters(year_min=2020, entity_types=["instrument"], entity_ids=[42])
+        clause, params = f.to_where_clause("p")
+        # Entity filters belong to to_entity_filter_clause, not to_where_clause.
+        assert "entity_id" not in clause
+        assert "entity_type" not in clause
+        assert params == [2020]
+
+
 class TestSearchResult:
     def test_construction(self) -> None:
         r = SearchResult(
@@ -205,6 +292,52 @@ class TestFacetFieldValidation:
     def test_sql_injection_blocked(self) -> None:
         with pytest.raises(ValueError, match="Unsupported facet field"):
             facet_counts(None, "year; DROP TABLE papers")  # type: ignore[arg-type]
+
+    def test_entity_filters_reach_sql(self) -> None:
+        """xz4.1.27 HIGH follow-up: facet_counts must thread entity filters into SQL,
+        not silently drop them."""
+        from unittest.mock import MagicMock
+
+        from scix.search import SearchFilters
+
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.__enter__ = MagicMock(return_value=cursor)
+        cursor.__exit__ = MagicMock(return_value=False)
+        cursor.fetchall.return_value = []
+        conn.cursor.return_value = cursor
+
+        filters = SearchFilters(entity_types=("instrument",), entity_ids=(42,))
+        facet_counts(conn, "year", filters=filters)
+
+        assert cursor.execute.called
+        sql, params = cursor.execute.call_args.args
+        assert "document_entities_canonical" in sql, (
+            "facet_counts dropped the entity filter — the EXISTS clause is missing"
+        )
+        assert [42] in params
+        assert ["instrument"] in params
+
+    def test_entity_filters_reach_sql_for_array_fields(self) -> None:
+        """Same guarantee for array-unnest facet fields (arxiv_class, etc.)."""
+        from unittest.mock import MagicMock
+
+        from scix.search import SearchFilters
+
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.__enter__ = MagicMock(return_value=cursor)
+        cursor.__exit__ = MagicMock(return_value=False)
+        cursor.fetchall.return_value = []
+        conn.cursor.return_value = cursor
+
+        filters = SearchFilters(entity_ids=(42,))
+        facet_counts(conn, "arxiv_class", filters=filters)
+
+        assert cursor.execute.called
+        sql, params = cursor.execute.call_args.args
+        assert "document_entities_canonical" in sql
+        assert [42] in params
 
 
 class TestHybridSearchDefaultModel:
@@ -320,6 +453,81 @@ class TestCardinalityRouting:
             # Normal vector_search should have been called
             mock_vs.assert_called_once()
             assert isinstance(result, SearchResult)
+
+
+class TestHybridSearchEntityFilterWiring:
+    """xz4.1.27: Entity filter params must propagate through hybrid_search subcalls."""
+
+    def test_entity_filter_threads_through_lexical(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        mock_conn = MagicMock()
+        entity_filter = SearchFilters(entity_types=["instrument"], entity_ids=[42])
+
+        fake_lex = SearchResult(papers=[], total=0, timing_ms={"lexical_ms": 1.0})
+        fake_body = SearchResult(papers=[], total=0, timing_ms={"body_lexical_ms": 1.0})
+
+        with (
+            patch("scix.search.lexical_search", return_value=fake_lex) as mock_lex,
+            patch("scix.search.lexical_search_body", return_value=fake_body),
+            patch("scix.search._model_has_embeddings", return_value=False),
+        ):
+            hybrid_search(mock_conn, "jwst", filters=entity_filter)
+            assert mock_lex.call_count == 1
+            # SearchFilters with entity fields must be passed through.
+            called_filters = mock_lex.call_args.kwargs.get("filters")
+            assert called_filters is not None
+            assert called_filters.entity_types == ("instrument",)
+            assert called_filters.entity_ids == (42,)
+
+    def test_entity_filter_threads_through_vector(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        mock_conn = MagicMock()
+        entity_filter = SearchFilters(entity_ids=[42])
+        fake_embedding = [0.1] * 768
+
+        fake_lex = SearchResult(papers=[], total=0, timing_ms={"lexical_ms": 1.0})
+        fake_vec = SearchResult(
+            papers=[{"bibcode": "X"}],
+            total=1,
+            timing_ms={"vector_ms": 1.0},
+        )
+
+        with (
+            patch("scix.search.lexical_search", return_value=fake_lex),
+            patch("scix.search.lexical_search_body", return_value=fake_lex),
+            patch("scix.search._estimate_filter_selectivity", return_value=0.5),
+            patch("scix.search.vector_search", return_value=fake_vec) as mock_vs,
+            patch("scix.search._model_has_embeddings", return_value=False),
+        ):
+            hybrid_search(
+                mock_conn,
+                "q",
+                query_embedding=fake_embedding,
+                filters=entity_filter,
+            )
+            mock_vs.assert_called_once()
+            assert mock_vs.call_args.kwargs["filters"].entity_ids == (42,)
+
+    def test_default_behavior_unchanged_without_entity_filters(self) -> None:
+        """Backward compat: searches with no entity filters behave exactly as before."""
+        from unittest.mock import MagicMock, patch
+
+        mock_conn = MagicMock()
+        plain_filter = SearchFilters(year_min=2020)
+
+        fake_lex = SearchResult(papers=[], total=0, timing_ms={"lexical_ms": 1.0})
+
+        with (
+            patch("scix.search.lexical_search", return_value=fake_lex) as mock_lex,
+            patch("scix.search.lexical_search_body", return_value=fake_lex),
+            patch("scix.search._model_has_embeddings", return_value=False),
+        ):
+            hybrid_search(mock_conn, "x", filters=plain_filter)
+            called = mock_lex.call_args.kwargs["filters"]
+            assert called.entity_types is None
+            assert called.entity_ids is None
 
 
 class TestOpenAISignalSkipped:
@@ -673,3 +881,216 @@ class TestTemporalEvolutionIntegration:
             for community in bucket["communities"]:
                 assert community["label"] is not None
                 assert community["anchor_count"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Integration tests for entity-aware filters (xz4.1.27)
+# Read-only — safe on production DSN.
+# ---------------------------------------------------------------------------
+
+
+def _has_entity_data(conn: psycopg.Connection) -> bool:
+    """True when the entity graph has any linked documents to filter on."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT EXISTS(" "SELECT 1 FROM document_entities_canonical LIMIT 1" ")")
+        return cur.fetchone()[0]
+
+
+def _pick_entity(conn: psycopg.Connection, entity_type: str) -> tuple[int, str] | None:
+    """Return (entity_id, canonical_name) for an entity of the given type that has links."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT e.id, e.canonical_name
+            FROM entities e
+            WHERE e.entity_type = %s
+              AND EXISTS (
+                  SELECT 1 FROM document_entities_canonical dec
+                  WHERE dec.entity_id = e.id LIMIT 1
+              )
+            LIMIT 1
+            """,
+            (entity_type,),
+        )
+        row = cur.fetchone()
+        return (row[0], row[1]) if row else None
+
+
+@pytest.mark.integration
+class TestEntityFilterIntegration:
+    """End-to-end entity filter behaviour against real indexes."""
+
+    def test_entity_type_filter_returns_only_linked_papers(self, conn) -> None:
+        if not has_papers(conn) or not has_tsv_column(conn):
+            pytest.skip("No papers or tsv column")
+        if not _has_entity_data(conn):
+            pytest.skip("No document_entities_canonical rows")
+
+        entity_filter = SearchFilters(entity_types=["instrument"])
+        result = lexical_search(
+            conn, "telescope", filters=entity_filter, limit=10, ts_config="english"
+        )
+        assert isinstance(result, SearchResult)
+        # All returned bibcodes must be linked to at least one instrument entity.
+        if result.total == 0:
+            pytest.skip("No matching papers for 'telescope' + instrument filter")
+        with conn.cursor() as cur:
+            for paper in result.papers:
+                cur.execute(
+                    """
+                    SELECT EXISTS(
+                        SELECT 1
+                        FROM document_entities_canonical dec
+                        JOIN entities e ON dec.entity_id = e.id
+                        WHERE dec.bibcode = %s
+                          AND e.entity_type = 'instrument'
+                    )
+                    """,
+                    (paper["bibcode"],),
+                )
+                linked = cur.fetchone()[0]
+                assert linked, (
+                    f"bibcode {paper['bibcode']} returned by entity_type filter "
+                    "but has no instrument link in document_entities_canonical"
+                )
+
+    def test_entity_id_filter_returns_only_that_entity(self, conn) -> None:
+        if not has_papers(conn):
+            pytest.skip("No papers")
+        picked = _pick_entity(conn, "instrument")
+        if picked is None:
+            pytest.skip("No instrument entity with links")
+        eid, _ = picked
+
+        entity_filter = SearchFilters(entity_ids=[eid])
+        result = lexical_search(
+            conn, "observation", filters=entity_filter, limit=10, ts_config="english"
+        )
+        if result.total == 0:
+            pytest.skip("No matching papers")
+        with conn.cursor() as cur:
+            for paper in result.papers:
+                cur.execute(
+                    """
+                    SELECT EXISTS(
+                        SELECT 1 FROM document_entities_canonical
+                        WHERE bibcode = %s AND entity_id = %s
+                    )
+                    """,
+                    (paper["bibcode"], eid),
+                )
+                assert cur.fetchone()[
+                    0
+                ], f"bibcode {paper['bibcode']} returned but not linked to entity_id={eid}"
+
+    def test_combined_entity_filters(self, conn) -> None:
+        """entity_types + entity_ids AND together."""
+        picked = _pick_entity(conn, "instrument")
+        if picked is None:
+            pytest.skip("No instrument entity")
+        eid, _ = picked
+
+        # Non-matching combination: an 'instrument' entity_id filtered by
+        # entity_type='mission' should return nothing.
+        mismatch_filter = SearchFilters(entity_ids=[eid], entity_types=["mission"])
+        result = lexical_search(
+            conn, "observation", filters=mismatch_filter, limit=10, ts_config="english"
+        )
+        assert result.total == 0, (
+            "Combining entity_id of type 'instrument' with entity_types=['mission'] "
+            "must return zero rows."
+        )
+
+    def test_default_behavior_unchanged(self, conn) -> None:
+        """Searches without entity filters behave identically to current production."""
+        if not has_papers(conn) or not has_tsv_column(conn):
+            pytest.skip("No papers or tsv column")
+        baseline = lexical_search(
+            conn, "galaxy", filters=SearchFilters(), limit=5, ts_config="english"
+        )
+        no_filters = lexical_search(conn, "galaxy", limit=5, ts_config="english")
+        assert [p["bibcode"] for p in baseline.papers] == [p["bibcode"] for p in no_filters.papers]
+
+    def test_empty_list_behaves_like_none(self, conn) -> None:
+        """filter with empty lists must NOT cull all results — treated as no-op."""
+        if not has_papers(conn) or not has_tsv_column(conn):
+            pytest.skip("No papers or tsv column")
+        baseline = lexical_search(
+            conn, "star", filters=SearchFilters(), limit=5, ts_config="english"
+        )
+        empty_entity = lexical_search(
+            conn,
+            "star",
+            filters=SearchFilters(entity_types=[], entity_ids=[]),
+            limit=5,
+            ts_config="english",
+        )
+        assert [p["bibcode"] for p in baseline.papers] == [
+            p["bibcode"] for p in empty_entity.papers
+        ]
+
+
+# ---------------------------------------------------------------------------
+# MCP tool schema exposes entity_types / entity_ids (xz4.1.27)
+# ---------------------------------------------------------------------------
+
+
+class TestMCPSearchEntityFilterSchema:
+    """MCP `search` tool must expose entity_types and entity_ids via filters schema."""
+
+    def test_filters_schema_includes_entity_fields(self) -> None:
+        from scix.mcp_server import _FILTERS_SCHEMA
+
+        props = _FILTERS_SCHEMA["properties"]
+        assert "entity_types" in props
+        assert "entity_ids" in props
+        # entity_types: array of strings
+        assert props["entity_types"]["type"] == "array"
+        assert props["entity_types"]["items"]["type"] == "string"
+        # entity_ids: array of integers
+        assert props["entity_ids"]["type"] == "array"
+        assert props["entity_ids"]["items"]["type"] == "integer"
+
+    def test_parse_filters_threads_entity_fields(self) -> None:
+        from scix.mcp_server import _parse_filters
+
+        parsed = _parse_filters(
+            {
+                "year_min": 2020,
+                "entity_types": ["instrument"],
+                "entity_ids": [27867],
+            }
+        )
+        assert parsed.entity_types == ("instrument",)
+        assert parsed.entity_ids == (27867,)
+        assert parsed.year_min == 2020
+
+    def test_parse_filters_missing_entity_keys(self) -> None:
+        from scix.mcp_server import _parse_filters
+
+        parsed = _parse_filters({"year_min": 2020})
+        assert parsed.entity_types is None
+        assert parsed.entity_ids is None
+
+    def test_parse_filters_caps_oversized_entity_lists(self) -> None:
+        """MCP boundary caps list size to prevent abuse."""
+        from scix.mcp_server import MAX_ENTITY_FILTER_ITEMS, _parse_filters
+
+        oversized_types = [f"type_{i}" for i in range(MAX_ENTITY_FILTER_ITEMS + 50)]
+        oversized_ids = list(range(MAX_ENTITY_FILTER_ITEMS + 50))
+        with pytest.raises(ValueError, match="entity_types"):
+            _parse_filters({"entity_types": oversized_types})
+        with pytest.raises(ValueError, match="entity_ids"):
+            _parse_filters({"entity_ids": oversized_ids})
+
+    def test_parse_filters_rejects_non_list_entity_types(self) -> None:
+        from scix.mcp_server import _parse_filters
+
+        with pytest.raises(ValueError, match="entity_types"):
+            _parse_filters({"entity_types": "instrument"})
+
+    def test_parse_filters_rejects_non_integer_entity_ids(self) -> None:
+        from scix.mcp_server import _parse_filters
+
+        with pytest.raises(ValueError, match="entity_ids"):
+            _parse_filters({"entity_ids": ["abc"]})

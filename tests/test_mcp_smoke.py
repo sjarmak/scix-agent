@@ -196,6 +196,48 @@ class TestToolSmoke:
         _assert_non_error(out, "search")
 
     @patch("scix.mcp_server._log_query")
+    @patch(
+        "scix.mcp_server._hnsw_index_exists",
+        return_value=True,
+    )
+    @patch(
+        "scix.mcp_server.embed_batch",
+        return_value=[[0.0] * 768],
+    )
+    @patch(
+        "scix.mcp_server.load_model",
+        return_value=(MagicMock(), MagicMock()),
+    )
+    @patch("scix.search.hybrid_search")
+    def test_search_with_entity_filters(
+        self,
+        mock_hybrid: MagicMock,
+        _mock_load: MagicMock,
+        _mock_embed: MagicMock,
+        _mock_guard: MagicMock,
+        _mock_log: MagicMock,
+        mock_conn: MagicMock,
+    ) -> None:
+        """xz4.1.27: MCP search with entity_types + entity_ids propagates to hybrid_search."""
+        mock_hybrid.return_value = _empty_result()
+        out = _dispatch_tool(
+            mock_conn,
+            "search",
+            {
+                "query": "papers about JWST instruments",
+                "filters": {
+                    "entity_types": ["instrument"],
+                    "entity_ids": [27867],
+                },
+            },
+        )
+        _assert_non_error(out, "search")
+        # Confirm the filter threaded through to hybrid_search.
+        called_filters = mock_hybrid.call_args.kwargs["filters"]
+        assert called_filters.entity_types == ("instrument",)
+        assert called_filters.entity_ids == (27867,)
+
+    @patch("scix.mcp_server._log_query")
     @patch("scix.search.concept_search")
     def test_concept_search(
         self,
@@ -377,6 +419,82 @@ class TestToolSmoke:
         mock_fc.return_value = _empty_result()
         out = _dispatch_tool(mock_conn, "facet_counts", {"field": "year"})
         _assert_non_error(out, "facet_counts")
+
+    @patch("scix.mcp_server._log_query")
+    @patch("scix.search.facet_counts")
+    def test_facet_counts_threads_entity_filters(
+        self,
+        mock_fc: MagicMock,
+        _mock_log: MagicMock,
+        mock_conn: MagicMock,
+    ) -> None:
+        """xz4.1.27 HIGH follow-up: facet_counts must propagate entity filters, not drop them."""
+        mock_fc.return_value = _empty_result()
+        out = _dispatch_tool(
+            mock_conn,
+            "facet_counts",
+            {
+                "field": "year",
+                "filters": {"entity_types": ["instrument"], "entity_ids": [27867]},
+            },
+        )
+        _assert_non_error(out, "facet_counts")
+        called_filters = mock_fc.call_args.kwargs["filters"]
+        assert called_filters.entity_types == ("instrument",)
+        assert called_filters.entity_ids == (27867,)
+
+    @patch("scix.mcp_server._log_query")
+    @patch(
+        "scix.mcp_server._hnsw_index_exists",
+        return_value=True,
+    )
+    @patch(
+        "scix.mcp_server.embed_batch",
+        return_value=[[0.0] * 768],
+    )
+    @patch(
+        "scix.mcp_server.load_model",
+        return_value=(MagicMock(), MagicMock()),
+    )
+    @patch("scix.search.hybrid_search")
+    def test_search_returns_json_error_for_bad_entity_filter(
+        self,
+        mock_hybrid: MagicMock,
+        _mock_load: MagicMock,
+        _mock_embed: MagicMock,
+        _mock_guard: MagicMock,
+        _mock_log: MagicMock,
+        mock_conn: MagicMock,
+    ) -> None:
+        """xz4.1.27 HIGH follow-up: invalid filters must return JSON {"error": ...}, not raise."""
+        out = _dispatch_tool(
+            mock_conn,
+            "search",
+            {"query": "dark matter", "filters": {"entity_types": "instrument"}},
+        )
+        data = json.loads(out)
+        assert "error" in data
+        assert "entity_types" in data["error"]
+        mock_hybrid.assert_not_called()
+
+    @patch("scix.mcp_server._log_query")
+    @patch("scix.search.facet_counts")
+    def test_facet_counts_returns_json_error_for_bad_entity_filter(
+        self,
+        mock_fc: MagicMock,
+        _mock_log: MagicMock,
+        mock_conn: MagicMock,
+    ) -> None:
+        """xz4.1.27 HIGH follow-up: invalid filters on facet_counts also return JSON error."""
+        out = _dispatch_tool(
+            mock_conn,
+            "facet_counts",
+            {"field": "year", "filters": {"entity_ids": ["not-an-int"]}},
+        )
+        data = json.loads(out)
+        assert "error" in data
+        assert "entity_ids" in data["error"]
+        mock_fc.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

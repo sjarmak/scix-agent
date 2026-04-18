@@ -299,16 +299,53 @@ def _result_to_json(result: Any) -> str:
 
 
 def _parse_filters(filters: dict[str, Any] | None = None) -> search.SearchFilters:
-    """Parse a filter dict into a SearchFilters instance."""
+    """Parse a filter dict into a SearchFilters instance.
+
+    Entity filter lists are validated and size-capped at the MCP boundary —
+    the SearchFilters dataclass does type validation, but the list-size cap is
+    a boundary concern (blast-radius control) and lives here.
+    """
     if not filters:
         return search.SearchFilters()
+
+    entity_types = _validate_entity_list(filters.get("entity_types"), "entity_types", str)
+    entity_ids = _validate_entity_list(filters.get("entity_ids"), "entity_ids", int)
+
     return search.SearchFilters(
         year_min=filters.get("year_min"),
         year_max=filters.get("year_max"),
         arxiv_class=filters.get("arxiv_class"),
         doctype=filters.get("doctype"),
         first_author=filters.get("first_author"),
+        entity_types=entity_types,
+        entity_ids=entity_ids,
     )
+
+
+def _validate_entity_list(raw: Any, name: str, element_type: type) -> list[Any] | None:
+    """Validate an optional entity-filter list at the MCP boundary.
+
+    Returns the list unchanged (or None). Empty lists pass through — the
+    SearchFilters dataclass normalizes them to None. Raises ValueError for
+    bad types or oversized payloads so the error surfaces as a clean
+    protocol-level response.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ValueError(f"{name} must be a list, got {type(raw).__name__}")
+    if len(raw) > MAX_ENTITY_FILTER_ITEMS:
+        raise ValueError(f"{name} has {len(raw)} items, max {MAX_ENTITY_FILTER_ITEMS}")
+    for item in raw:
+        # bool is a subclass of int; reject it explicitly for entity_ids so
+        # an agent passing `True` does not end up querying entity_id=1.
+        if element_type is int and isinstance(item, bool):
+            raise ValueError(f"{name} items must be int, got bool")
+        if not isinstance(item, element_type):
+            raise ValueError(
+                f"{name} items must be {element_type.__name__}, got {type(item).__name__}"
+            )
+    return raw
 
 
 _MIN_YEAR = 1900
@@ -439,6 +476,12 @@ def _shutdown() -> None:
 # Filters schema (shared across tool definitions)
 # ---------------------------------------------------------------------------
 
+# Cap list sizes at the MCP boundary to prevent pathological query construction
+# (e.g. a misbehaving agent sending thousands of entity ids). This is a blast-
+# radius control, not a correctness check — document_entities_canonical has
+# the indexes to handle reasonable lists efficiently.
+MAX_ENTITY_FILTER_ITEMS = 100
+
 _FILTERS_SCHEMA = {
     "type": "object",
     "properties": {
@@ -447,6 +490,26 @@ _FILTERS_SCHEMA = {
         "arxiv_class": {"type": "string"},
         "doctype": {"type": "string"},
         "first_author": {"type": "string"},
+        "entity_types": {
+            "type": "array",
+            "items": {"type": "string"},
+            "maxItems": MAX_ENTITY_FILTER_ITEMS,
+            "description": (
+                "Restrict results to papers linked to at least one entity of "
+                "these types (e.g. 'instrument', 'mission', 'dataset'). "
+                f"Empty list disables the filter. Max {MAX_ENTITY_FILTER_ITEMS} items."
+            ),
+        },
+        "entity_ids": {
+            "type": "array",
+            "items": {"type": "integer"},
+            "maxItems": MAX_ENTITY_FILTER_ITEMS,
+            "description": (
+                "Restrict results to papers linked to at least one of these "
+                "specific entity ids (from the entities table). "
+                f"Empty list disables the filter. Max {MAX_ENTITY_FILTER_ITEMS} items."
+            ),
+        },
     },
 }
 
@@ -644,7 +707,11 @@ def create_server(_run_self_test: bool = True):
                     "authors, years, and citation counts. Defaults to hybrid mode, the best "
                     "general-purpose search. Use concept_search instead when the query is a "
                     "formal astronomy taxonomy term (e.g., 'Exoplanets'). Use entity with "
-                    "action='search' when looking up a named method, dataset, or instrument."
+                    "action='search' when looking up a named method, dataset, or instrument. "
+                    "Optional filters.entity_types / filters.entity_ids restrict results to "
+                    "papers linked to entities of given types (e.g. ['instrument']) or to "
+                    "specific entity ids resolved via the entity tool — useful for queries "
+                    "like 'papers about JWST' once JWST's entity id is known."
                 ),
                 inputSchema={
                     "type": "object",
@@ -1346,7 +1413,10 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
 
     # --- facet_counts ---
     if name == "facet_counts":
-        filters = _parse_filters(args.get("filters"))
+        try:
+            filters = _parse_filters(args.get("filters"))
+        except ValueError as exc:
+            return json.dumps({"error": str(exc)})
         limit = args.get("limit", 50)
         result = search.facet_counts(conn, args["field"], filters=filters, limit=limit)
         return _result_to_json(result)
@@ -1421,7 +1491,10 @@ def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Unified search: hybrid/semantic/keyword."""
     mode = args.get("mode", "hybrid")
     query = args["query"]
-    filters = _parse_filters(args.get("filters"))
+    try:
+        filters = _parse_filters(args.get("filters"))
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
     limit = args.get("limit", 10)
 
     if mode == "keyword":
@@ -1642,12 +1715,8 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
 
         sources = args.get("sources")
         if sources is not None:
-            if not isinstance(sources, list) or not all(
-                isinstance(s, str) for s in sources
-            ):
-                return json.dumps(
-                    {"error": "sources must be a list of strings"}
-                )
+            if not isinstance(sources, list) or not all(isinstance(s, str) for s in sources):
+                return json.dumps({"error": "sources must be a list of strings"})
             where_clauses.append("e.source = ANY(%s::text[])")
             params.append(list(sources))
 

@@ -1830,41 +1830,107 @@ def get_entity_context(
     conn: psycopg.Connection,
     entity_id: int,
 ) -> SearchResult:
-    """Get full entity context from the agent_entity_context matview.
+    """Get full entity context for a single entity.
 
-    Returns entity card: entity_id, canonical_name, entity_type, discipline,
-    source, identifiers, aliases, relationships, and citing_paper_count.
+    Returns an entity card: entity_id, canonical_name, entity_type, discipline,
+    source, identifiers, aliases, properties (raw JSONB from
+    ``public.entities``), relationships (each enriched with the object
+    entity's name, type, and properties), and citing_paper_count.
 
-    Returns an empty SearchResult with an error in metadata when the entity_id
-    is not found, rather than raising an exception.
+    The ``agent_entity_context`` matview supplies the aggregates
+    (identifiers, aliases, citing_paper_count). ``properties`` and the
+    relationship enrichment are read directly from the source tables so
+    agents get the full structural context without waiting for a matview
+    schema change (xz4.5 tracks that). Relationships join through
+    ``entity_relationships`` and surface ``(predicate, object_entity,
+    properties_of_object)`` for one-hop navigation.
+
+    Returns an empty SearchResult with an error in metadata when the
+    entity_id is not found, rather than raising an exception.
     """
     t0 = time.perf_counter()
 
-    sql = """
+    matview_sql = """
         SELECT entity_id, canonical_name, entity_type, discipline, source,
-               identifiers, aliases, relationships, citing_paper_count
+               identifiers, aliases, citing_paper_count
         FROM agent_entity_context
         WHERE entity_id = %s
     """
 
+    properties_sql = "SELECT properties FROM entities WHERE id = %s"
+
+    relationships_sql = """
+        SELECT er.predicate,
+               er.object_entity_id AS object_id,
+               er.confidence,
+               er.source AS relationship_source,
+               obj.canonical_name AS object_name,
+               obj.entity_type AS object_entity_type,
+               obj.properties AS object_properties
+        FROM entity_relationships er
+        LEFT JOIN entities obj ON obj.id = er.object_entity_id
+        WHERE er.subject_entity_id = %s
+        ORDER BY er.predicate, obj.canonical_name
+    """
+
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(sql, (entity_id,))
-        row = cur.fetchone()
+        cur.execute(matview_sql, (entity_id,))
+        matview_row = cur.fetchone()
+
+        if matview_row is None:
+            # Fall back to entities when the matview has not refreshed yet.
+            # Without this, newly-inserted entities return "not found"
+            # even though they exist in the canonical table.
+            cur.execute(
+                """
+                SELECT id AS entity_id, canonical_name, entity_type,
+                       discipline, source, properties
+                FROM entities
+                WHERE id = %s
+                """,
+                (entity_id,),
+            )
+            fallback = cur.fetchone()
+            if fallback is None:
+                query_ms = _elapsed_ms(t0)
+                return SearchResult(
+                    papers=[],
+                    total=0,
+                    timing_ms={"query_ms": query_ms},
+                    metadata={"error": f"Entity not found: {entity_id}"},
+                )
+            result = dict(fallback)
+            result.setdefault("identifiers", [])
+            result.setdefault("aliases", [])
+            result.setdefault("citing_paper_count", 0)
+        else:
+            result = dict(matview_row)
+            # Convert aliases from SQL array to list for JSON serialization
+            if result.get("aliases") is not None:
+                result["aliases"] = list(result["aliases"])
+            cur.execute(properties_sql, (entity_id,))
+            props_row = cur.fetchone()
+            result["properties"] = (
+                props_row["properties"] if props_row and props_row["properties"] is not None else {}
+            )
+
+        cur.execute(relationships_sql, (entity_id,))
+        rel_rows = cur.fetchall()
 
     query_ms = _elapsed_ms(t0)
 
-    if row is None:
-        return SearchResult(
-            papers=[],
-            total=0,
-            timing_ms={"query_ms": query_ms},
-            metadata={"error": f"Entity not found: {entity_id}"},
-        )
-
-    result = dict(row)
-    # Convert aliases from SQL array to list for JSON serialization
-    if result.get("aliases") is not None:
-        result["aliases"] = list(result["aliases"])
+    result["relationships"] = [
+        {
+            "predicate": rel["predicate"],
+            "object_id": rel["object_id"],
+            "object_name": rel["object_name"],
+            "object_entity_type": rel["object_entity_type"],
+            "object_properties": rel["object_properties"] or {},
+            "confidence": rel["confidence"],
+            "source": rel["relationship_source"],
+        }
+        for rel in rel_rows
+    ]
 
     return SearchResult(
         papers=[result],

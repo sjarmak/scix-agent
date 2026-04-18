@@ -483,12 +483,36 @@ class TestDispatchDocumentContext:
 
 
 class TestGetEntityContext:
-    """Tests for search.get_entity_context() — queries agent_entity_context matview."""
+    """Tests for search.get_entity_context() — queries agent_entity_context
+    matview for aggregates, joins through entity_relationships for the
+    relationships block, and reads entities.properties directly so
+    agents see the full JSONB payload without waiting for a matview
+    refresh.
+    """
 
-    def _make_conn_with_row(self, row: dict | None) -> MagicMock:
+    def _make_conn(
+        self,
+        *,
+        matview_row: dict | None,
+        fallback_row: dict | None = None,
+        properties_row: dict | None = None,
+        relationship_rows: list[dict] | None = None,
+    ) -> MagicMock:
+        """Build a mock connection whose cursor replays the expected sequence.
+
+        The real ``get_entity_context`` issues up to three queries when the
+        matview has a hit (matview, properties, relationships) and two when
+        it falls back to the ``entities`` table (fallback, relationships).
+        """
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
-        mock_cursor.fetchone.return_value = row
+        fetchone_seq: list[dict | None]
+        if matview_row is not None:
+            fetchone_seq = [matview_row, properties_row]
+        else:
+            fetchone_seq = [None, fallback_row]
+        mock_cursor.fetchone.side_effect = fetchone_seq
+        mock_cursor.fetchall.return_value = relationship_rows or []
         mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
         mock_cursor.__exit__ = MagicMock(return_value=False)
         mock_conn.cursor.return_value = mock_cursor
@@ -496,7 +520,7 @@ class TestGetEntityContext:
 
     def test_existing_entity_returns_full_card(self) -> None:
         """Known entity_id returns full entity card with identifiers, aliases, relationships."""
-        row = {
+        matview_row = {
             "entity_id": 42,
             "canonical_name": "OSIRIS-REx",
             "entity_type": "mission",
@@ -504,10 +528,25 @@ class TestGetEntityContext:
             "source": "metadata",
             "identifiers": [{"scheme": "nasa_mission", "id": "osiris-rex"}],
             "aliases": ["Origins Spectral Interpretation", "OSIRIS REx"],
-            "relationships": [{"predicate": "observes", "object_id": 99, "confidence": 0.95}],
             "citing_paper_count": 1523,
         }
-        conn = self._make_conn_with_row(row)
+        properties_row = {"properties": {"launch_year": 2016}}
+        relationship_rows = [
+            {
+                "predicate": "observes",
+                "object_id": 99,
+                "confidence": 0.95,
+                "relationship_source": "curated",
+                "object_name": "Bennu",
+                "object_entity_type": "target",
+                "object_properties": {"diameter_m": 492},
+            }
+        ]
+        conn = self._make_conn(
+            matview_row=matview_row,
+            properties_row=properties_row,
+            relationship_rows=relationship_rows,
+        )
 
         result = get_entity_context(conn, 42)
 
@@ -518,14 +557,18 @@ class TestGetEntityContext:
         assert entity["canonical_name"] == "OSIRIS-REx"
         assert entity["entity_type"] == "mission"
         assert entity["citing_paper_count"] == 1523
+        assert entity["properties"] == {"launch_year": 2016}
         assert len(entity["identifiers"]) == 1
         assert len(entity["aliases"]) == 2
         assert len(entity["relationships"]) == 1
+        rel = entity["relationships"][0]
+        assert rel["object_name"] == "Bennu"
+        assert rel["object_properties"] == {"diameter_m": 492}
         assert "query_ms" in result.timing_ms
 
     def test_entity_with_no_relationships(self) -> None:
         """Entity with empty relationships/aliases returns empty lists."""
-        row = {
+        matview_row = {
             "entity_id": 7,
             "canonical_name": "Dark matter",
             "entity_type": "concept",
@@ -533,20 +576,25 @@ class TestGetEntityContext:
             "source": "uat",
             "identifiers": [],
             "aliases": [],
-            "relationships": [],
             "citing_paper_count": 50000,
         }
-        conn = self._make_conn_with_row(row)
+        conn = self._make_conn(
+            matview_row=matview_row,
+            properties_row={"properties": {}},
+            relationship_rows=[],
+        )
 
         result = get_entity_context(conn, 7)
 
         assert result.total == 1
-        assert result.papers[0]["aliases"] == []
-        assert result.papers[0]["relationships"] == []
+        entity = result.papers[0]
+        assert entity["aliases"] == []
+        assert entity["relationships"] == []
+        assert entity["properties"] == {}
 
     def test_nonexistent_entity_returns_empty(self) -> None:
         """Unknown entity_id returns empty result with error metadata."""
-        conn = self._make_conn_with_row(None)
+        conn = self._make_conn(matview_row=None, fallback_row=None)
 
         result = get_entity_context(conn, 999999)
 
@@ -556,16 +604,17 @@ class TestGetEntityContext:
         assert "999999" in result.metadata["error"]
 
     def test_query_uses_matview(self) -> None:
-        """Query targets agent_entity_context matview."""
-        conn = self._make_conn_with_row(None)
+        """First query targets agent_entity_context matview."""
+        conn = self._make_conn(matview_row=None, fallback_row=None)
 
         get_entity_context(conn, 42)
 
         cur = conn.cursor.return_value
-        sql = cur.execute.call_args[0][0]
-        assert "agent_entity_context" in sql
-        params = cur.execute.call_args[0][1]
-        assert params == (42,)
+        # First execute is the matview lookup
+        first_sql = cur.execute.call_args_list[0][0][0]
+        assert "agent_entity_context" in first_sql
+        first_params = cur.execute.call_args_list[0][0][1]
+        assert first_params == (42,)
 
 
 class TestDispatchEntityContext:

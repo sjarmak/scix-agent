@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "description": "Fixed reference set for the nightly NER canary. Ten synthetic astronomy snippets with gold-label entity spans (char offsets). Used to detect F1 drift of the pinned nasa-smd-ibm-v0.1_NER_DEAL model against the baseline in results/ner_wiesp_eval.json.",
+  "papers": [
+    {
+      "id": "canary-001",
+      "text": "We used Hubble Space Telescope to image NGC 4258.",
+      "gold_entities": [
+        {"type": "Mission", "span": [8, 30], "text": "Hubble Space Telescope"},
+        {"type": "CelestialObject", "span": [40, 48], "text": "NGC 4258"}
+      ]
+    },
+    {
+      "id": "canary-002",
+      "text": "Chandra observations of Sagittarius A* reveal variable X-ray emission.",
+      "gold_entities": [
+        {"type": "Mission", "span": [0, 7], "text": "Chandra"},
+        {"type": "CelestialObject", "span": [24, 38], "text": "Sagittarius A*"}
+      ]
+    },
+    {
+      "id": "canary-003",
+      "text": "The WFC3 instrument aboard HST captured deep-field images of Abell 2744.",
+      "gold_entities": [
+        {"type": "Instrument", "span": [4, 8], "text": "WFC3"},
+        {"type": "Mission", "span": [27, 30], "text": "HST"},
+        {"type": "CelestialObject", "span": [61, 71], "text": "Abell 2744"}
+      ]
+    },
+    {
+      "id": "canary-004",
+      "text": "JWST MIRI spectra of TRAPPIST-1e show no detectable atmosphere.",
+      "gold_entities": [
+        {"type": "Mission", "span": [0, 4], "text": "JWST"},
+        {"type": "Instrument", "span": [5, 9], "text": "MIRI"},
+        {"type": "CelestialObject", "span": [21, 31], "text": "TRAPPIST-1e"}
+      ]
+    },
+    {
+      "id": "canary-005",
+      "text": "Astropy was used to reduce data from the Keck Observatory.",
+      "gold_entities": [
+        {"type": "Software", "span": [0, 7], "text": "Astropy"},
+        {"type": "Observatory", "span": [41, 57], "text": "Keck Observatory"}
+      ]
+    },
+    {
+      "id": "canary-006",
+      "text": "The Gaia mission measured parallaxes for stars in the Milky Way disk.",
+      "gold_entities": [
+        {"type": "Mission", "span": [4, 8], "text": "Gaia"},
+        {"type": "CelestialObject", "span": [54, 63], "text": "Milky Way"}
+      ]
+    },
+    {
+      "id": "canary-007",
+      "text": "VLT UVES spectra of Proxima Centauri b constrain atmospheric escape.",
+      "gold_entities": [
+        {"type": "Observatory", "span": [0, 3], "text": "VLT"},
+        {"type": "Instrument", "span": [4, 8], "text": "UVES"},
+        {"type": "CelestialObject", "span": [20, 38], "text": "Proxima Centauri b"}
+      ]
+    },
+    {
+      "id": "canary-008",
+      "text": "We processed TESS light curves with Lightkurve to detect transits of Kepler-452b.",
+      "gold_entities": [
+        {"type": "Mission", "span": [13, 17], "text": "TESS"},
+        {"type": "Software", "span": [36, 46], "text": "Lightkurve"},
+        {"type": "CelestialObject", "span": [69, 80], "text": "Kepler-452b"}
+      ]
+    },
+    {
+      "id": "canary-009",
+      "text": "ALMA Band 6 observations resolved dust continuum in HL Tau.",
+      "gold_entities": [
+        {"type": "Observatory", "span": [0, 4], "text": "ALMA"},
+        {"type": "CelestialObject", "span": [52, 58], "text": "HL Tau"}
+      ]
+    },
+    {
+      "id": "canary-010",
+      "text": "Spitzer IRAC photometry characterized the spectral energy distribution of M82.",
+      "gold_entities": [
+        {"type": "Mission", "span": [0, 7], "text": "Spitzer"},
+        {"type": "Instrument", "span": [8, 12], "text": "IRAC"},
+        {"type": "CelestialObject", "span": [74, 77], "text": "M82"}
+      ]
+    }
+  ]
+}

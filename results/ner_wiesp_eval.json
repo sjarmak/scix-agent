@@ -1,0 +1,53 @@
+{
+  "meta": {
+    "_note": "Fixture-based placeholder report. Regenerate on a host with GPU and network access by running: `python scripts/eval_ner_wiesp.py --output results/ner_wiesp_eval.json` (no --fixture flag) to evaluate the pinned model on the real WIESP2022-NER test split.",
+    "dataset": "adsabs/WIESP2022-NER",
+    "model_name": "adsabs/nasa-smd-ibm-v0.1_NER_DEAL",
+    "model_revision": "87ce76dbc8c3b1e3f2bbe2c64fee5d25bc03c03d",
+    "predictions_source": "fixture",
+    "source": "fixture",
+    "split": "test"
+  },
+  "per_entity": {
+    "CelestialObject": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 2
+    },
+    "Identifier": {
+      "f1": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "support": 1
+    },
+    "Mission": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 2
+    },
+    "Survey": {
+      "f1": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "support": 1
+    },
+    "Wavelength": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 1
+    }
+  },
+  "summary": {
+    "macro_f1": 0.6,
+    "macro_precision": 0.6,
+    "macro_recall": 0.6,
+    "micro_f1": 0.8333333333333333,
+    "micro_precision": 1.0,
+    "micro_recall": 0.7142857142857143,
+    "n_examples": 3,
+    "total_support": 7
+  }
+}

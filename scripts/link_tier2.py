@@ -76,10 +76,28 @@ DEFAULT_WORKERS: int = 1
 # and ships ``(bibcode, abstract)`` tuples to workers in chunks.
 PAPER_BATCH_SIZE: int = 512
 
+# Commit and sync the pipeline every N paper batches (~this many papers).
+# Long single-transaction runs bloat WAL and lose all work on a crash.
+# 0 means "commit only at end" (used by tests / dry-run).
+DEFAULT_COMMIT_INTERVAL_BATCHES: int = 40  # ~20k papers per commit
+
 TIER2_LINK_TYPE: str = "abstract_match"
 TIER2_TIER: int = 2
 TIER2_TIER_VERSION: int = 1
 TIER2_MATCH_METHOD: str = "aho_corasick_abstract"
+
+# ---------------------------------------------------------------------------
+# Entity source
+# ---------------------------------------------------------------------------
+
+# The curated core (``curated_entity_core``) is a ~600-row operator-promoted
+# subset. ``full`` widens the pool to every entity with a safe
+# ambiguity_class (``unique``/``domain_safe``/``homograph``) that has not
+# been demoted to ``link_policy='llm_only'``. Default stays ``curated`` so
+# existing tests and callers are unaffected.
+ENTITY_SOURCE_CURATED: str = "curated"
+ENTITY_SOURCE_FULL: str = "full"
+ENTITY_SOURCES: tuple[str, ...] = (ENTITY_SOURCE_CURATED, ENTITY_SOURCE_FULL)
 
 
 # ---------------------------------------------------------------------------
@@ -87,9 +105,13 @@ TIER2_MATCH_METHOD: str = "aho_corasick_abstract"
 # ---------------------------------------------------------------------------
 
 
-def fetch_entity_rows(conn: psycopg.Connection) -> list[EntityRow]:
+def fetch_entity_rows(
+    conn: psycopg.Connection,
+    *,
+    source: str = ENTITY_SOURCE_CURATED,
+) -> list[EntityRow]:
     """Pull ``(entity_id, surface, canonical_name, ambiguity_class,
-    is_alias)`` rows for every entity in the curated core.
+    is_alias)`` rows for the tier-2 automaton.
 
     Two queries are unioned client-side:
 
@@ -97,28 +119,62 @@ def fetch_entity_rows(conn: psycopg.Connection) -> list[EntityRow]:
     * every alias (``is_alias=True``)
 
     The ``ambiguity_class`` filter excludes ``banned`` entities outright.
+
+    Parameters
+    ----------
+    source
+        ``"curated"`` (default) restricts to ``curated_entity_core`` —
+        the operator-promoted subset used by the incremental runner and
+        existing regression tests. ``"full"`` widens to every entity with
+        a safe ambiguity_class that has not been demoted to
+        ``link_policy='llm_only'``.
     """
+    if source not in ENTITY_SOURCES:
+        raise ValueError(f"unknown entity source: {source!r}; expected one of {ENTITY_SOURCES}")
+
     rows: list[EntityRow] = []
 
-    canonical_sql = """
-        SELECT e.id,
-               e.canonical_name AS surface,
-               e.canonical_name,
-               e.ambiguity_class::text
-          FROM curated_entity_core c
-          JOIN entities e ON e.id = c.entity_id
-         WHERE e.ambiguity_class IN ('unique', 'domain_safe', 'homograph')
-    """
-    alias_sql = """
-        SELECT e.id,
-               ea.alias AS surface,
-               e.canonical_name,
-               e.ambiguity_class::text
-          FROM curated_entity_core c
-          JOIN entities e ON e.id = c.entity_id
-          JOIN entity_aliases ea ON ea.entity_id = e.id
-         WHERE e.ambiguity_class IN ('unique', 'domain_safe', 'homograph')
-    """
+    if source == ENTITY_SOURCE_CURATED:
+        canonical_sql = """
+            SELECT e.id,
+                   e.canonical_name AS surface,
+                   e.canonical_name,
+                   e.ambiguity_class::text
+              FROM curated_entity_core c
+              JOIN entities e ON e.id = c.entity_id
+             WHERE e.ambiguity_class IN ('unique', 'domain_safe', 'homograph')
+        """
+        alias_sql = """
+            SELECT e.id,
+                   ea.alias AS surface,
+                   e.canonical_name,
+                   e.ambiguity_class::text
+              FROM curated_entity_core c
+              JOIN entities e ON e.id = c.entity_id
+              JOIN entity_aliases ea ON ea.entity_id = e.id
+             WHERE e.ambiguity_class IN ('unique', 'domain_safe', 'homograph')
+        """
+    else:  # ENTITY_SOURCE_FULL
+        canonical_sql = """
+            SELECT e.id,
+                   e.canonical_name AS surface,
+                   e.canonical_name,
+                   e.ambiguity_class::text
+              FROM entities e
+             WHERE e.ambiguity_class IN ('unique', 'domain_safe', 'homograph')
+               AND (e.link_policy IS NULL OR e.link_policy <> 'llm_only')
+        """
+        alias_sql = """
+            SELECT e.id,
+                   ea.alias AS surface,
+                   e.canonical_name,
+                   e.ambiguity_class::text
+              FROM entities e
+              JOIN entity_aliases ea ON ea.entity_id = e.id
+             WHERE e.ambiguity_class IN ('unique', 'domain_safe', 'homograph')
+               AND (e.link_policy IS NULL OR e.link_policy <> 'llm_only')
+        """
+
     with conn.cursor() as cur:
         cur.execute(canonical_sql)
         for entity_id, surface, canonical, ambiguity in cur.fetchall():
@@ -348,6 +404,8 @@ def run_tier2_link(
     bibcode_prefix: Optional[str] = None,
     max_per_entity: int = DEFAULT_MAX_PER_ENTITY,
     dry_run: bool = False,
+    entity_source: str = ENTITY_SOURCE_CURATED,
+    commit_interval_batches: int = 0,
 ) -> Tier2Stats:
     """Run the full Tier-2 linkage pass against ``conn``.
 
@@ -365,17 +423,26 @@ def run_tier2_link(
         to ``link_policy='llm_only'`` and stop receiving writes.
     dry_run
         If True, the transaction is rolled back instead of committed.
+    entity_source
+        Which entity pool the automaton is built from. ``"curated"``
+        (default) uses ``curated_entity_core``. ``"full"`` uses every
+        entity with a safe ambiguity_class.
+    commit_interval_batches
+        Commit the write connection every N paper batches. 0 (default)
+        commits only at the end — preserves existing test semantics.
+        Long prod runs should set e.g. 40 to cap WAL size and survive
+        crashes.
 
     Returns
     -------
     Tier2Stats
         Aggregate counts for the run.
     """
-    logger.info("Fetching curated-core entity rows...")
-    entity_rows = fetch_entity_rows(conn)
+    logger.info("Fetching entity rows (source=%s)...", entity_source)
+    entity_rows = fetch_entity_rows(conn, source=entity_source)
     logger.info("  -> %d surface forms", len(entity_rows))
     if not entity_rows:
-        logger.warning("curated_entity_core is empty; nothing to link")
+        logger.warning("entity pool is empty; nothing to link")
         return Tier2Stats(0, 0, 0, 0, 0)
 
     automaton = build_automaton(entity_rows)
@@ -400,10 +467,17 @@ def run_tier2_link(
 
     log_interval = 50_000  # log every N papers scanned
 
+    # Writes go through a second connection in pipeline mode. Pipeline
+    # mode batches execute() round-trips to the server (3-5x speedup
+    # for per-row INSERTs) but is incompatible with the server-side
+    # cursor used to stream papers, so we split read and write paths.
+    write_conn = psycopg.connect(conn.info.dsn)
+    batches_since_commit = 0
     try:
-        with conn.cursor() as insert_cur:
+        with write_conn.pipeline(), write_conn.cursor() as insert_cur:
             for batch in iter_paper_batches(conn, bibcode_prefix):
                 papers_scanned += len(batch)
+                batches_since_commit += 1
                 if papers_scanned % log_interval < len(batch):
                     logger.info(
                         "  progress: %d papers scanned, %d rows pending, %d demoted",
@@ -449,27 +523,45 @@ def run_tier2_link(
                                 "evidence": _evidence_json(cand),
                             },
                         )
-                        inserted = insert_cur.rowcount or 0
-                        if inserted:
-                            rows_inserted += inserted
-                            per_entity_count[entity_id] = current + inserted
-                            entities_with_links.add(entity_id)
+                        # Under pipeline mode, rowcount isn't reliable
+                        # until sync. Use optimistic per-candidate
+                        # accounting: count every accepted candidate as
+                        # inserted. ON CONFLICT DO NOTHING may drop
+                        # some duplicates, which only shifts demotion
+                        # a few rows earlier — acceptable drift.
+                        rows_inserted += 1
+                        per_entity_count[entity_id] = current + 1
+                        entities_with_links.add(entity_id)
+
+                if (
+                    commit_interval_batches > 0
+                    and not dry_run
+                    and batches_since_commit >= commit_interval_batches
+                ):
+                    # commit() inside a pipeline block is legal — it
+                    # flushes the pipeline, commits, and keeps pipeline
+                    # mode active for subsequent executes.
+                    write_conn.commit()
+                    batches_since_commit = 0
     finally:
         if pool is not None:
             pool.close()
             pool.join()
 
-    if dry_run:
-        conn.rollback()
-        logger.info("DRY RUN — rolled back %d tier-2 rows", rows_inserted)
-    else:
-        conn.commit()
-        logger.info(
-            "Committed %d tier-2 rows across %d entities (%d demoted)",
-            rows_inserted,
-            len(entities_with_links),
-            len(demoted),
-        )
+    try:
+        if dry_run:
+            write_conn.rollback()
+            logger.info("DRY RUN — rolled back %d tier-2 rows", rows_inserted)
+        else:
+            write_conn.commit()
+            logger.info(
+                "Committed %d tier-2 rows across %d entities (%d demoted)",
+                rows_inserted,
+                len(entities_with_links),
+                len(demoted),
+            )
+    finally:
+        write_conn.close()
 
     return Tier2Stats(
         papers_scanned=papers_scanned,
@@ -502,6 +594,24 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_MAX_PER_ENTITY,
         help="Per-entity linkage cap; over-cap entities are demoted to llm_only",
+    )
+    parser.add_argument(
+        "--entity-source",
+        choices=ENTITY_SOURCES,
+        default=ENTITY_SOURCE_CURATED,
+        help=(
+            "Entity pool: 'curated' uses curated_entity_core (~600 rows); "
+            "'full' widens to every entity with a safe ambiguity_class."
+        ),
+    )
+    parser.add_argument(
+        "--commit-interval-batches",
+        type=int,
+        default=0,
+        help=(
+            "Commit write connection every N paper batches (0 = commit "
+            "only at end). Long prod runs should set 40 or so."
+        ),
     )
     parser.add_argument("--dry-run", action="store_true", default=False)
     parser.add_argument(
@@ -539,6 +649,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             bibcode_prefix=args.bibcode_prefix,
             max_per_entity=args.max_per_entity,
             dry_run=args.dry_run,
+            entity_source=args.entity_source,
+            commit_interval_batches=args.commit_interval_batches,
         )
         wall_seconds = time.monotonic() - t0
     finally:

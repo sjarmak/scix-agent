@@ -13,12 +13,17 @@ Verifies two contracts that MCP agents depend on:
    mission like JWST to its instruments and read each instrument's
    metadata in one hop.
 
-The unit-mock tests assert the shape regardless of DB state. The
-integration tests run against ``SCIX_TEST_DSN`` (defaults to
-``dbname=scix_test``) and are skipped when the DSN is unset, points at
-prod, or the ``entity_relationships`` table is empty — that last case
-is the current prod reality while matview refresh is blocked (see
-xz4.5).
+Test layers:
+
+* Unit tests (mocked search layer) assert JSON contract shape
+  regardless of DB state.
+* Integration tests run against ``SCIX_TEST_DSN`` (defaults to
+  ``dbname=scix_test``); they seed their own fixtures so they do not
+  depend on any prior DB state. Skip when ``SCIX_TEST_DSN`` is unset
+  or points at the production DB.
+* A read-only prod smoke test exercises the real JWST entity when
+  ``entity_relationships`` is populated on prod; it skips cleanly
+  while that table is empty (current state, blocked on xz4.5 MV lock).
 """
 
 from __future__ import annotations
@@ -78,17 +83,6 @@ def _integration_skip_reason() -> str | None:
     if is_production_dsn(TEST_DSN):
         return "Refusing to run destructive tests against production DSN"
     return None
-
-
-def _has_entity_relationships(dsn: str) -> bool:
-    """Return True if the target DB has any rows in entity_relationships."""
-    try:
-        with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-            cur.execute("SELECT EXISTS (SELECT 1 FROM entity_relationships LIMIT 1)")
-            row = cur.fetchone()
-            return bool(row and row[0])
-    except psycopg.Error:
-        return False
 
 
 # ---------------------------------------------------------------------------
@@ -306,9 +300,9 @@ class TestEntityContextIntegration:
             assert result.total == 1, f"entity {entity_id} not found in matview"
             entity = result.papers[0]
             props = entity.get("properties")
-            assert isinstance(props, dict), (
-                "properties JSONB was stripped — agents cannot see Psyche taxonomy/albedo/diameter"
-            )
+            assert isinstance(
+                props, dict
+            ), "properties JSONB was stripped — agents cannot see Psyche taxonomy/albedo/diameter"
             assert props.get("taxonomy") == "M"
             assert props.get("sso_class") == "MB>Outer"
             assert props.get("albedo") == pytest.approx(0.1175)
@@ -319,13 +313,6 @@ class TestEntityContextIntegration:
                 cur.execute("DELETE FROM entities WHERE id = %s", (entity_id,))
             test_conn.commit()
 
-    @pytest.mark.skipif(
-        TEST_DSN is None or not _has_entity_relationships(TEST_DSN or ""),
-        reason=(
-            "entity_relationships empty on target DSN — populate via "
-            "scripts/populate_entity_relationships.py or wait for xz4.5 MV lock to clear"
-        ),
-    )
     def test_jwst_like_entity_returns_has_instrument_relationships(
         self, test_conn: psycopg.Connection
     ) -> None:
@@ -397,9 +384,9 @@ class TestEntityContextIntegration:
             entity = result.papers[0]
             rels = entity.get("relationships") or []
             has_instrument_rels = [r for r in rels if r.get("predicate") == "has_instrument"]
-            assert len(has_instrument_rels) >= 3, (
-                f"expected >=3 has_instrument relationships, got {len(has_instrument_rels)}"
-            )
+            assert (
+                len(has_instrument_rels) >= 3
+            ), f"expected >=3 has_instrument relationships, got {len(has_instrument_rels)}"
 
             seen_names = {r.get("object_name") for r in has_instrument_rels}
             assert {"NIRSpec_xz4129", "NIRCam_xz4129", "MIRI_xz4129"}.issubset(
@@ -412,12 +399,12 @@ class TestEntityContextIntegration:
                 if name not in instruments:
                     continue
                 obj_props = r.get("object_properties")
-                assert isinstance(obj_props, dict), (
-                    f"relationship for {name} dropped object_properties"
+                assert isinstance(
+                    obj_props, dict
+                ), f"relationship for {name} dropped object_properties"
+                assert (
+                    obj_props.get("wavelength_range_um") == instruments[name]["wavelength_range_um"]
                 )
-                assert obj_props.get("wavelength_range_um") == instruments[name][
-                    "wavelength_range_um"
-                ]
                 assert obj_props.get("mode") == instruments[name]["mode"]
         finally:
             # Tear down fixtures (FK cascade drops entity_relationships rows)
@@ -427,3 +414,84 @@ class TestEntityContextIntegration:
                     ([mission_id, *instrument_ids.values()],),
                 )
             test_conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Prod read-only smoke test — runs against the real DB when permitted.
+# ---------------------------------------------------------------------------
+
+
+_PROD_DSN_FOR_READONLY = os.environ.get("SCIX_DSN", "dbname=scix")
+
+
+def _prod_has_real_jwst_relationships() -> bool:
+    """Return True when prod has a JWST entity with has_instrument edges."""
+    try:
+        with psycopg.connect(_PROD_DSN_FOR_READONLY) as conn, conn.cursor() as cur:
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT 1
+                      FROM entities e
+                      JOIN entity_relationships er ON er.subject_entity_id = e.id
+                     WHERE e.canonical_name = 'James Webb Space Telescope'
+                       AND er.predicate = 'has_instrument'
+                     LIMIT 1
+                )
+                """)
+            row = cur.fetchone()
+            return bool(row and row[0])
+    except psycopg.Error:
+        return False
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    not _prod_has_real_jwst_relationships(),
+    reason=(
+        "entity_relationships empty (or no JWST has_instrument edges) on prod — "
+        "blocked on MV lock clearing (xz4.5). Once populate_entity_relationships "
+        "runs against prod, this test exercises the real JWST -> NIRSpec/NIRCam/MIRI path."
+    ),
+)
+def test_prod_jwst_returns_instruments_as_has_instrument_relationships() -> None:
+    """Read-only prod smoke: real JWST must surface NIRSpec/NIRCam/MIRI.
+
+    This is the bead's JWST prod smoke test. It is a pure read against
+    the production DSN — no writes, no matview refresh. It skips
+    cleanly while ``entity_relationships`` is empty on prod (current
+    state, blocked on xz4.5).
+    """
+    with psycopg.connect(_PROD_DSN_FOR_READONLY) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id FROM entities
+                 WHERE canonical_name = 'James Webb Space Telescope'
+                   AND entity_type = 'mission'
+                 ORDER BY id
+                 LIMIT 1
+                """)
+            row = cur.fetchone()
+        assert row is not None, "expected a JWST mission entity on prod"
+        jwst_id = row[0]
+
+        result = search.get_entity_context(conn, jwst_id)
+        assert result.total == 1
+        entity = result.papers[0]
+        rels = entity.get("relationships") or []
+        has_instrument = [r for r in rels if r.get("predicate") == "has_instrument"]
+        instrument_names = {r.get("object_name") for r in has_instrument}
+
+        # Per CURATED_FLAGSHIP_INSTRUMENTS, JWST has NIRSpec, NIRCam, MIRI,
+        # NIRISS, FGS. Assert the well-known prime three are present; the
+        # full set may vary slightly as sources evolve.
+        for expected in ("NIRSpec", "NIRCam", "MIRI"):
+            assert expected in instrument_names, (
+                f"missing {expected} in JWST has_instrument relationships: "
+                f"got {sorted(instrument_names)}"
+            )
+
+        # Every relationship must carry object_properties (possibly empty
+        # dict) — the contract is that the key is present, not null.
+        for r in has_instrument:
+            assert "object_properties" in r, "relationship must carry object_properties key"
+            assert isinstance(r["object_properties"], dict)

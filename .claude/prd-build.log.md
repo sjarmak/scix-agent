@@ -4,6 +4,9 @@
 
 - **Start**: PRD `docs/prd/prd_community_detection_v2.md` → integration branch `prd-build/community-detection-v2` (created from main @ f5437179)
 - **Decomposition complete** — 7 units across 3 layers (Layer 0: 3, Layer 1: 3, Layer 2: 1). Must-haves M1-M5 + should-haves S1, S2. N1 ablation deferred (nice-to-have, no downstream dep).
+- **Layer 0 implement** — M1 (uat-loader-fix), M2 (semantic-communities), M3 (citation-recompute) all SUCCESS.
+- **Layer 0 review** — M1 PASS, M3 PASS, M2 FAIL r1 (gitignored artifacts — criteria 5 & 6 required committed sample JSON); M2 r2 SUCCESS+PASS after committing `docs/prd/artifacts/semantic_communities*.sample.json`.
+- **Layer 0 land** — All 3 units landed onto `prd-build/community-detection-v2`. 9/9 tests pass (3 uat loader + 4 semantic + 2 citation).
 
 ## 2026-04-18
 

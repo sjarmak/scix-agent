@@ -1366,6 +1366,134 @@ def facet_counts(
 
 _VALID_RESOLUTIONS = frozenset({"coarse", "medium", "fine"})
 
+# Community signals supported by explore_community and graph_context.
+# - 'citation' reads paper_metrics.community_id_{resolution}
+# - 'semantic' reads paper_metrics.community_semantic_{resolution}
+# - 'taxonomic' reads paper_metrics.community_taxonomic (single resolution,
+#   stored at 'coarse' in the communities table by convention).
+_VALID_COMMUNITY_SIGNALS = frozenset({"citation", "semantic", "taxonomic"})
+
+# Per-signal resolution lists mirroring scripts/generate_community_labels.py.
+_RESOLUTIONS_BY_SIGNAL: dict[str, tuple[str, ...]] = {
+    "citation": ("coarse", "medium", "fine"),
+    "semantic": ("coarse", "medium", "fine"),
+    "taxonomic": ("coarse",),
+}
+
+
+def _community_column_for_signal(signal: str, resolution: str) -> str:
+    """Return the paper_metrics column for a given (signal, resolution).
+
+    Mirrors scripts/generate_community_labels._community_column so that
+    labels in `communities` align with ids stored in `paper_metrics`.
+    """
+    if signal == "citation":
+        return f"community_id_{resolution}"
+    if signal == "semantic":
+        return f"community_semantic_{resolution}"
+    if signal == "taxonomic":
+        return "community_taxonomic"
+    raise ValueError(
+        f"invalid community signal: {signal!r}. "
+        f"Must be one of {sorted(_VALID_COMMUNITY_SIGNALS)}"
+    )
+
+
+def _taxonomic_community_id(text_label: str) -> int:
+    """Map a taxonomic string (e.g. 'astro-ph.GA') to a stable non-negative INT.
+
+    Mirrors scripts/generate_community_labels._taxonomic_id so that a taxonomic
+    community_id in `paper_metrics.community_taxonomic` (TEXT) can be joined
+    against `communities.community_id` (INT).
+    """
+    import zlib
+
+    return zlib.adler32(text_label.encode("utf-8")) & 0x7FFFFFFF
+
+
+def _fetch_communities_for_paper(
+    conn: psycopg.Connection, bibcode: str
+) -> dict[str, dict[str, Any]]:
+    """Return the full per-signal communities block for a paper.
+
+    Shape:
+        {
+          "citation":  {"coarse": {...}, "medium": {...}, "fine": {...}},
+          "semantic":  {"coarse": {...}, "medium": {...}, "fine": {...}},
+          "taxonomic": {"coarse": {...}},
+        }
+    where each inner block is
+        {"community_id": int, "label": str|None, "top_keywords": list[str]}
+    and resolutions with no community assignment are omitted.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT community_id_coarse, community_id_medium, community_id_fine, "
+            "       community_semantic_coarse, community_semantic_medium, "
+            "       community_semantic_fine, community_taxonomic "
+            "FROM paper_metrics WHERE bibcode = %s",
+            (bibcode,),
+        )
+        pm_row = cur.fetchone()
+
+    result: dict[str, dict[str, Any]] = {}
+    if pm_row is None:
+        return result
+
+    # Build list of (signal, resolution, community_id) tuples to look up.
+    signal_ids: list[tuple[str, str, int]] = []
+
+    for res in ("coarse", "medium", "fine"):
+        cid = pm_row.get(f"community_id_{res}")
+        if cid is not None:
+            signal_ids.append(("citation", res, int(cid)))
+
+    for res in ("coarse", "medium", "fine"):
+        cid = pm_row.get(f"community_semantic_{res}")
+        if cid is not None:
+            signal_ids.append(("semantic", res, int(cid)))
+
+    tax_text = pm_row.get("community_taxonomic")
+    if tax_text:
+        signal_ids.append(("taxonomic", "coarse", _taxonomic_community_id(tax_text)))
+
+    if not signal_ids:
+        return result
+
+    # Fetch labels in a single query keyed by (signal, resolution, community_id).
+    placeholders = ",".join(["(%s,%s,%s)"] * len(signal_ids))
+    params: list[Any] = []
+    for s, r, c in signal_ids:
+        params.extend([s, r, c])
+
+    label_by_key: dict[tuple[str, str, int], dict[str, Any]] = {}
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT signal, resolution, community_id, label, top_keywords "
+            "FROM communities "
+            f"WHERE (signal, resolution, community_id) IN ({placeholders})",
+            params,
+        )
+        for row in cur.fetchall():
+            label_by_key[(row["signal"], row["resolution"], row["community_id"])] = {
+                "label": row["label"],
+                "top_keywords": list(row["top_keywords"] or []),
+            }
+
+    for signal, res, cid in signal_ids:
+        block = result.setdefault(signal, {})
+        entry: dict[str, Any] = {"community_id": cid}
+        if signal == "taxonomic":
+            # Preserve the original text so callers can display it.
+            entry["community_taxonomic"] = tax_text
+        label_row = label_by_key.get((signal, res, cid))
+        if label_row:
+            entry["label"] = label_row["label"]
+            entry["top_keywords"] = label_row["top_keywords"]
+        block[res] = entry
+
+    return result
+
 
 def get_paper_metrics(conn: psycopg.Connection, bibcode: str) -> SearchResult:
     """Get precomputed graph metrics for a paper (PageRank, HITS, communities)."""
@@ -1402,11 +1530,13 @@ def get_paper_metrics(conn: psycopg.Connection, bibcode: str) -> SearchResult:
     if row.get("updated_at"):
         metrics["updated_at"] = row["updated_at"].isoformat()
 
+    communities_block = _fetch_communities_for_paper(conn, bibcode)
+
     return SearchResult(
         papers=[],
         total=1,
         timing_ms={"query_ms": query_ms},
-        metadata={"metrics": metrics},
+        metadata={"metrics": metrics, "communities": communities_block},
     )
 
 
@@ -1415,14 +1545,40 @@ def explore_community(
     bibcode: str,
     resolution: str = "coarse",
     limit: int = 20,
+    signal: str = "semantic",
 ) -> SearchResult:
-    """Find a paper's community and return sibling papers by PageRank."""
-    assert resolution in _VALID_RESOLUTIONS, f"invalid resolution: {resolution}"
+    """Find a paper's community and return sibling papers by PageRank.
+
+    Parameters
+    ----------
+    signal:
+        One of ``citation`` (co-citation-derived Leiden), ``semantic``
+        (INDUS-embedding k-means), or ``taxonomic`` (arXiv-class). Selects
+        which ``paper_metrics`` column and which ``communities`` rows to
+        read. Invalid values raise ``ValueError``.
+    resolution:
+        One of ``coarse``, ``medium``, ``fine``. For ``signal='taxonomic'``
+        only ``coarse`` is populated (the other resolutions are stored as
+        aliases of coarse); callers passing ``medium`` or ``fine`` for
+        taxonomic will still receive the taxonomic row.
+    """
+    if signal not in _VALID_COMMUNITY_SIGNALS:
+        raise ValueError(
+            f"invalid community signal: {signal!r}. "
+            f"Must be one of {sorted(_VALID_COMMUNITY_SIGNALS)}"
+        )
+    if resolution not in _VALID_RESOLUTIONS:
+        raise ValueError(
+            f"invalid resolution: {resolution!r}. "
+            f"Must be one of {sorted(_VALID_RESOLUTIONS)}"
+        )
+    # Taxonomic has a single resolution regardless of the requested value.
+    lookup_resolution = "coarse" if signal == "taxonomic" else resolution
     t0 = time.perf_counter()
 
-    col = f"community_id_{resolution}"
+    col = _community_column_for_signal(signal, resolution)
 
-    # Get the paper's community
+    # Get the paper's community id for this (signal, resolution).
     with conn.cursor() as cur:
         cur.execute(f"SELECT {col} FROM paper_metrics WHERE bibcode = %s", (bibcode,))
         row = cur.fetchone()
@@ -1432,21 +1588,36 @@ def explore_community(
             papers=[],
             total=0,
             timing_ms={"query_ms": _elapsed_ms(t0)},
-            metadata={"community_id": None, "resolution": resolution},
+            metadata={
+                "signal": signal,
+                "community_id": None,
+                "resolution": resolution,
+            },
         )
 
-    community_id = row[0]
+    raw_cid = row[0]
+    # paper_metrics.community_taxonomic is TEXT; normalise to the integer
+    # used in `communities.community_id`.
+    if signal == "taxonomic":
+        taxonomic_text = str(raw_cid)
+        community_id: int = _taxonomic_community_id(taxonomic_text)
+    else:
+        taxonomic_text = ""
+        community_id = int(raw_cid)
 
-    # Get community metadata
+    # Get community metadata filtered by (signal, resolution, community_id).
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             "SELECT label, paper_count, top_keywords FROM communities "
-            "WHERE community_id = %s AND resolution = %s",
-            (community_id, resolution),
+            "WHERE signal = %s AND resolution = %s AND community_id = %s",
+            (signal, lookup_resolution, community_id),
         )
         community_row = cur.fetchone()
 
-    # Get top papers in this community by PageRank
+    # Get top papers in this community by PageRank. For taxonomic the
+    # column is TEXT, so we filter by the original text value; for
+    # citation/semantic we filter by the integer id.
+    filter_value: object = taxonomic_text if signal == "taxonomic" else community_id
     sql = f"""
         SELECT {STUB_COLUMNS}
         FROM paper_metrics pm
@@ -1456,20 +1627,23 @@ def explore_community(
         LIMIT %s
     """
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(sql, (community_id, limit))
+        cur.execute(sql, (filter_value, limit))
         rows = cur.fetchall()
 
     query_ms = _elapsed_ms(t0)
     papers = [PaperStub.from_row(row).to_dict() for row in rows]
 
     meta: dict[str, Any] = {
+        "signal": signal,
         "community_id": community_id,
         "resolution": resolution,
     }
+    if signal == "taxonomic":
+        meta["community_taxonomic"] = taxonomic_text
     if community_row:
         meta["label"] = community_row["label"]
         meta["paper_count"] = community_row["paper_count"]
-        meta["top_keywords"] = community_row["top_keywords"]
+        meta["top_keywords"] = list(community_row["top_keywords"] or [])
 
     return SearchResult(
         papers=papers, total=len(papers), timing_ms={"query_ms": query_ms}, metadata=meta

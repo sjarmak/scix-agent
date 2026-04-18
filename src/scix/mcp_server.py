@@ -941,11 +941,15 @@ def create_server(_run_self_test: bool = True):
                 name="graph_context",
                 description=(
                     "Get citation-graph analytics for a paper: influence scores, authority "
-                    "and hub metrics, and the community it belongs to at coarse/medium/fine "
-                    "resolution. Optionally also returns sibling papers in the same "
-                    "community ranked by influence. Use citation_graph instead when you "
-                    "want direct citing or cited papers rather than computed scores and "
-                    "community membership."
+                    "and hub metrics, and the communities it belongs to under all three "
+                    "signals (citation, semantic, taxonomic) at coarse/medium/fine "
+                    "resolution. The response includes a top-level `communities` block "
+                    "with a sub-block per signal, each carrying `community_id`, `label`, "
+                    "and `top_keywords` where available. Optionally also returns sibling "
+                    "papers in the same community ranked by influence; the `signal` "
+                    "parameter selects which community signal to explore for siblings. "
+                    "Use citation_graph instead when you want direct citing or cited "
+                    "papers rather than computed scores and community membership."
                 ),
                 inputSchema={
                     "type": "object",
@@ -964,6 +968,17 @@ def create_server(_run_self_test: bool = True):
                             "enum": ["coarse", "medium", "fine"],
                             "default": "coarse",
                             "description": "Community resolution level",
+                        },
+                        "signal": {
+                            "type": "string",
+                            "enum": ["citation", "semantic", "taxonomic"],
+                            "default": "semantic",
+                            "description": (
+                                "Community signal to explore for sibling papers: "
+                                "'citation' (co-citation-derived Leiden), 'semantic' "
+                                "(INDUS-embedding k-means), or 'taxonomic' (arXiv-class). "
+                                "Invalid values return a structured error."
+                            ),
                         },
                         "limit": {"type": "integer", "default": 20},
                     },
@@ -1685,7 +1700,15 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
 
 
 def _handle_graph_context(conn: psycopg.Connection, args: dict[str, Any]) -> str:
-    """Graph metrics and optional community exploration."""
+    """Graph metrics and optional community exploration.
+
+    The metrics block always includes a ``communities`` sub-block with per-signal
+    (citation / semantic / taxonomic) community memberships and labels. When
+    ``include_community`` is true, an additional ``community`` block returns
+    sibling papers in the community selected by ``signal`` (default ``semantic``)
+    and ``resolution``. Invalid ``signal`` values propagate as a ValueError and
+    are returned to the caller as a structured JSON error.
+    """
     bibcode = args["bibcode"]
     include_community = args.get("include_community", False)
 
@@ -1696,7 +1719,13 @@ def _handle_graph_context(conn: psycopg.Connection, args: dict[str, Any]) -> str
 
     resolution = args.get("resolution", "coarse")
     limit = args.get("limit", 20)
-    community_result = search.explore_community(conn, bibcode, resolution=resolution, limit=limit)
+    signal = args.get("signal", "semantic")
+    try:
+        community_result = search.explore_community(
+            conn, bibcode, resolution=resolution, limit=limit, signal=signal
+        )
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
 
     # Merge metrics and community data
     metrics_data = json.loads(_result_to_json(metrics_result))

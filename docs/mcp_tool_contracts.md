@@ -213,6 +213,79 @@ verb sprawl.
 Any proposal that would add a 14th verb requires an ADR update and
 explicit sign-off; it is not a routine change.
 
+## `graph_context`: community signals (M5)
+
+`graph_context` exposes a `signal` parameter and surfaces a per-signal
+`communities` block in its response, allowing callers to compare
+citation-derived, semantic-embedding-derived, and taxonomic community
+memberships for a paper without issuing three separate calls.
+
+### Request
+
+| Parameter           | Type    | Default    | Allowed                                 | Meaning |
+| ------------------- | ------- | ---------- | --------------------------------------- | ------- |
+| `bibcode`           | string  | —          | any                                     | Required ADS bibcode. |
+| `include_community` | boolean | `false`    | —                                       | When `true`, also return sibling papers in the selected community. |
+| `signal`            | string  | `semantic` | `citation`, `semantic`, `taxonomic`     | Which community signal to explore for siblings (only read when `include_community=true`). Invalid values are returned as a structured JSON error. |
+| `resolution`        | string  | `coarse`   | `coarse`, `medium`, `fine`              | Resolution for the sibling lookup. `taxonomic` is only populated at `coarse`; other resolutions are aliased. |
+| `limit`             | integer | `20`       | —                                       | Max sibling papers returned. |
+
+### Response: `communities` block
+
+The `metrics.metadata.communities` block is present on every response
+(independent of `include_community`). It contains one sub-block per
+signal. Each inner block is keyed by resolution and carries
+`community_id`, `label`, and `top_keywords` where a matching row exists
+in the `communities` table.
+
+```json
+{
+  "metadata": {
+    "communities": {
+      "citation":  {
+        "coarse": {"community_id": 9001, "label": "...", "top_keywords": ["..."]},
+        "medium": {"community_id": 9001, "label": "...", "top_keywords": ["..."]},
+        "fine":   {"community_id": 9001, "label": "...", "top_keywords": ["..."]}
+      },
+      "semantic":  {
+        "coarse": {"community_id": 9201, "label": "...", "top_keywords": ["..."]},
+        "medium": {"community_id": 9201, "label": "...", "top_keywords": ["..."]},
+        "fine":   {"community_id": 9201, "label": "...", "top_keywords": ["..."]}
+      },
+      "taxonomic": {
+        "coarse": {
+          "community_id": 1234567890,
+          "community_taxonomic": "astro-ph.GA",
+          "label": "astro-ph.GA — ...",
+          "top_keywords": ["..."]
+        }
+      }
+    }
+  }
+}
+```
+
+Rules:
+
+- Resolutions with no community assignment for the requested paper are
+  omitted from the inner block (no `null` placeholders).
+- Signals with no assignments are omitted entirely.
+- `community_id` is an integer in all three blocks. For `taxonomic`, the
+  integer is a stable `adler32` of the original arXiv class, and the
+  raw text is additionally surfaced under `community_taxonomic`.
+- `label` and `top_keywords` come from the row in `communities` filtered
+  on `(signal, resolution, community_id)`; they are omitted when no
+  matching labels row exists yet.
+
+### Response: `community` block (sibling lookup)
+
+Only present when `include_community=true`. Mirrors the
+`search.explore_community` result: sibling papers ranked by PageRank,
+plus `metadata` echoing the `signal`, `community_id`, `resolution`, and
+(for taxonomic) the `community_taxonomic` text. An invalid `signal`
+returns `{"error": "invalid community signal: ..."}` at the top level
+rather than raising.
+
 ## References
 
 - `docs/ADR/006_arxiv_licensing.md` — the Addendum at the bottom of this
@@ -224,3 +297,6 @@ explicit sign-off; it is not a routine change.
   full-text responses.
 - `CLAUDE.md` — "Tool Count Concern" section, A-RAG citation for the
   13-verb invariant.
+- `migrations/051_community_semantic_columns.sql`,
+  `migrations/052_communities_signal.sql` — schema foundations for the
+  per-signal community surface.

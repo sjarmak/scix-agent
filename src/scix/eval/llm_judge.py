@@ -1,4 +1,10 @@
-"""LLM-judge stub + Cohen's kappa for M9 eval harness.
+"""LLM-judge stub + Cohen's kappa for M9 entity-link audit.
+
+This module is the **binary** link-audit judge: it labels entity-linking
+decisions as ``correct / incorrect / ambiguous``. For the **ordinal
+relevance** judge (0-3 scoring of retrieval results) see
+:mod:`scix.eval.persona_judge` — that module is the preferred path for
+new eval work and uses the Claude Code OAuth subagent dispatcher.
 
 ``judge()`` returns deterministic stub labels by default. If
 ``ANTHROPIC_API_KEY`` is set AND ``use_real=True`` is passed, a real
@@ -10,6 +16,12 @@ formula::
     kappa = (p_o - p_e) / (1 - p_e)
 
 where ``p_o`` is observed agreement and ``p_e`` is chance agreement.
+
+.. note::
+
+    New code paths that need to score retrieval relevance should use
+    :mod:`scix.eval.persona_judge` instead. That module uses the
+    ``in_domain_researcher`` OAuth subagent — no paid API key required.
 """
 
 from __future__ import annotations

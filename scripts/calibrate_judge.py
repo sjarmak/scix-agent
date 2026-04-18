@@ -313,6 +313,11 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    from scix.db import DEFAULT_DSN, redact_dsn  # type: ignore[import-not-found]
+
+    resolved_dsn = args.dsn or DEFAULT_DSN
+    logger.info("calibrating against DSN=%s", redact_dsn(resolved_dsn))
+
     dispatcher: Dispatcher
     if args.stub:
         dispatcher = StubDispatcher(fixed_score=2, reason="stub")

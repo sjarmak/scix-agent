@@ -7,6 +7,9 @@
 - **Layer 0 implement** — M1 (uat-loader-fix), M2 (semantic-communities), M3 (citation-recompute) all SUCCESS.
 - **Layer 0 review** — M1 PASS, M3 PASS, M2 FAIL r1 (gitignored artifacts — criteria 5 & 6 required committed sample JSON); M2 r2 SUCCESS+PASS after committing `docs/prd/artifacts/semantic_communities*.sample.json`.
 - **Layer 0 land** — All 3 units landed onto `prd-build/community-detection-v2`. 9/9 tests pass (3 uat loader + 4 semantic + 2 citation).
+- **Layer 1 implement** — M4 (community-labels), S1 (uat-descendant-search), S2 (coverage-report) all SUCCESS. S1 agent stalled before commit; orchestrator committed the verified diff from the worktree.
+- **Layer 1 review** — M4 PASS, S1 PASS, S2 PASS.
+- **Layer 1 land** — All 3 units landed. 18/18 tests pass (Layer 0 + Layer 1 combined).
 
 ## 2026-04-18
 

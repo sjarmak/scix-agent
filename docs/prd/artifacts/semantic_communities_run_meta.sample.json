@@ -1,0 +1,42 @@
+{
+  "run_id": "7cc7b17f-2d74-4c0d-a1a0-81a53b39678f",
+  "git_sha": "92604b674cae3003cdc9df85748468cee47aa351",
+  "started_at": "2026-04-18T18:13:13.878113+00:00",
+  "finished_at": "2026-04-18T18:13:14.510155+00:00",
+  "params": {
+    "k_coarse": 4,
+    "k_medium": 8,
+    "k_fine": 16,
+    "seed": 42,
+    "batch_size": 10000,
+    "silhouette_sample_size": 10000,
+    "dsn_redacted": "dbname=scix_test",
+    "dsn_hash_12": "329baa6123c8",
+    "allow_prod": false
+  },
+  "n_indus_rows": 120,
+  "peak_rss_mb": 195.109375,
+  "resolutions": {
+    "coarse": {
+      "k": 4,
+      "n_rows": 120,
+      "wall_clock_s": 0.0583797711879015,
+      "silhouette": 0.9899316430091858,
+      "sample_n": 120
+    },
+    "medium": {
+      "k": 8,
+      "n_rows": 120,
+      "wall_clock_s": 0.037257405929267406,
+      "silhouette": 0.2513011693954468,
+      "sample_n": 120
+    },
+    "fine": {
+      "k": 16,
+      "n_rows": 120,
+      "wall_clock_s": 0.03785264096222818,
+      "silhouette": 0.004284917376935482,
+      "sample_n": 120
+    }
+  }
+}

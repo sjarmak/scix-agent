@@ -1,9 +1,10 @@
 {
-  "status": "executing",
-  "prd_path": "docs/prd/prd_full_text_100pct_coverage.md",
+  "status": "done",
+  "prd_path": "docs/prd/prd_community_detection_v2.md",
   "max_passes": 3,
   "max_parallel": 5,
   "current_pass": 1,
-  "integration_branch": "prd-build/full-text-100pct-coverage",
-  "started_at": "2026-04-17T00:00:00Z"
+  "integration_branch": "prd-build/community-detection-v2",
+  "started_at": "2026-04-18T15:30:00Z",
+  "finished_at": "2026-04-18T18:30:00Z"
 }

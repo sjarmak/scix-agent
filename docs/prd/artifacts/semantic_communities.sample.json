@@ -1,0 +1,28 @@
+{
+  "run_id": "7cc7b17f-2d74-4c0d-a1a0-81a53b39678f",
+  "seed": 42,
+  "peak_rss_mb": 195.109375,
+  "resolutions": {
+    "coarse": {
+      "k": 4,
+      "n_rows": 120,
+      "wall_clock_s": 0.0583797711879015,
+      "silhouette": 0.9899316430091858,
+      "sample_n": 120
+    },
+    "medium": {
+      "k": 8,
+      "n_rows": 120,
+      "wall_clock_s": 0.037257405929267406,
+      "silhouette": 0.2513011693954468,
+      "sample_n": 120
+    },
+    "fine": {
+      "k": 16,
+      "n_rows": 120,
+      "wall_clock_s": 0.03785264096222818,
+      "silhouette": 0.004284917376935482,
+      "sample_n": 120
+    }
+  }
+}

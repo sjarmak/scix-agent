@@ -64,7 +64,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 MODEL_NAME = "adsabs/nasa-smd-ibm-v0.1_NER_DEAL"
-# TODO: must match MODEL_REVISION in scripts/eval_ner_wiesp.py. Refresh
+# Keep in sync with MODEL_REVISION in scripts/eval_ner_wiesp.py. Refresh
 # from the HF model page (commit list) when the eval script is repinned.
 MODEL_REVISION = "87ce76dbc8c3b1e3f2bbe2c64fee5d25bc03c03d"
 
@@ -107,7 +107,11 @@ class ReferencePaper:
 # ---------------------------------------------------------------------------
 
 
-REQUIRED_BASELINE_TOP_KEYS = ("per_entity", "summary", "model_revision")
+# Baseline schema contract — must match the actual output of
+# scripts/eval_ner_wiesp.py (MetricsReport.to_dict). That script writes
+# {"per_entity": {...}, "summary": {...}, "meta": {"model_revision": ..., ...}}
+# so `model_revision` lives under `meta`, not at the top level.
+REQUIRED_BASELINE_TOP_KEYS = ("per_entity", "summary")
 REQUIRED_PER_ENTITY_KEYS = ("precision", "recall", "f1")
 
 
@@ -138,7 +142,7 @@ def load_baseline(path: Path) -> dict[str, Any]:
     if missing:
         raise FileFormatError(
             f"Baseline at {path} missing required keys: {missing}. "
-            "Expected schema: {per_entity, summary, model_revision, generated_at}."
+            "Expected schema: {per_entity, summary, meta (optional)}."
         )
 
     per_entity = payload.get("per_entity")
@@ -159,7 +163,27 @@ def load_baseline(path: Path) -> dict[str, Any]:
                 f"{missing_metric}. Expected precision/recall/f1."
             )
 
+    # model_revision is nested under `meta` when produced by eval_ner_wiesp.py.
+    # Tolerate absence (older hand-crafted baselines may omit it) — warn only.
+    meta = payload.get("meta")
+    if not isinstance(meta, dict) or meta.get("model_revision") is None:
+        logger.warning(
+            "Baseline at %s does not declare meta.model_revision — drift "
+            "comparisons will still run, but cannot validate model pinning.",
+            path,
+        )
+
     return payload
+
+
+def baseline_model_revision(baseline: dict[str, Any]) -> str | None:
+    """Extract model_revision from the baseline payload, tolerating absence."""
+    meta = baseline.get("meta")
+    if isinstance(meta, dict):
+        rev = meta.get("model_revision")
+        if isinstance(rev, str) and rev:
+            return rev
+    return None
 
 
 def load_reference(path: Path) -> list[ReferencePaper]:
@@ -382,7 +406,7 @@ def write_log(
         "generated_at": stamp.isoformat().replace("+00:00", "Z"),
         "model_name": MODEL_NAME,
         "model_revision": MODEL_REVISION,
-        "baseline_revision": baseline.get("model_revision"),
+        "baseline_revision": baseline_model_revision(baseline),
         "baseline_generated_at": baseline.get("generated_at"),
         "current": current,
         "per_entity": drift_map,

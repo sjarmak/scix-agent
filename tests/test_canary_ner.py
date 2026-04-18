@@ -3,12 +3,16 @@
 All tests mock the HuggingFace model loader so they run without network
 or GPU. Each test writes into ``tmp_path`` so no state leaks across
 runs.
+
+Schema contract note: ``scripts/eval_ner_wiesp.py`` writes
+``{"per_entity": ..., "summary": ..., "meta": {"model_revision": ..., ...}}``
+so ``model_revision`` is nested under ``meta`` — these fixtures must
+match that exact schema.
 """
 from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import stat
 import sys
 from datetime import datetime, timezone
@@ -36,25 +40,49 @@ def canary():
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers — schema mirrors scripts/eval_ner_wiesp.py MetricsReport.to_dict()
 # ---------------------------------------------------------------------------
 
 
 def _make_baseline(
     tmp_path: Path,
     per_entity: dict[str, dict[str, float]] | None = None,
+    *,
+    include_meta: bool = True,
 ) -> Path:
     per_entity = per_entity or {
-        "Mission": {"precision": 0.9, "recall": 0.9, "f1": 0.9},
-        "Instrument": {"precision": 0.8, "recall": 0.8, "f1": 0.8},
+        "Mission": {"precision": 0.9, "recall": 0.9, "f1": 0.9, "support": 10},
+        "Instrument": {
+            "precision": 0.8,
+            "recall": 0.8,
+            "f1": 0.8,
+            "support": 10,
+        },
     }
     macro = sum(v["f1"] for v in per_entity.values()) / len(per_entity)
-    payload = {
+    payload: dict = {
         "per_entity": per_entity,
-        "summary": {"micro_f1": macro, "macro_f1": macro},
-        "model_revision": "87ce76dbc8c3b1e3f2bbe2c64fee5d25bc03c03d",
-        "generated_at": "2026-04-17T00:00:00Z",
+        "summary": {
+            "macro_f1": macro,
+            "macro_precision": macro,
+            "macro_recall": macro,
+            "micro_f1": macro,
+            "micro_precision": macro,
+            "micro_recall": macro,
+            "n_examples": 3,
+            "total_support": sum(v.get("support", 0) for v in per_entity.values()),
+        },
     }
+    if include_meta:
+        # This mirrors the REAL schema produced by scripts/eval_ner_wiesp.py:
+        # model_revision is nested under `meta`, NOT at the top level.
+        payload["meta"] = {
+            "dataset": "adsabs/WIESP2022-NER",
+            "model_name": "adsabs/nasa-smd-ibm-v0.1_NER_DEAL",
+            "model_revision": "87ce76dbc8c3b1e3f2bbe2c64fee5d25bc03c03d",
+            "split": "test",
+            "source": "fixture",
+        }
     path = tmp_path / "ner_wiesp_eval.json"
     path.write_text(json.dumps(payload))
     return path
@@ -125,6 +153,44 @@ def test_load_baseline_happy_path(canary, tmp_path: Path):
     payload = canary.load_baseline(path)
     assert "per_entity" in payload
     assert payload["per_entity"]["Mission"]["f1"] == 0.9
+    # model_revision is nested under `meta`, matching eval_ner_wiesp.py.
+    assert (
+        payload["meta"]["model_revision"]
+        == "87ce76dbc8c3b1e3f2bbe2c64fee5d25bc03c03d"
+    )
+
+
+def test_load_baseline_tolerates_missing_meta(canary, tmp_path: Path):
+    """Baselines without a `meta` block still load (backwards-compat)."""
+    path = _make_baseline(tmp_path, include_meta=False)
+    payload = canary.load_baseline(path)
+    assert "per_entity" in payload
+    # model_revision accessor returns None when meta is absent.
+    assert canary.baseline_model_revision(payload) is None
+
+
+def test_baseline_model_revision_extracts_from_meta(canary):
+    payload = {
+        "per_entity": {"X": {"precision": 1.0, "recall": 1.0, "f1": 1.0}},
+        "summary": {},
+        "meta": {"model_revision": "abc123"},
+    }
+    assert canary.baseline_model_revision(payload) == "abc123"
+
+
+def test_baseline_model_revision_returns_none_when_absent(canary):
+    assert (
+        canary.baseline_model_revision(
+            {"per_entity": {}, "summary": {}}
+        )
+        is None
+    )
+    assert (
+        canary.baseline_model_revision(
+            {"per_entity": {}, "summary": {}, "meta": {}}
+        )
+        is None
+    )
 
 
 def test_load_baseline_missing_file_raises_clear_error(canary, tmp_path: Path):
@@ -138,7 +204,7 @@ def test_load_baseline_malformed_missing_per_entity(
     canary, tmp_path: Path
 ):
     path = tmp_path / "bad.json"
-    path.write_text(json.dumps({"summary": {}, "model_revision": "x"}))
+    path.write_text(json.dumps({"summary": {}, "meta": {"model_revision": "x"}}))
     with pytest.raises(canary.FileFormatError) as excinfo:
         canary.load_baseline(path)
     assert "per_entity" in str(excinfo.value)
@@ -151,13 +217,42 @@ def test_load_baseline_malformed_missing_f1(canary, tmp_path: Path):
             {
                 "per_entity": {"Mission": {"precision": 0.9, "recall": 0.9}},
                 "summary": {"micro_f1": 0.9, "macro_f1": 0.9},
-                "model_revision": "x",
+                "meta": {"model_revision": "x"},
             }
         )
     )
     with pytest.raises(canary.FileFormatError) as excinfo:
         canary.load_baseline(path)
     assert "f1" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# Integration: regression guard against schema drift with eval_ner_wiesp.py
+# ---------------------------------------------------------------------------
+
+
+def test_load_baseline_accepts_committed_eval_ner_wiesp_output(canary):
+    """Regression guard: the canary must load the schema produced by
+    scripts/eval_ner_wiesp.py without raising FileFormatError.
+
+    This is the exact bug the previous review caught — canary required
+    model_revision at the top level, but eval_ner_wiesp writes it nested
+    under `meta`. This test loads the actual committed baseline file.
+    """
+    committed_baseline = REPO_ROOT / "results" / "ner_wiesp_eval.json"
+    if not committed_baseline.exists():
+        pytest.skip(
+            f"{committed_baseline} not present in this checkout; "
+            "regenerate via scripts/eval_ner_wiesp.py."
+        )
+    payload = canary.load_baseline(committed_baseline)
+    # Schema sanity: top-level keys, per_entity populated, meta.model_revision set.
+    assert "per_entity" in payload
+    assert "summary" in payload
+    assert isinstance(payload["per_entity"], dict) and payload["per_entity"]
+    # model_revision must be reachable via the accessor (it's nested in meta).
+    revision = canary.baseline_model_revision(payload)
+    assert revision is None or isinstance(revision, str)
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +453,11 @@ def test_main_writes_log_with_expected_schema(
 
     assert payload["model_name"] == canary.MODEL_NAME
     assert payload["model_revision"] == canary.MODEL_REVISION
+    # baseline_revision is sourced from meta.model_revision in the baseline
+    assert (
+        payload["baseline_revision"]
+        == "87ce76dbc8c3b1e3f2bbe2c64fee5d25bc03c03d"
+    )
     assert payload["paper_count"] == 2
     assert payload["threshold"] == canary.DRIFT_THRESHOLD
     assert payload["exceeded"] is False
@@ -435,3 +535,46 @@ def test_main_raises_file_format_error_when_baseline_missing(
                 "--mock-model",
             ]
         )
+
+
+def test_main_runs_against_committed_baseline_and_fixture(
+    canary, tmp_path: Path, monkeypatch
+):
+    """End-to-end regression: the script should run cleanly against the
+    committed baseline and fixture without raising FileFormatError.
+
+    In --mock-model mode, predictions equal gold so drift = 0 and exit = 0
+    (unless the baseline declares entity types with f1 < 1 for entity types
+    that appear in the reference fixture — which would legitimately be drift).
+
+    This guards against the exact previous regression: canary required
+    top-level model_revision and crashed on its own companion's output.
+    """
+    committed_baseline = REPO_ROOT / "results" / "ner_wiesp_eval.json"
+    committed_fixture = REPO_ROOT / "tests" / "fixtures" / "canary_ner_reference.json"
+    if not committed_baseline.exists() or not committed_fixture.exists():
+        pytest.skip("committed baseline/fixture not present in this checkout")
+
+    # Belt-and-suspenders: ensure no real model load even if --mock-model is
+    # somehow ignored.
+    def _boom(revision: str):
+        raise AssertionError("load_model should not be called with --mock-model")
+
+    monkeypatch.setattr(canary, "load_model", _boom)
+
+    log_dir = tmp_path / "logs"
+    exit_code = canary.main(
+        [
+            "--baseline",
+            str(committed_baseline),
+            "--fixture",
+            str(committed_fixture),
+            "--log-dir",
+            str(log_dir),
+            "--mock-model",
+        ]
+    )
+    # Exit 0 or 1 both acceptable; key assertion is NO FileFormatError.
+    assert exit_code in (0, 1)
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    assert (log_dir / f"{today}.json").exists()

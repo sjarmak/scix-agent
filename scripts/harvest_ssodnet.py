@@ -148,8 +148,22 @@ def download_parquet(
 # ---------------------------------------------------------------------------
 
 
+PARQUET_COLUMNS = [
+    "sso_id",
+    "sso_name",
+    "sso_number",
+    "sso_class",
+    "diameter.value",
+    "albedo.value",
+    "taxonomy.class",
+]
+
+
 def read_parquet(path: Path) -> list[dict[str, Any]]:
     """Read a Parquet file and return rows as dicts.
+
+    Only reads the columns needed by parse_sso_record to avoid loading
+    the full 915-column ssoBFT file (~27GB) into memory.
 
     Tries pyarrow first, falls back to pandas.
 
@@ -162,12 +176,8 @@ def read_parquet(path: Path) -> list[dict[str, Any]]:
     try:
         import pyarrow.parquet as pq
 
-        table = pq.read_table(str(path))
-        records = table.to_pydict()
-        # Convert columnar dict to list of row dicts
-        keys = list(records.keys())
-        num_rows = len(records[keys[0]]) if keys else 0
-        rows = [{k: records[k][i] for k in keys} for i in range(num_rows)]
+        table = pq.read_table(str(path), columns=PARQUET_COLUMNS)
+        rows = table.to_pylist()
         logger.info("Read %d rows from %s using pyarrow", len(rows), path)
         return rows
     except ImportError:
@@ -176,7 +186,7 @@ def read_parquet(path: Path) -> list[dict[str, Any]]:
     try:
         import pandas as pd
 
-        df = pd.read_parquet(str(path))
+        df = pd.read_parquet(str(path), columns=PARQUET_COLUMNS)
         rows = df.to_dict(orient="records")
         logger.info("Read %d rows from %s using pandas", len(rows), path)
         return rows
@@ -192,8 +202,19 @@ def read_parquet(path: Path) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+def _notnull(val: Any) -> bool:
+    """Return True if val is a non-empty, non-NaN value."""
+    if val is None:
+        return False
+    s = str(val).strip()
+    return s != "" and s.lower() != "nan"
+
+
 def parse_sso_record(row: dict[str, Any]) -> dict[str, Any] | None:
     """Parse a single ssoBFT row into a harvester record.
+
+    Column names use dot-notation from the Parquet schema (e.g.
+    ``diameter.value``, ``taxonomy.class``).
 
     Args:
         row: Dict from Parquet row.
@@ -205,44 +226,41 @@ def parse_sso_record(row: dict[str, Any]) -> dict[str, Any] | None:
     if not sso_name:
         return None
 
-    # Build properties from physical data
     properties: dict[str, Any] = {}
-    for field in ("diameter", "albedo", "taxonomy_class"):
-        val = row.get(field)
-        if val is not None and val != "" and str(val) != "nan":
-            # Map taxonomy_class to taxonomy in properties
-            prop_key = "taxonomy" if field == "taxonomy_class" else field
-            properties[prop_key] = val
+
+    diameter = row.get("diameter.value")
+    if _notnull(diameter):
+        properties["diameter"] = diameter
+
+    albedo = row.get("albedo.value")
+    if _notnull(albedo):
+        properties["albedo"] = albedo
+
+    taxonomy = row.get("taxonomy.class")
+    if _notnull(taxonomy):
+        properties["taxonomy"] = taxonomy
+
+    sso_class = row.get("sso_class")
+    if _notnull(sso_class):
+        properties["sso_class"] = sso_class
 
     sso_number = row.get("sso_number")
-    if sso_number is not None and str(sso_number).strip():
+    if _notnull(sso_number):
         properties["sso_number"] = sso_number
 
-    # Build identifiers
-    identifiers: list[dict[str, Any]] = [
-        {"id_scheme": "ssodnet", "external_id": sso_name, "is_primary": True},
-    ]
-    spkid = row.get("spkid")
-    if spkid is not None and str(spkid).strip() and str(spkid) != "nan":
+    identifiers: list[dict[str, Any]] = []
+
+    sso_id = row.get("sso_id")
+    if _notnull(sso_id):
         identifiers.append(
-            {"id_scheme": "sbdb_spkid", "external_id": str(spkid).strip(), "is_primary": False}
+            {"id_scheme": "ssodnet", "external_id": str(sso_id).strip(), "is_primary": True}
         )
 
-    # Build aliases from other_designations (pipe-separated)
     aliases: list[str] = []
-    other_desig = row.get("other_designations", "")
-    if other_desig and str(other_desig).strip() and str(other_desig) != "nan":
-        for desig in str(other_desig).split("|"):
-            desig = desig.strip()
-            if desig and desig != sso_name:
-                aliases.append(desig)
-
-    # Add numbered designation as alias if present
-    if sso_number is not None and str(sso_number).strip() and str(sso_number) != "nan":
+    if _notnull(sso_number):
         num_str = str(sso_number).strip()
         numbered_name = f"({num_str}) {sso_name}"
-        if numbered_name not in aliases:
-            aliases.append(numbered_name)
+        aliases.append(numbered_name)
 
     return {
         "canonical_name": sso_name,

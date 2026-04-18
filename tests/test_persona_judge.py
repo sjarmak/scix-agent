@@ -21,6 +21,10 @@ from dataclasses import dataclass
 import pytest
 
 from scix.eval.persona_judge import (
+    DEFAULT_PERSONA,
+    PERSONA_NAME,
+    UMBRELA_PERSONA_NAME,
+    ClaudeSubprocessDispatcher,
     DispatcherError,
     JudgeScore,
     JudgeTriple,
@@ -28,10 +32,10 @@ from scix.eval.persona_judge import (
     StubDispatcher,
     build_snippet,
     parse_judge_response,
+    parse_umbrela_response,
     quadratic_weighted_kappa,
     spearman_rho,
 )
-
 
 # ---------------------------------------------------------------------------
 # Snippet construction
@@ -77,9 +81,9 @@ class TestParseJudgeResponse:
 
     def test_parses_json_embedded_in_prose(self) -> None:
         raw = (
-            'Here is my assessment:\n\n'
+            "Here is my assessment:\n\n"
             '{"score": 3, "reason": "Strongly relevant — same method and subfield."}\n\n'
-            'End of response.'
+            "End of response."
         )
         score = parse_judge_response(raw)
         assert score.score == 3
@@ -101,6 +105,100 @@ class TestParseJudgeResponse:
     def test_rejects_no_json(self) -> None:
         with pytest.raises(ValueError):
             parse_judge_response("no json here")
+
+
+# ---------------------------------------------------------------------------
+# Response parsing — UMBRELA format
+# ---------------------------------------------------------------------------
+
+
+class TestParseUmbrelaResponse:
+    def test_parses_strict_two_line_output(self) -> None:
+        raw = "##final score: 2\n##needs_human_review: false\n"
+        score = parse_umbrela_response(raw)
+        assert score.score == 2
+        assert score.reason == ""  # UMBRELA does not emit a reason
+        assert score.needs_human_review is False
+
+    def test_parses_true_review_flag(self) -> None:
+        raw = "##final score: 3\n##needs_human_review: true"
+        score = parse_umbrela_response(raw)
+        assert score.score == 3
+        assert score.needs_human_review is True
+
+    def test_case_insensitive_flag(self) -> None:
+        raw = "##final score: 1\n##needs_human_review: TRUE"
+        assert parse_umbrela_response(raw).needs_human_review is True
+
+    def test_tolerates_surrounding_prose(self) -> None:
+        raw = (
+            "Let me consider the intent...\n"
+            "##final score: 0\n"
+            "##needs_human_review: false\n"
+            "End.\n"
+        )
+        score = parse_umbrela_response(raw)
+        assert score.score == 0
+        assert score.needs_human_review is False
+
+    def test_rejects_missing_score_line(self) -> None:
+        with pytest.raises(ValueError, match="##final score"):
+            parse_umbrela_response("##needs_human_review: false")
+
+    def test_rejects_missing_review_line(self) -> None:
+        with pytest.raises(ValueError, match="##needs_human_review"):
+            parse_umbrela_response("##final score: 2")
+
+    def test_rejects_out_of_range_score(self) -> None:
+        raw = "##final score: 5\n##needs_human_review: false"
+        with pytest.raises(ValueError):
+            parse_umbrela_response(raw)
+
+    def test_rejects_empty_response(self) -> None:
+        with pytest.raises(ValueError):
+            parse_umbrela_response("")
+
+
+# ---------------------------------------------------------------------------
+# ClaudeSubprocessDispatcher default persona + factory
+# ---------------------------------------------------------------------------
+
+
+class TestClaudeSubprocessDispatcherPersonas:
+    def test_default_is_umbrela(self) -> None:
+        """xz4.1.28.1: UMBRELA is the new default — bead acceptance."""
+        dispatcher = ClaudeSubprocessDispatcher()
+        assert dispatcher.persona == UMBRELA_PERSONA_NAME
+        assert DEFAULT_PERSONA == UMBRELA_PERSONA_NAME
+
+    def test_in_domain_researcher_factory(self) -> None:
+        """Alternate persona still reachable via classmethod."""
+        dispatcher = ClaudeSubprocessDispatcher.in_domain_researcher()
+        assert dispatcher.persona == PERSONA_NAME
+
+    def test_umbrela_dispatcher_parses_umbrela_format(self) -> None:
+        dispatcher = ClaudeSubprocessDispatcher()
+        parsed = dispatcher.response_parser("##final score: 2\n##needs_human_review: false")
+        assert parsed.score == 2
+
+    def test_in_domain_dispatcher_parses_json_format(self) -> None:
+        dispatcher = ClaudeSubprocessDispatcher.in_domain_researcher()
+        parsed = dispatcher.response_parser('{"score": 3, "reason": "matches methodology"}')
+        assert parsed.score == 3
+        assert parsed.reason == "matches methodology"
+
+    def test_umbrela_prompt_includes_query_and_format_reminder(self) -> None:
+        dispatcher = ClaudeSubprocessDispatcher()
+        triple = JudgeTriple(
+            query="transformer protein folding",
+            bibcode="2024ABC",
+            snippet="Title: X. Abstract: Y.",
+        )
+        prompt = dispatcher.prompt_formatter(triple, dispatcher.persona)
+        assert "transformer protein folding" in prompt
+        assert "##final score" in prompt
+        assert "##needs_human_review" in prompt
+        assert UMBRELA_PERSONA_NAME in prompt
 
 
 # ---------------------------------------------------------------------------

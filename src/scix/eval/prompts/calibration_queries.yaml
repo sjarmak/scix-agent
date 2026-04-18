@@ -1,0 +1,187 @@
+# Calibration seed queries for the UMBRELA judge.
+#
+# 50 queries spread across the 6 entity-enrichment value-prop lanes
+# (see docs/prd/amendments/2026-04-18-m6-m12-collapse.md):
+#
+#   - alias            : query uses an acronym that should be expanded via
+#                        entity_aliases (HST -> Hubble Space Telescope, etc.)
+#   - ontology         : query carries an ontology predicate that maps to a
+#                        JSONB property filter (M-type asteroid, IR instrument).
+#   - disambiguation   : query contains a homograph (Hubble, Psyche, Kepler,
+#                        Cassini) that must resolve to the correct sense.
+#   - entity_type      : query is scoped by entity *type* (instrument, mission,
+#                        asteroid) rather than a specific entity.
+#   - specific_entity  : query pinpoints one entity and we want papers
+#                        mentioning it (JWST, TRAPPIST-1, Sgr A*).
+#   - community        : query targets a coherent subfield; retrieval should
+#                        recover papers from the same Leiden citation community.
+#
+# This file is an input to scripts/generate_calibration_seed.py. The script
+# runs hybrid_search on each query, picks top-K candidate bibcodes, and
+# dispatches the umbrela_judge subagent to draft a score for each pair.
+
+version: 1
+default_top_k: 5  # candidates per query; total rows = n_queries * default_top_k
+
+queries:
+  # ---- alias expansion (8) ----
+  - id: alias_01
+    lane: alias
+    query: "HST observations of cool brown dwarfs"
+  - id: alias_02
+    lane: alias
+    query: "NIRSpec spectroscopy of exoplanet atmospheres"
+  - id: alias_03
+    lane: alias
+    query: "JWST MIRI mid-infrared imaging of planetary nebulae"
+  - id: alias_04
+    lane: alias
+    query: "SDSS photometry of low-mass galaxies"
+  - id: alias_05
+    lane: alias
+    query: "CMB anisotropy measurements from WMAP"
+  - id: alias_06
+    lane: alias
+    query: "X-ray binaries detected by Chandra"
+  - id: alias_07
+    lane: alias
+    query: "Kepler exoplanet transit light curves"
+  - id: alias_08
+    lane: alias
+    query: "LIGO gravitational wave compact binary mergers"
+
+  # ---- ontology expansion (8) ----
+  - id: ontology_01
+    lane: ontology
+    query: "M-type asteroid metallic composition from near-infrared spectroscopy"
+  - id: ontology_02
+    lane: ontology
+    query: "S-type asteroid taxonomy and surface mineralogy"
+  - id: ontology_03
+    lane: ontology
+    query: "C-type asteroid water and organics content"
+  - id: ontology_04
+    lane: ontology
+    query: "infrared instruments on space telescopes for exoplanet detection"
+  - id: ontology_05
+    lane: ontology
+    query: "radio telescope surveys of active galactic nuclei"
+  - id: ontology_06
+    lane: ontology
+    query: "near-Earth asteroids with high radar albedo"
+  - id: ontology_07
+    lane: ontology
+    query: "flagship NASA missions to the outer solar system"
+  - id: ontology_08
+    lane: ontology
+    query: "V-type asteroid basaltic surface signatures"
+
+  # ---- disambiguation (8) ----
+  - id: disambig_01
+    lane: disambiguation
+    query: "Hubble deep field galaxy morphology"
+  - id: disambig_02
+    lane: disambiguation
+    query: "Edwin Hubble and the recession of galaxies"
+  - id: disambig_03
+    lane: disambiguation
+    query: "Psyche asteroid composition from radar observations"
+  - id: disambig_04
+    lane: disambiguation
+    query: "Psyche spacecraft mission instruments and trajectory"
+  - id: disambig_05
+    lane: disambiguation
+    query: "Kepler's laws of planetary motion and historical derivation"
+  - id: disambig_06
+    lane: disambiguation
+    query: "Kepler space telescope exoplanet occurrence statistics"
+  - id: disambig_07
+    lane: disambiguation
+    query: "Cassini encounter with Enceladus plume"
+  - id: disambig_08
+    lane: disambiguation
+    query: "Cassini division Saturn ring structure gravitational resonance"
+
+  # ---- entity-type filter (8) ----
+  - id: etype_01
+    lane: entity_type
+    query: "papers introducing new space-based astronomical observatories"
+  - id: etype_02
+    lane: entity_type
+    query: "papers describing novel instruments for exoplanet characterization"
+  - id: etype_03
+    lane: entity_type
+    query: "papers characterizing individual main-belt asteroids"
+  - id: etype_04
+    lane: entity_type
+    query: "papers on particular long-period comets"
+  - id: etype_05
+    lane: entity_type
+    query: "papers characterizing specific nearby galaxies"
+  - id: etype_06
+    lane: entity_type
+    query: "papers on specific gravitational wave events from binary mergers"
+  - id: etype_07
+    lane: entity_type
+    query: "papers studying specific transiting exoplanets in detail"
+  - id: etype_08
+    lane: entity_type
+    query: "papers on particular pulsars in globular clusters"
+
+  # ---- specific-entity filter (8) ----
+  - id: specific_01
+    lane: specific_entity
+    query: "JWST first-year observations of high-redshift galaxies"
+  - id: specific_02
+    lane: specific_entity
+    query: "TRAPPIST-1 planetary atmospheric characterization"
+  - id: specific_03
+    lane: specific_entity
+    query: "47 Tucanae globular cluster stellar population"
+  - id: specific_04
+    lane: specific_entity
+    query: "Eris dwarf planet surface composition"
+  - id: specific_05
+    lane: specific_entity
+    query: "Sgr A* supermassive black hole imaging Event Horizon Telescope"
+  - id: specific_06
+    lane: specific_entity
+    query: "GW170817 neutron star merger electromagnetic counterpart"
+  - id: specific_07
+    lane: specific_entity
+    query: "Oumuamua interstellar object non-gravitational acceleration"
+  - id: specific_08
+    lane: specific_entity
+    query: "Proxima Centauri b orbital parameters and habitability"
+
+  # ---- community expansion (10) ----
+  - id: community_01
+    lane: community
+    query: "baryon acoustic oscillations as a cosmological standard ruler"
+  - id: community_02
+    lane: community
+    query: "self-interacting dark matter galactic halos"
+  - id: community_03
+    lane: community
+    query: "primordial black holes as dark matter candidates constraints"
+  - id: community_04
+    lane: community
+    query: "21-cm hydrogen cosmological signal from the Epoch of Reionization"
+  - id: community_05
+    lane: community
+    query: "N-body simulations of large-scale cosmic structure formation"
+  - id: community_06
+    lane: community
+    query: "photometric redshift calibration for weak lensing surveys"
+  - id: community_07
+    lane: community
+    query: "ACT CMB lensing detection and cross-correlation with galaxies"
+  - id: community_08
+    lane: community
+    query: "stellar archaeology of the Milky Way halo using metal-poor stars"
+  - id: community_09
+    lane: community
+    query: "machine learning classification of transient astronomical sources"
+  - id: community_10
+    lane: community
+    query: "Bayesian inference for exoplanet transit light curves"

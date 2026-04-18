@@ -49,7 +49,7 @@ import logging
 import math
 import re
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -67,9 +67,21 @@ ERROR_SENTINEL: int = -1
 """Returned for a triple that exhausted retries — surfaces as a hard error."""
 
 PERSONA_NAME: str = "in_domain_researcher"
-"""Name of the subagent prompt file under ``.claude/agents/``."""
+"""Alternate (legacy) subagent: SciX-specific scientist framing, JSON output."""
 
-DEFAULT_PROMPT_VERSION: str = "in_domain_researcher-v1"
+UMBRELA_PERSONA_NAME: str = "umbrela_judge"
+"""Default subagent: verbatim UMBRELA rubric (Castorini, Apache-2.0). See
+.claude/agents/umbrela_judge.md and arXiv:2406.06519."""
+
+DEFAULT_PERSONA: str = UMBRELA_PERSONA_NAME
+"""UMBRELA is the default — published Kendall's τ > 0.87 vs TREC human
+assessors gives us a benchmarked baseline. The in_domain_researcher
+persona is retained for A/B comparison on the same seed."""
+
+IN_DOMAIN_PROMPT_VERSION: str = "in_domain_researcher-v1"
+UMBRELA_PROMPT_VERSION: str = "umbrela_judge-v1"
+
+DEFAULT_PROMPT_VERSION: str = UMBRELA_PROMPT_VERSION
 """Prompt version tag used for drift-watch bookkeeping."""
 
 DEFAULT_MAX_CONCURRENCY: int = 4
@@ -109,14 +121,21 @@ class JudgeScore:
         score: 0-3 relevance score, or :data:`ERROR_SENTINEL` on failure.
         reason: Free-text reasoning from the persona (or error message on
             failure). Truncated to ~1000 chars to keep logs bounded.
+            Empty string when the underlying prompt (e.g. UMBRELA) does
+            not request a reason.
         triple: Back-reference to the input triple (optional — set by
             :class:`PersonaJudge.run`; ``None`` when the DTO is used
             standalone).
+        needs_human_review: Self-reported triage flag. ``True`` when the
+            judge flagged the row as borderline / uncertain. ``None`` when
+            the prompt does not emit a review flag (e.g. the JSON
+            in_domain_researcher format).
     """
 
     score: int
     reason: str
     triple: JudgeTriple | None = None
+    needs_human_review: bool | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +252,53 @@ def parse_judge_response(raw: str) -> JudgeScore:
     raise ValueError(f"no parseable judge JSON in response (last error: {last_error})")
 
 
+_UMBRELA_SCORE_RE = re.compile(
+    r"^\s*##\s*final\s*score\s*:\s*([0-3])\s*$", re.IGNORECASE | re.MULTILINE
+)
+_UMBRELA_REVIEW_RE = re.compile(
+    r"^\s*##\s*needs[_ ]human[_ ]review\s*:\s*(true|false)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def parse_umbrela_response(raw: str) -> JudgeScore:
+    """Parse the UMBRELA-formatted judge response.
+
+    UMBRELA (verbatim) emits ``##final score: N``. Our pipeline adds one
+    adapter line — ``##needs_human_review: true|false`` — after it. Both
+    lines must appear on their own line; any surrounding prose is
+    tolerated but ignored.
+
+    Args:
+        raw: Raw stdout from the subagent.
+
+    Returns:
+        :class:`JudgeScore` with ``reason=""`` (UMBRELA does not request
+        a reason, per the verbatim rubric) and ``needs_human_review`` set
+        from the adapter line.
+
+    Raises:
+        ValueError: If either line is missing or malformed.
+    """
+    if not raw or not raw.strip():
+        raise ValueError("empty response")
+
+    score_match = _UMBRELA_SCORE_RE.search(raw)
+    if score_match is None:
+        raise ValueError("no '##final score: N' line found in UMBRELA response")
+    score = int(score_match.group(1))
+
+    review_match = _UMBRELA_REVIEW_RE.search(raw)
+    if review_match is None:
+        raise ValueError(
+            "no '##needs_human_review: true|false' line found — "
+            "the umbrela_judge output-format addendum was not emitted"
+        )
+    needs_human_review = review_match.group(1).lower() == "true"
+
+    return JudgeScore(score=score, reason="", needs_human_review=needs_human_review)
+
+
 # ---------------------------------------------------------------------------
 # Dispatchers
 # ---------------------------------------------------------------------------
@@ -270,6 +336,10 @@ class StubDispatcher:
         return JudgeScore(score=self.fixed_score, reason=self.reason)
 
 
+PromptFormatter = Callable[["JudgeTriple", str], str]
+ResponseParser = Callable[[str], "JudgeScore"]
+
+
 @dataclass
 class ClaudeSubprocessDispatcher:
     """Dispatches via ``claude -p <prompt>`` as a subprocess (OAuth, no API key).
@@ -277,22 +347,56 @@ class ClaudeSubprocessDispatcher:
     Relies on the user's existing Claude Code OAuth session — this is the
     high-throughput path for 500+ triples. The smaller-batch in-session
     ``Agent`` tool path is used when a Claude Code session orchestrates the
-    judge directly (scripts/judge_triples.py does not use that path).
+    judge directly.
+
+    Defaults to the UMBRELA persona (verbatim Castorini rubric), which has
+    published Kendall's τ > 0.87 vs TREC human assessors. The
+    ``in_domain_researcher()`` classmethod returns a dispatcher configured
+    for the legacy SciX-specific persona (JSON output with a reason field).
 
     Attributes:
         claude_binary: Path or name of the ``claude`` CLI.
         persona: Subagent name to dispatch to (default
-            :data:`PERSONA_NAME`).
+            :data:`DEFAULT_PERSONA`, i.e. UMBRELA).
         timeout_s: Per-call timeout. A timeout propagates as
             :class:`DispatcherError` so the orchestrator can retry.
+        prompt_formatter: Builds the text passed to ``claude -p`` from a
+            :class:`JudgeTriple` and the persona name. Defaults to the
+            UMBRELA formatter.
+        response_parser: Parses the subprocess stdout into a
+            :class:`JudgeScore`. Defaults to :func:`parse_umbrela_response`.
     """
 
     claude_binary: str = "claude"
-    persona: str = PERSONA_NAME
+    persona: str = DEFAULT_PERSONA
     timeout_s: float = DEFAULT_SUBPROCESS_TIMEOUT_S
+    prompt_formatter: PromptFormatter = field(default=None)  # type: ignore[assignment]
+    response_parser: ResponseParser = field(default=None)  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.prompt_formatter is None:
+            self.prompt_formatter = _format_persona_prompt_umbrela
+        if self.response_parser is None:
+            self.response_parser = parse_umbrela_response
+
+    @classmethod
+    def in_domain_researcher(
+        cls,
+        *,
+        claude_binary: str = "claude",
+        timeout_s: float = DEFAULT_SUBPROCESS_TIMEOUT_S,
+    ) -> ClaudeSubprocessDispatcher:
+        """Factory for the legacy SciX-specific persona (JSON output)."""
+        return cls(
+            claude_binary=claude_binary,
+            persona=PERSONA_NAME,
+            timeout_s=timeout_s,
+            prompt_formatter=_format_persona_prompt,
+            response_parser=parse_judge_response,
+        )
 
     async def judge(self, triple: JudgeTriple) -> JudgeScore:
-        prompt = _format_persona_prompt(triple, persona=self.persona)
+        prompt = self.prompt_formatter(triple, self.persona)
         try:
             completed = await asyncio.wait_for(
                 _run_claude_subprocess(self.claude_binary, prompt),
@@ -309,12 +413,11 @@ class ClaudeSubprocessDispatcher:
 
         if completed.returncode != 0:
             raise DispatcherError(
-                f"claude -p exited {completed.returncode}: "
-                f"stderr={completed.stderr[:500]!r}"
+                f"claude -p exited {completed.returncode}: " f"stderr={completed.stderr[:500]!r}"
             )
 
         try:
-            return parse_judge_response(completed.stdout)
+            return self.response_parser(completed.stdout)
         except ValueError as exc:
             raise DispatcherError(f"unparseable judge response: {exc}") from exc
 
@@ -345,12 +448,11 @@ async def _run_claude_subprocess(binary: str, prompt: str) -> subprocess.Complet
     )
 
 
-def _format_persona_prompt(triple: JudgeTriple, *, persona: str) -> str:
-    """Format the user-message prompt passed to ``claude -p``.
+def _format_persona_prompt(triple: JudgeTriple, persona: str) -> str:
+    """Format the user-message prompt for the JSON-output persona
+    (:data:`PERSONA_NAME` / ``in_domain_researcher``).
 
-    The prompt delegates to the named subagent (which carries the persona
-    instructions) and embeds the triple. The subagent is responsible for
-    emitting a JSON object with ``score`` and ``reason``.
+    The subagent emits a JSON object with ``score`` and ``reason``.
     """
     return (
         f"Use the {persona} subagent to score this (query, paper) pair on the "
@@ -359,6 +461,26 @@ def _format_persona_prompt(triple: JudgeTriple, *, persona: str) -> str:
         f"Paper (bibcode {triple.bibcode}):\n{triple.snippet}\n\n"
         f"Respond with a single JSON object: "
         f'{{"score": <0-3>, "reason": "<one sentence>"}}.'
+    )
+
+
+def _format_persona_prompt_umbrela(triple: JudgeTriple, persona: str) -> str:
+    """Format the prompt for the UMBRELA persona.
+
+    The subagent's prompt file carries the verbatim UMBRELA rubric and
+    4-example demonstration. The caller injects only the Query and
+    Passage and reminds the subagent of the exact output format.
+    """
+    return (
+        f"Use the {persona} subagent to score this (query, passage) pair "
+        f"on the UMBRELA 0-3 relevance scale defined in the subagent "
+        f"definition.\n\n"
+        f"Query: {triple.query}\n\n"
+        f"Passage (bibcode {triple.bibcode}): {triple.snippet}\n\n"
+        f"Respond with exactly two lines:\n"
+        f"##final score: <0|1|2|3>\n"
+        f"##needs_human_review: <true|false>\n"
+        f"No other output. No reasoning. No JSON."
     )
 
 
@@ -435,16 +557,21 @@ class PersonaJudge:
                 attempt += 1
                 continue
             except Exception as exc:  # fatal — don't retry
-                logger.error(
-                    "fatal judge error for %s: %s", triple.bibcode, exc, exc_info=True
-                )
+                logger.error("fatal judge error for %s: %s", triple.bibcode, exc, exc_info=True)
                 return JudgeScore(
                     score=ERROR_SENTINEL,
                     reason=f"fatal error: {exc}",
                     triple=triple,
                 )
-            # Attach triple to score (dispatcher returns it with triple=None)
-            return JudgeScore(score=score.score, reason=score.reason, triple=triple)
+            # Attach triple to score (dispatcher returns it with triple=None).
+            # Preserve needs_human_review so UMBRELA triage flags survive
+            # the orchestrator hop.
+            return JudgeScore(
+                score=score.score,
+                reason=score.reason,
+                triple=triple,
+                needs_human_review=score.needs_human_review,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -482,18 +609,14 @@ def quadratic_weighted_kappa(
         ValueError: On length mismatch or out-of-range scores.
     """
     if len(human) != len(judge_scores):
-        raise ValueError(
-            f"length mismatch: {len(human)} vs {len(judge_scores)}"
-        )
+        raise ValueError(f"length mismatch: {len(human)} vs {len(judge_scores)}")
     n = len(human)
     if n == 0:
         return 0.0
 
     for value in (*human, *judge_scores):
         if not (min_score <= value <= max_score):
-            raise ValueError(
-                f"score {value} out of range [{min_score}, {max_score}]"
-            )
+            raise ValueError(f"score {value} out of range [{min_score}, {max_score}]")
 
     num_categories = max_score - min_score + 1
     if num_categories < 2:
@@ -505,8 +628,7 @@ def quadratic_weighted_kappa(
         obs[h - min_score][j - min_score] += 1
 
     human_marginal = [sum(row) for row in obs]
-    judge_marginal = [sum(obs[r][c] for r in range(num_categories))
-                      for c in range(num_categories)]
+    judge_marginal = [sum(obs[r][c] for r in range(num_categories)) for c in range(num_categories)]
 
     # Expected matrix (under independence)
     expected = [
@@ -517,19 +639,14 @@ def quadratic_weighted_kappa(
     # Quadratic weights
     denom_w = (num_categories - 1) ** 2
     weights = [
-        [((r - c) ** 2) / denom_w for c in range(num_categories)]
-        for r in range(num_categories)
+        [((r - c) ** 2) / denom_w for c in range(num_categories)] for r in range(num_categories)
     ]
 
     num = sum(
-        weights[r][c] * obs[r][c]
-        for r in range(num_categories)
-        for c in range(num_categories)
+        weights[r][c] * obs[r][c] for r in range(num_categories) for c in range(num_categories)
     )
     den = sum(
-        weights[r][c] * expected[r][c]
-        for r in range(num_categories)
-        for c in range(num_categories)
+        weights[r][c] * expected[r][c] for r in range(num_categories) for c in range(num_categories)
     )
 
     if den == 0:
@@ -603,10 +720,12 @@ __all__ = [
     "ClaudeSubprocessDispatcher",
     "DEFAULT_MAX_CONCURRENCY",
     "DEFAULT_MAX_RETRIES",
+    "DEFAULT_PERSONA",
     "DEFAULT_PROMPT_VERSION",
     "Dispatcher",
     "DispatcherError",
     "ERROR_SENTINEL",
+    "IN_DOMAIN_PROMPT_VERSION",
     "JudgeScore",
     "JudgeTriple",
     "PERSONA_NAME",
@@ -614,8 +733,11 @@ __all__ = [
     "SCORE_MAX",
     "SCORE_MIN",
     "StubDispatcher",
+    "UMBRELA_PERSONA_NAME",
+    "UMBRELA_PROMPT_VERSION",
     "build_snippet",
     "parse_judge_response",
+    "parse_umbrela_response",
     "quadratic_weighted_kappa",
     "spearman_rho",
 ]

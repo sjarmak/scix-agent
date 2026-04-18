@@ -892,6 +892,25 @@ def create_server(_run_self_test: bool = True):
                             "description": "Enable fuzzy matching (resolve only)",
                         },
                         "limit": {"type": "integer", "default": 20},
+                        "min_confidence_tier": {
+                            "type": "integer",
+                            "enum": [1, 2, 3],
+                            "description": (
+                                "Only return extractions whose confidence_tier is "
+                                ">= this value (1=low, 2=medium, 3=high). Omit to "
+                                "include all tiers. Applies to action='search' only."
+                            ),
+                        },
+                        "sources": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Filter extractions to these provenance sources "
+                                "only (e.g. ['metadata', 'ner', 'llm']). Omit to "
+                                "include all sources. Applies to action='search' "
+                                "only."
+                            ),
+                        },
                     },
                     "required": ["action", "query"],
                 },
@@ -1533,6 +1552,21 @@ def _handle_citation_similarity(conn: psycopg.Connection, args: dict[str, Any]) 
     return _result_to_json(result)
 
 
+#: Mapping from integer ``min_confidence_tier`` to the set of TEXT
+#: ``confidence_tier`` values that satisfy the filter. The DB column is
+#: constrained to ``'high' | 'medium' | 'low'`` (migration 017); callers pass
+#: an integer so the public MCP contract is numerically comparable.
+#:
+#:     1 (low)    -> {'low', 'medium', 'high'}
+#:     2 (medium) -> {'medium', 'high'}
+#:     3 (high)   -> {'high'}
+_TIER_MIN_TO_ALLOWED: dict[int, list[str]] = {
+    1: ["low", "medium", "high"],
+    2: ["medium", "high"],
+    3: ["high"],
+}
+
+
 def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Unified entity search and resolution."""
     action = args.get("action", "search")
@@ -1585,16 +1619,54 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         limit = min(args.get("limit", 20), 200)
         containment = json.dumps({entity_type: [query]})
 
-        sql = """
+        # Build WHERE clauses conditionally so backward compatibility is
+        # preserved: when no provenance args are supplied, the effective
+        # SQL is identical to the pre-filter query.
+        where_clauses: list[str] = ["e.payload @> %s::jsonb"]
+        params: list[Any] = [containment]
+
+        sources = args.get("sources")
+        if sources is not None:
+            if not isinstance(sources, list) or not all(
+                isinstance(s, str) for s in sources
+            ):
+                return json.dumps(
+                    {"error": "sources must be a list of strings"}
+                )
+            where_clauses.append("e.source = ANY(%s::text[])")
+            params.append(list(sources))
+
+        min_confidence_tier = args.get("min_confidence_tier")
+        if min_confidence_tier is not None:
+            if (
+                not isinstance(min_confidence_tier, int)
+                or isinstance(min_confidence_tier, bool)
+                or min_confidence_tier not in _TIER_MIN_TO_ALLOWED
+            ):
+                return json.dumps(
+                    {
+                        "error": (
+                            "min_confidence_tier must be 1, 2, or 3; "
+                            f"got {min_confidence_tier!r}"
+                        )
+                    }
+                )
+            where_clauses.append("e.confidence_tier = ANY(%s::text[])")
+            params.append(_TIER_MIN_TO_ALLOWED[min_confidence_tier])
+
+        # NOTE: the f-string only splices a join of whitelisted SQL
+        # fragments; user-provided values are all bound via %s placeholders.
+        sql = f"""
             SELECT e.bibcode, e.extraction_type, e.extraction_version, e.payload,
                    p.title
             FROM extractions e
             JOIN papers p ON p.bibcode = e.bibcode
-            WHERE e.payload @> %s::jsonb
+            WHERE {" AND ".join(where_clauses)}
             LIMIT %s
         """
+        params.append(limit)
         with conn.cursor() as cur:
-            cur.execute(sql, (containment, limit))
+            cur.execute(sql, tuple(params))
             rows = cur.fetchall()
         papers = [
             {

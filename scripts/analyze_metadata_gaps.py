@@ -50,8 +50,16 @@ FIELD_TO_ENTITY_TYPE: dict[str, str] = {
 }
 
 # Cohort predicate reused by fetch_cohort_rows.  Exposed for tests / audit.
+#
+# NOTE on percent-sign escaping: psycopg3 treats ``%`` as the start of a
+# placeholder when a query string is passed alongside parameters to
+# ``cur.execute(query, params)``.  A bare ``ILIKE 'astro-ph%'`` therefore
+# raises ``ProgrammingError: only '%s', '%b', '%t' are allowed as
+# placeholders, got '%''``.  We escape the LIKE wildcard as ``%%``; psycopg3
+# unescapes it back to a single ``%`` before sending to the server on BOTH
+# the parameterised LIMIT path AND the streaming (no-params) path.
 ASTRONOMY_COHORT_SQL: str = (
-    "(EXISTS (SELECT 1 FROM unnest(arxiv_class) c WHERE c ILIKE 'astro-ph%'))\n"
+    "(EXISTS (SELECT 1 FROM unnest(arxiv_class) c WHERE c ILIKE 'astro-ph%%'))\n"
     "OR ('astronomy' = ANY(database))"
 )
 

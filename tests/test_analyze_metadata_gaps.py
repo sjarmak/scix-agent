@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -477,3 +479,98 @@ class TestWriteReport:
         # Sanity: ensure the default cap stays a sensible int.
         assert isinstance(DEFAULT_COHORT_BIBCODE_CAP, int)
         assert DEFAULT_COHORT_BIBCODE_CAP > 0
+
+
+# ---------------------------------------------------------------------------
+# psycopg3 placeholder-parser regression
+# ---------------------------------------------------------------------------
+
+
+def _psycopg_placeholder_safe(query: str) -> bool:
+    """Return True if no raw ``%`` appears outside an allowed placeholder.
+
+    psycopg3 treats ``%`` as the start of a placeholder when parameters are
+    supplied.  Only ``%s``, ``%b``, ``%t``, and the literal-percent escape
+    ``%%`` are legal.  Any other ``%X`` triggers ``ProgrammingError``.
+    """
+    # Replace all legal sequences with a neutral token, then look for stray %.
+    scrubbed = re.sub(r"%[sbt%]", "", query)
+    return "%" not in scrubbed
+
+
+class TestPsycopgPlaceholderEscape:
+    """Regression guard: bare ``%`` in SQL constant crashes parameterised path."""
+
+    def test_cohort_sql_has_no_bare_percent(self) -> None:
+        # The original bug: ILIKE 'astro-ph%' contained a bare % that the
+        # psycopg3 placeholder parser interpreted as a malformed placeholder.
+        # Escaping to %% is the fix.
+        assert _psycopg_placeholder_safe(ASTRONOMY_COHORT_SQL), (
+            f"Unescaped %% in ASTRONOMY_COHORT_SQL would crash psycopg3: "
+            f"{ASTRONOMY_COHORT_SQL!r}"
+        )
+
+    def test_cohort_sql_escapes_astro_ph_wildcard(self) -> None:
+        # Belt-and-braces: ensure the LIKE wildcard is explicitly %%.
+        assert "astro-ph%%" in ASTRONOMY_COHORT_SQL
+        assert "astro-ph%'" not in ASTRONOMY_COHORT_SQL.replace("astro-ph%%", "")
+
+    def test_limit_query_string_is_placeholder_safe(self) -> None:
+        # Mirror the exact query construction used in _fetch_rows_with_limit.
+        query = (
+            "SELECT bibcode, facility, data, keyword_norm\n"
+            "FROM papers\n"
+            f"WHERE {ASTRONOMY_COHORT_SQL}\n"
+            "LIMIT %s"
+        )
+        assert _psycopg_placeholder_safe(query), (
+            f"LIMIT query would crash psycopg3 placeholder parser: {query!r}"
+        )
+
+    def test_streaming_query_string_is_placeholder_safe(self) -> None:
+        # Mirror the exact query construction used in _fetch_rows_streaming.
+        query = (
+            "SELECT bibcode, facility, data, keyword_norm\n"
+            "FROM papers\n"
+            f"WHERE {ASTRONOMY_COHORT_SQL}"
+        )
+        assert _psycopg_placeholder_safe(query), (
+            f"Streaming query would crash psycopg3 placeholder parser: "
+            f"{query!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Real-database integration test (opt-in via SCIX_TEST_DSN)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestRealDatabaseSampleSize:
+    """Exercise --sample-size against a real psycopg3 cursor.
+
+    Skipped unless ``SCIX_TEST_DSN`` is set so we never touch production.
+    This is the regression test for the placeholder-parser crash: mocked
+    cursors never call into the real psycopg3 parameter parser, so a unit
+    test cannot catch the class of bug.
+    """
+
+    def test_sample_size_executes_without_programming_error(self) -> None:
+        test_dsn = os.environ.get("SCIX_TEST_DSN")
+        if not test_dsn:
+            pytest.skip("SCIX_TEST_DSN not set; skipping real-DB regression test")
+
+        import psycopg  # imported lazily so unit-only runs don't need the dep
+
+        with psycopg.connect(test_dsn) as conn:
+            # If the % escape is wrong, the next call raises
+            # psycopg.ProgrammingError before any rows come back.
+            rows = fetch_cohort_rows(conn, sample_size=10)
+
+        assert isinstance(rows, list)
+        # scix_test may be empty; the assertion is about no exception.
+        for r in rows:
+            assert "bibcode" in r
+            assert "facility" in r
+            assert "data" in r
+            assert "keyword_norm" in r

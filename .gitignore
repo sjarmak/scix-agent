@@ -71,6 +71,8 @@ Thumbs.db
 .claude/rfc-dag.log.md
 .claude/rfc-dag-artifacts/
 .claude/prd-build-artifacts/
+.claude/worktrees/
+.claude/prd-build.state.json
 
 # Cache
 .cache/

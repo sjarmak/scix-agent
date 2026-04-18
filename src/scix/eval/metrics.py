@@ -278,6 +278,22 @@ def format_m4_report(
     )
     lines.append("")
 
+    lines.append("## Lane deltas (vs hybrid_baseline)")
+    lines.append("")
+    lines.append("| Config | ΔnDCG@10 | ΔRecall@20 | ΔMRR |")
+    lines.append("|--------|----------|------------|------|")
+    baseline_q = results.query_reports.get("hybrid_baseline")
+    if baseline_q is not None:
+        for config in configs:
+            report = results.query_reports[config.name]
+            d_ndcg = report.mean_ndcg_at_10 - baseline_q.mean_ndcg_at_10
+            d_recall = report.mean_recall_at_20 - baseline_q.mean_recall_at_20
+            d_mrr = report.mean_mrr - baseline_q.mean_mrr
+            lines.append(
+                f"| {config.name} | {d_ndcg:+.4f} | {d_recall:+.4f} | {d_mrr:+.4f} |"
+            )
+    lines.append("")
+
     return "\n".join(lines) + "\n"
 
 

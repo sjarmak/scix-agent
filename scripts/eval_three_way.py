@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
 """Three-way entity-enrichment eval runner for PRD §M4.
 
-Compares three configurations on the fixture:
+Compares three configurations:
 
 1. ``hybrid_baseline``     — hybrid search alone, no entity enrichment.
-2. ``hybrid_plus_static``  — hybrid search + static-core entity filter,
-   entities fetched via ``resolve_entities(mode='static')``.
-3. ``hybrid_plus_jit``     — hybrid search + JIT enrichment, entities
-   fetched via ``resolve_entities(mode='jit')``.
+2. ``hybrid_plus_static``  — hybrid search + static-core entity filter
+   that restricts candidates to bibcodes present in
+   ``document_entities_canonical``.
+3. ``hybrid_plus_jit``     — hybrid search + JIT re-rank that boosts
+   candidates whose entity set overlaps with the seed's entity set,
+   resolved at query time against ``document_entities_canonical``.
 
-The fixture contains 5 seeded queries and 2 graph-walk tasks (scaled
-down from the paper's 50 + 20 — see the TODO at the bottom of the file
-and the research doc for u12). Real-corpus evaluation is out of scope
-for the fixture runner; wire the real retriever in when u11's harness
-exposes scoring results over the scix_test database.
+Two modes are supported:
+
+* **Fixture mode** (default) — 5 seeded queries + 2 graph-walk tasks,
+  no DB required. Useful for CI.
+* **Real-data mode** (``--real-data``) — samples seed papers from the
+  populated ``scix`` database, builds citation-based ground truth, and
+  runs the three lanes through :mod:`scix.search`. This is the PRD
+  hinge runner.
 
 Usage
 -----
@@ -22,6 +27,7 @@ Usage
 
     python scripts/eval_three_way.py
     python scripts/eval_three_way.py --output build-artifacts/m4_inhouse_eval.md
+    python scripts/eval_three_way.py --real-data --n-queries 50 --n-graph-walks 20
 """
 
 from __future__ import annotations
@@ -259,6 +265,155 @@ def run(output_path: Path = DEFAULT_OUTPUT) -> ThreeWayResults:
     return results
 
 
+def run_real_data(
+    output_path: Path,
+    n_queries: int = 50,
+    n_graph_walks: int = 20,
+    min_neighbors: int = 10,
+    random_seed: int = 42,
+    baseline_top_n: int | None = None,
+) -> ThreeWayResults:
+    """Run the §M4 eval against the populated prod corpus.
+
+    Samples ``n_queries + n_graph_walks`` seed bibcodes that have an
+    INDUS embedding, at least one entity link in
+    ``document_entities_canonical``, and ``min_neighbors+`` citation
+    neighbors. Builds binary relevance from the seed's citation
+    neighborhood and runs the three retrieval lanes defined in
+    :mod:`scix.eval.real_data`.
+    """
+    # Deferred imports so fixture-mode tests never touch the DB module.
+    from scix.db import get_connection  # noqa: WPS433 — intentional local import
+    from scix.eval import real_data as rd  # noqa: WPS433
+
+    conn = get_connection()
+    ctx = rd.RealEvalContext(conn=conn)
+
+    total_seeds = n_queries + n_graph_walks
+    seeds = rd.sample_seed_papers(
+        conn,
+        n_seeds=total_seeds,
+        min_neighbors=min_neighbors,
+        random_seed=random_seed,
+    )
+    if len(seeds) < total_seeds:
+        logger.warning(
+            "Sampler returned %d seeds, requested %d — continuing with smaller n",
+            len(seeds),
+            total_seeds,
+        )
+
+    # Split seeds: first N for query set, remainder for graph-walk tasks.
+    query_seeds = seeds[:n_queries]
+    task_seeds = seeds[n_queries : n_queries + n_graph_walks]
+
+    queries: list[QueryFixture] = []
+    tasks: list[GraphWalkTask] = []
+    for idx, seed in enumerate(query_seeds):
+        truth = rd.ground_truth_for_seed(conn, seed.bibcode)
+        if not truth:
+            continue
+        queries.append(
+            QueryFixture(
+                query_id=f"q_{idx}_{seed.bibcode}",
+                query_text=seed.lexical_query or seed.title[:120],
+                relevant_bibcodes=frozenset(truth),
+            )
+        )
+    for idx, seed in enumerate(task_seeds):
+        truth = rd.ground_truth_for_seed(conn, seed.bibcode)
+        if not truth:
+            continue
+        tasks.append(
+            GraphWalkTask(
+                task_id=f"gw_{idx}_{seed.bibcode}",
+                seed_bibcode=seed.bibcode,
+                expected_bibcodes=frozenset(truth),
+            )
+        )
+
+    # Map bibcode -> seed so retriever callbacks can resolve seed metadata.
+    seed_map = {s.bibcode: s for s in seeds}
+    qid_to_seed: dict[str, rd.SeedPaper] = {}
+    for q, s in zip(queries, query_seeds):
+        qid_to_seed[q.query_id] = s
+    for t, s in zip(tasks, task_seeds):
+        qid_to_seed[t.task_id] = s
+
+    top_n = baseline_top_n if baseline_top_n is not None else rd.BASELINE_TOP_N
+
+    def _lookup_seed(fixture: QueryFixture) -> rd.SeedPaper:
+        # For graph-walk tasks the fixture's query_id is the task_id we mapped.
+        seed = qid_to_seed.get(fixture.query_id)
+        if seed is not None:
+            return seed
+        # Fallback: synthesise a SeedPaper from the fixture metadata.
+        bibcode = fixture.query_text.replace("graph_walk:", "")
+        return seed_map.get(
+            bibcode,
+            rd.SeedPaper(
+                bibcode=bibcode,
+                title=fixture.query_text,
+                abstract=None,
+                year=None,
+                citation_count=0,
+                n_neighbors=0,
+                n_entities=0,
+            ),
+        )
+
+    def baseline(fixture: QueryFixture) -> tuple[list[str], float]:
+        return rd.baseline_retrieve(ctx, _lookup_seed(fixture), limit=top_n)
+
+    def static(fixture: QueryFixture) -> tuple[list[str], float]:
+        return rd.static_filter_retrieve(ctx, _lookup_seed(fixture), limit=top_n)
+
+    def jit(fixture: QueryFixture) -> tuple[list[str], float]:
+        return rd.jit_rerank_retrieve(ctx, _lookup_seed(fixture), limit=top_n)
+
+    configs = [
+        ThreeWayConfig(
+            name="hybrid_baseline",
+            description="Hybrid lexical + dense search (INDUS + BM25 via RRF), no enrichment.",
+            retrieve=baseline,
+        ),
+        ThreeWayConfig(
+            name="hybrid_plus_static",
+            description=(
+                "Hybrid search + static-core filter: candidates restricted to bibcodes "
+                "present in document_entities_canonical."
+            ),
+            retrieve=static,
+        ),
+        ThreeWayConfig(
+            name="hybrid_plus_jit",
+            description=(
+                "Hybrid search + JIT enrichment: baseline list re-ranked by seed-to-candidate "
+                "entity-set overlap (resolved at query time)."
+            ),
+            retrieve=jit,
+        ),
+    ]
+
+    logger.info(
+        "Running real-data eval: %d queries, %d graph-walk tasks, 3 lanes",
+        len(queries),
+        len(tasks),
+    )
+    results = run_three_way_eval(queries, tasks, configs)
+    report = format_m4_report(
+        results=results,
+        configs=configs,
+        n_queries=len(queries),
+        n_graph_walk=len(tasks),
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(report)
+    logger.info("Wrote real-data M4 report to %s", output_path)
+    conn.close()
+    return results
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     parser = argparse.ArgumentParser(description="M4 three-way entity-enrichment eval")
@@ -268,8 +423,53 @@ def main() -> None:
         default=DEFAULT_OUTPUT,
         help="Path for the markdown report (default: %(default)s)",
     )
+    parser.add_argument(
+        "--real-data",
+        action="store_true",
+        help="Run against the populated prod DB instead of the in-process fixture.",
+    )
+    parser.add_argument(
+        "--n-queries",
+        type=int,
+        default=50,
+        help="Number of seed queries for --real-data mode (default: 50).",
+    )
+    parser.add_argument(
+        "--n-graph-walks",
+        type=int,
+        default=20,
+        help="Number of graph-walk tasks for --real-data mode (default: 20).",
+    )
+    parser.add_argument(
+        "--min-neighbors",
+        type=int,
+        default=10,
+        help="Minimum citation neighbors per seed (default: 10).",
+    )
+    parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=42,
+        help="Sampling seed for reproducibility (default: 42).",
+    )
+    parser.add_argument(
+        "--baseline-top-n",
+        type=int,
+        default=None,
+        help="Override the retrieval top-N used by each lane.",
+    )
     args = parser.parse_args()
-    results = run(output_path=args.output)
+    if args.real_data:
+        results = run_real_data(
+            output_path=args.output,
+            n_queries=args.n_queries,
+            n_graph_walks=args.n_graph_walks,
+            min_neighbors=args.min_neighbors,
+            random_seed=args.random_seed,
+            baseline_top_n=args.baseline_top_n,
+        )
+    else:
+        results = run(output_path=args.output)
     for name, report in results.query_reports.items():
         logger.info(
             "%s — nDCG@10=%.4f Recall@20=%.4f MRR=%.4f",

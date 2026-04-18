@@ -279,13 +279,43 @@ _CONCEPT_MERGE_SQL = """
 _REL_STAGING_DROP = "DROP TABLE IF EXISTS _uat_rel_staging"
 _REL_STAGING_CREATE = "CREATE TEMP TABLE _uat_rel_staging (parent_id TEXT, child_id TEXT)"
 
+# Count staging rows that would be dropped by the uat_concepts FK check.  Used
+# for diagnostic logging so silent FK drops don't look like a successful load.
+_REL_FK_DROP_COUNT_SQL = """
+    SELECT COUNT(*) FROM (
+        SELECT DISTINCT s.parent_id, s.child_id
+        FROM _uat_rel_staging s
+        WHERE NOT EXISTS (SELECT 1 FROM uat_concepts c WHERE c.concept_id = s.parent_id)
+           OR NOT EXISTS (SELECT 1 FROM uat_concepts c WHERE c.concept_id = s.child_id)
+    ) AS dropped
+"""
+
+# Insert only rows whose parent_id and child_id both exist in uat_concepts so
+# the FK check never raises.  RETURNING 1 lets us count *newly-inserted* rows
+# unambiguously — cursor.rowcount on INSERT ... ON CONFLICT DO NOTHING reports
+# 0 on re-runs where the rows already exist, which masks successful loads.
 _REL_MERGE_SQL = """
-    INSERT INTO uat_relationships (parent_id, child_id)
-    SELECT DISTINCT s.parent_id, s.child_id
-    FROM _uat_rel_staging s
-    WHERE EXISTS (SELECT 1 FROM uat_concepts c WHERE c.concept_id = s.parent_id)
-      AND EXISTS (SELECT 1 FROM uat_concepts c WHERE c.concept_id = s.child_id)
-    ON CONFLICT DO NOTHING
+    WITH inserted AS (
+        INSERT INTO uat_relationships (parent_id, child_id)
+        SELECT DISTINCT s.parent_id, s.child_id
+        FROM _uat_rel_staging s
+        WHERE EXISTS (SELECT 1 FROM uat_concepts c WHERE c.concept_id = s.parent_id)
+          AND EXISTS (SELECT 1 FROM uat_concepts c WHERE c.concept_id = s.child_id)
+        ON CONFLICT (parent_id, child_id) DO NOTHING
+        RETURNING 1
+    )
+    SELECT COUNT(*) FROM inserted
+"""
+
+# Authoritative "present after load" count: how many (parent, child) pairs
+# from the staging table are now in uat_relationships.  This is what the
+# caller actually wants — it stays correct across re-runs, unlike rowcount.
+_REL_PRESENT_COUNT_SQL = """
+    SELECT COUNT(*) FROM uat_relationships r
+    WHERE EXISTS (
+        SELECT 1 FROM _uat_rel_staging s
+        WHERE s.parent_id = r.parent_id AND s.child_id = r.child_id
+    )
 """
 
 
@@ -333,12 +363,25 @@ def load_concepts(conn: psycopg.Connection, concepts: list[UATConcept]) -> int:
 def load_relationships(conn: psycopg.Connection, rels: list[UATRelationship]) -> int:
     """Load UAT relationships into uat_relationships via staging table pattern.
 
+    Stages the input via a TEMP table + COPY, runs an FK-safe INSERT that skips
+    pairs whose endpoints are missing from ``uat_concepts`` (instead of raising),
+    then returns the count of staged pairs actually present in the target table.
+
+    The returned value is the count of **matching rows now present**, not just
+    newly-inserted rows.  ``ON CONFLICT DO NOTHING`` on an INSERT ... SELECT
+    reports ``rowcount == 0`` when every row already exists, which would mask a
+    successful load on re-runs and give the false impression that no rows landed.
+    Using a present-count instead keeps the return value meaningful across
+    idempotent loads and across FK drops (see WARN log below).
+
     Args:
         conn: Database connection.
         rels: List of UATRelationship instances.
 
     Returns:
-        Number of relationships inserted.
+        Number of input relationships present in ``uat_relationships`` after
+        load.  Equals ``len(rels)`` when every input row references valid
+        concepts; lower if any rows were skipped by the FK check.
     """
     t0 = time.monotonic()
 
@@ -348,13 +391,32 @@ def load_relationships(conn: psycopg.Connection, rels: list[UATRelationship]) ->
         with cur.copy("COPY _uat_rel_staging (parent_id, child_id) FROM STDIN") as copy:
             for r in rels:
                 copy.write_row((r.parent_id, r.child_id))
+
+        cur.execute(_REL_FK_DROP_COUNT_SQL)
+        fk_dropped = cur.fetchone()[0]
+        if fk_dropped:
+            logger.warning(
+                "Skipping %d relationships with parent_id or child_id "
+                "missing from uat_concepts (FK preflight)",
+                fk_dropped,
+            )
+
         cur.execute(_REL_MERGE_SQL)
-        count = cur.rowcount
+        newly_inserted = cur.fetchone()[0]
+
+        cur.execute(_REL_PRESENT_COUNT_SQL)
+        present = cur.fetchone()[0]
 
     conn.commit()
     elapsed = time.monotonic() - t0
-    logger.info("Loaded %d relationships in %.1fs", count, elapsed)
-    return count
+    logger.info(
+        "Loaded relationships: %d newly inserted, %d present in table, " "%d FK-dropped in %.1fs",
+        newly_inserted,
+        present,
+        fk_dropped,
+        elapsed,
+    )
+    return present
 
 
 def _pg_text_array(values: tuple[str, ...] | list[str]) -> str:

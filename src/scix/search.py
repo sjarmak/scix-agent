@@ -1476,17 +1476,40 @@ def explore_community(
     )
 
 
+#: Maximum recursion depth for UAT descendant expansion in concept_search.
+#: Bounds the recursive CTE to avoid pathological traversal of deep/cyclic
+#: hierarchies. UAT is typically <=6 levels deep, so this covers full expansion.
+CONCEPT_DESCENDANT_MAX_DEPTH = 6
+
+
 def concept_search(
     conn: psycopg.Connection,
     query: str,
     *,
-    include_subtopics: bool = True,
+    include_descendants: bool = True,
+    include_subtopics: bool | None = None,
     limit: int = 20,
 ) -> SearchResult:
-    """Search for papers by UAT concept, optionally including subtopics.
+    """Search for papers by UAT concept, optionally including descendants.
+
+    When ``include_descendants=True`` (default), the query concept is expanded
+    to its full descendant set via a recursive CTE against ``uat_relationships``
+    bounded at depth ``CONCEPT_DESCENDANT_MAX_DEPTH`` (6). Papers tagged with
+    the root concept or any descendant are returned.
+
+    When ``include_descendants=False``, only papers tagged with the exact
+    root concept are returned (no expansion).
+
+    ``include_subtopics`` is a legacy alias for ``include_descendants``. When
+    provided (non-None), it overrides ``include_descendants`` for backward
+    compatibility.
 
     Accepts a concept label (looked up case-insensitively) or concept_id URI.
     """
+    # Backward-compat: legacy ``include_subtopics`` wins when explicitly set.
+    if include_subtopics is not None:
+        include_descendants = include_subtopics
+
     t0 = time.perf_counter()
 
     # Resolve concept_id from label or URI
@@ -1510,36 +1533,48 @@ def concept_search(
 
     concept_id = row[0]
 
-    if include_subtopics:
+    if include_descendants:
+        # Recursive CTE bounded at CONCEPT_DESCENDANT_MAX_DEPTH (6). The
+        # depth-cap guard lives on the recursive step so that a descendant at
+        # depth N can still be produced iff N <= max_depth.
         sql = f"""
             WITH RECURSIVE descendants AS (
-                SELECT child_id AS cid FROM uat_relationships WHERE parent_id = %s
-                UNION
-                SELECT r.child_id FROM uat_relationships r JOIN descendants d ON r.parent_id = d.cid
+                SELECT child_id AS concept_id, 1 AS depth
+                FROM uat_relationships
+                WHERE parent_id = %(root)s
+                UNION ALL
+                SELECT r.child_id, d.depth + 1
+                FROM uat_relationships r
+                JOIN descendants d ON r.parent_id = d.concept_id
+                WHERE d.depth < %(max_depth)s
             ),
             all_concepts AS (
-                SELECT %s AS cid
-                UNION ALL
-                SELECT cid FROM descendants
+                SELECT %(root)s AS concept_id
+                UNION
+                SELECT concept_id FROM descendants WHERE depth <= %(max_depth)s
             )
             SELECT DISTINCT {STUB_COLUMNS}
             FROM all_concepts ac
-            JOIN paper_uat_mappings m ON m.concept_id = ac.cid
+            JOIN paper_uat_mappings m ON m.concept_id = ac.concept_id
             JOIN papers p ON p.bibcode = m.bibcode
             ORDER BY p.citation_count DESC NULLS LAST
-            LIMIT %s
+            LIMIT %(limit)s
         """
-        params: list[Any] = [concept_id, concept_id, limit]
+        params: dict[str, Any] = {
+            "root": concept_id,
+            "max_depth": CONCEPT_DESCENDANT_MAX_DEPTH,
+            "limit": limit,
+        }
     else:
         sql = f"""
             SELECT DISTINCT {STUB_COLUMNS}
             FROM paper_uat_mappings m
             JOIN papers p ON p.bibcode = m.bibcode
-            WHERE m.concept_id = %s
+            WHERE m.concept_id = %(root)s
             ORDER BY p.citation_count DESC NULLS LAST
-            LIMIT %s
+            LIMIT %(limit)s
         """
-        params = [concept_id, limit]
+        params = {"root": concept_id, "limit": limit}
 
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(sql, params)
@@ -1561,7 +1596,10 @@ def concept_search(
             "concept_found": True,
             "concept_id": concept_id,
             "concept_label": label_row[0] if label_row else None,
-            "include_subtopics": include_subtopics,
+            "include_descendants": include_descendants,
+            # Keep legacy key for backward compatibility with consumers that
+            # still read ``include_subtopics`` from the metadata envelope.
+            "include_subtopics": include_descendants,
         },
     )
 

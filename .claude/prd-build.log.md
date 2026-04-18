@@ -10,6 +10,10 @@
 - **Layer 1 implement** — M4 (community-labels), S1 (uat-descendant-search), S2 (coverage-report) all SUCCESS. S1 agent stalled before commit; orchestrator committed the verified diff from the worktree.
 - **Layer 1 review** — M4 PASS, S1 PASS, S2 PASS.
 - **Layer 1 land** — All 3 units landed. 18/18 tests pass (Layer 0 + Layer 1 combined).
+- **Layer 2 implement** — M5 (mcp-community-signals) SUCCESS on first attempt.
+- **Layer 2 review** — M5 PASS. 25/25 PRD tests pass. 163 broader MCP tests pass; 15 pre-existing errors in test_mcp_e2e.py (unrelated AttributeError, not a regression).
+- **Layer 2 land** — M5 already on integration branch. Final state: 7/7 units landed, zero evictions, single pass.
+- **PRD build complete** — `prd-build/community-detection-v2` @ 75956ea ready to merge to main.
 
 ## 2026-04-18
 

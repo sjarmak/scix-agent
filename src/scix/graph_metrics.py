@@ -401,13 +401,24 @@ def load_graph(
         _rss_gb(),
     )
     edge_chunk_size = 5_000_000
-    for chunk_start in range(0, edge_count, edge_chunk_size):
+    chunk_log_every = 10  # log RSS every ~50M edges
+    for chunk_idx, chunk_start in enumerate(
+        range(0, edge_count, edge_chunk_size)
+    ):
         chunk_end = min(chunk_start + edge_chunk_size, edge_count)
         chunk = np.column_stack(
             (src_arr[chunk_start:chunk_end], tgt_arr[chunk_start:chunk_end])
         )
         graph.add_edges(chunk)
         del chunk
+        if (chunk_idx + 1) % chunk_log_every == 0 or chunk_end == edge_count:
+            logger.info(
+                "  chunk %d: %d/%d edges added (RSS=%.2fGB)",
+                chunk_idx + 1,
+                chunk_end,
+                edge_count,
+                _rss_gb(),
+            )
     del src_arr, tgt_arr
     gc.collect()
     _malloc_trim()

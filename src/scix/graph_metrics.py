@@ -438,6 +438,13 @@ def load_graph(
         total_ms,
     )
 
+    # Release the idle-in-transaction state left over by the server-side
+    # (named) cursors above. Downstream callers run hours of in-process work
+    # (Leiden, PageRank) before issuing another query, and holding an open
+    # read transaction that whole time blocks autovacuum, pins xmin, and
+    # risks connection-side timeouts killing the handle mid-run.
+    conn.commit()
+
     return graph, bibcode_to_id, id_to_bibcode
 
 
@@ -529,43 +536,95 @@ def extract_giant_component(
     t0 = time.perf_counter()
 
     components = graph.connected_components(mode="weak")
+    n_components = len(components)
+    logger.info(
+        "connected_components(weak): %d components (%.1fms)",
+        n_components,
+        _elapsed_ms(t0),
+    )
 
-    if len(components) <= 1:
+    if n_components <= 1:
         # Entire graph is one component (or empty) — nothing to extract
         logger.info(
-            "Graph has %d component(s); skipping giant-component extraction (%.1fms)",
-            len(components),
-            _elapsed_ms(t0),
+            "Graph has %d component(s); skipping giant-component extraction",
+            n_components,
         )
         return graph, bibcode_to_id, id_to_bibcode, set()
 
-    # Find the largest component by vertex count
-    giant_idx = max(range(len(components)), key=lambda i: len(components[i]))
-    giant_vids: list[int] = components[giant_idx]
-    giant_vid_set = set(giant_vids)
+    # Find the largest component. components.sizes() is a single O(V) pass;
+    # the obvious `max(range(n), key=lambda i: len(components[i]))` is
+    # O(C * V) because VertexClustering.__getitem__ scans the full membership
+    # vector on every call — pathological at 12M+ components.
+    t_sizes = time.perf_counter()
+    sizes = components.sizes()
+    giant_idx = max(range(len(sizes)), key=sizes.__getitem__)
+    logger.info(
+        "Located giant component: idx=%d size=%d (%.1fms)",
+        giant_idx,
+        sizes[giant_idx],
+        _elapsed_ms(t_sizes),
+    )
 
-    # Collect bibcodes in small components
-    small_bibcodes: set[str] = set()
-    for vid in range(graph.vcount()):
-        if vid not in giant_vid_set:
-            small_bibcodes.add(id_to_bibcode[vid])
+    # Derive giant_vids from the membership vector in a single O(V) pass —
+    # cheaper than `components[giant_idx]` which rescans membership.
+    t_vids = time.perf_counter()
+    membership = components.membership
+    giant_vids: list[int] = [
+        vid for vid, cid in enumerate(membership) if cid == giant_idx
+    ]
+    logger.info(
+        "Collected %d giant-component vids (%.1fms)",
+        len(giant_vids),
+        _elapsed_ms(t_vids),
+    )
+
+    # Collect bibcodes in small components — also one O(V) pass against the
+    # membership vector. Avoids re-hashing a 22M-element giant_vid_set.
+    t_small = time.perf_counter()
+    small_bibcodes: set[str] = {
+        id_to_bibcode[vid]
+        for vid, cid in enumerate(membership)
+        if cid != giant_idx
+    }
+    logger.info(
+        "Collected %d small-component bibcodes (%.1fms)",
+        len(small_bibcodes),
+        _elapsed_ms(t_small),
+    )
+    del membership
+    gc.collect()
+    _malloc_trim()
 
     # Extract giant component subgraph
+    t_sub = time.perf_counter()
     giant_graph = graph.induced_subgraph(giant_vids)
+    logger.info(
+        "induced_subgraph: %d vertices, %d edges (%.1fms) RSS=%.2fGB",
+        giant_graph.vcount(),
+        giant_graph.ecount(),
+        _elapsed_ms(t_sub),
+        _rss_gb(),
+    )
 
     # Build new contiguous ID mappings
+    t_map = time.perf_counter()
     giant_b2i: dict[str, int] = {}
     giant_i2b: dict[int, str] = {}
     for new_id, old_id in enumerate(giant_vids):
         bib = id_to_bibcode[old_id]
         giant_b2i[bib] = new_id
         giant_i2b[new_id] = bib
+    logger.info(
+        "Built giant id mappings (%.1fms) RSS=%.2fGB",
+        _elapsed_ms(t_map),
+        _rss_gb(),
+    )
 
     logger.info(
         "Giant component: %d nodes (%d small-component nodes in %d other components) (%.1fms)",
         len(giant_vids),
         len(small_bibcodes),
-        len(components) - 1,
+        n_components - 1,
         _elapsed_ms(t0),
     )
     return giant_graph, giant_b2i, giant_i2b, small_bibcodes

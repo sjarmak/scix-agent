@@ -189,27 +189,31 @@ def _compute_nmi_vs_semantic(
     if not giant_bib_to_community:
         return None
 
-    bibcodes = list(giant_bib_to_community.keys())
+    # Stream the whole populated-semantic-coarse column and filter in Python.
+    # Sending ~22M bibcodes via WHERE bibcode = ANY(%s) and fetchall()ing the
+    # response (tried previously) consumes >5 GB on the prod corpus and can
+    # blow the process budget when it overlaps Leiden's working set. A named
+    # server-side cursor streams with bounded Python memory (~1 GB for the
+    # two label arrays).
+    citation_labels: list[int] = []
+    semantic_labels: list[int] = []
 
-    # Fetch semantic-coarse labels for all giant-component bibcodes.
-    with conn.cursor() as cur:
+    with conn.cursor(name="nmi_cursor") as cur:
+        cur.itersize = 500_000
         cur.execute(
             "SELECT bibcode, community_semantic_coarse "
             "FROM paper_metrics "
-            "WHERE bibcode = ANY(%s) "
-            "  AND community_semantic_coarse IS NOT NULL",
-            (bibcodes,),
+            "WHERE community_semantic_coarse IS NOT NULL"
         )
-        rows = cur.fetchall()
+        for bib, sem in cur:
+            cid = giant_bib_to_community.get(bib)
+            if cid is None:
+                continue
+            citation_labels.append(cid)
+            semantic_labels.append(int(sem))
 
-    if not rows:
+    if not citation_labels:
         return None
-
-    citation_labels: list[int] = []
-    semantic_labels: list[int] = []
-    for bib, sem in rows:
-        citation_labels.append(giant_bib_to_community[bib])
-        semantic_labels.append(int(sem))
 
     return compute_nmi(citation_labels, semantic_labels)
 
@@ -299,10 +303,10 @@ def run(
 
         # 5. Stage + UPDATE paper_metrics.
         # Must run inside a single transaction so the TEMP tables survive
-        # long enough to drive the UPDATEs. ``load_graph`` left the
-        # connection in an idle-in-transaction state (server-side cursor);
-        # commit it to start a clean transaction for the writes.
-        conn.commit()
+        # long enough to drive the UPDATEs. ``load_graph`` commits its own
+        # read transaction before returning, so by this point the connection
+        # is idle (not idle-in-tx) and ``with conn.transaction()`` starts a
+        # fresh write transaction.
         with conn.transaction():
             with conn.cursor() as cur:
                 cur.execute(STAGING_TABLE_SQL)
@@ -415,6 +419,20 @@ def main(argv: list[str] | None = None) -> int:
         logger.error(
             "Refusing to write to production DSN %s — pass --allow-prod to override",
             redact_dsn(dsn),
+        )
+        return 2
+
+    # Any --allow-prod invocation must run inside a systemd-managed unit
+    # (transient scope, service, timer, etc.) so oomd can enforce a memory
+    # ceiling without collateral-killing the gascity supervisor (see
+    # CLAUDE.md §Memory isolation). systemd sets INVOCATION_ID inside every
+    # unit and leaves it unset in plain interactive shells — making it a
+    # reliable proxy for "am I inside a cgroup oomd can manage".
+    if args.allow_prod and not os.environ.get("INVOCATION_ID"):
+        logger.error(
+            "Refusing to run --allow-prod outside a systemd scope. "
+            "Invoke via: scix-batch python %s <args...>",
+            Path(sys.argv[0]).name,
         )
         return 2
 

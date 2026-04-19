@@ -4,7 +4,14 @@
 *.jsonl.xz
 ads_metadata_by_year_picard/
 ads_metadata_by_year_full/
-data/
+data/*
+# ...except small, checked-in evaluation artifacts that track with code.
+!data/eval/
+data/eval/*
+!data/eval/*.csv
+!data/eval/*.yaml
+!data/eval/*.md
+!data/eval/.gitkeep
 
 # Logs
 *.log

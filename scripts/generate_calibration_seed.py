@@ -182,7 +182,10 @@ class CandidateSource:
         from scix.embed import embed_batch
 
         self._ensure_model()
-        vectors = embed_batch([query], model=self._model, tokenizer=self._tokenizer)
+        # embed_batch signature is (model, tokenizer, texts, ..., pooling).
+        # INDUS trains with mean pooling; SPECTER2 uses CLS.
+        pooling = "mean" if self._model_name == "indus" else "cls"
+        vectors = embed_batch(self._model, self._tokenizer, [query], pooling=pooling)
         return list(vectors[0])
 
     def fetch(self, spec: QuerySpec, top_k: int) -> list[Candidate]:

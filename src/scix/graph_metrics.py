@@ -388,20 +388,32 @@ def load_graph(
         logger.info("Dropped bibcode_to_id + malloc_trim (RSS=%.2fGB)", _rss_gb())
 
     # --- Build graph ---
-    # igraph 1.0 accepts a (E, 2) int32 array directly. column_stack allocates
-    # ~2.4 GB temporarily; free src/tgt right after to cap peak.
+    # Passing the full 298M-edge array to igraph.Graph(edges=...) materialises
+    # ~27 GB of transient Python state inside the python-igraph wrapper
+    # (measured at ~170 bytes/edge peak on 10M-edge test → ~50 GB for 298M).
+    # igraph.Graph(n=N) + chunked add_edges() holds the same final graph but
+    # peaks at only ~70 bytes/edge (~21 GB for 298M).
     t_build = time.perf_counter()
-    edges = np.column_stack((src_arr, tgt_arr))
+    graph = igraph.Graph(n=node_count, directed=True)
+    logger.info(
+        "Empty graph with %d vertices (RSS=%.2fGB) — adding edges in chunks...",
+        node_count,
+        _rss_gb(),
+    )
+    edge_chunk_size = 5_000_000
+    for chunk_start in range(0, edge_count, edge_chunk_size):
+        chunk_end = min(chunk_start + edge_chunk_size, edge_count)
+        chunk = np.column_stack(
+            (src_arr[chunk_start:chunk_end], tgt_arr[chunk_start:chunk_end])
+        )
+        graph.add_edges(chunk)
+        del chunk
     del src_arr, tgt_arr
     gc.collect()
     _malloc_trim()
-    logger.info("column_stack done (RSS=%.2fGB) — building igraph...", _rss_gb())
-    graph = igraph.Graph(n=node_count, edges=edges, directed=True)
-    del edges
-    gc.collect()
-    _malloc_trim()
     logger.info(
-        "Built igraph in %.1fs (RSS=%.2fGB)",
+        "Built igraph (%d edges) in %.1fs (RSS=%.2fGB)",
+        graph.ecount(),
         (time.perf_counter() - t_build),
         _rss_gb(),
     )

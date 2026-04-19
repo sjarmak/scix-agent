@@ -44,7 +44,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Protocol
 
 import yaml
 
@@ -78,6 +78,14 @@ CSV_COLUMNS: tuple[str, ...] = (
     "draft_score",
     "needs_human_review",
     "snippet_preview",
+)
+
+# Canonical lane names — keep in sync with
+# docs/prd/amendments/2026-04-18-m6-m12-collapse.md. A YAML typo (e.g.
+# "entity_types" instead of "entity_type") would otherwise silently create
+# a seventh lane in the stats and misreport coverage.
+CANONICAL_LANES: frozenset[str] = frozenset(
+    {"alias", "ontology", "disambiguation", "entity_type", "specific_entity", "community"}
 )
 
 
@@ -149,13 +157,25 @@ def load_query_specs(path: Path) -> tuple[list[QuerySpec], int]:
         if qid in seen_ids:
             raise ValueError(f"{path}: duplicate query id {qid!r}")
         seen_ids.add(qid)
-        specs.append(QuerySpec(id=qid, lane=str(raw["lane"]), query=str(raw["query"])))
+        lane = str(raw["lane"])
+        if lane not in CANONICAL_LANES:
+            raise ValueError(
+                f"{path}: unknown lane {lane!r} for query {qid!r}; "
+                f"expected one of {sorted(CANONICAL_LANES)}"
+            )
+        specs.append(QuerySpec(id=qid, lane=lane, query=str(raw["query"])))
     return specs, top_k
 
 
 # ---------------------------------------------------------------------------
 # Candidate retrieval
 # ---------------------------------------------------------------------------
+
+
+class CandidateSourceProtocol(Protocol):
+    """Structural contract for candidate sources — real + stub both satisfy."""
+
+    def fetch(self, spec: QuerySpec, top_k: int) -> list[Candidate]: ...
 
 
 class CandidateSource:
@@ -256,17 +276,22 @@ async def generate_seed_rows(
     *,
     specs: list[QuerySpec],
     top_k: int,
-    candidate_source: Any,
+    candidate_source: "CandidateSourceProtocol",
     dispatcher: Dispatcher,
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
 ) -> tuple[list[SeedRow], GenerationStats]:
     """Score every (query, candidate) pair and return rows + stats.
 
     Rows with dispatcher failures are skipped; they're counted in
-    ``stats.n_failed`` so the caller can surface the miss-rate.
+    ``stats.n_failed`` so the caller can surface the miss-rate. Pairing
+    between triples and scores goes through a (query, bibcode) lookup
+    rather than a parallel list, so reordering in the dispatcher can't
+    silently produce wrong pairings.
     """
     triples: list[JudgeTriple] = []
-    metadata: list[tuple[QuerySpec, Candidate]] = []
+    # Key the lookup by (query, bibcode) rather than relying on list
+    # order preservation through asyncio.gather.
+    pairings: dict[tuple[str, str], tuple[QuerySpec, Candidate]] = {}
     stats = GenerationStats()
 
     for spec in specs:
@@ -278,7 +303,7 @@ async def generate_seed_rows(
             triples.append(
                 JudgeTriple(query=spec.query, bibcode=cand.bibcode, snippet=cand.snippet)
             )
-            metadata.append((spec, cand))
+            pairings[(spec.query, cand.bibcode)] = (spec, cand)
 
     if not triples:
         return [], stats
@@ -287,10 +312,14 @@ async def generate_seed_rows(
     scores = await judge.run(triples)
 
     rows: list[SeedRow] = []
-    for (spec, cand), score in zip(metadata, scores):
+    for score in scores:
         if score.score < 0:
             stats.n_failed += 1
             continue
+        # PersonaJudge re-attaches the triple to every score; pair through
+        # that rather than position.
+        assert score.triple is not None, "PersonaJudge.run must attach the triple"
+        spec, cand = pairings[(score.triple.query, score.triple.bibcode)]
         stats.n_scored += 1
         rows.append(
             SeedRow(
@@ -394,18 +423,26 @@ def main(argv: list[str] | None = None) -> int:
     if args.max_queries is not None:
         specs = specs[: args.max_queries]
 
+    candidate_source: CandidateSourceProtocol
+    dispatcher: Dispatcher
     if args.stub:
-        candidate_source: Any = StubCandidateSource()
-        dispatcher: Dispatcher = StubDispatcher(fixed_score=2, reason="stub")
+        candidate_source = StubCandidateSource()
+        dispatcher = StubDispatcher(fixed_score=2, reason="stub")
     else:
         candidate_source = CandidateSource(dsn=args.dsn, model_name=args.model_name)
         dispatcher = ClaudeSubprocessDispatcher(claude_binary=args.claude_binary)
 
+    # Mirror calibrate_judge.py: log the resolved DSN through redact_dsn so
+    # credentials don't leak into stdout / logs.
+    from scix.db import DEFAULT_DSN, redact_dsn  # type: ignore[import-not-found]
+
+    resolved_dsn = "stub" if args.stub else (args.dsn or DEFAULT_DSN)
     logger.info(
-        "generating seed: %d queries, top_k=%d, stub=%s, output=%s",
+        "generating seed: %d queries, top_k=%d, stub=%s, dsn=%s, output=%s",
         len(specs),
         top_k,
         args.stub,
+        "stub" if args.stub else redact_dsn(resolved_dsn),
         args.output,
     )
 
@@ -421,15 +458,15 @@ def main(argv: list[str] | None = None) -> int:
 
     write_seed_csv(args.output, rows)
 
-    print("Calibration seed generation complete")
-    print(f"  queries     : {stats.n_queries}")
-    print(f"  candidates  : {stats.n_candidates}")
-    print(f"  scored      : {stats.n_scored}")
-    print(f"  failed      : {stats.n_failed}")
-    print(f"  by lane     : {stats.lanes}")
-    print(f"  output      : {args.output}")
+    logger.info("Calibration seed generation complete")
+    logger.info("  queries     : %d", stats.n_queries)
+    logger.info("  candidates  : %d", stats.n_candidates)
+    logger.info("  scored      : %d", stats.n_scored)
+    logger.info("  failed      : %d", stats.n_failed)
+    logger.info("  by lane     : %s", stats.lanes)
+    logger.info("  output      : %s", args.output)
     if stats.n_failed:
-        print(f"  WARNING: {stats.n_failed} rows failed scoring and were dropped.")
+        logger.warning("%d rows failed scoring and were dropped.", stats.n_failed)
     return 0
 
 

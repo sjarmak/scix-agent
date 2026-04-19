@@ -253,7 +253,7 @@ def parse_judge_response(raw: str) -> JudgeScore:
 
 
 _UMBRELA_SCORE_RE = re.compile(
-    r"^\s*##\s*final\s*score\s*:\s*([0-3])\s*$", re.IGNORECASE | re.MULTILINE
+    r"^\s*##\s*final\s*score\s*:\s*(\d+)\s*$", re.IGNORECASE | re.MULTILINE
 )
 _UMBRELA_REVIEW_RE = re.compile(
     r"^\s*##\s*needs[_ ]human[_ ]review\s*:\s*(true|false)\s*$",
@@ -267,7 +267,9 @@ def parse_umbrela_response(raw: str) -> JudgeScore:
     UMBRELA (verbatim) emits ``##final score: N``. Our pipeline adds one
     adapter line — ``##needs_human_review: true|false`` — after it. Both
     lines must appear on their own line; any surrounding prose is
-    tolerated but ignored.
+    tolerated but ignored. Two score lines or two review lines are
+    rejected as ambiguous — that indicates the subagent was confused
+    enough to double-emit.
 
     Args:
         raw: Raw stdout from the subagent.
@@ -278,23 +280,31 @@ def parse_umbrela_response(raw: str) -> JudgeScore:
         from the adapter line.
 
     Raises:
-        ValueError: If either line is missing or malformed.
+        ValueError: If either line is missing, duplicated, or malformed.
     """
     if not raw or not raw.strip():
         raise ValueError("empty response")
 
-    score_match = _UMBRELA_SCORE_RE.search(raw)
-    if score_match is None:
+    score_matches = _UMBRELA_SCORE_RE.findall(raw)
+    if not score_matches:
         raise ValueError("no '##final score: N' line found in UMBRELA response")
-    score = int(score_match.group(1))
+    if len(score_matches) > 1:
+        raise ValueError(f"ambiguous response: {len(score_matches)} '##final score:' lines found")
+    score = int(score_matches[0])
+    if not (SCORE_MIN <= score <= SCORE_MAX):
+        raise ValueError(f"score {score} out of range [{SCORE_MIN}, {SCORE_MAX}]")
 
-    review_match = _UMBRELA_REVIEW_RE.search(raw)
-    if review_match is None:
+    review_matches = _UMBRELA_REVIEW_RE.findall(raw)
+    if not review_matches:
         raise ValueError(
             "no '##needs_human_review: true|false' line found — "
             "the umbrela_judge output-format addendum was not emitted"
         )
-    needs_human_review = review_match.group(1).lower() == "true"
+    if len(review_matches) > 1:
+        raise ValueError(
+            f"ambiguous response: {len(review_matches)} '##needs_human_review:' lines found"
+        )
+    needs_human_review = review_matches[0].lower() == "true"
 
     return JudgeScore(score=score, reason="", needs_human_review=needs_human_review)
 
@@ -336,8 +346,8 @@ class StubDispatcher:
         return JudgeScore(score=self.fixed_score, reason=self.reason)
 
 
-PromptFormatter = Callable[["JudgeTriple", str], str]
-ResponseParser = Callable[[str], "JudgeScore"]
+_PromptFormatter = Callable[["JudgeTriple", str], str]
+_ResponseParser = Callable[[str], "JudgeScore"]
 
 
 @dataclass
@@ -370,14 +380,30 @@ class ClaudeSubprocessDispatcher:
     claude_binary: str = "claude"
     persona: str = DEFAULT_PERSONA
     timeout_s: float = DEFAULT_SUBPROCESS_TIMEOUT_S
-    prompt_formatter: PromptFormatter = field(default=None)  # type: ignore[assignment]
-    response_parser: ResponseParser = field(default=None)  # type: ignore[assignment]
+    # Lambdas defer name resolution so the formatter/parser functions
+    # defined further down in the module can still be the defaults.
+    prompt_formatter: _PromptFormatter = field(
+        default_factory=lambda: _format_persona_prompt_umbrela
+    )
+    response_parser: _ResponseParser = field(default_factory=lambda: parse_umbrela_response)
 
     def __post_init__(self) -> None:
-        if self.prompt_formatter is None:
-            self.prompt_formatter = _format_persona_prompt_umbrela
-        if self.response_parser is None:
-            self.response_parser = parse_umbrela_response
+        # Guard the silent-mismatch footgun: a caller passing
+        # persona="in_domain_researcher" without also overriding the
+        # formatter/parser ends up with the legacy persona name but the
+        # UMBRELA prompt format, which fails every response parse. Warn
+        # loudly so they either fix the construction or use the factory.
+        if self.persona == PERSONA_NAME and self.response_parser is parse_umbrela_response:
+            import warnings
+
+            warnings.warn(
+                f"persona={PERSONA_NAME!r} was set but response_parser is still "
+                "the UMBRELA parser. Use "
+                "ClaudeSubprocessDispatcher.in_domain_researcher() for the "
+                "legacy JSON persona, or pass prompt_formatter and "
+                "response_parser explicitly.",
+                stacklevel=2,
+            )
 
     @classmethod
     def in_domain_researcher(

@@ -12,29 +12,14 @@ from __future__ import annotations
 
 import asyncio
 import csv
-import importlib.util
-import sys
 from pathlib import Path
 
+# scripts/ is on sys.path via pyproject.toml [tool.pytest.ini_options]
+# pythonpath, so the script imports like a normal module.
+import generate_calibration_seed as gcs
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-
-# Import the script module by path so we don't need to add scripts/ to sys.path
-# in production contexts.
-_SCRIPT_PATH = REPO_ROOT / "scripts" / "generate_calibration_seed.py"
-_spec = importlib.util.spec_from_file_location("generate_calibration_seed", _SCRIPT_PATH)
-assert _spec is not None and _spec.loader is not None
-gcs = importlib.util.module_from_spec(_spec)
-sys.modules["generate_calibration_seed"] = gcs
-_spec.loader.exec_module(gcs)
-
-
-from scix.eval.persona_judge import (  # noqa: E402
-    JudgeScore,
-    JudgeTriple,
-    StubDispatcher,
-)
+from scix.eval.persona_judge import JudgeScore, JudgeTriple, StubDispatcher
 
 # ---------------------------------------------------------------------------
 # YAML loading

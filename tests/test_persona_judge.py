@@ -151,12 +151,24 @@ class TestParseUmbrelaResponse:
 
     def test_rejects_out_of_range_score(self) -> None:
         raw = "##final score: 5\n##needs_human_review: false"
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="out of range"):
             parse_umbrela_response(raw)
 
     def test_rejects_empty_response(self) -> None:
         with pytest.raises(ValueError):
             parse_umbrela_response("")
+
+    def test_rejects_ambiguous_duplicate_score_lines(self) -> None:
+        """Two '##final score:' lines indicates the model double-emitted;
+        silently picking one would discard signal that the judge was confused."""
+        raw = "##final score: 2\n##final score: 3\n##needs_human_review: false"
+        with pytest.raises(ValueError, match="ambiguous.*final score"):
+            parse_umbrela_response(raw)
+
+    def test_rejects_ambiguous_duplicate_review_lines(self) -> None:
+        raw = "##final score: 2\n##needs_human_review: true\n##needs_human_review: false\n"
+        with pytest.raises(ValueError, match="ambiguous.*needs_human_review"):
+            parse_umbrela_response(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +211,36 @@ class TestClaudeSubprocessDispatcherPersonas:
         assert "##final score" in prompt
         assert "##needs_human_review" in prompt
         assert UMBRELA_PERSONA_NAME in prompt
+
+    def test_warns_on_mismatched_legacy_persona_with_umbrela_parser(self) -> None:
+        """xz4.1.28.1 HIGH fix: constructing the dispatcher with the legacy
+        persona name but the default UMBRELA parser/formatter silently breaks
+        every call. The __post_init__ warning catches the footgun."""
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            ClaudeSubprocessDispatcher(persona=PERSONA_NAME)
+            matching = [x for x in w if "UMBRELA parser" in str(x.message)]
+            assert matching, f"expected a mismatch warning, got: {[str(x.message) for x in w]}"
+
+    def test_no_warning_when_using_in_domain_researcher_factory(self) -> None:
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            ClaudeSubprocessDispatcher.in_domain_researcher()
+            mismatches = [x for x in w if "UMBRELA parser" in str(x.message)]
+            assert not mismatches
+
+    def test_no_warning_when_default_constructed(self) -> None:
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            ClaudeSubprocessDispatcher()
+            mismatches = [x for x in w if "UMBRELA parser" in str(x.message)]
+            assert not mismatches
 
 
 # ---------------------------------------------------------------------------

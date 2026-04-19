@@ -1,7 +1,7 @@
 ---
 name: umbrela_judge
 description: UMBRELA-based relevance judge — scores (query, paper) pairs on the UMBRELA 0-3 scale. Use for retrieval evaluation draft scoring. Rubric is verbatim from castorini/umbrela (Apache-2.0).
-tools: ["Read"]
+tools: []
 model: sonnet
 ---
 

@@ -6,6 +6,8 @@ ads_metadata_by_year_picard/
 ads_metadata_by_year_full/
 data/*
 # ...except small, checked-in evaluation artifacts that track with code.
+# Do NOT put credentials / env dumps under data/eval/*.csv|yaml — this
+# carve-out has no way to distinguish calibration data from secrets.
 !data/eval/
 data/eval/*
 !data/eval/*.csv

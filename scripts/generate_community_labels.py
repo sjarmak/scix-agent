@@ -611,9 +611,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     taxonomic_text_by_id: dict[int, str] = {}
 
     total_upserted = 0
-    with psycopg.connect(dsn) as conn:
-        conn.autocommit = False
-        for signal, resolution in _iter_targets(args.signal):
+    # One connection per (signal, resolution) triple. Under autocommit=False
+    # a single outer psycopg.connect wraps everything in ONE implicit
+    # transaction — `with conn.transaction()` inside _label_one /
+    # _aggregate would only create savepoints, so no write would be
+    # durable until script exit, and any accidental kill mid-run would
+    # roll back all 9 triples. A fresh connection per triple commits
+    # cleanly on close and resets per-triple aggregation state.
+    for signal, resolution in _iter_targets(args.signal):
+        with psycopg.connect(dsn) as conn:
+            conn.autocommit = False
             # _label_one is atomic per resolution (one transaction).
             if signal == "taxonomic":
                 # Need the id->text mapping out of the aggregation pass —
@@ -626,7 +633,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
             n = _label_one(conn, signal, resolution)
             total_upserted += n
+            conn.commit()
 
+    # Spot-check reads from the committed communities table; use a
+    # fresh short-lived connection so we observe the just-written data
+    # and don't pin any tx state.
+    with psycopg.connect(dsn) as conn:
+        conn.autocommit = False
         spotcheck_md = _spotcheck_markdown(
             conn, taxonomic_text_by_id, args.spotcheck_n, args.seed
         )

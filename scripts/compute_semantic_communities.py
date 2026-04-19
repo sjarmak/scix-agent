@@ -114,10 +114,22 @@ def _parse_pgvector_text(text: str) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-_STREAM_SQL = (
+_STREAM_SQL_BASE = (
     "SELECT bibcode, embedding FROM paper_embeddings "
     "WHERE model_name = 'indus'"
 )
+
+def _build_stream_sql(row_limit: Optional[int]) -> str:
+    """Return the stream SQL optionally capped by ``row_limit``.
+
+    ``row_limit`` is intended for validation / small-scale test runs. In
+    production leave it as ``None`` to process the full corpus.
+    """
+    if row_limit is not None and row_limit > 0:
+        return f"{_STREAM_SQL_BASE} LIMIT {int(row_limit)}"
+    return _STREAM_SQL_BASE
+
+
 # Intentionally no ORDER BY: on 32M rows x 768 dims the sort
 # materializes the full result in backend memory (~tens of GB) before
 # streaming. The staging TEMP table uses bibcode as primary key so row
@@ -128,6 +140,7 @@ def _iter_indus_batches(
     conn: psycopg.Connection,
     batch_size: int,
     cursor_name: str,
+    row_limit: Optional[int] = None,
 ) -> Iterator[tuple[list[str], np.ndarray]]:
     """Yield ``(bibcodes, vectors)`` batches from ``paper_embeddings``.
 
@@ -151,7 +164,7 @@ def _iter_indus_batches(
 
     with conn.cursor(name=cursor_name) as cur:
         cur.itersize = batch_size
-        cur.execute(_STREAM_SQL)
+        cur.execute(_build_stream_sql(row_limit))
 
         batch_bibs: list[str] = []
         batch_vecs: list[np.ndarray] = []
@@ -298,6 +311,7 @@ def _run_resolution(
     batch_size: int,
     silhouette_sample: int,
     train_max_rows: int,
+    row_limit: Optional[int] = None,
 ) -> ResolutionResult:
     """Train MiniBatchKMeans, predict assignments, stage + merge into paper_metrics."""
     # Local import keeps the CLI fast for --help and makes missing-sklearn
@@ -332,7 +346,7 @@ def _run_resolution(
     n_rows_train = 0
     with conn.transaction():
         for _bibs, vecs in _iter_indus_batches(
-            conn, batch_size, f"sc_{spec.name}_train"
+            conn, batch_size, f"sc_{spec.name}_train", row_limit=row_limit
         ):
             n_rows_train += len(_bibs)
             if carry_vecs is not None:
@@ -379,7 +393,7 @@ def _run_resolution(
         _create_staging(conn)
         batch_counter = 0
         for bibs, vecs in _iter_indus_batches(
-            conn, batch_size, f"sc_{spec.name}_predict"
+            conn, batch_size, f"sc_{spec.name}_predict", row_limit=row_limit
         ):
             labels = kmeans.predict(vecs)
             _copy_assignments(conn, bibs, labels)
@@ -518,6 +532,16 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch-size", type=int, default=10_000)
     parser.add_argument(
+        "--row-limit",
+        type=int,
+        default=None,
+        help=(
+            "Cap total rows streamed from paper_embeddings (both train and "
+            "predict). Intended for validation / small-scale test runs; "
+            "leave unset for a full-corpus run."
+        ),
+    )
+    parser.add_argument(
         "--train-max-rows",
         type=int,
         default=1_500_000,
@@ -609,6 +633,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 batch_size=args.batch_size,
                 silhouette_sample=args.silhouette_sample,
                 train_max_rows=args.train_max_rows,
+                row_limit=args.row_limit,
             )
             results.append(result)
 

@@ -47,6 +47,7 @@ from typing import Iterator, Optional, Sequence
 
 import numpy as np
 import psycopg
+from pgvector.psycopg import register_vector
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = REPO_ROOT / "src"
@@ -113,7 +114,7 @@ def _parse_pgvector_text(text: str) -> np.ndarray:
 
 
 _STREAM_SQL = (
-    "SELECT bibcode, embedding::text FROM paper_embeddings "
+    "SELECT bibcode, embedding FROM paper_embeddings "
     "WHERE model_name = 'indus' ORDER BY bibcode"
 )
 
@@ -128,6 +129,11 @@ def _iter_indus_batches(
     Uses a server-side cursor so the driver never buffers more than
     ``batch_size`` rows at once. ``vectors`` is a ``(len(bibcodes), 768)``
     ``float32`` matrix.
+
+    Requires ``pgvector.psycopg.register_vector`` to have been called on
+    the connection so embeddings arrive as numpy arrays via the binary
+    pgvector wire format. Text-form parsing was ~100x slower at 32M-row
+    scale.
 
     The connection must be in ``autocommit=False`` mode — psycopg3 named
     cursors refuse to execute in autocommit.
@@ -144,11 +150,11 @@ def _iter_indus_batches(
 
         batch_bibs: list[str] = []
         batch_vecs: list[np.ndarray] = []
-        for bibcode, emb_text in cur:
-            if emb_text is None:
+        for bibcode, emb in cur:
+            if emb is None:
                 continue
             batch_bibs.append(bibcode)
-            batch_vecs.append(_parse_pgvector_text(emb_text))
+            batch_vecs.append(np.asarray(emb, dtype=np.float32))
             if len(batch_bibs) >= batch_size:
                 yield batch_bibs, np.vstack(batch_vecs)
                 batch_bibs = []
@@ -282,6 +288,7 @@ def _run_resolution(
     seed: int,
     batch_size: int,
     silhouette_sample: int,
+    train_max_rows: int,
 ) -> ResolutionResult:
     """Train MiniBatchKMeans, predict assignments, stage + merge into paper_metrics."""
     # Local import keeps the CLI fast for --help and makes missing-sklearn
@@ -309,6 +316,9 @@ def _run_resolution(
 
     # --- Pass 1: training via partial_fit over streamed batches ---
     # Caller must have set autocommit=False before calling this function.
+    # MiniBatchKMeans converges long before 32M samples; cap the training
+    # pass at ``train_max_rows`` and use the fitted model to predict
+    # labels over the full corpus in pass 2.
     carry_vecs: Optional[np.ndarray] = None
     n_rows_train = 0
     with conn.transaction():
@@ -324,6 +334,13 @@ def _run_resolution(
                 carry_vecs = vecs
                 continue
             kmeans.partial_fit(vecs)
+            if n_rows_train >= train_max_rows:
+                logger.info(
+                    "Resolution %s: training cap reached at %d rows (>= %d) — "
+                    "proceeding to predict pass",
+                    spec.name, n_rows_train, train_max_rows,
+                )
+                break
         if carry_vecs is not None and len(carry_vecs) > 0:
             # Final tail: pad by re-fitting alongside already-seen centroids.
             # partial_fit refuses n_samples < n_clusters, so we only proceed
@@ -481,6 +498,17 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch-size", type=int, default=10_000)
     parser.add_argument(
+        "--train-max-rows",
+        type=int,
+        default=1_500_000,
+        help=(
+            "Cap training-pass rows per resolution. MiniBatchKMeans converges "
+            "long before 32M samples; predict pass still covers the full "
+            "corpus. 1.5M is ~750x k=2000 — sample ratio well above the "
+            "10-100x rule."
+        ),
+    )
+    parser.add_argument(
         "--silhouette-sample",
         type=int,
         default=DEFAULT_SILHOUETTE_SAMPLE,
@@ -550,6 +578,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     with psycopg.connect(dsn) as conn:
         conn.autocommit = False
+        register_vector(conn)
         n_indus = _count_indus_rows(conn)
         logger.info("paper_embeddings(model_name='indus'): %d rows", n_indus)
         for spec in specs:
@@ -559,6 +588,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 seed=args.seed,
                 batch_size=args.batch_size,
                 silhouette_sample=args.silhouette_sample,
+                train_max_rows=args.train_max_rows,
             )
             results.append(result)
 

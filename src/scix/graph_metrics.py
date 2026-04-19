@@ -6,6 +6,8 @@ evaluating partition quality against external labels or structural criteria.
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import gc
 import io
 import logging
@@ -19,6 +21,47 @@ import psycopg
 from psycopg.rows import dict_row
 
 from scix.db import get_connection
+
+_LIBC: ctypes.CDLL | None = None
+
+
+def _libc() -> ctypes.CDLL | None:
+    """Return a cached libc handle for malloc_trim, or None on non-glibc."""
+    global _LIBC
+    if _LIBC is not None:
+        return _LIBC
+    try:
+        path = ctypes.util.find_library("c")
+        if path is None:
+            return None
+        _LIBC = ctypes.CDLL(path)
+        return _LIBC
+    except OSError:
+        return None
+
+
+def _malloc_trim() -> None:
+    """Ask glibc to return freed arenas to the OS (no-op on non-glibc)."""
+    lib = _libc()
+    if lib is None or not hasattr(lib, "malloc_trim"):
+        return
+    try:
+        lib.malloc_trim(0)
+    except OSError:
+        pass
+
+
+def _rss_gb() -> float:
+    """Return current process RSS in GB (Linux /proc-based, 0.0 elsewhere)."""
+    try:
+        with open("/proc/self/status", "r", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    kb = int(line.split()[1])
+                    return round(kb / (1024 * 1024), 2)
+    except OSError:
+        pass
+    return 0.0
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +325,12 @@ def load_graph(
             id_to_bibcode.append(bibcode)
 
     node_count = len(id_to_bibcode)
-    logger.info("Loaded %d nodes in %.1fs", node_count, (time.perf_counter() - t0))
+    logger.info(
+        "Loaded %d nodes in %.1fs (RSS=%.2fGB)",
+        node_count,
+        (time.perf_counter() - t0),
+        _rss_gb(),
+    )
 
     # --- Stream edges into numpy int32 arrays ---
     # A Python list of (src, tgt) tuples for 10^8+ edges costs ~70 bytes each
@@ -320,31 +368,43 @@ def load_graph(
     src_arr = src_arr[:edge_count]
     tgt_arr = tgt_arr[:edge_count]
     logger.info(
-        "Loaded %d edges (skipped %d) in %.1fs",
+        "Loaded %d edges (skipped %d) in %.1fs (RSS=%.2fGB)",
         edge_count,
         skipped,
         (time.perf_counter() - t_edges),
+        _rss_gb(),
     )
 
     # Release the bibcode→vid dict before igraph allocates its internal
-    # representation: on the 32M-paper graph this dict is ~8 GB and pushes
+    # representation: on the 32M-paper graph this dict is ~5-8 GB and pushes
     # the process into OOM during Graph() construction. Downstream callers
     # that only need the vid→bibcode map can opt out via keep_bibcode_to_id.
+    # gc.collect() marks arenas free but glibc won't return them to OS
+    # automatically — malloc_trim forces that.
     if not keep_bibcode_to_id:
         bibcode_to_id = {}
         gc.collect()
+        _malloc_trim()
+        logger.info("Dropped bibcode_to_id + malloc_trim (RSS=%.2fGB)", _rss_gb())
 
     # --- Build graph ---
     # igraph 1.0 accepts a (E, 2) int32 array directly. column_stack allocates
-    # ~1.2 GB temporarily; free src/tgt right after to cap peak.
+    # ~2.4 GB temporarily; free src/tgt right after to cap peak.
     t_build = time.perf_counter()
     edges = np.column_stack((src_arr, tgt_arr))
     del src_arr, tgt_arr
     gc.collect()
+    _malloc_trim()
+    logger.info("column_stack done (RSS=%.2fGB) — building igraph...", _rss_gb())
     graph = igraph.Graph(n=node_count, edges=edges, directed=True)
     del edges
     gc.collect()
-    logger.info("Built igraph in %.1fs", (time.perf_counter() - t_build))
+    _malloc_trim()
+    logger.info(
+        "Built igraph in %.1fs (RSS=%.2fGB)",
+        (time.perf_counter() - t_build),
+        _rss_gb(),
+    )
 
     total_ms = _elapsed_ms(t0)
     logger.info(

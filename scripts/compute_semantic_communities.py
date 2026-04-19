@@ -30,6 +30,7 @@ Outputs:
 from __future__ import annotations
 
 import argparse
+import gc
 import hashlib
 import json
 import logging
@@ -115,8 +116,12 @@ def _parse_pgvector_text(text: str) -> np.ndarray:
 
 _STREAM_SQL = (
     "SELECT bibcode, embedding FROM paper_embeddings "
-    "WHERE model_name = 'indus' ORDER BY bibcode"
+    "WHERE model_name = 'indus'"
 )
+# Intentionally no ORDER BY: on 32M rows x 768 dims the sort
+# materializes the full result in backend memory (~tens of GB) before
+# streaming. The staging TEMP table uses bibcode as primary key so row
+# order does not affect correctness of the bulk UPDATE.
 
 
 def _iter_indus_batches(
@@ -154,7 +159,11 @@ def _iter_indus_batches(
             if emb is None:
                 continue
             batch_bibs.append(bibcode)
-            batch_vecs.append(np.asarray(emb, dtype=np.float32))
+            # np.array (not np.asarray) forces a copy — detaches the
+            # ndarray from the libpq result buffer so the buffer can be
+            # freed on the next FETCH instead of being retained for the
+            # lifetime of the iteration.
+            batch_vecs.append(np.array(emb, dtype=np.float32, copy=True))
             if len(batch_bibs) >= batch_size:
                 yield batch_bibs, np.vstack(batch_vecs)
                 batch_bibs = []
@@ -368,6 +377,7 @@ def _run_resolution(
     n_rows_predict = 0
     with conn.transaction():
         _create_staging(conn)
+        batch_counter = 0
         for bibs, vecs in _iter_indus_batches(
             conn, batch_size, f"sc_{spec.name}_predict"
         ):
@@ -375,6 +385,16 @@ def _run_resolution(
             _copy_assignments(conn, bibs, labels)
             reservoir.extend(vecs, labels)
             n_rows_predict += len(bibs)
+            # Drop references to the batch numpy arrays so the next
+            # iteration's allocations can reuse the freed pages. Without
+            # this the interpreter hangs on to each batch until the
+            # next reassignment at the top of the for-loop, which is
+            # too late when the allocator has already expanded the
+            # python heap.
+            del labels, vecs, bibs
+            batch_counter += 1
+            if batch_counter % 50 == 0:
+                gc.collect()
         n_merged = _merge_resolution(conn, spec.name)
         logger.info(
             "Resolution %s: merged %d paper_metrics rows from %d staged",

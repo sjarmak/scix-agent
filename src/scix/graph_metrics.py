@@ -242,34 +242,46 @@ def _import_leidenalg() -> Any:
 
 def load_graph(
     conn: psycopg.Connection,
-) -> tuple[Any, dict[str, int], dict[int, str]]:
+    keep_bibcode_to_id: bool = True,
+) -> tuple[Any, dict[str, int], Any]:
     """Load citation graph from PostgreSQL into an igraph.Graph.
 
     Streams nodes and edges via server-side cursors to handle millions of rows
     without exhausting memory.
 
+    Args:
+        conn: PostgreSQL connection (psycopg).
+        keep_bibcode_to_id: When False, drops the bibcode→vid dict right after
+            edge resolution and returns an empty dict for the second tuple
+            element. Saves ~8 GB on the full 32M-paper graph. Set False when
+            downstream code only needs the graph + vid→bibcode reverse map
+            (e.g. the M3 Leiden recompute).
+
     Returns:
-        (graph, bibcode_to_id, id_to_bibcode) where graph is an igraph.Graph
-        and the dicts map between bibcodes and integer vertex IDs.
+        (graph, bibcode_to_id, id_to_bibcode) — graph is an igraph.Graph;
+        bibcode_to_id is dict[str, int] (or empty dict if ``keep_bibcode_to_id``
+        is False); id_to_bibcode is a ``list[str]`` where the vid is the list
+        index (smaller memory footprint than dict[int, str] by ~40 %).
     """
     igraph = _import_igraph()
 
     t0 = time.perf_counter()
 
     # --- Stream nodes ---
+    # bibcode_to_id stays a dict for O(1) edge lookup.
+    # id_to_bibcode is a list (vid → bibcode) — index-based, no hash overhead,
+    # and ~4-5 GB smaller than a 32M-entry dict on the full corpus.
     bibcode_to_id: dict[str, int] = {}
-    id_to_bibcode: dict[int, str] = {}
-    node_idx = 0
+    id_to_bibcode: list[str] = []
 
     with conn.cursor(name="node_cursor") as cur:
         cur.itersize = 500_000
         cur.execute("SELECT bibcode FROM papers")
         for (bibcode,) in cur:
-            bibcode_to_id[bibcode] = node_idx
-            id_to_bibcode[node_idx] = bibcode
-            node_idx += 1
+            bibcode_to_id[bibcode] = len(id_to_bibcode)
+            id_to_bibcode.append(bibcode)
 
-    node_count = len(bibcode_to_id)
+    node_count = len(id_to_bibcode)
     logger.info("Loaded %d nodes in %.1fs", node_count, (time.perf_counter() - t0))
 
     # --- Stream edges into numpy int32 arrays ---
@@ -313,6 +325,14 @@ def load_graph(
         skipped,
         (time.perf_counter() - t_edges),
     )
+
+    # Release the bibcode→vid dict before igraph allocates its internal
+    # representation: on the 32M-paper graph this dict is ~8 GB and pushes
+    # the process into OOM during Graph() construction. Downstream callers
+    # that only need the vid→bibcode map can opt out via keep_bibcode_to_id.
+    if not keep_bibcode_to_id:
+        bibcode_to_id = {}
+        gc.collect()
 
     # --- Build graph ---
     # igraph 1.0 accepts a (E, 2) int32 array directly. column_stack allocates

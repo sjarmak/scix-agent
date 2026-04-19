@@ -239,8 +239,12 @@ def run(
     conn = psycopg.connect(dsn)
     try:
         # 1. Load full citation graph.
+        # keep_bibcode_to_id=False drops the 32M-entry bibcode→vid dict inside
+        # load_graph() once edges are resolved — it is not referenced after
+        # that point here, and retaining it pushes peak RSS into OOM territory
+        # during igraph.Graph() construction on the 32M/298M prod graph.
         logger.info("Loading citation graph...")
-        graph, b2i, i2b = load_graph(conn)
+        graph, b2i, i2b = load_graph(conn, keep_bibcode_to_id=False)
 
         # 2. Count degree-0 nodes for run_meta (pure metric; does not mutate graph).
         #    This avoids the memory cost of materialising an intermediate subgraph

@@ -6,6 +6,7 @@ evaluating partition quality against external labels or structural criteria.
 
 from __future__ import annotations
 
+import gc
 import io
 import logging
 import math
@@ -13,6 +14,7 @@ import time
 from collections import Counter
 from typing import Any
 
+import numpy as np
 import psycopg
 from psycopg.rows import dict_row
 
@@ -270,9 +272,22 @@ def load_graph(
     node_count = len(bibcode_to_id)
     logger.info("Loaded %d nodes in %.1fs", node_count, (time.perf_counter() - t0))
 
-    # --- Stream edges ---
+    # --- Stream edges into numpy int32 arrays ---
+    # A Python list of (src, tgt) tuples for 10^8+ edges costs ~70 bytes each
+    # (tuple + 2 PyLong) → ~20 GB peak at 298M edges. Writing directly into
+    # preallocated int32 arrays reduces this to ~2.4 GB and keeps the peak
+    # safely below system memory during igraph construction.
     t_edges = time.perf_counter()
-    edge_list: list[tuple[int, int]] = []
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM citation_edges")
+        total_rows = cur.fetchone()[0]
+    logger.info("citation_edges row count: %d (preallocating arrays)", total_rows)
+
+    # int32 holds 2.1B IDs — fine for ~32M nodes.
+    src_arr = np.empty(total_rows, dtype=np.int32)
+    tgt_arr = np.empty(total_rows, dtype=np.int32)
+    write_idx = 0
     skipped = 0
 
     with conn.cursor(name="edge_cursor") as cur:
@@ -284,9 +299,14 @@ def load_graph(
             if src_id is None or tgt_id is None:
                 skipped += 1
                 continue
-            edge_list.append((src_id, tgt_id))
+            src_arr[write_idx] = src_id
+            tgt_arr[write_idx] = tgt_id
+            write_idx += 1
 
-    edge_count = len(edge_list)
+    edge_count = write_idx
+    # Trim (cheap view) in case skips or table growth shifted the count.
+    src_arr = src_arr[:edge_count]
+    tgt_arr = tgt_arr[:edge_count]
     logger.info(
         "Loaded %d edges (skipped %d) in %.1fs",
         edge_count,
@@ -295,8 +315,15 @@ def load_graph(
     )
 
     # --- Build graph ---
+    # igraph 1.0 accepts a (E, 2) int32 array directly. column_stack allocates
+    # ~1.2 GB temporarily; free src/tgt right after to cap peak.
     t_build = time.perf_counter()
-    graph = igraph.Graph(n=node_count, edges=edge_list, directed=True)
+    edges = np.column_stack((src_arr, tgt_arr))
+    del src_arr, tgt_arr
+    gc.collect()
+    graph = igraph.Graph(n=node_count, edges=edges, directed=True)
+    del edges
+    gc.collect()
     logger.info("Built igraph in %.1fs", (time.perf_counter() - t_build))
 
     total_ms = _elapsed_ms(t0)

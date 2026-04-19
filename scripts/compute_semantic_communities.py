@@ -620,12 +620,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     results: list[ResolutionResult] = []
 
+    # Count once up front using a short-lived connection.
     with psycopg.connect(dsn) as conn:
         conn.autocommit = False
         register_vector(conn)
         n_indus = _count_indus_rows(conn)
         logger.info("paper_embeddings(model_name='indus'): %d rows", n_indus)
-        for spec in specs:
+
+    # One connection per resolution. Under autocommit=False the outer
+    # psycopg.connect wraps everything in a SINGLE implicit transaction,
+    # so nothing commits until the connection closes — `with
+    # conn.transaction()` inside _run_resolution only creates savepoints.
+    # Running all three resolutions in one tx means (a) none of the work
+    # is durable until the final exit, and (b) cross-resolution state
+    # (cursor bookkeeping, kmeans fit history, gc-detached reservoirs)
+    # accumulates in the python process. A fresh connection per
+    # resolution commits cleanly on close and resets both ends.
+    for spec in specs:
+        with psycopg.connect(dsn) as conn:
+            conn.autocommit = False
+            register_vector(conn)
             result = _run_resolution(
                 conn,
                 spec,
@@ -635,7 +649,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 train_max_rows=args.train_max_rows,
                 row_limit=args.row_limit,
             )
-            results.append(result)
+            # Explicit commit before close so the resolution's UPDATE
+            # lands immediately in the database (visible to other
+            # connections) and backend-side state is released.
+            conn.commit()
+        results.append(result)
+        gc.collect()
 
     peak_rss_mb = _peak_rss_mb()
     finished_at = datetime.now(timezone.utc).isoformat()

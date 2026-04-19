@@ -29,6 +29,7 @@ Outputs:
 from __future__ import annotations
 
 import argparse
+import gc
 import io
 import json
 import logging
@@ -53,7 +54,6 @@ from scix.graph_metrics import (  # noqa: E402
     compute_leiden,
     compute_nmi,
     extract_giant_component,
-    filter_isolated_nodes,
     load_graph,
 )
 
@@ -242,22 +242,31 @@ def run(
         logger.info("Loading citation graph...")
         graph, b2i, i2b = load_graph(conn)
 
-        # 2. Filter isolated nodes → subgraph of degree ≥ 1.
-        logger.info("Filtering isolated nodes...")
-        subgraph, sub_b2i, sub_i2b, isolated_bibcodes = filter_isolated_nodes(
-            graph, b2i, i2b
-        )
+        # 2. Count degree-0 nodes for run_meta (pure metric; does not mutate graph).
+        #    This avoids the memory cost of materialising an intermediate subgraph
+        #    via filter_isolated_nodes(): extract_giant_component() already lumps
+        #    degree-0 nodes into small_bibcodes, and downstream _copy_null_rows
+        #    unions isolated + small anyway — so the filter step is redundant.
+        logger.info("Counting isolated nodes...")
+        n_isolated = sum(1 for d in graph.degree() if d == 0)
+        logger.info("Found %d isolated nodes", n_isolated)
 
-        # 3. Extract giant component.
+        # 3. Extract giant component directly from full graph.
         logger.info("Extracting giant component...")
         giant, giant_b2i, giant_i2b, small_bibcodes = extract_giant_component(
-            subgraph, sub_b2i, sub_i2b
+            graph, b2i, i2b
         )
+        # Free the full-graph representation as soon as possible — peak RSS during
+        # induced_subgraph() + giant_i2b construction was what OOM'd on prod (32M
+        # nodes / 298M edges).
+        del graph, b2i, i2b
+        gc.collect()
+
         giant_n = giant.vcount()
         logger.info(
-            "Giant component: %d nodes (isolated=%d, small-component=%d)",
+            "Giant component: %d nodes (isolated=%d, non-giant total=%d)",
             giant_n,
-            len(isolated_bibcodes),
+            n_isolated,
             len(small_bibcodes),
         )
 
@@ -296,7 +305,7 @@ def run(
                 cur.execute(NULL_STAGING_SQL)
             if giant_n > 0:
                 _copy_giant_rows(conn, giant_i2b, coarse, medium, fine)
-            _copy_null_rows(conn, isolated_bibcodes | small_bibcodes)
+            _copy_null_rows(conn, small_bibcodes)
             with conn.cursor() as cur:
                 cur.execute(UPDATE_GIANT_SQL)
                 giant_updated = cur.rowcount
@@ -341,8 +350,8 @@ def run(
             "fine": resolution_fine,
         },
         "giant_component_size": giant_n,
-        "isolated_node_count": len(isolated_bibcodes),
-        "small_component_node_count": len(small_bibcodes),
+        "isolated_node_count": n_isolated,
+        "small_component_node_count": len(small_bibcodes) - n_isolated,
         "n_communities": {
             "coarse": n_coarse,
             "medium": n_medium,

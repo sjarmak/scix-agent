@@ -106,5 +106,5 @@ shipped with this tag.
   in-memory; add a Redis-backed limiter if the same bearer token will
   be used across replicas.
 
-[Unreleased]: https://github.com/sjarmak/scix_experiments/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/sjarmak/scix_experiments/releases/tag/v0.1.0
+[Unreleased]: https://github.com/sjarmak/scix-agent/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/sjarmak/scix-agent/releases/tag/v0.1.0

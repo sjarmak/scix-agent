@@ -8,7 +8,7 @@ a running deployment. Read this alongside
 
 ```bash
 # 1. Fetch the new tag
-cd /path/to/scix_experiments
+cd /path/to/scix-agent
 git fetch --tags
 git checkout v<X.Y.Z>
 

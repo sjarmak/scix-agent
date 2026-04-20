@@ -1,8 +1,10 @@
 # SciX Corpus Coverage Bias Analysis
 
+> **Snapshot — 2026-04-04.** The per-field distributions, year breakdowns, and bias analysis below reflect the corpus state at the time this report was generated. Body-text ingest has continued since: as of **2026-04-20** the corpus has **32,400,594 total papers** and **14,941,487 with full text (46.1%)**. Re-run `scripts/coverage_bias_analysis.py` to regenerate this report against current data.
+
 This report analyzes the SciX corpus for coverage biases, data quality issues, and completeness across multiple dimensions. It compares the distribution of papers with full text (body IS NOT NULL) vs abstract-only papers and examines field-level data quality.
 
-## Corpus Summary
+## Corpus Summary (2026-04-04 snapshot)
 
 - **Total papers**: 32,390,237
 - **With full text**: 5,988,936 (18.5%)

@@ -285,12 +285,26 @@ def run(
             medium: list[int] = []
             fine: list[int] = []
         else:
-            logger.info("Running Leiden (coarse=%.6f)...", resolution_coarse)
-            coarse = compute_leiden(giant, resolution=resolution_coarse, seed=seed)
-            logger.info("Running Leiden (medium=%.6f)...", resolution_medium)
-            medium = compute_leiden(giant, resolution=resolution_medium, seed=seed)
-            logger.info("Running Leiden (fine=%.6f)...", resolution_fine)
-            fine = compute_leiden(giant, resolution=resolution_fine, seed=seed)
+            # CPM (CPMVertexPartition) is the CWTS-recommended quality
+            # function for citation graphs at fine-grained resolutions —
+            # CLAUDE.md specifies 0.001/0.01/0.1 as meaningful CPM edge-
+            # density thresholds. Modularity (the igraph default) is
+            # degenerate at those values because its resolution parameter
+            # shifts the gain function proportionally to the graph's edge
+            # count; at res=0.001 on a 298M-edge graph, modularity collapses
+            # to a single community.
+            logger.info("Running Leiden CPM (coarse=%.6f)...", resolution_coarse)
+            coarse = compute_leiden(
+                giant, resolution=resolution_coarse, seed=seed, partition_type="CPM"
+            )
+            logger.info("Running Leiden CPM (medium=%.6f)...", resolution_medium)
+            medium = compute_leiden(
+                giant, resolution=resolution_medium, seed=seed, partition_type="CPM"
+            )
+            logger.info("Running Leiden CPM (fine=%.6f)...", resolution_fine)
+            fine = compute_leiden(
+                giant, resolution=resolution_fine, seed=seed, partition_type="CPM"
+            )
 
         n_coarse, largest_coarse, coarse_by_bib = _summarize_membership(coarse, giant_i2b)
         n_medium, largest_medium, _ = _summarize_membership(medium, giant_i2b)
@@ -351,7 +365,7 @@ def run(
         "started_at": started_at,
         "git_sha": _git_sha(),
         "seed": seed,
-        "partition_type": "modularity",
+        "partition_type": "CPM",
         "resolutions": {
             "coarse": resolution_coarse,
             "medium": resolution_medium,

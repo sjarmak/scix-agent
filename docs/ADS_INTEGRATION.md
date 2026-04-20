@@ -15,7 +15,7 @@ replacement for any existing ADS service. Concretely:
 | Per-bibcode metadata lookup | `adsws`, `resolver-service` | — |
 | Full-text PDF retrieval | `ADSfulltext` pipeline → proj storage | — |
 | Citation metrics, export, biblib | dedicated microservices | — |
-| **Dense semantic retrieval** (INDUS / text-embedding-3-large) | none | MCP `search`, `semantic_search`, `concept_search` |
+| **Dense semantic retrieval** (INDUS, full 32M corpus) | none | MCP `search`, `concept_search` |
 | **Citation-graph context** (PPR, multi-hop chains, co-citation) | citation counts only | MCP `citation_chain`, `citation_similarity`, `graph_context` |
 | **Agent-friendly navigation** over the corpus | — | The 13-tool MCP surface |
 

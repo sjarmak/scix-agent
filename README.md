@@ -1,6 +1,6 @@
 # SciX Experiments
 
-Agent-navigable knowledge layer on the full NASA ADS/SciX corpus. Transforms 32.4M scientific papers and 299M citation edges into infrastructure that AI agents can navigate programmatically via a 22-tool MCP server.
+Agent-navigable knowledge layer on the full NASA ADS/SciX corpus. Transforms 32.4M scientific papers and 299M citation edges into infrastructure that AI agents can navigate programmatically via a 13-tool MCP server.
 
 ## What This Does
 
@@ -8,11 +8,11 @@ Instead of returning ranked lists, the system exposes the structural topology of
 
 Key capabilities:
 
-- **Hybrid search**: INDUS (domain-specific scientific similarity) + text-embedding-3-large (query-to-doc retrieval) + BM25 fused via Reciprocal Rank Fusion
+- **Hybrid search**: INDUS dense embeddings (domain-specific scientific similarity, full 32.4M corpus) + BM25 lexical (via ts_rank_cd, optional ParadeDB pg_search) fused via Reciprocal Rank Fusion
 - **Graph intelligence**: PageRank, HITS, Leiden community detection at multiple resolutions on the full citation graph
 - **Entity extraction**: LLM-based extraction of methods, datasets, instruments from abstracts and full text
 - **Session state**: Working sets that let agents accumulate and reason over papers across a research session
-- **Full-text search**: Body text available for ~55% of papers with GIN-indexed tsvector
+- **Full-text search**: Body text ingested for 46% of papers (14.9M of 32.4M) with GIN-indexed tsvector
 
 ## Architecture
 
@@ -22,10 +22,10 @@ Single PostgreSQL 16 instance with pgvector 0.8.2. No separate search engine or 
 | --------------- | ------------------------------------------- |
 | Papers          | 32.4M (1800--2026)                          |
 | With abstracts  | 23.3M (72%)                                 |
-| With full text  | 6.0M ingested (17.9M available via ADS API) |
-| Citation edges  | 299M                                        |
+| With full text  | 14.9M ingested (46%)                        |
+| Citation edges  | 299.3M                                      |
 | Edge resolution | 99.6%                                       |
-| Embeddings      | INDUS (768d) + OpenAI (1024d)               |
+| Embeddings      | INDUS 768d (32.4M, full corpus)             |
 
 **Discipline coverage** (papers may belong to multiple):
 
@@ -47,37 +47,46 @@ Single PostgreSQL 16 instance with pgvector 0.8.2. No separate search engine or 
 | Cited papers | 54%                          |
 | Keywords     | 49%                          |
 | References   | 40%                          |
-| Full text    | 19% ingested (55% available) |
+| Full text    | 46% ingested (14.9M of 32.4M) |
 
 ## Project Structure
 
 ```
-src/scix/                     -- Python package (47 modules)
-  mcp_server.py               -- MCP server (22 tools across 5 categories)
+src/scix/                     -- Python package (76 modules)
+  mcp_server.py               -- MCP stdio server (13 tools)
+  mcp_server_http.py          -- MCP HTTP/streamable transport
   search.py                   -- Hybrid search with RRF fusion
   db.py                       -- DB helpers (connection pool, IndexManager, IngestLog)
   ingest.py                   -- JSONL -> PostgreSQL via COPY
   field_mapping.py            -- ADS/SciX JSONL -> SQL field mapping + transforms
-  embed.py                    -- INDUS / SPECTER2 embedding pipeline
+  embed.py                    -- INDUS embedding pipeline (SPECTER2/nomic as 20K pilots only)
   graph_metrics.py            -- PageRank, HITS, community detection
   extract.py                  -- LLM entity extraction
   session.py                  -- Agent working set management
   sources/                    -- OpenAlex, ar5iv, S2 source modules
   jit/                        -- JIT entity resolution (cache, router, NER)
   eval/                       -- Retrieval evaluation framework
-scripts/                      -- CLI tools (78 scripts)
+scripts/                      -- CLI tools (114 scripts)
   ingest.py                   -- Corpus ingestion CLI
   embed_fast.py               -- GPU embedding pipeline
   harvest_*.py                -- External data harvesters
   eval_*.py                   -- Evaluation scripts
   link_*.py                   -- Entity linking scripts
   setup_db.sh                 -- Idempotent database creation
-schema.sql                    -- Consolidated PostgreSQL schema
-tests/                        -- pytest suite (107 test files)
+migrations/                   -- Numbered SQL migrations (001..054)
+schema.sql                    -- Consolidated PostgreSQL schema (generated)
+tests/                        -- pytest suite (153 test files)
 docs/                         -- Documentation
   ADR/                        -- Architecture decision records
-  paper_outline.md            -- ADASS 2026 paper outline
+  DEPLOYMENT.md               -- Operator deploy guide (k8s + compose)
+  ADS_INTEGRATION.md          -- BeeHive placement + corpus-sync options
+  UPGRADING.md                -- Migration + semver tag contract
+  runbooks/                   -- Operational runbooks
   figures/                    -- Data visualizations
+deploy/                       -- Container + k8s deployment manifests
+  Dockerfile                  -- Hardened multi-stage build
+  k8s/                        -- ADS AWS cluster manifests
+  compose/                    -- Backoffice docker-compose variant
 ```
 
 ## Setup
@@ -151,7 +160,7 @@ The default DSN (`dbname=scix`) points at the production database with 32M paper
 
 | Tool             | Description                                                                                                              |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `search`         | Search the corpus by natural-language query. Modes: hybrid (INDUS + OpenAI + BM25 via RRF), semantic, or keyword.        |
+| `search`         | Search the corpus by natural-language query. Modes: hybrid (INDUS + BM25 via RRF), semantic, or keyword.                 |
 | `concept_search` | Retrieve papers tagged with a Unified Astronomy Thesaurus (UAT) concept, with optional expansion to descendant concepts. |
 | `facet_counts`   | Distribution of paper counts grouped by year, doctype, arxiv_class, database, bibgroup, or property.                     |
 

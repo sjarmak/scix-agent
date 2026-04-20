@@ -10,7 +10,7 @@
 
 ## Abstract (~250 words)
 
-Scientific literature grows faster than researchers can navigate it. AI agents are emerging as research tools, but they lack infrastructure: existing search APIs return ranked lists, not navigable knowledge structures. We present an agent-native knowledge layer built on the full NASA ADS corpus — 32.4M papers and 299M citation edges spanning 1800-2026 — and show that corpus completeness is not optional: a 6-year rolling window resolves only 17.8% of citation edges, rendering graph analytics structurally misleading. The full corpus resolves 99.6%, transforming a fragmented graph into a connected knowledge structure where PageRank, community detection, and co-citation analysis produce valid results. On this foundation, we build three capabilities absent from existing scientific search: (1) corpus-scale graph analytics — PageRank, HITS, and Leiden community detection revealing the structural topology of science; (2) multi-model semantic retrieval — INDUS (nasa-impact/nasa-smd-ibm-st-v2), a domain-specific model trained on 2.66M ADS title-abstract pairs, for document similarity fused with text-embedding-3-large for natural-language queries via reciprocal rank fusion; and (3) agent session state — working-set management that enables systematic literature exploration rather than isolated searches. These are exposed through a 22-tool MCP server. We evaluate retrieval quality, graph topology, and community coherence on the full corpus, and discuss implications for ADS infrastructure: precomputed embeddings and graph metrics as data products, and MCP endpoints as a complement to REST APIs.
+Scientific literature grows faster than researchers can navigate it. AI agents are emerging as research tools, but they lack infrastructure: existing search APIs return ranked lists, not navigable knowledge structures. We present an agent-native knowledge layer built on the full NASA ADS corpus — 32.4M papers and 299M citation edges spanning 1800-2026 — and show that corpus completeness is not optional: a 6-year rolling window resolves only 17.8% of citation edges, rendering graph analytics structurally misleading. The full corpus resolves 99.6%, transforming a fragmented graph into a connected knowledge structure where PageRank, community detection, and co-citation analysis produce valid results. On this foundation, we build three capabilities absent from existing scientific search: (1) corpus-scale graph analytics — PageRank, HITS, and Leiden community detection revealing the structural topology of science; (2) multi-model semantic retrieval — INDUS (nasa-impact/nasa-smd-ibm-st-v2), a domain-specific model trained on 2.66M ADS title-abstract pairs, for document similarity fused with text-embedding-3-large for natural-language queries via reciprocal rank fusion; and (3) agent session state — working-set management that enables systematic literature exploration rather than isolated searches. These are exposed through a 13-tool MCP server. We evaluate retrieval quality, graph topology, and community coherence on the full corpus, and discuss implications for ADS infrastructure: precomputed embeddings and graph metrics as data products, and MCP endpoints as a complement to REST APIs.
 
 ---
 
@@ -32,7 +32,7 @@ Scientific literature grows faster than researchers can navigate it. AI agents a
 
 - Agent-native navigation layer on 32.4M ADS papers
 - Three layers: graph intelligence, semantic retrieval, session state
-- 22 MCP tools enabling agent-driven research workflows
+- 13 MCP tools enabling agent-driven research workflows
 - Open-source, designed for upstream integration into ADS
 
 ---
@@ -260,7 +260,7 @@ RRF fusion of BM25 + dense retrieval adds negligible lift on this benchmark: hyb
 
 ### 6.1 MCP tool design
 
-- 22 tools across 5 categories:
+- 13 tools across 5 categories:
   - Search: semantic_search, hybrid_search, lexical_search, faceted_search
   - Paper: get_paper, get_citations, get_references
   - Graph: co_citation_analysis, bibliographic_coupling, citation_chain, temporal_evolution, graph_metrics, explore_community
@@ -379,7 +379,7 @@ RRF fusion of BM25 + dense retrieval adds negligible lift on this benchmark: hyb
 ### Summary
 
 - First MCP server for scientific literature navigation
-- 32.4M papers, 299M edges, 22 tools, 3 community signals
+- 32.4M papers, 299M edges, 13 tools, 3 community signals
 - Designed for upstream integration into ADS/SciX
 
 ### Future work
@@ -395,7 +395,7 @@ RRF fusion of BM25 + dense retrieval adds negligible lift on this benchmark: hyb
 
 ### A. MCP Tool Specification
 
-Complete JSON schema for all 22 tools.
+Complete JSON schema for all 13 tools.
 
 ### B. SQL Schema
 

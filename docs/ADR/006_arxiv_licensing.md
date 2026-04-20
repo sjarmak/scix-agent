@@ -1,7 +1,7 @@
 # ADR-006: arXiv LaTeX Licensing — Internal Use Only
 
 - **Status**: Accepted (2026-04-13)
-- **Deciders**: SciX Experiments maintainers
+- **Deciders**: SciX Agent maintainers
 - **Scope**: All code paths that ingest, index, embed, or emit arXiv LaTeX-derived text
 - **Supersedes**: none
 - **Related**: `docs/prd/prd_external_data_integration.md`, PRD Build 5 (bead `scix_experiments-wqr`)

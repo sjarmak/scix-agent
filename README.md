@@ -1,4 +1,4 @@
-# SciX Experiments
+# SciX Agent
 
 Agent-navigable knowledge layer on the full NASA ADS/SciX corpus. Transforms 32.4M scientific papers and 299M citation edges into infrastructure that AI agents can navigate programmatically via a 13-tool MCP server.
 

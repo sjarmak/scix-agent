@@ -96,18 +96,65 @@ insufficient.
 
 ## Security posture
 
-- **Auth**: bearer token (`MCP_AUTH_TOKEN`) on every request,
-  rate-limited per token. For human users, put Cloudflare Access or a
-  Traefik ForwardAuth middleware in front of the ingress — tokens
-  become the second factor.
-- **DB credentials**: the MCP uses the `scix_reader` role with
-  `SELECT`-only grants. There is no code path that writes to Postgres
-  at request time; writes only happen from operator-run ingest / embed
-  jobs.
-- **Network**: the pod drops all Linux caps, runs as uid 1001 with a
-  read-only root FS. Egress is only needed for INDUS model download on
-  first start (with `HF_HUB_OFFLINE=0`) — seed the cache volume and
-  you can lock egress down entirely.
+### Auth
+
+The MCP ships with a single shared bearer token (`MCP_AUTH_TOKEN`)
+checked on every request and rate-limited per token in-memory. That's
+the right primitive for the pilot (sjarmak's workstation, internal
+testing) but almost certainly not how ADS wants this deployed. A few
+things we know about your stack that are relevant:
+
+- ADS already issues per-user API tokens at
+  `https://ui.adsabs.harvard.edu/user/settings/token`, and the
+  `api_gateway` / `adsws` microservices validate them for every
+  existing workflow.
+- Traefik — the ingress controller on `v126.kube.adslabs.org` — supports
+  ForwardAuth middleware, so an inbound `Authorization: Bearer <ADS
+  token>` can be validated upstream before the request ever reaches a
+  backend pod.
+- The MCP's auth check is a single ASGI middleware
+  (`src/scix/mcp_server_http.py::_AuthWrap`) — swapping it, bypassing
+  it, or running with `MCP_NO_AUTH=1` behind a trusted ingress are all
+  supported.
+
+Plausible integration patterns (pick whichever matches your auth
+plane — we don't have a strong opinion):
+
+1. **Gateway-validated ADS tokens.** Put the MCP behind `api_gateway`
+   or a Traefik ForwardAuth middleware that validates the inbound ADS
+   token against `adsws`, then forwards to the MCP with
+   `MCP_NO_AUTH=1`. Clients pass their existing ADS token in the
+   `Authorization` header; you get per-user attribution and revocation
+   for free. This is the lowest-code path and the one that makes the
+   MCP behave like every other SciX microservice.
+2. **In-process ADS-token validation.** Add a middleware to the MCP
+   that calls an ADS token-validation endpoint per request with a
+   short TTL cache. More code on our side, but keeps the MCP
+   deployable without the gateway (useful for labs, partners,
+   or staging clusters). Happy to add this behind a feature flag if
+   option 1 ends up not fitting — it's a small, isolated change.
+3. **Shared bearer token.** The current `MCP_AUTH_TOKEN`. Fine for
+   internal-only clusters or short-lived sandboxes where per-user
+   auditing isn't a requirement.
+
+All three coexist with Cloudflare Access / Okta / any SSO layer in
+front of the ingress if you want interactive human auth on top of
+programmatic token auth.
+
+### DB credentials
+
+The MCP uses the `scix_reader` role with `SELECT`-only grants. There
+is no code path that writes to Postgres at request time; writes only
+happen from operator-run ingest / embed jobs. Whatever you set up for
+rotating Postgres creds in BeeHive (sealed secrets, vault, whatever
+the pattern is) can apply here unchanged.
+
+### Network
+
+The pod drops all Linux caps, runs as uid 1001 with a read-only root
+FS. Egress is only needed for INDUS model download on first start
+(with `HF_HUB_OFFLINE=0`) — seed the cache volume and you can lock
+egress down entirely.
 
 ## Handoff summary for ops
 
@@ -136,3 +183,8 @@ insufficient.
 4. Which Postgres is this pointed at — new dedicated instance, or a
    database inside an existing server? 600 GB + heavy HNSW index
    builds argue for dedicated.
+5. Which of the auth patterns above (gateway-validated ADS token,
+   in-MCP ADS-token validation, shared bearer) should this target?
+   If it's the gateway pattern, is there an existing
+   `api_gateway` / `adsws` endpoint we should point a ForwardAuth
+   middleware at, or should we write against a specific route?

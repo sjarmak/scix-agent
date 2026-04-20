@@ -1,15 +1,15 @@
 # SciX Corpus Coverage Bias Analysis
 
-> **Snapshot — 2026-04-04.** The per-field distributions, year breakdowns, and bias analysis below reflect the corpus state at the time this report was generated. Body-text ingest has continued since: as of **2026-04-20** the corpus has **32,400,594 total papers** and **14,941,487 with full text (46.1%)**. Re-run `scripts/coverage_bias_analysis.py` to regenerate this report against current data.
+> Generated 2026-04-20 from the live `scix` database. Re-run `scripts/coverage_bias_analysis.py` to refresh after further ingest.
 
 This report analyzes the SciX corpus for coverage biases, data quality issues, and completeness across multiple dimensions. It compares the distribution of papers with full text (body IS NOT NULL) vs abstract-only papers and examines field-level data quality.
 
-## Corpus Summary (2026-04-04 snapshot)
+## Corpus Summary
 
-- **Total papers**: 32,390,237
-- **With full text**: 5,988,936 (18.5%)
-- **Citation edges**: 299,253,213
-- **Embeddings**: 32,373,178
+- **Total papers**: 32,400,594
+- **With full text**: 14,941,487 (46.1%)
+- **Citation edges**: 299,329,159
+- **Embeddings**: 32,423,531
 - **Year range**: 1800 -- 2026
 - **Median citation count**: 1
 - **Median reference count**: 0
@@ -20,29 +20,29 @@ Shows what percentage of papers have non-null (and non-empty for arrays) values 
 
 | Field | Total | Populated | Missing | % Populated |
 |---|---:|---:|---:|---:|
-| title | 32,390,237 | 32,373,178 | 17,059 | 100.0% |
-| abstract | 32,390,237 | 23,281,444 | 9,108,793 | 71.9% |
-| body | 32,390,237 | 5,988,936 | 26,401,301 | 18.5% |
-| year | 32,390,237 | 32,390,237 | 0 | 100.0% |
-| doctype | 32,390,237 | 32,390,237 | 0 | 100.0% |
-| pub | 32,390,237 | 32,390,132 | 105 | 100.0% |
-| first_author | 32,390,237 | 31,203,705 | 1,186,532 | 96.3% |
-| citation_count | 32,390,237 | 32,390,154 | 83 | 100.0% |
-| read_count | 32,390,237 | 32,390,154 | 83 | 100.0% |
-| reference_count | 32,390,237 | 27,391,811 | 4,998,426 | 84.6% |
-| pubdate | 32,390,237 | 32,390,237 | 0 | 100.0% |
-| lang | 32,390,237 | 0 | 32,390,237 | 0.0% |
-| copyright | 32,390,237 | 15,556,018 | 16,834,219 | 48.0% |
-| authors | 32,390,237 | 31,203,705 | 1,186,532 | 96.3% |
-| affiliations | 32,390,237 | 31,221,421 | 1,168,816 | 96.4% |
-| keywords | 32,390,237 | 15,829,538 | 16,560,699 | 48.9% |
-| arxiv_class | 32,390,237 | 2,662,341 | 29,727,896 | 8.2% |
-| database | 32,390,237 | 32,390,237 | 0 | 100.0% |
-| doi | 32,390,237 | 28,235,596 | 4,154,641 | 87.2% |
-| bibstem | 32,390,237 | 32,390,237 | 0 | 100.0% |
-| bibgroup | 32,390,237 | 663,064 | 31,727,173 | 2.0% |
-| orcid_pub | 32,390,237 | 31,174,078 | 1,216,159 | 96.2% |
-| orcid_user | 32,390,237 | 397,774 | 31,992,463 | 1.2% |
+| title | 32,400,594 | 32,383,535 | 17,059 | 100.0% |
+| abstract | 32,400,594 | 23,291,796 | 9,108,798 | 71.9% |
+| body | 32,400,594 | 14,941,487 | 17,459,107 | 46.1% |
+| year | 32,400,594 | 32,400,594 | 0 | 100.0% |
+| doctype | 32,400,594 | 32,400,594 | 0 | 100.0% |
+| pub | 32,400,594 | 32,400,485 | 109 | 100.0% |
+| first_author | 32,400,594 | 31,214,062 | 1,186,532 | 96.3% |
+| citation_count | 32,400,594 | 32,399,050 | 1,544 | 100.0% |
+| read_count | 32,400,594 | 32,399,048 | 1,546 | 100.0% |
+| reference_count | 32,400,594 | 27,400,705 | 4,999,889 | 84.6% |
+| pubdate | 32,400,594 | 32,400,590 | 4 | 100.0% |
+| lang | 32,400,594 | 0 | 32,400,594 | 0.0% |
+| copyright | 32,400,594 | 15,556,018 | 16,844,576 | 48.0% |
+| authors | 32,400,594 | 31,214,062 | 1,186,532 | 96.3% |
+| affiliations | 32,400,594 | 31,231,774 | 1,168,820 | 96.4% |
+| keywords | 32,400,594 | 15,839,773 | 16,560,821 | 48.9% |
+| arxiv_class | 32,400,594 | 2,672,557 | 29,728,037 | 8.2% |
+| database | 32,400,594 | 32,400,590 | 4 | 100.0% |
+| doi | 32,400,594 | 28,241,853 | 4,158,741 | 87.2% |
+| bibstem | 32,400,594 | 32,400,590 | 4 | 100.0% |
+| bibgroup | 32,400,594 | 663,074 | 31,737,520 | 2.0% |
+| orcid_pub | 32,400,594 | 31,184,320 | 1,216,274 | 96.2% |
+| orcid_user | 32,400,594 | 397,815 | 32,002,779 | 1.2% |
 
 ![Field Completeness](figures/field_completeness.png)
 
@@ -50,12 +50,12 @@ Shows what percentage of papers have non-null (and non-empty for arrays) values 
 
 Measures what fraction of cited papers (targets of citation edges) exist in the corpus.
 
-- **Total citation edges**: 299,253,213
-- **Edges with target in corpus**: 297,777,895 (99.5%)
-- **Edges with target missing**: 1,475,318 (0.5%)
-- **Unique cited papers**: 286,505,026
-- **Unique cited in corpus**: 285,041,678 (99.5%)
-- **Unique cited missing**: 1,463,348 (0.5%)
+- **Total citation edges**: 299,329,159
+- **Edges with target in corpus**: 297,946,258 (99.5%)
+- **Edges with target missing**: 1,382,901 (0.5%)
+- **Unique cited papers**: 286,443,039
+- **Unique cited in corpus**: 285,072,111 (99.5%)
+- **Unique cited missing**: 1,370,928 (0.5%)
 
 ## Year Distribution
 
@@ -266,28 +266,28 @@ Measures what fraction of cited papers (targets of citation edges) exist in the 
 | 2002 | 496,501 | 149,312 | 347,189 | 30.1% |
 | 2003 | 536,741 | 169,515 | 367,226 | 31.6% |
 | 2004 | 564,017 | 192,735 | 371,282 | 34.2% |
-| 2005 | 605,808 | 0 | 605,808 | 0.0% |
-| 2006 | 664,516 | 0 | 664,516 | 0.0% |
-| 2007 | 702,395 | 0 | 702,395 | 0.0% |
-| 2008 | 765,483 | 0 | 765,483 | 0.0% |
-| 2009 | 845,013 | 0 | 845,013 | 0.0% |
-| 2010 | 886,430 | 0 | 886,430 | 0.0% |
-| 2011 | 901,863 | 0 | 901,863 | 0.0% |
-| 2012 | 937,657 | 0 | 937,657 | 0.0% |
-| 2013 | 952,280 | 0 | 952,280 | 0.0% |
-| 2014 | 984,111 | 0 | 984,111 | 0.0% |
-| 2015 | 1,032,535 | 0 | 1,032,535 | 0.0% |
-| 2016 | 1,090,059 | 0 | 1,090,059 | 0.0% |
-| 2017 | 1,127,588 | 0 | 1,127,588 | 0.0% |
-| 2018 | 1,199,985 | 0 | 1,199,985 | 0.0% |
-| 2019 | 1,300,139 | 0 | 1,300,139 | 0.0% |
-| 2020 | 1,042,042 | 0 | 1,042,042 | 0.0% |
-| 2021 | 1,106,361 | 706,333 | 400,028 | 63.8% |
-| 2022 | 1,108,998 | 701,014 | 407,984 | 63.2% |
-| 2023 | 1,133,536 | 720,073 | 413,463 | 63.5% |
-| 2024 | 1,219,435 | 817,568 | 401,867 | 67.0% |
-| 2025 | 430,017 | 288,001 | 142,016 | 67.0% |
-| 2026 | 21 | 0 | 21 | 0.0% |
+| 2005 | 605,808 | 315,011 | 290,797 | 52.0% |
+| 2006 | 664,516 | 355,568 | 308,948 | 53.5% |
+| 2007 | 702,395 | 383,639 | 318,756 | 54.6% |
+| 2008 | 765,483 | 417,742 | 347,741 | 54.6% |
+| 2009 | 845,013 | 447,769 | 397,244 | 53.0% |
+| 2010 | 886,430 | 479,009 | 407,421 | 54.0% |
+| 2011 | 901,863 | 494,776 | 407,087 | 54.9% |
+| 2012 | 937,657 | 511,225 | 426,432 | 54.5% |
+| 2013 | 952,280 | 548,265 | 404,015 | 57.6% |
+| 2014 | 984,111 | 577,000 | 407,111 | 58.6% |
+| 2015 | 1,032,535 | 611,581 | 420,954 | 59.2% |
+| 2016 | 1,090,059 | 657,230 | 432,829 | 60.3% |
+| 2017 | 1,127,588 | 682,999 | 444,589 | 60.6% |
+| 2018 | 1,199,985 | 790,214 | 409,771 | 65.8% |
+| 2019 | 1,300,139 | 895,333 | 404,806 | 68.9% |
+| 2020 | 1,042,047 | 730,762 | 311,285 | 70.1% |
+| 2021 | 1,106,362 | 706,335 | 400,027 | 63.8% |
+| 2022 | 1,109,001 | 701,015 | 407,986 | 63.2% |
+| 2023 | 1,133,541 | 720,074 | 413,467 | 63.5% |
+| 2024 | 1,219,453 | 817,568 | 401,885 | 67.0% |
+| 2025 | 430,065 | 332,266 | 97,799 | 77.3% |
+| 2026 | 10,298 | 10,159 | 139 | 98.7% |
 
 ![Year Distribution](figures/year_distribution.png)
 
@@ -297,26 +297,26 @@ Measures what fraction of cited papers (targets of citation edges) exist in the 
 
 | arXiv Class | Total | Full Text | Abstract Only | % Full Text |
 |---|---:|---:|---:|---:|
-| cs.LG | 198,807 | 131,945 | 66,862 | 66.4% |
-| hep-ph | 185,339 | 83,718 | 101,621 | 45.2% |
-| hep-th | 170,765 | 77,166 | 93,599 | 45.2% |
-| quant-ph | 158,101 | 68,694 | 89,407 | 43.5% |
-| cs.CV | 147,407 | 99,725 | 47,682 | 67.7% |
-| cs.AI | 119,998 | 91,757 | 28,241 | 76.5% |
-| gr-qc | 111,910 | 47,196 | 64,714 | 42.2% |
-| astro-ph | 105,263 | 58,683 | 46,580 | 55.8% |
-| cond-mat.mtrl-sci | 97,125 | 38,833 | 58,292 | 40.0% |
-| cond-mat.mes-hall | 93,432 | 32,490 | 60,942 | 34.8% |
-| math-ph | 82,284 | 28,489 | 53,795 | 34.6% |
-| cs.CL | 79,880 | 57,970 | 21,910 | 72.6% |
-| cond-mat.str-el | 76,463 | 29,820 | 46,643 | 39.0% |
-| cond-mat.stat-mech | 75,651 | 31,453 | 44,198 | 41.6% |
-| stat.ML | 72,598 | 28,217 | 44,381 | 38.9% |
-| astro-ph.CO | 70,973 | 18,303 | 52,670 | 25.8% |
-| astro-ph.GA | 69,307 | 26,159 | 43,148 | 37.7% |
-| math.CO | 69,143 | 25,228 | 43,915 | 36.5% |
-| math.AP | 65,085 | 24,458 | 40,627 | 37.6% |
-| astro-ph.SR | 63,654 | 19,297 | 44,357 | 30.3% |
+| cs.LG | 198,807 | 197,077 | 1,730 | 99.1% |
+| hep-ph | 185,595 | 182,713 | 2,882 | 98.5% |
+| hep-th | 171,068 | 168,605 | 2,463 | 98.6% |
+| quant-ph | 158,726 | 156,881 | 1,845 | 98.8% |
+| cs.CV | 148,677 | 147,407 | 1,270 | 99.2% |
+| cs.AI | 121,917 | 120,413 | 1,504 | 98.8% |
+| gr-qc | 112,194 | 110,371 | 1,823 | 98.4% |
+| astro-ph | 105,263 | 104,699 | 564 | 99.5% |
+| cond-mat.mtrl-sci | 97,429 | 96,669 | 760 | 99.2% |
+| cond-mat.mes-hall | 93,632 | 93,022 | 610 | 99.3% |
+| math-ph | 82,447 | 81,696 | 751 | 99.1% |
+| cs.CL | 80,839 | 80,104 | 735 | 99.1% |
+| cond-mat.str-el | 76,626 | 76,132 | 494 | 99.4% |
+| cond-mat.stat-mech | 75,798 | 75,275 | 523 | 99.3% |
+| stat.ML | 74,038 | 73,295 | 743 | 99.0% |
+| astro-ph.CO | 71,112 | 69,476 | 1,636 | 97.7% |
+| astro-ph.GA | 69,527 | 69,127 | 400 | 99.4% |
+| math.CO | 69,333 | 68,677 | 656 | 99.0% |
+| math.AP | 65,331 | 64,683 | 648 | 99.0% |
+| astro-ph.SR | 63,810 | 63,506 | 304 | 99.5% |
 
 ![arXiv Distribution](figures/arxiv_distribution.png)
 
@@ -326,26 +326,26 @@ Measures what fraction of cited papers (targets of citation edges) exist in the 
 
 | Doctype | Total | Full Text | Abstract Only | % Full Text |
 |---|---:|---:|---:|---:|
-| article | 21,943,646 | 4,837,919 | 17,105,727 | 22.1% |
-| inproceedings | 5,602,616 | 254,807 | 5,347,809 | 4.5% |
-| eprint | 1,589,538 | 747,176 | 842,362 | 47.0% |
-| abstract | 1,376,088 | 63,988 | 1,312,100 | 4.7% |
+| article | 21,943,650 | 10,029,447 | 11,914,203 | 45.7% |
+| inproceedings | 5,602,616 | 3,141,694 | 2,460,922 | 56.1% |
+| eprint | 1,599,754 | 1,553,078 | 46,676 | 97.1% |
+| abstract | 1,376,088 | 87,835 | 1,288,253 | 6.4% |
 | proposal | 474,978 | 0 | 474,978 | 0.0% |
-| techreport | 332,016 | 522 | 331,494 | 0.2% |
-| phdthesis | 219,380 | 537 | 218,843 | 0.2% |
-| circular | 166,524 | 2,175 | 164,349 | 1.3% |
-| inbook | 129,975 | 8,873 | 121,102 | 6.8% |
-| bookreview | 110,939 | 31,893 | 79,046 | 28.8% |
-| proceedings | 86,731 | 1,753 | 84,978 | 2.0% |
-| erratum | 71,954 | 18,623 | 53,331 | 25.9% |
-| book | 67,763 | 191 | 67,572 | 0.3% |
-| editorial | 60,889 | 15,364 | 45,525 | 25.2% |
+| techreport | 332,016 | 617 | 331,399 | 0.2% |
+| phdthesis | 219,380 | 1,880 | 217,500 | 0.9% |
+| circular | 166,524 | 2,187 | 164,337 | 1.3% |
+| inbook | 129,975 | 12,276 | 117,699 | 9.4% |
+| bookreview | 110,939 | 36,934 | 74,005 | 33.3% |
+| proceedings | 86,731 | 3,487 | 83,244 | 4.0% |
+| erratum | 71,954 | 36,825 | 35,129 | 51.2% |
+| book | 67,763 | 258 | 67,505 | 0.4% |
+| editorial | 60,889 | 28,675 | 32,214 | 47.1% |
 | dataset | 43,260 | 3 | 43,257 | 0.0% |
-| newsletter | 42,802 | 434 | 42,368 | 1.0% |
-| software | 36,858 | 2 | 36,856 | 0.0% |
-| mastersthesis | 10,595 | 3 | 10,592 | 0.0% |
-| obituary | 10,095 | 3,521 | 6,574 | 34.9% |
-| misc | 8,054 | 1,151 | 6,903 | 14.3% |
+| newsletter | 42,802 | 438 | 42,364 | 1.0% |
+| software | 36,995 | 7 | 36,988 | 0.0% |
+| mastersthesis | 10,595 | 18 | 10,577 | 0.2% |
+| obituary | 10,095 | 4,363 | 5,732 | 43.2% |
+| misc | 8,054 | 1,464 | 6,590 | 18.2% |
 | pressrelease | 2,960 | 0 | 2,960 | 0.0% |
 | catalog | 2,230 | 1 | 2,229 | 0.0% |
 | talk | 339 | 0 | 339 | 0.0% |
@@ -361,10 +361,10 @@ The ADS `database` field indicates which databases index a paper (e.g. astronomy
 
 | Database | Total | Full Text | Abstract Only | % Full Text |
 |---|---:|---:|---:|---:|
-| physics | 17,090,704 | 2,739,161 | 14,351,543 | 16.0% |
-| earth science | 13,118,857 | 2,310,645 | 10,808,212 | 17.6% |
-| general | 5,784,114 | 887,364 | 4,896,750 | 15.3% |
-| astronomy | 3,004,416 | 942,748 | 2,061,668 | 31.4% |
+| physics | 17,093,196 | 7,960,783 | 9,132,413 | 46.6% |
+| earth science | 13,118,876 | 6,475,688 | 6,643,188 | 49.4% |
+| general | 5,791,687 | 2,482,004 | 3,309,683 | 42.9% |
+| astronomy | 3,005,461 | 1,469,879 | 1,535,582 | 48.9% |
 
 ![Database Distribution](figures/database_distribution.png)
 
@@ -374,12 +374,12 @@ The ADS `database` field indicates which databases index a paper (e.g. astronomy
 
 | Citations | Total | Full Text | Abstract Only | % Full Text |
 |---|---:|---:|---:|---:|
-| 0 | 15,050,375 | 2,160,695 | 12,889,680 | 14.4% |
-| 1-5 | 8,097,798 | 1,943,474 | 6,154,324 | 24.0% |
-| 6-20 | 5,574,323 | 1,119,102 | 4,455,221 | 20.1% |
-| 21-100 | 3,171,892 | 638,569 | 2,533,323 | 20.1% |
-| 101-500 | 461,075 | 116,312 | 344,763 | 25.2% |
-| 500+ | 34,691 | 10,783 | 23,908 | 31.1% |
+| 0 | 15,058,538 | 5,722,380 | 9,336,158 | 38.0% |
+| 1-5 | 8,098,510 | 4,004,849 | 4,093,661 | 49.5% |
+| 6-20 | 5,574,339 | 2,991,516 | 2,582,823 | 53.7% |
+| 21-100 | 3,171,895 | 1,908,531 | 1,263,364 | 60.2% |
+| 101-500 | 461,077 | 290,885 | 170,192 | 63.1% |
+| 500+ | 34,691 | 21,879 | 12,812 | 63.1% |
 
 ![Citation Distribution](figures/citation_distribution.png)
 
@@ -389,26 +389,26 @@ The ADS `database` field indicates which databases index a paper (e.g. astronomy
 
 | Journal | Total | Full Text | Abstract Only | % Full Text |
 |---|---:|---:|---:|---:|
-| arXiv e-prints | 1,516,671 | 719,312 | 797,359 | 47.4% |
+| arXiv e-prints | 1,526,887 | 1,506,534 | 20,353 | 98.7% |
 | NSF Award | 419,382 | 0 | 419,382 | 0.0% |
-| Nature | 410,979 | 32,899 | 378,080 | 8.0% |
-| AGU Fall Meeting Abstracts | 409,959 | 29 | 409,930 | 0.0% |
-| PLoS ONE | 306,926 | 619 | 306,307 | 0.2% |
-| Scientific Reports | 230,156 | 107,869 | 122,287 | 46.9% |
-| Ph.D. Thesis | 219,343 | 540 | 218,803 | 0.2% |
-| EGU General Assembly Conference Abstracts | 219,147 | 0 | 219,147 | 0.0% |
-| Science | 218,460 | 497 | 217,963 | 0.2% |
-| Physical Review B | 218,152 | 129,690 | 88,462 | 59.5% |
+| Nature | 410,979 | 77,029 | 333,950 | 18.7% |
+| AGU Fall Meeting Abstracts | 409,959 | 31 | 409,928 | 0.0% |
+| PLoS ONE | 306,926 | 2,251 | 304,675 | 0.7% |
+| Scientific Reports | 230,156 | 228,709 | 1,447 | 99.4% |
+| Ph.D. Thesis | 219,343 | 1,883 | 217,460 | 0.9% |
+| EGU General Assembly Conference Abstracts | 219,147 | 69 | 219,078 | 0.0% |
+| Science | 218,460 | 1,564 | 216,896 | 0.7% |
+| Physical Review B | 218,152 | 218,004 | 148 | 99.9% |
 | APS March Meeting Abstracts | 210,083 | 0 | 210,083 | 0.0% |
-| Journal of the American Chemical Society | 209,655 | 188 | 209,467 | 0.1% |
-| Journal of Physics Conference Series | 190,833 | 21,553 | 169,280 | 11.3% |
-| Acoustical Society of America Journal | 169,728 | 151 | 169,577 | 0.1% |
-| Proceedings of the National Academy of Science | 163,776 | 928 | 162,848 | 0.6% |
-| Journal of Applied Physics | 149,398 | 8,449 | 140,949 | 5.7% |
-| Journal of Chemical Physics | 146,719 | 8,889 | 137,830 | 6.1% |
-| Physical Review Letters | 138,842 | 85,856 | 52,986 | 61.8% |
-| The Astrophysical Journal | 137,613 | 83,278 | 54,335 | 60.5% |
-| Applied Physics Letters | 135,563 | 12,411 | 123,152 | 9.2% |
+| Journal of the American Chemical Society | 209,655 | 407 | 209,248 | 0.2% |
+| Journal of Physics Conference Series | 190,833 | 135,367 | 55,466 | 70.9% |
+| Acoustical Society of America Journal | 169,728 | 355 | 169,373 | 0.2% |
+| Proceedings of the National Academy of Science | 163,776 | 2,654 | 161,122 | 1.6% |
+| Journal of Applied Physics | 149,398 | 63,075 | 86,323 | 42.2% |
+| Journal of Chemical Physics | 146,719 | 47,507 | 99,212 | 32.4% |
+| Physical Review Letters | 138,842 | 138,710 | 132 | 99.9% |
+| The Astrophysical Journal | 137,613 | 137,515 | 98 | 99.9% |
+| Applied Physics Letters | 135,563 | 79,337 | 56,226 | 58.5% |
 
 ![Journal Distribution](figures/journal_distribution.png)
 

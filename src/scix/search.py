@@ -18,7 +18,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from scix.db import IterativeScanMode, configure_iterative_scan
-from scix.sources.ar5iv import LATEX_DERIVED_SOURCES, _ARXIV_ID_RE, _build_canonical_url
+from scix.sources.ar5iv import _ARXIV_ID_RE, LATEX_DERIVED_SOURCES, _build_canonical_url
 from scix.sources.licensing import enforce_snippet_budget
 from scix.stubs import PaperStub
 
@@ -562,6 +562,87 @@ def _model_has_embeddings(conn: psycopg.Connection, model_name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Entity-aware query intent (alias expansion + ontology parsing)
+# ---------------------------------------------------------------------------
+
+# Cap on how many alias expansions become extra lexical RRF lanes per query —
+# bounds DB load when a query mentions many entities (e.g. "JWST MIRI NIRSpec
+# NIRCam imaging" would otherwise fan out to 4 extra SELECTs).
+_MAX_ALIAS_LEXICAL_LANES = 3
+
+# Cap on entity_ids lifted from a single properties_filter. The entities table
+# has 1.58M rows; we never want to materialise every match into the IN list.
+_MAX_PROPERTIES_FILTER_IDS = 200
+
+
+def _resolve_entity_ids_for_properties(
+    conn: psycopg.Connection,
+    properties_filters: tuple[dict[str, str], ...],
+    entity_types: tuple[str, ...] | None,
+) -> tuple[int, ...]:
+    """Look up entity_ids whose ``properties`` JSONB contains any of the supplied filters.
+
+    Each filter is applied as ``entities.properties @> %s::jsonb`` and the
+    union is returned. ``entity_types`` further restricts the lookup when
+    supplied. Capped at :data:`_MAX_PROPERTIES_FILTER_IDS` per call.
+    """
+    if not properties_filters:
+        return ()
+
+    clauses: list[str] = []
+    params: list[Any] = []
+    for payload in properties_filters:
+        clauses.append("properties @> %s::jsonb")
+        params.append(json.dumps(payload))
+
+    type_clause = ""
+    if entity_types:
+        type_clause = " AND entity_type = ANY(%s)"
+        params.append(list(entity_types))
+
+    sql = f"SELECT id FROM entities WHERE ({' OR '.join(clauses)}){type_clause} LIMIT %s"
+    params.append(_MAX_PROPERTIES_FILTER_IDS)
+
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        return tuple(int(row[0]) for row in cur.fetchall())
+
+
+def _merge_filters(
+    base: SearchFilters | None,
+    *,
+    extra_entity_types: tuple[str, ...] = (),
+    extra_entity_ids: tuple[int, ...] = (),
+) -> SearchFilters:
+    """Return a new :class:`SearchFilters` with extra entity scopes UNION'd in.
+
+    Empty extras leave the field unchanged. Existing filter scalar fields
+    (year, doctype, etc.) carry through verbatim.
+    """
+    base = base or SearchFilters()
+
+    if extra_entity_types:
+        merged_types = tuple(dict.fromkeys((*(base.entity_types or ()), *extra_entity_types)))
+    else:
+        merged_types = base.entity_types
+
+    if extra_entity_ids:
+        merged_ids = tuple(dict.fromkeys((*(base.entity_ids or ()), *extra_entity_ids)))
+    else:
+        merged_ids = base.entity_ids
+
+    return SearchFilters(
+        year_min=base.year_min,
+        year_max=base.year_max,
+        arxiv_class=base.arxiv_class,
+        doctype=base.doctype,
+        first_author=base.first_author,
+        entity_types=merged_types,
+        entity_ids=merged_ids,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Hybrid search (vector + lexical + RRF + optional cross-encoder rerank)
 # ---------------------------------------------------------------------------
 
@@ -581,6 +662,9 @@ def hybrid_search(
     ef_search: int = 100,
     reranker: Any | None = None,
     include_body: bool = True,
+    enable_alias_expansion: bool = False,
+    enable_ontology_parser: bool = False,
+    alias_automaton: Any | None = None,
 ) -> SearchResult:
     """Hybrid search combining vector and lexical via RRF, with optional reranking.
 
@@ -599,14 +683,89 @@ def hybrid_search(
         include_body: When True (default), runs body BM25 as a 4th RRF signal
             against the GIN expression index on papers.body. Set to False to
             skip when body coverage is irrelevant or for benchmarking.
+        enable_alias_expansion: When True, runs :func:`scix.alias_expansion.expand_query`
+            on ``query_text`` and adds one extra lexical RRF lane per matched
+            entity (canonical name as the lane query), capped at
+            :data:`_MAX_ALIAS_LEXICAL_LANES`. Default False.
+        enable_ontology_parser: When True, runs :func:`scix.ontology_query_parser.parse_query`
+            on ``query_text`` and lifts ``entity_types`` plus
+            ``properties_filters`` (resolved to entity_ids) into ``filters``.
+            Default False.
+        alias_automaton: Optional pre-built :class:`AliasAutomaton`. When None
+            and ``enable_alias_expansion`` is True, a global cached automaton
+            is built lazily from the ``entities``/``entity_aliases`` tables.
     """
     timing: dict[str, float] = {}
+    metadata: dict[str, Any] = {}
+
+    # Ontology parsing — lift to filters BEFORE lexical/vector calls so all
+    # downstream stages see the augmented scope.
+    if enable_ontology_parser:
+        from scix.ontology_query_parser import parse_query
+
+        t_parse = time.perf_counter()
+        parsed = parse_query(query_text)
+        property_ids: tuple[int, ...] = ()
+        if parsed.properties_filters:
+            property_ids = _resolve_entity_ids_for_properties(
+                conn,
+                parsed.properties_filters,
+                parsed.entity_types or None,
+            )
+        if parsed.entity_types or property_ids:
+            filters = _merge_filters(
+                filters,
+                extra_entity_types=parsed.entity_types,
+                extra_entity_ids=property_ids,
+            )
+        timing["ontology_parse_ms"] = _elapsed_ms(t_parse)
+        metadata["ontology_clauses"] = len(parsed.clauses)
+        metadata["ontology_entity_ids"] = len(property_ids)
+
+    # Alias expansion — collect extra lexical lanes (no filter mutation, since
+    # an entity-id filter would over-restrict recall vs. simple OR'd lexical
+    # rerank). Each extra lane is a lexical_search on the matched entity's
+    # canonical name; RRF fusion handles deduplication.
+    alias_lane_queries: list[str] = []
+    if enable_alias_expansion:
+        from scix.alias_expansion import expand_query
+
+        t_alias = time.perf_counter()
+        expansion = expand_query(conn, query_text, automaton=alias_automaton)
+        seen: set[str] = set()
+        for match in expansion.matches:
+            canonical = match.canonical_name.strip()
+            key = canonical.lower()
+            if not canonical or key in seen:
+                continue
+            seen.add(key)
+            alias_lane_queries.append(canonical)
+            if len(alias_lane_queries) >= _MAX_ALIAS_LEXICAL_LANES:
+                break
+        timing["alias_expansion_ms"] = _elapsed_ms(t_alias)
+        metadata["alias_matches"] = len(expansion.matches)
+        metadata["alias_lanes"] = len(alias_lane_queries)
 
     # Lexical search (title + abstract tsvector)
     lex_result = lexical_search(conn, query_text, filters=filters, limit=lexical_limit)
     timing["lexical_ms"] = lex_result.timing_ms["lexical_ms"]
 
     results_lists: list[list[dict[str, Any]]] = [lex_result.papers]
+
+    # Extra alias lexical lanes — one per matched entity canonical name.
+    if alias_lane_queries:
+        t_alias_lex = time.perf_counter()
+        for lane_query in alias_lane_queries:
+            try:
+                lane = lexical_search(conn, lane_query, filters=filters, limit=lexical_limit)
+            except Exception:
+                logger.warning(
+                    "Alias lexical lane failed for %r; continuing", lane_query, exc_info=True
+                )
+                continue
+            if lane.papers:
+                results_lists.append(lane.papers)
+        timing["alias_lexical_ms"] = _elapsed_ms(t_alias_lex)
 
     # Body BM25 (full-text via GIN expression index on papers.body)
     timing["body_lexical_ms"] = 0.0
@@ -698,6 +857,7 @@ def hybrid_search(
         papers=fused,
         total=len(fused),
         timing_ms=timing,
+        metadata=metadata,
     )
 
 

@@ -186,24 +186,36 @@ def store_embeddings_copy(
     if not inputs:
         return 0
 
+    # INDUS writes land in the halfvec(768) shadow column populated by
+    # the storage/halfvec-migration cutover (bead scix_experiments-0vy).
+    # Pilot models keep using the legacy vector column. The staging table
+    # carries both columns so we only need one COPY path; the INSERT
+    # picks the right target.
+    use_halfvec = model_name == "indus"
+
     with conn.cursor() as cur:
         cur.execute(
             "CREATE TEMP TABLE IF NOT EXISTS _embed_staging ("
-            "  bibcode TEXT, model_name TEXT, embedding vector(768),"
+            "  bibcode TEXT, model_name TEXT,"
+            "  embedding    vector(768),"
+            "  embedding_hv halfvec(768),"
             "  input_type TEXT, source_hash TEXT"
             ") ON COMMIT DELETE ROWS"
         )
 
         with cur.copy(
-            "COPY _embed_staging (bibcode, model_name, embedding, input_type, source_hash) "
+            "COPY _embed_staging "
+            "  (bibcode, model_name, embedding, embedding_hv, input_type, source_hash) "
             "FROM STDIN"
         ) as copy:
             for inp, vec in zip(inputs, vectors):
+                literal = _vec_to_pgvector(vec)
                 copy.write_row(
                     (
                         inp.bibcode,
                         model_name,
-                        _vec_to_pgvector(vec),
+                        None if use_halfvec else literal,
+                        literal if use_halfvec else None,
                         inp.input_type,
                         inp.source_hash,
                     )
@@ -211,13 +223,14 @@ def store_embeddings_copy(
 
         cur.execute(
             "INSERT INTO paper_embeddings "
-            "  (bibcode, model_name, embedding, input_type, source_hash) "
-            "SELECT bibcode, model_name, embedding, input_type, source_hash "
+            "  (bibcode, model_name, embedding, embedding_hv, input_type, source_hash) "
+            "SELECT bibcode, model_name, embedding, embedding_hv, input_type, source_hash "
             "FROM _embed_staging "
             "ON CONFLICT (bibcode, model_name) DO UPDATE SET "
-            "  embedding = EXCLUDED.embedding, "
-            "  input_type = EXCLUDED.input_type, "
-            "  source_hash = EXCLUDED.source_hash"
+            "  embedding    = EXCLUDED.embedding, "
+            "  embedding_hv = EXCLUDED.embedding_hv, "
+            "  input_type   = EXCLUDED.input_type, "
+            "  source_hash  = EXCLUDED.source_hash"
         )
         count = cur.rowcount
 
@@ -239,7 +252,23 @@ def store_embeddings(
         return 0
 
     with conn.cursor() as cur:
+        use_halfvec = model_name == "indus"
         for inp, vec in zip(inputs, vectors):
+            literal = _vec_to_pgvector(vec)
+            if use_halfvec:
+                cur.execute(
+                    """
+                    INSERT INTO paper_embeddings
+                        (bibcode, model_name, embedding_hv, input_type, source_hash)
+                    VALUES (%s, %s, %s::halfvec(768), %s, %s)
+                    ON CONFLICT (bibcode, model_name) DO UPDATE SET
+                        embedding_hv = EXCLUDED.embedding_hv,
+                        input_type   = EXCLUDED.input_type,
+                        source_hash  = EXCLUDED.source_hash
+                    """,
+                    (inp.bibcode, model_name, literal, inp.input_type, inp.source_hash),
+                )
+                continue
             cur.execute(
                 """
                 INSERT INTO paper_embeddings (bibcode, model_name, embedding, input_type, source_hash)

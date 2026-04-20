@@ -339,7 +339,13 @@ def vector_search(
 
     ndim = len(query_embedding)
     vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
-    vec_cast = f"vector({ndim})"
+    # INDUS (the production dense signal) lives in the halfvec(768) shadow
+    # column backed by idx_embed_hnsw_indus_hv (halfvec_cosine_ops). All
+    # other per-model rows still use the legacy `embedding` column with
+    # vector_cosine_ops — see bead scix_experiments-0vy.
+    use_halfvec = model_name == "indus"
+    vec_col = "pe.embedding_hv" if use_halfvec else "pe.embedding"
+    vec_cast = f"halfvec({ndim})" if use_halfvec else f"vector({ndim})"
     effective = filters or SearchFilters()
     filter_clause, filter_params = effective.to_where_clause("p")
     entity_clause, entity_params = effective.to_entity_filter_clause("p")
@@ -358,17 +364,17 @@ def vector_search(
     if scan_mode is not None:
         iterative_applied = configure_iterative_scan(conn, mode=scan_mode)
 
-    # Cast embedding to vector(N) to match per-model partial HNSW expression
-    # indexes which are defined on (embedding::vector(N)).
+    # Match the per-model partial HNSW expression: halfvec(768) for INDUS,
+    # vector(N) for pilots.
     query = f"""
         SELECT {STUB_COLUMNS},
-               1 - (pe.embedding::{vec_cast} <=> %s::{vec_cast}) AS similarity
+               1 - ({vec_col} <=> %s::{vec_cast}) AS similarity
         FROM paper_embeddings pe
         JOIN papers p ON p.bibcode = pe.bibcode
         WHERE pe.model_name = %s
         {filter_clause}
         {entity_clause}
-        ORDER BY pe.embedding::{vec_cast} <=> %s::{vec_cast}
+        ORDER BY {vec_col} <=> %s::{vec_cast}
         LIMIT %s
     """
     params: list[Any] = [vec_str, model_name] + filter_params + entity_params + [vec_str, limit]
@@ -500,7 +506,9 @@ def _filter_first_vector_search(
 
     ndim = len(query_embedding)
     vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
-    vec_cast = f"vector({ndim})"
+    use_halfvec = model_name == "indus"
+    vec_col = "pe.embedding_hv" if use_halfvec else "pe.embedding"
+    vec_cast = f"halfvec({ndim})" if use_halfvec else f"vector({ndim})"
     effective = filters or SearchFilters()
     filter_clause, filter_params = effective.to_where_clause("p")
     entity_clause, entity_params = effective.to_entity_filter_clause("p")
@@ -513,12 +521,12 @@ def _filter_first_vector_search(
             {entity_clause}
         )
         SELECT {STUB_COLUMNS},
-               1 - (pe.embedding::{vec_cast} <=> %s::{vec_cast}) AS similarity
+               1 - ({vec_col} <=> %s::{vec_cast}) AS similarity
         FROM paper_embeddings pe
         JOIN filtered f ON f.bibcode = pe.bibcode
         JOIN papers p   ON p.bibcode = pe.bibcode
         WHERE pe.model_name = %s
-        ORDER BY pe.embedding::{vec_cast} <=> %s::{vec_cast}
+        ORDER BY {vec_col} <=> %s::{vec_cast}
         LIMIT %s
     """
     params: list[Any] = filter_params + entity_params + [vec_str, model_name, vec_str, limit]

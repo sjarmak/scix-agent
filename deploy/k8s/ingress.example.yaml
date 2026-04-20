@@ -1,0 +1,50 @@
+# Optional Traefik ingress for exposing the MCP outside the cluster.
+#
+# The ADS prod cluster (v126.kube.adslabs.org) uses Traefik as the
+# default ingress controller — same pattern as the harvester pipeline
+# ingress in SciXDevelopmentEnvironment/k3s/pipelines/ingress.yaml.
+#
+# For internal-only access (agents running inside the cluster, or via
+# kubectl port-forward), delete this file entirely — the Service is
+# reachable at scix-mcp.scix-mcp.svc.cluster.local on port 80.
+#
+# Auth: the bearer token (MCP_AUTH_TOKEN) is enforced by the app itself.
+# If you want SSO in front (recommended for human users), add Traefik
+# middleware for ForwardAuth against your identity provider, or put the
+# ingress behind a Cloudflare Access application.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: scix-mcp
+  namespace: scix-mcp
+  annotations:
+    kubernetes.io/ingressClassName: traefik
+    # Uncomment to rate-limit at the ingress (defense-in-depth; the app
+    # already rate-limits per bearer token).
+    # traefik.ingress.kubernetes.io/router.middlewares: scix-mcp-ratelimit@kubernetescrd
+spec:
+  rules:
+    - host: mcp.REPLACE_WITH_YOUR_DOMAIN
+      http:
+        paths:
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: scix-mcp
+                port:
+                  number: 80
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: scix-mcp
+                port:
+                  number: 80
+  # Enable TLS by pointing at a Secret populated by cert-manager or an
+  # existing wildcard. Omit the tls block entirely if Cloudflare / ALB
+  # terminates TLS upstream.
+  # tls:
+  #   - hosts:
+  #       - mcp.REPLACE_WITH_YOUR_DOMAIN
+  #     secretName: scix-mcp-tls

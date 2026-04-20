@@ -1,0 +1,78 @@
+# SciX MCP — backoffice Docker Compose deployment.
+#
+# Intended for ADS backoffice hosts (adsnest, adsnull style) where
+# Postgres runs locally and an existing reverse proxy (nginx / traefik)
+# or a sibling container terminates TLS in front.
+#
+# This variant differs from ../docker-compose.yml (which bundles a
+# Cloudflare named tunnel) in two ways:
+#   1. No cloudflared sidecar — your existing ingress handles public exposure.
+#   2. Publishes port 8000 on loopback by default, so a host-level proxy
+#      can pick it up without exposing the MCP directly to the network.
+#
+# Required env (see ../.env.example):
+#   MCP_AUTH_TOKEN  — bearer token
+#   SCIX_DSN        — postgres DSN for the SciX database
+#   HF_CACHE_DIR    — host path to the HuggingFace cache with INDUS warmed
+#
+# Launch:
+#   docker compose -f deploy/compose/backoffice.yaml --env-file deploy/.env up -d
+#
+# Image tag convention matches BeeHive: scix-mcp:v0.1.0 locally, retagged
+# as tailor:scix-mcp-v0.1.0 if pushing to the internal registry.
+
+services:
+  scix-mcp:
+    image: scix-mcp:v0.1.0
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+    container_name: scix-mcp
+    restart: unless-stopped
+    environment:
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?set MCP_AUTH_TOKEN in .env}
+      MCP_PORT: "8000"
+      MCP_HOST: "0.0.0.0"
+      SCIX_DSN: ${SCIX_DSN:?set SCIX_DSN in .env}
+      SCIX_POOL_MIN: "2"
+      SCIX_POOL_MAX: "20"
+      SCIX_EMBED_DEVICE: ${SCIX_EMBED_DEVICE:-cpu}
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    # If Postgres runs on the host via loopback, uncomment and use
+    # host=host.docker.internal in SCIX_DSN. If Postgres is another
+    # container on the same compose network, use its service name and
+    # remove this block.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ${HF_CACHE_DIR:?set HF_CACHE_DIR in .env}:/home/scix/.cache/huggingface:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4g
+    # Publish on loopback only — put nginx/traefik in front for TLS.
+    # Change to "8000:8000" to expose directly (not recommended).
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    logging:
+      # Match the BeeHive backoffice convention — cap log files so a runaway
+      # pod doesn't fill the host disk.
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"

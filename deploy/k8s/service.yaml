@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: scix-mcp
+  namespace: scix-mcp
+  labels:
+    app: scix-mcp
+    app.kubernetes.io/name: scix-mcp
+spec:
+  type: ClusterIP
+  selector:
+    app: scix-mcp
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+      protocol: TCP

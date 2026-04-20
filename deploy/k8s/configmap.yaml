@@ -1,0 +1,49 @@
+# Non-secret environment for the SciX MCP HTTP server.
+#
+# Secrets (MCP_AUTH_TOKEN, SCIX_DSN) live in a separate Secret — see
+# secret.example.yaml. Create the real one with kubectl create secret
+# before applying this manifest.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scix-mcp-env
+  namespace: scix-mcp
+  labels:
+    app: scix-mcp
+data:
+  # HTTP server
+  MCP_HOST: "0.0.0.0"
+  MCP_PORT: "8000"
+
+  # Postgres connection pool (see src/scix/mcp_server.py)
+  SCIX_POOL_MIN: "2"
+  SCIX_POOL_MAX: "20"
+  SCIX_POOL_TIMEOUT: "30.0"
+
+  # Per-tool timeouts (seconds). Tune under load.
+  SCIX_TIMEOUT_SEARCH: "30"
+  SCIX_TIMEOUT_CONCEPT: "15"
+  SCIX_TIMEOUT_PAPER: "5"
+  SCIX_TIMEOUT_READ_PAPER: "10"
+  SCIX_TIMEOUT_CITATIONS: "10"
+  SCIX_TIMEOUT_COCITATION: "15"
+  SCIX_TIMEOUT_CHAIN: "20"
+  SCIX_TIMEOUT_ENTITY: "10"
+  SCIX_TIMEOUT_ENTITY_CONTEXT: "5"
+  SCIX_TIMEOUT_GRAPH_CONTEXT: "10"
+  SCIX_TIMEOUT_FIND_GAPS: "15"
+  SCIX_TIMEOUT_TEMPORAL: "10"
+  SCIX_TIMEOUT_FACETS: "10"
+  SCIX_TIMEOUT_SEMANTIC: "30"
+  SCIX_TIMEOUT_KEYWORD: "10"
+  SCIX_TIMEOUT_HEALTH: "3"
+
+  # INDUS embedding device — "cpu" works on any node, "cuda" requires a
+  # GPU node (DCGM-monitored GPU instance groups in the ADS cluster).
+  SCIX_EMBED_DEVICE: "cpu"
+
+  # HuggingFace cache must be pre-populated (see hf-cache PVC in
+  # deployment.yaml) OR set both HF_HUB_OFFLINE=0 and TRANSFORMERS_OFFLINE=0
+  # to let the pod download INDUS on first startup (adds ~90s + network).
+  HF_HUB_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"

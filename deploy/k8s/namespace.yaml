@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: scix-mcp
+  labels:
+    name: scix-mcp
+    app.kubernetes.io/part-of: scix

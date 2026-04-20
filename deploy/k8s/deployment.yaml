@@ -1,0 +1,120 @@
+# SciX MCP HTTP server — Deployment for the ADS AWS Kubernetes cluster.
+#
+# Matches the convention in adsabs/BeeHive microservices:
+#   - ClusterIP service on port 8000
+#   - ConfigMap for non-secret env, Secret for MCP_AUTH_TOKEN / SCIX_DSN
+#   - Image pulled from ADS ECR after re-tagging (tailor:scix-mcp-vX.Y.Z)
+#
+# Apply order (see README.md):
+#   1. namespace.yaml
+#   2. configmap.yaml
+#   3. scix-mcp-secrets  (kubectl create secret, or secret.example.yaml)
+#   4. deployment.yaml
+#   5. service.yaml
+#   6. ingress.example.yaml  (if exposing outside the cluster)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scix-mcp
+  namespace: scix-mcp
+  labels:
+    app: scix-mcp
+    app.kubernetes.io/name: scix-mcp
+    app.kubernetes.io/component: retrieval
+    app.kubernetes.io/part-of: scix
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: scix-mcp
+  template:
+    metadata:
+      labels:
+        app: scix-mcp
+        app.kubernetes.io/name: scix-mcp
+    spec:
+      # Unprivileged pod, no host access needed.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: scix-mcp
+          # Source of truth tag: scix-mcp:vX.Y.Z. ADS retags into the
+          # internal registry (e.g. 084981688622.dkr.ecr.us-east-1.amazonaws.com/
+          # honeycomb:scix-mcp-v0.1.0) and rewrites this field at deploy time.
+          image: scix-mcp:v0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: scix-mcp-env
+            - secretRef:
+                name: scix-mcp-secrets
+          # /health returns 200 when the Postgres pool is reachable.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # INDUS on CPU needs headroom (~2 GiB resident). Bump memory
+          # limits if you enable semantic_search heavily, or switch
+          # SCIX_EMBED_DEVICE=cuda and request a GPU.
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: hf-cache
+              mountPath: /home/scix/.cache/huggingface
+      volumes:
+        # Writable /tmp for uvicorn + transformers scratch files.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+        # HuggingFace cache. Options:
+        #   (a) emptyDir — simple; every pod startup re-downloads INDUS.
+        #       Requires HF_HUB_OFFLINE=0 + TRANSFORMERS_OFFLINE=0 in the
+        #       ConfigMap and outbound network to huggingface.co.
+        #   (b) PersistentVolumeClaim — pre-seed the PVC with the INDUS
+        #       model via a one-shot Job, then leave HF_HUB_OFFLINE=1.
+        #       Example claim name: scix-mcp-hf-cache (EBS gp3, 10Gi).
+        - name: hf-cache
+          emptyDir:
+            sizeLimit: 5Gi
+          # Replace the emptyDir above with this to use a PVC:
+          # persistentVolumeClaim:
+          #   claimName: scix-mcp-hf-cache

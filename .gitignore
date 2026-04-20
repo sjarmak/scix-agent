@@ -71,6 +71,7 @@ Thumbs.db
 *.db
 .brainstorm/
 .gc/
+.codex/
 
 # MCP config (machine-specific paths)
 .mcp.json

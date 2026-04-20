@@ -1,0 +1,1546 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-04-20T17:39:35.020050+00:00",
+  "oracle": {
+    "kind": "kitchen_sink_hybrid_top_k",
+    "top_k": 30,
+    "lexical_limit": 200,
+    "include_body": true,
+    "grading": "reciprocal_rank",
+    "note": "Oracle is hybrid_search with both flags ON. Variants are evaluated against the same oracle so wins reflect signal recovery, not entity-id filter membership tautologies."
+  },
+  "limitations": [
+    "Structural benchmark \u2014 does not measure topical relevance.",
+    "Oracle is self-referential (built with both flags ON); it rewards variants that recover the fused-signal top-K, but may under-credit ontology-only wins on queries where the oracle is dominated by alias signals.",
+    "Topical evaluation requires the persona-Claude judge harness (see docs/prd/amendments/2026-04-18-m6-m12-collapse.md)."
+  ],
+  "queries": [
+    {
+      "id": "alias_01",
+      "query": "HST observations of cool brown dwarfs"
+    },
+    {
+      "id": "alias_03",
+      "query": "JWST MIRI mid-infrared imaging of planetary nebulae"
+    },
+    {
+      "id": "alias_05",
+      "query": "CMB anisotropy measurements from WMAP"
+    },
+    {
+      "id": "alias_06",
+      "query": "X-ray binaries detected by Chandra"
+    },
+    {
+      "id": "ontology_01",
+      "query": "M-type asteroid metallic composition from near-infrared spectroscopy"
+    },
+    {
+      "id": "ontology_03",
+      "query": "C-type asteroid water and organics content"
+    },
+    {
+      "id": "ontology_04",
+      "query": "infrared instruments on space telescopes for exoplanet detection"
+    },
+    {
+      "id": "ontology_07",
+      "query": "flagship NASA missions to the outer solar system"
+    },
+    {
+      "id": "mixed_01",
+      "query": "Kepler space telescope exoplanet occurrence statistics"
+    },
+    {
+      "id": "mixed_02",
+      "query": "Cassini spacecraft instruments at Saturn"
+    }
+  ],
+  "summary": {
+    "baseline": {
+      "mean_ndcg_at_10": 0.575,
+      "median_ndcg_at_10": 0.7491,
+      "mean_entity_coverage_top10": 0.0125,
+      "mean_wallclock_ms": 211.25,
+      "n_scored": 10,
+      "n_timeouts": 0,
+      "n_queries_with_entity_pool": 8
+    },
+    "alias": {
+      "mean_ndcg_at_10": 0.5731,
+      "median_ndcg_at_10": 0.7363,
+      "mean_entity_coverage_top10": 0.0125,
+      "mean_wallclock_ms": 3764.08,
+      "n_scored": 10,
+      "n_timeouts": 0,
+      "n_queries_with_entity_pool": 8
+    },
+    "ontology": {
+      "mean_ndcg_at_10": 0.688,
+      "median_ndcg_at_10": 0.9868,
+      "mean_entity_coverage_top10": 0.0125,
+      "mean_wallclock_ms": 138.35,
+      "n_scored": 10,
+      "n_timeouts": 0,
+      "n_queries_with_entity_pool": 8
+    },
+    "both": {
+      "mean_ndcg_at_10": 0.6887,
+      "median_ndcg_at_10": 0.9905,
+      "mean_entity_coverage_top10": 0.0125,
+      "mean_wallclock_ms": 15192.92,
+      "n_scored": 10,
+      "n_timeouts": 0,
+      "n_queries_with_entity_pool": 8
+    }
+  },
+  "per_query": [
+    {
+      "query_id": "alias_01",
+      "query": "HST observations of cool brown dwarfs",
+      "alias_entities_found": [
+        {
+          "id": 8500,
+          "canonical": "RUTGERS/IMCS/COOL",
+          "type": "mission"
+        }
+      ],
+      "ontology_clauses": [],
+      "oracle_size": 30,
+      "entity_linked_pool_size": 20,
+      "variants": {
+        "baseline": {
+          "ndcg_at_10": 1.0,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2004A&A...424..213B",
+            "2023arXiv230612363H",
+            "2022ApJ...930...24G",
+            "2008A&A...481..757B",
+            "2019MNRAS.486.2254D",
+            "2015PhDT.......216A",
+            "2005AJ....130.1221D",
+            "1996ApJ...468..655C",
+            "1995ApJ...440..216P",
+            "2017reph.conf30002P"
+          ],
+          "timing_ms": {
+            "lexical_ms": 21.69,
+            "body_lexical_ms": 83.04,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.05,
+            "rerank_ms": 0.0,
+            "total_ms": 104.78,
+            "wallclock_ms": 105.04
+          },
+          "search_metadata": {}
+        },
+        "alias": {
+          "ndcg_at_10": 1.0,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2004A&A...424..213B",
+            "2023arXiv230612363H",
+            "2022ApJ...930...24G",
+            "2008A&A...481..757B",
+            "2019MNRAS.486.2254D",
+            "2015PhDT.......216A",
+            "2005AJ....130.1221D",
+            "1996ApJ...468..655C",
+            "1995ApJ...440..216P",
+            "2017reph.conf30002P"
+          ],
+          "timing_ms": {
+            "alias_expansion_ms": 0.04,
+            "lexical_ms": 22.21,
+            "alias_lexical_ms": 114.93,
+            "body_lexical_ms": 91.71,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.07,
+            "rerank_ms": 0.0,
+            "total_ms": 228.96,
+            "wallclock_ms": 229.32
+          },
+          "search_metadata": {
+            "alias_matches": 1,
+            "alias_lanes": 1
+          }
+        },
+        "ontology": {
+          "ndcg_at_10": 1.0,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2004A&A...424..213B",
+            "2023arXiv230612363H",
+            "2022ApJ...930...24G",
+            "2008A&A...481..757B",
+            "2019MNRAS.486.2254D",
+            "2015PhDT.......216A",
+            "2005AJ....130.1221D",
+            "1996ApJ...468..655C",
+            "1995ApJ...440..216P",
+            "2017reph.conf30002P"
+          ],
+          "timing_ms": {
+            "ontology_parse_ms": 0.02,
+            "lexical_ms": 23.02,
+            "body_lexical_ms": 89.88,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.05,
+            "rerank_ms": 0.0,
+            "total_ms": 112.97,
+            "wallclock_ms": 113.25
+          },
+          "search_metadata": {
+            "ontology_clauses": 0,
+            "ontology_entity_ids": 0
+          }
+        },
+        "both": {
+          "ndcg_at_10": 1.0,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2004A&A...424..213B",
+            "2023arXiv230612363H",
+            "2022ApJ...930...24G",
+            "2008A&A...481..757B",
+            "2019MNRAS.486.2254D",
+            "2015PhDT.......216A",
+            "2005AJ....130.1221D",
+            "1996ApJ...468..655C",
+            "1995ApJ...440..216P",
+            "2017reph.conf30002P"
+          ],
+          "timing_ms": {
+            "ontology_parse_ms": 0.02,
+            "alias_expansion_ms": 0.04,
+            "lexical_ms": 22.68,
+            "alias_lexical_ms": 120.06,
+            "body_lexical_ms": 90.93,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.06,
+            "rerank_ms": 0.0,
+            "total_ms": 233.79,
+            "wallclock_ms": 234.09
+          },
+          "search_metadata": {
+            "ontology_clauses": 0,
+            "ontology_entity_ids": 0,
+            "alias_matches": 1,
+            "alias_lanes": 1
+          }
+        }
+      }
+    },
+    {
+      "query_id": "alias_03",
+      "query": "JWST MIRI mid-infrared imaging of planetary nebulae",
+      "alias_entities_found": [
+        {
+          "id": 6184,
+          "canonical": "CA/INAC/NAP/MRD/MID",
+          "type": "mission"
+        }
+      ],
+      "ontology_clauses": [],
+      "oracle_size": 30,
+      "entity_linked_pool_size": 70,
+      "variants": {
+        "baseline": {
+          "ndcg_at_10": 0.9061,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2025AJ....169..236R",
+            "2025ApJ...980...49T",
+            "2020AJ....160...28G",
+            "2009PASA...26..415L",
+            "2020arXiv200701603P",
+            "2020arXiv200206693L",
+            "2019arXiv190210541H",
+            "2019astro2020T.504K",
+            "2018ConPh..59..251K",
+            "2018arXiv180909642T"
+          ],
+          "timing_ms": {
+            "lexical_ms": 9.33,
+            "body_lexical_ms": 34.91,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.04,
+            "rerank_ms": 0.0,
+            "total_ms": 44.28,
+            "wallclock_ms": 44.55
+          },
+          "search_metadata": {}
+        },
+        "alias": {
+          "ndcg_at_10": 0.9061,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2025AJ....169..236R",
+            "2025ApJ...980...49T",
+            "2020AJ....160...28G",
+            "2009PASA...26..415L",
+            "2020arXiv200701603P",
+            "2020arXiv200206693L",
+            "2019arXiv190210541H",
+            "2019astro2020T.504K",
+            "2018ConPh..59..251K",
+            "2018arXiv180909642T"
+          ],
+          "timing_ms": {
+            "alias_expansion_ms": 0.06,
+            "lexical_ms": 11.28,
+            "alias_lexical_ms": 113.27,
+            "body_lexical_ms": 32.32,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.03,
+            "rerank_ms": 0.0,
+            "total_ms": 156.96,
+            "wallclock_ms": 157.19
+          },
+          "search_metadata": {
+            "alias_matches": 1,
+            "alias_lanes": 1
+          }
+        },
+        "ontology": {
+          "ndcg_at_10": 0.9061,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2025AJ....169..236R",
+            "2025ApJ...980...49T",
+            "2020AJ....160...28G",
+            "2009PASA...26..415L",
+            "2020arXiv200701603P",
+            "2020arXiv200206693L",
+            "2019arXiv190210541H",
+            "2019astro2020T.504K",
+            "2018ConPh..59..251K",
+            "2018arXiv180909642T"
+          ],
+          "timing_ms": {
+            "ontology_parse_ms": 0.02,
+            "lexical_ms": 8.28,
+            "body_lexical_ms": 32.84,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.04,
+            "rerank_ms": 0.0,
+            "total_ms": 41.18,
+            "wallclock_ms": 41.44
+          },
+          "search_metadata": {
+            "ontology_clauses": 0,
+            "ontology_entity_ids": 0
+          }
+        },
+        "both": {
+          "ndcg_at_10": 0.9061,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2025AJ....169..236R",
+            "2025ApJ...980...49T",
+            "2020AJ....160...28G",
+            "2009PASA...26..415L",
+            "2020arXiv200701603P",
+            "2020arXiv200206693L",
+            "2019arXiv190210541H",
+            "2019astro2020T.504K",
+            "2018ConPh..59..251K",
+            "2018arXiv180909642T"
+          ],
+          "timing_ms": {
+            "ontology_parse_ms": 0.03,
+            "alias_expansion_ms": 0.06,
+            "lexical_ms": 8.8,
+            "alias_lexical_ms": 106.02,
+            "body_lexical_ms": 31.28,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.03,
+            "rerank_ms": 0.0,
+            "total_ms": 146.22,
+            "wallclock_ms": 146.44
+          },
+          "search_metadata": {
+            "ontology_clauses": 0,
+            "ontology_entity_ids": 0,
+            "alias_matches": 1,
+            "alias_lanes": 1
+          }
+        }
+      }
+    },
+    {
+      "query_id": "alias_05",
+      "query": "CMB anisotropy measurements from WMAP",
+      "alias_entities_found": [
+        {
+          "id": 5977,
+          "canonical": "CMB",
+          "type": "mission"
+        }
+      ],
+      "ontology_clauses": [],
+      "oracle_size": 30,
+      "entity_linked_pool_size": 500,
+      "variants": {
+        "baseline": {
+          "ndcg_at_10": 0.9927,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2006ApJ...645L..89S",
+            "2013IJMPA..2850094D",
+            "2004PhRvD..70l3521C",
+            "2013JCAP...06..026K",
+            "2006NewAR..50..889S",
+            "2015ApJ...810..143A",
+            "2003NewAR..47..741O",
+            "2018PhRvD..98b3521M",
+            "2006JCAP...06..007C",
+            "2011ASPC..449..446A"
+          ],
+          "timing_ms": {
+            "lexical_ms": 13.09,
+            "body_lexical_ms": 96.78,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.06,
+            "rerank_ms": 0.0,
+            "total_ms": 109.93,
+            "wallclock_ms": 110.32
+          },
+          "search_metadata": {}
+        },
+        "alias": {
+          "ndcg_at_10": 1.0,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2006ApJ...645L..89S",
+            "2013IJMPA..2850094D",
+            "2004PhRvD..70l3521C",
+            "2013JCAP...06..026K",
+            "2006NewAR..50..889S",
+            "2015ApJ...810..143A",
+            "2012amld.book...55P",
+            "2003NewAR..47..741O",
+            "2018PhRvD..98b3521M",
+            "2006JCAP...06..007C"
+          ],
+          "timing_ms": {
+            "alias_expansion_ms": 0.05,
+            "lexical_ms": 13.59,
+            "alias_lexical_ms": 211.99,
+            "body_lexical_ms": 103.44,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.1,
+            "rerank_ms": 0.0,
+            "total_ms": 329.17,
+            "wallclock_ms": 329.57
+          },
+          "search_metadata": {
+            "alias_matches": 1,
+            "alias_lanes": 1
+          }
+        },
+        "ontology": {
+          "ndcg_at_10": 0.9927,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2006ApJ...645L..89S",
+            "2013IJMPA..2850094D",
+            "2004PhRvD..70l3521C",
+            "2013JCAP...06..026K",
+            "2006NewAR..50..889S",
+            "2015ApJ...810..143A",
+            "2003NewAR..47..741O",
+            "2018PhRvD..98b3521M",
+            "2006JCAP...06..007C",
+            "2011ASPC..449..446A"
+          ],
+          "timing_ms": {
+            "ontology_parse_ms": 0.02,
+            "lexical_ms": 14.73,
+            "body_lexical_ms": 98.1,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.06,
+            "rerank_ms": 0.0,
+            "total_ms": 112.91,
+            "wallclock_ms": 113.28
+          },
+          "search_metadata": {
+            "ontology_clauses": 0,
+            "ontology_entity_ids": 0
+          }
+        },
+        "both": {
+          "ndcg_at_10": 1.0,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2006ApJ...645L..89S",
+            "2013IJMPA..2850094D",
+            "2004PhRvD..70l3521C",
+            "2013JCAP...06..026K",
+            "2006NewAR..50..889S",
+            "2015ApJ...810..143A",
+            "2012amld.book...55P",
+            "2003NewAR..47..741O",
+            "2018PhRvD..98b3521M",
+            "2006JCAP...06..007C"
+          ],
+          "timing_ms": {
+            "ontology_parse_ms": 0.02,
+            "alias_expansion_ms": 0.05,
+            "lexical_ms": 12.86,
+            "alias_lexical_ms": 200.34,
+            "body_lexical_ms": 96.72,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.1,
+            "rerank_ms": 0.0,
+            "total_ms": 310.09,
+            "wallclock_ms": 310.46
+          },
+          "search_metadata": {
+            "ontology_clauses": 0,
+            "ontology_entity_ids": 0,
+            "alias_matches": 1,
+            "alias_lanes": 1
+          }
+        }
+      }
+    },
+    {
+      "query_id": "alias_06",
+      "query": "X-ray binaries detected by Chandra",
+      "alias_entities_found": [],
+      "ontology_clauses": [],
+      "oracle_size": 30,
+      "entity_linked_pool_size": 0,
+      "variants": {
+        "baseline": {
+          "ndcg_at_10": 1.0,
+          "entity_coverage_top10": null,
+          "top10": [
+            "2007A&A...471L..63A",
+            "2019RLSFN..30S.125P",
+            "2008MNRAS.383..330M",
+            "2011ApJ...739L..51B",
+            "2006IAUS..230..200S",
+            "2015ApJ...808...19L",
+            "2010ApJ...721.1523K",
+            "2011ApJ...735...95C",
+            "2020ApJ...889...58R",
+            "2014AJ....148...32J"
+          ],
+          "timing_ms": {
+            "lexical_ms": 45.38,
+            "body_lexical_ms": 177.23,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.06,
+            "rerank_ms": 0.0,
+            "total_ms": 222.67,
+            "wallclock_ms": 222.97
+          },
+          "search_metadata": {}
+        },
+        "alias": {
+          "ndcg_at_10": 1.0,
+          "entity_coverage_top10": null,
+          "top10": [
+            "2007A&A...471L..63A",
+            "2019RLSFN..30S.125P",
+            "2008MNRAS.383..330M",
+            "2011ApJ...739L..51B",
+            "2006IAUS..230..200S",
+            "2015ApJ...808...19L",
+            "2010ApJ...721.1523K",
+            "2011ApJ...735...95C",
+            "2020ApJ...889...58R",
+            "2014AJ....148...32J"
+          ],
+          "timing_ms": {
+            "alias_expansion_ms": 0.03,
+            "lexical_ms": 45.92,
+            "body_lexical_ms": 197.32,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.08,
+            "rerank_ms": 0.0,
+            "total_ms": 243.35,
+            "wallclock_ms": 243.75
+          },
+          "search_metadata": {
+            "alias_matches": 0,
+            "alias_lanes": 0
+          }
+        },
+        "ontology": {
+          "ndcg_at_10": 1.0,
+          "entity_coverage_top10": null,
+          "top10": [
+            "2007A&A...471L..63A",
+            "2019RLSFN..30S.125P",
+            "2008MNRAS.383..330M",
+            "2011ApJ...739L..51B",
+            "2006IAUS..230..200S",
+            "2015ApJ...808...19L",
+            "2010ApJ...721.1523K",
+            "2011ApJ...735...95C",
+            "2020ApJ...889...58R",
+            "2014AJ....148...32J"
+          ],
+          "timing_ms": {
+            "ontology_parse_ms": 0.03,
+            "lexical_ms": 49.47,
+            "body_lexical_ms": 215.63,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.07,
+            "rerank_ms": 0.0,
+            "total_ms": 265.2,
+            "wallclock_ms": 265.62
+          },
+          "search_metadata": {
+            "ontology_clauses": 0,
+            "ontology_entity_ids": 0
+          }
+        },
+        "both": {
+          "ndcg_at_10": 1.0,
+          "entity_coverage_top10": null,
+          "top10": [
+            "2007A&A...471L..63A",
+            "2019RLSFN..30S.125P",
+            "2008MNRAS.383..330M",
+            "2011ApJ...739L..51B",
+            "2006IAUS..230..200S",
+            "2015ApJ...808...19L",
+            "2010ApJ...721.1523K",
+            "2011ApJ...735...95C",
+            "2020ApJ...889...58R",
+            "2014AJ....148...32J"
+          ],
+          "timing_ms": {
+            "ontology_parse_ms": 0.02,
+            "alias_expansion_ms": 0.03,
+            "lexical_ms": 63.67,
+            "body_lexical_ms": 261.8,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.09,
+            "rerank_ms": 0.0,
+            "total_ms": 325.61,
+            "wallclock_ms": 326.14
+          },
+          "search_metadata": {
+            "ontology_clauses": 0,
+            "ontology_entity_ids": 0,
+            "alias_matches": 0,
+            "alias_lanes": 0
+          }
+        }
+      }
+    },
+    {
+      "query_id": "ontology_01",
+      "query": "M-type asteroid metallic composition from near-infrared spectroscopy",
+      "alias_entities_found": [],
+      "ontology_clauses": [
+        {
+          "entity_type": "asteroid",
+          "properties_filter": null,
+          "surface": "asteroid"
+        },
+        {
+          "entity_type": "asteroid",
+          "properties_filter": {
+            "taxonomy": "M"
+          },
+          "surface": "M-type"
+        }
+      ],
+      "oracle_size": 0,
+      "entity_linked_pool_size": 0,
+      "variants": {
+        "baseline": {
+          "ndcg_at_10": 0.0,
+          "entity_coverage_top10": null,
+          "top10": [
+            "2021PSJ.....2...95C",
+            "2014DPS....4650603L",
+            "2020AGUFMP056.0002L",
+            "2020SSRv..216...59B",
+            "2024PSJ.....5..230D",
+            "2023E&SS...1002694D",
+            "2019PASP..131i4501K",
+            "2004eso..pres...21.",
+            "2019MNRAS.486.1292M",
+            "2023A&A...671A..77Z"
+          ],
+          "timing_ms": {
+            "lexical_ms": 45.13,
+            "body_lexical_ms": 158.59,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.06,
+            "rerank_ms": 0.0,
+            "total_ms": 203.78,
+            "wallclock_ms": 204.15
+          },
+          "search_metadata": {}
+        },
+        "alias": {
+          "ndcg_at_10": 0.0,
+          "entity_coverage_top10": null,
+          "top10": [
+            "2021PSJ.....2...95C",
+            "2014DPS....4650603L",
+            "2020AGUFMP056.0002L",
+            "2020SSRv..216...59B",
+            "2024PSJ.....5..230D",
+            "2023E&SS...1002694D",
+            "2019PASP..131i4501K",
+            "2004eso..pres...21.",
+            "2019MNRAS.486.1292M",
+            "2023A&A...671A..77Z"
+          ],
+          "timing_ms": {
+            "alias_expansion_ms": 0.07,
+            "lexical_ms": 43.98,
+            "body_lexical_ms": 140.47,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.06,
+            "rerank_ms": 0.0,
+            "total_ms": 184.58,
+            "wallclock_ms": 184.92
+          },
+          "search_metadata": {
+            "alias_matches": 0,
+            "alias_lanes": 0
+          }
+        },
+        "ontology": {
+          "ndcg_at_10": 0.0,
+          "entity_coverage_top10": null,
+          "top10": [],
+          "timing_ms": {
+            "ontology_parse_ms": 0.45,
+            "lexical_ms": 48.35,
+            "body_lexical_ms": 140.59,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.01,
+            "rerank_ms": 0.0,
+            "total_ms": 189.4,
+            "wallclock_ms": 189.55
+          },
+          "search_metadata": {
+            "ontology_clauses": 2,
+            "ontology_entity_ids": 0
+          }
+        },
+        "both": {
+          "ndcg_at_10": 0.0,
+          "entity_coverage_top10": null,
+          "top10": [],
+          "timing_ms": {
+            "ontology_parse_ms": 0.37,
+            "alias_expansion_ms": 0.05,
+            "lexical_ms": 43.75,
+            "body_lexical_ms": 135.74,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.01,
+            "rerank_ms": 0.0,
+            "total_ms": 179.92,
+            "wallclock_ms": 180.07
+          },
+          "search_metadata": {
+            "ontology_clauses": 2,
+            "ontology_entity_ids": 0,
+            "alias_matches": 0,
+            "alias_lanes": 0
+          }
+        }
+      }
+    },
+    {
+      "query_id": "ontology_03",
+      "query": "C-type asteroid water and organics content",
+      "alias_entities_found": [
+        {
+          "id": 5843,
+          "canonical": "LTER/AND",
+          "type": "mission"
+        }
+      ],
+      "ontology_clauses": [
+        {
+          "entity_type": "asteroid",
+          "properties_filter": null,
+          "surface": "asteroid"
+        },
+        {
+          "entity_type": "asteroid",
+          "properties_filter": {
+            "taxonomy": "C"
+          },
+          "surface": "C-type"
+        }
+      ],
+      "oracle_size": 0,
+      "entity_linked_pool_size": 66,
+      "variants": {
+        "baseline": {
+          "ndcg_at_10": 0.0,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2022ApJ...925L..15M",
+            "2023Icar..39115300F",
+            "2014SPIE.9226E..02H",
+            "2020EPSC...14..351S",
+            "2020Natur.579..518O",
+            "2020Icar..33513404Z",
+            "2020P&SS..18704900G",
+            "2020SSRv..216..133B",
+            "2020Icar..34713817M",
+            "2020NatCo..11.3453T"
+          ],
+          "timing_ms": {
+            "lexical_ms": 38.83,
+            "body_lexical_ms": 138.39,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.04,
+            "rerank_ms": 0.0,
+            "total_ms": 177.26,
+            "wallclock_ms": 177.54
+          },
+          "search_metadata": {}
+        },
+        "alias": {
+          "ndcg_at_10": 0.0,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2022ApJ...925L..15M",
+            "2023Icar..39115300F",
+            "2014SPIE.9226E..02H",
+            "2020EPSC...14..351S",
+            "2020Natur.579..518O",
+            "2020Icar..33513404Z",
+            "2020P&SS..18704900G",
+            "2020SSRv..216..133B",
+            "2020Icar..34713817M",
+            "2020NatCo..11.3453T"
+          ],
+          "timing_ms": {
+            "alias_expansion_ms": 0.06,
+            "lexical_ms": 38.9,
+            "alias_lexical_ms": 125.75,
+            "body_lexical_ms": 134.57,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.03,
+            "rerank_ms": 0.0,
+            "total_ms": 299.31,
+            "wallclock_ms": 299.54
+          },
+          "search_metadata": {
+            "alias_matches": 1,
+            "alias_lanes": 1
+          }
+        },
+        "ontology": {
+          "ndcg_at_10": 0.0,
+          "entity_coverage_top10": 0.0,
+          "top10": [],
+          "timing_ms": {
+            "ontology_parse_ms": 0.38,
+            "lexical_ms": 46.94,
+            "body_lexical_ms": 142.44,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.01,
+            "rerank_ms": 0.0,
+            "total_ms": 189.77,
+            "wallclock_ms": 189.93
+          },
+          "search_metadata": {
+            "ontology_clauses": 2,
+            "ontology_entity_ids": 0
+          }
+        },
+        "both": {
+          "ndcg_at_10": 0.0,
+          "entity_coverage_top10": 0.0,
+          "top10": [],
+          "timing_ms": {
+            "ontology_parse_ms": 0.35,
+            "alias_expansion_ms": 0.06,
+            "lexical_ms": 42.27,
+            "alias_lexical_ms": 0.73,
+            "body_lexical_ms": 142.5,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.01,
+            "rerank_ms": 0.0,
+            "total_ms": 185.92,
+            "wallclock_ms": 186.08
+          },
+          "search_metadata": {
+            "ontology_clauses": 2,
+            "ontology_entity_ids": 0,
+            "alias_matches": 1,
+            "alias_lanes": 1
+          }
+        }
+      }
+    },
+    {
+      "query_id": "ontology_04",
+      "query": "infrared instruments on space telescopes for exoplanet detection",
+      "alias_entities_found": [
+        {
+          "id": 8945,
+          "canonical": "CA/STATSCAN/AS/ON",
+          "type": "mission"
+        },
+        {
+          "id": 8396,
+          "canonical": "UWA/ESS/SPACE",
+          "type": "mission"
+        },
+        {
+          "id": 288,
+          "canonical": "Telescopes",
+          "type": "instrument"
+        },
+        {
+          "id": 296,
+          "canonical": "TELESCOPES",
+          "type": "instrument"
+        }
+      ],
+      "ontology_clauses": [
+        {
+          "entity_type": "instrument",
+          "properties_filter": null,
+          "surface": "instruments"
+        },
+        {
+          "entity_type": "telescope",
+          "properties_filter": null,
+          "surface": "telescopes"
+        },
+        {
+          "entity_type": "exoplanet",
+          "properties_filter": null,
+          "surface": "exoplanet"
+        }
+      ],
+      "oracle_size": 30,
+      "entity_linked_pool_size": 500,
+      "variants": {
+        "baseline": {
+          "ndcg_at_10": 0.2587,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2022SPIE12184E..46S",
+            "2010ASPC..430..284E",
+            "2006ESASP1306..505O",
+            "2016SPIE.9904E..5MY",
+            "2011AdSpR..48..323E",
+            "2011SPIE.8146E..0QE",
+            "2011ASPC..450...63D",
+            "2015SPIE.9605E..0SY",
+            "2023NatAs...7.1317L",
+            "2019A&A...623A..85L"
+          ],
+          "timing_ms": {
+            "lexical_ms": 83.74,
+            "body_lexical_ms": 550.65,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.06,
+            "rerank_ms": 0.0,
+            "total_ms": 634.45,
+            "wallclock_ms": 634.74
+          },
+          "search_metadata": {}
+        },
+        "alias": {
+          "ndcg_at_10": 0.2587,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2022SPIE12184E..46S",
+            "2010ASPC..430..284E",
+            "2006ESASP1306..505O",
+            "2016SPIE.9904E..5MY",
+            "2011AdSpR..48..323E",
+            "2011SPIE.8146E..0QE",
+            "2011ASPC..450...63D",
+            "2015SPIE.9605E..0SY",
+            "2023NatAs...7.1317L",
+            "2019A&A...623A..85L"
+          ],
+          "timing_ms": {
+            "alias_expansion_ms": 0.09,
+            "lexical_ms": 27.11,
+            "alias_lexical_ms": 22078.42,
+            "body_lexical_ms": 142.91,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.08,
+            "rerank_ms": 0.0,
+            "total_ms": 22248.61,
+            "wallclock_ms": 22248.96
+          },
+          "search_metadata": {
+            "alias_matches": 4,
+            "alias_lanes": 3
+          }
+        },
+        "ontology": {
+          "ndcg_at_10": 1.0,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2015SPIE.9605E..0SY",
+            "2019A&A...623A..85L",
+            "2019SPIE11117E..1DS",
+            "2010A&A...523A..35T",
+            "2024SPIE13092E..0YI",
+            "2021ApJ...906L..10A",
+            "2016NatCo...710436Y",
+            "2023JATIS...9c4007N",
+            "2020arXiv200302145G",
+            "2016SPIE.9904E..36F"
+          ],
+          "timing_ms": {
+            "ontology_parse_ms": 0.04,
+            "lexical_ms": 43.13,
+            "body_lexical_ms": 154.86,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.07,
+            "rerank_ms": 0.0,
+            "total_ms": 198.1,
+            "wallclock_ms": 198.48
+          },
+          "search_metadata": {
+            "ontology_clauses": 3,
+            "ontology_entity_ids": 0
+          }
+        },
+        "both": {
+          "ndcg_at_10": 1.0,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2015SPIE.9605E..0SY",
+            "2019A&A...623A..85L",
+            "2019SPIE11117E..1DS",
+            "2010A&A...523A..35T",
+            "2024SPIE13092E..0YI",
+            "2021ApJ...906L..10A",
+            "2016NatCo...710436Y",
+            "2023JATIS...9c4007N",
+            "2020arXiv200302145G",
+            "2016SPIE.9904E..36F"
+          ],
+          "timing_ms": {
+            "ontology_parse_ms": 0.04,
+            "alias_expansion_ms": 0.07,
+            "lexical_ms": 27.6,
+            "alias_lexical_ms": 90035.44,
+            "body_lexical_ms": 154.62,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.06,
+            "rerank_ms": 0.0,
+            "total_ms": 90217.83,
+            "wallclock_ms": 90218.1
+          },
+          "search_metadata": {
+            "ontology_clauses": 3,
+            "ontology_entity_ids": 0,
+            "alias_matches": 4,
+            "alias_lanes": 3
+          }
+        }
+      }
+    },
+    {
+      "query_id": "ontology_07",
+      "query": "flagship NASA missions to the outer solar system",
+      "alias_entities_found": [
+        {
+          "id": 5482,
+          "canonical": "NASA",
+          "type": "mission"
+        },
+        {
+          "id": 8219,
+          "canonical": "UHI/IA/SOLAR",
+          "type": "mission"
+        }
+      ],
+      "ontology_clauses": [
+        {
+          "entity_type": "mission",
+          "properties_filter": null,
+          "surface": "missions"
+        }
+      ],
+      "oracle_size": 30,
+      "entity_linked_pool_size": 500,
+      "variants": {
+        "baseline": {
+          "ndcg_at_10": 0.5921,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2013aero.confE.245A",
+            "2025JGRE..13008507B",
+            "2025PSJ.....6...41F",
+            "2017AdSpR..59.2407M",
+            "2006epsc.conf..643J",
+            "2009EM&P..105..143O",
+            "2009rpsi.rept.....N",
+            "2018P&SS..155...12M",
+            "2024AGUFMP53C.3044K",
+            "2007AGUFM.P21B0532S"
+          ],
+          "timing_ms": {
+            "lexical_ms": 41.21,
+            "body_lexical_ms": 115.6,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.07,
+            "rerank_ms": 0.0,
+            "total_ms": 156.88,
+            "wallclock_ms": 157.24
+          },
+          "search_metadata": {}
+        },
+        "alias": {
+          "ndcg_at_10": 0.5665,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2013aero.confE.245A",
+            "2025JGRE..13008507B",
+            "2025PSJ.....6...41F",
+            "2017AdSpR..59.2407M",
+            "2006epsc.conf..643J",
+            "2009EM&P..105..143O",
+            "2009rpsi.rept.....N",
+            "2018P&SS..155...12M",
+            "2024AGUFMP53C.3044K",
+            "2012LPIBu.128...33."
+          ],
+          "timing_ms": {
+            "alias_expansion_ms": 0.06,
+            "lexical_ms": 32.55,
+            "alias_lexical_ms": 13449.21,
+            "body_lexical_ms": 62.47,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.11,
+            "rerank_ms": 0.0,
+            "total_ms": 13544.4,
+            "wallclock_ms": 13544.74
+          },
+          "search_metadata": {
+            "alias_matches": 2,
+            "alias_lanes": 2
+          }
+        },
+        "ontology": {
+          "ndcg_at_10": 0.9809,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2025JGRE..13008507B",
+            "2017AdSpR..59.2407M",
+            "2009rpsi.rept.....N",
+            "2024AGUFMP53C.3044K",
+            "2007AGUFM.P21B0532S",
+            "2007DPS....39.2805S",
+            "2007DPS....39.2803P",
+            "2020arXiv200613428P",
+            "2008AGUFM.P13D..08S",
+            "2020SSRv..216...72S"
+          ],
+          "timing_ms": {
+            "ontology_parse_ms": 0.04,
+            "lexical_ms": 32.3,
+            "body_lexical_ms": 68.44,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.06,
+            "rerank_ms": 0.0,
+            "total_ms": 100.84,
+            "wallclock_ms": 101.11
+          },
+          "search_metadata": {
+            "ontology_clauses": 1,
+            "ontology_entity_ids": 0
+          }
+        },
+        "both": {
+          "ndcg_at_10": 0.9809,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2025JGRE..13008507B",
+            "2017AdSpR..59.2407M",
+            "2009rpsi.rept.....N",
+            "2024AGUFMP53C.3044K",
+            "2007AGUFM.P21B0532S",
+            "2007DPS....39.2805S",
+            "2007DPS....39.2803P",
+            "2020arXiv200613428P",
+            "2008AGUFM.P13D..08S",
+            "2020SSRv..216...72S"
+          ],
+          "timing_ms": {
+            "ontology_parse_ms": 0.04,
+            "alias_expansion_ms": 0.05,
+            "lexical_ms": 30.09,
+            "alias_lexical_ms": 60026.18,
+            "body_lexical_ms": 60.97,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.06,
+            "rerank_ms": 0.0,
+            "total_ms": 60117.39,
+            "wallclock_ms": 60117.69
+          },
+          "search_metadata": {
+            "ontology_clauses": 1,
+            "ontology_entity_ids": 0,
+            "alias_matches": 2,
+            "alias_lanes": 2
+          }
+        }
+      }
+    },
+    {
+      "query_id": "mixed_01",
+      "query": "Kepler space telescope exoplanet occurrence statistics",
+      "alias_entities_found": [
+        {
+          "id": 27931,
+          "canonical": "NASA 0.95m Kepler Satellite Mission",
+          "type": "instrument"
+        },
+        {
+          "id": 8396,
+          "canonical": "UWA/ESS/SPACE",
+          "type": "mission"
+        },
+        {
+          "id": 1588868,
+          "canonical": "Kepler Space Telescope",
+          "type": "mission"
+        }
+      ],
+      "ontology_clauses": [
+        {
+          "entity_type": "telescope",
+          "properties_filter": null,
+          "surface": "telescope"
+        },
+        {
+          "entity_type": "exoplanet",
+          "properties_filter": null,
+          "surface": "exoplanet"
+        },
+        {
+          "entity_type": "telescope",
+          "properties_filter": {
+            "mission": "Kepler"
+          },
+          "surface": "Kepler"
+        }
+      ],
+      "oracle_size": 0,
+      "entity_linked_pool_size": 500,
+      "variants": {
+        "baseline": {
+          "ndcg_at_10": 0.0,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2018A&A...609A...4K",
+            "2023AJ....165..177S",
+            "2018AJ....155...94S",
+            "2013ApJ...764..105S",
+            "2022A&A...668A..52K",
+            "2021tsc2.confE..17T",
+            "2018adap.prop..113P",
+            "2013PhDT.......118B",
+            "2015AAS...22525736B",
+            "2020PNAS..11718264K"
+          ],
+          "timing_ms": {
+            "lexical_ms": 22.63,
+            "body_lexical_ms": 229.08,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.04,
+            "rerank_ms": 0.0,
+            "total_ms": 251.75,
+            "wallclock_ms": 252.12
+          },
+          "search_metadata": {}
+        },
+        "alias": {
+          "ndcg_at_10": 0.0,
+          "entity_coverage_top10": 0.0,
+          "top10": [
+            "2018A&A...609A...4K",
+            "2023AJ....165..177S",
+            "2018AJ....155...94S",
+            "2013ApJ...764..105S",
+            "2022A&A...668A..52K",
+            "2021tsc2.confE..17T",
+            "2009AAS...21346409M",
+            "2013AstHe.106..528S",
+            "2018adap.prop..113P",
+            "2016JAVSO..44..168M"
+          ],
+          "timing_ms": {
+            "alias_expansion_ms": 0.06,
+            "lexical_ms": 21.18,
+            "alias_lexical_ms": 246.45,
+            "body_lexical_ms": 71.64,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.07,
+            "rerank_ms": 0.0,
+            "total_ms": 339.4,
+            "wallclock_ms": 339.68
+          },
+          "search_metadata": {
+            "alias_matches": 3,
+            "alias_lanes": 3
+          }
+        },
+        "ontology": {
+          "ndcg_at_10": 0.0,
+          "entity_coverage_top10": 0.0,
+          "top10": [],
+          "timing_ms": {
+            "ontology_parse_ms": 0.25,
+            "lexical_ms": 19.65,
+            "body_lexical_ms": 60.08,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.01,
+            "rerank_ms": 0.0,
+            "total_ms": 79.99,
+            "wallclock_ms": 80.17
+          },
+          "search_metadata": {
+            "ontology_clauses": 3,
+            "ontology_entity_ids": 0
+          }
+        },
+        "both": {
+          "ndcg_at_10": 0.0,
+          "entity_coverage_top10": 0.0,
+          "top10": [],
+          "timing_ms": {
+            "ontology_parse_ms": 0.37,
+            "alias_expansion_ms": 0.08,
+            "lexical_ms": 19.71,
+            "alias_lexical_ms": 35.66,
+            "body_lexical_ms": 59.71,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.01,
+            "rerank_ms": 0.0,
+            "total_ms": 115.54,
+            "wallclock_ms": 115.68
+          },
+          "search_metadata": {
+            "ontology_clauses": 3,
+            "ontology_entity_ids": 0,
+            "alias_matches": 3,
+            "alias_lanes": 3
+          }
+        }
+      }
+    },
+    {
+      "query_id": "mixed_02",
+      "query": "Cassini spacecraft instruments at Saturn",
+      "alias_entities_found": [
+        {
+          "id": 27881,
+          "canonical": "NASA/ESA/ASI Cassini-Huygens Spacecraft Mission to Saturn",
+          "type": "instrument"
+        },
+        {
+          "id": 6477,
+          "canonical": "AT",
+          "type": "mission"
+        }
+      ],
+      "ontology_clauses": [
+        {
+          "entity_type": "spacecraft",
+          "properties_filter": null,
+          "surface": "spacecraft"
+        },
+        {
+          "entity_type": "instrument",
+          "properties_filter": null,
+          "surface": "instruments"
+        },
+        {
+          "entity_type": "spacecraft",
+          "properties_filter": {
+            "mission": "Cassini"
+          },
+          "surface": "Cassini"
+        }
+      ],
+      "oracle_size": 30,
+      "entity_linked_pool_size": 500,
+      "variants": {
+        "baseline": {
+          "ndcg_at_10": 1.0,
+          "entity_coverage_top10": 0.1,
+          "top10": [
+            "2014GeoRL..41.1382J",
+            "2017AdSpR..59.1614K",
+            "2008JGRA..113.1209C",
+            "2005aero.conf..429L",
+            "2006P&SS...54..957W",
+            "2008GeoRL..35.7102C",
+            "2012JGRA..117.6220O",
+            "2022Icar..38815237J",
+            "2008JGRA..113.5210C",
+            "2010JGRA..115.8203M"
+          ],
+          "timing_ms": {
+            "lexical_ms": 13.97,
+            "body_lexical_ms": 189.39,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.08,
+            "rerank_ms": 0.0,
+            "total_ms": 203.44,
+            "wallclock_ms": 203.82
+          },
+          "search_metadata": {}
+        },
+        "alias": {
+          "ndcg_at_10": 1.0,
+          "entity_coverage_top10": 0.1,
+          "top10": [
+            "2014GeoRL..41.1382J",
+            "2017AdSpR..59.1614K",
+            "2008JGRA..113.1209C",
+            "2005aero.conf..429L",
+            "2006P&SS...54..957W",
+            "2008GeoRL..35.7102C",
+            "2012JGRA..117.6220O",
+            "2022Icar..38815237J",
+            "2008JGRA..113.5210C",
+            "2010JGRA..115.8203M"
+          ],
+          "timing_ms": {
+            "alias_expansion_ms": 0.05,
+            "lexical_ms": 16.4,
+            "alias_lexical_ms": 2.67,
+            "body_lexical_ms": 43.67,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.07,
+            "rerank_ms": 0.0,
+            "total_ms": 62.86,
+            "wallclock_ms": 63.15
+          },
+          "search_metadata": {
+            "alias_matches": 2,
+            "alias_lanes": 2
+          }
+        },
+        "ontology": {
+          "ndcg_at_10": 1.0,
+          "entity_coverage_top10": 0.1,
+          "top10": [
+            "2014GeoRL..41.1382J",
+            "2017AdSpR..59.1614K",
+            "2008JGRA..113.1209C",
+            "2005aero.conf..429L",
+            "2006P&SS...54..957W",
+            "2008GeoRL..35.7102C",
+            "2012JGRA..117.6220O",
+            "2022Icar..38815237J",
+            "2008JGRA..113.5210C",
+            "2010JGRA..115.8203M"
+          ],
+          "timing_ms": {
+            "ontology_parse_ms": 0.29,
+            "lexical_ms": 23.96,
+            "body_lexical_ms": 66.04,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.08,
+            "rerank_ms": 0.0,
+            "total_ms": 90.37,
+            "wallclock_ms": 90.68
+          },
+          "search_metadata": {
+            "ontology_clauses": 3,
+            "ontology_entity_ids": 0
+          }
+        },
+        "both": {
+          "ndcg_at_10": 1.0,
+          "entity_coverage_top10": 0.1,
+          "top10": [
+            "2014GeoRL..41.1382J",
+            "2017AdSpR..59.1614K",
+            "2008JGRA..113.1209C",
+            "2005aero.conf..429L",
+            "2006P&SS...54..957W",
+            "2008GeoRL..35.7102C",
+            "2012JGRA..117.6220O",
+            "2022Icar..38815237J",
+            "2008JGRA..113.5210C",
+            "2010JGRA..115.8203M"
+          ],
+          "timing_ms": {
+            "ontology_parse_ms": 0.3,
+            "alias_expansion_ms": 0.05,
+            "lexical_ms": 21.96,
+            "alias_lexical_ms": 2.83,
+            "body_lexical_ms": 68.92,
+            "vector_ms": 0.0,
+            "openai_vector_ms": 0.0,
+            "fusion_ms": 0.07,
+            "rerank_ms": 0.0,
+            "total_ms": 94.13,
+            "wallclock_ms": 94.43
+          },
+          "search_metadata": {
+            "ontology_clauses": 3,
+            "ontology_entity_ids": 0,
+            "alias_matches": 2,
+            "alias_lanes": 2
+          }
+        }
+      }
+    }
+  ]
+}

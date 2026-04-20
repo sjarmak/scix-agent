@@ -87,3 +87,4 @@ Thumbs.db
 .cache/
 deploy/.env
 CLAUDE.local.md
+.claude/scheduled_tasks.lock

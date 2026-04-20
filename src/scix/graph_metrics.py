@@ -6,6 +6,9 @@ evaluating partition quality against external labels or structural criteria.
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
+import gc
 import io
 import logging
 import math
@@ -13,10 +16,52 @@ import time
 from collections import Counter
 from typing import Any
 
+import numpy as np
 import psycopg
 from psycopg.rows import dict_row
 
 from scix.db import get_connection
+
+_LIBC: ctypes.CDLL | None = None
+
+
+def _libc() -> ctypes.CDLL | None:
+    """Return a cached libc handle for malloc_trim, or None on non-glibc."""
+    global _LIBC
+    if _LIBC is not None:
+        return _LIBC
+    try:
+        path = ctypes.util.find_library("c")
+        if path is None:
+            return None
+        _LIBC = ctypes.CDLL(path)
+        return _LIBC
+    except OSError:
+        return None
+
+
+def _malloc_trim() -> None:
+    """Ask glibc to return freed arenas to the OS (no-op on non-glibc)."""
+    lib = _libc()
+    if lib is None or not hasattr(lib, "malloc_trim"):
+        return
+    try:
+        lib.malloc_trim(0)
+    except OSError:
+        pass
+
+
+def _rss_gb() -> float:
+    """Return current process RSS in GB (Linux /proc-based, 0.0 elsewhere)."""
+    try:
+        with open("/proc/self/status", "r", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    kb = int(line.split()[1])
+                    return round(kb / (1024 * 1024), 2)
+    except OSError:
+        pass
+    return 0.0
 
 logger = logging.getLogger(__name__)
 
@@ -240,39 +285,69 @@ def _import_leidenalg() -> Any:
 
 def load_graph(
     conn: psycopg.Connection,
-) -> tuple[Any, dict[str, int], dict[int, str]]:
+    keep_bibcode_to_id: bool = True,
+) -> tuple[Any, dict[str, int], Any]:
     """Load citation graph from PostgreSQL into an igraph.Graph.
 
     Streams nodes and edges via server-side cursors to handle millions of rows
     without exhausting memory.
 
+    Args:
+        conn: PostgreSQL connection (psycopg).
+        keep_bibcode_to_id: When False, drops the bibcode→vid dict right after
+            edge resolution and returns an empty dict for the second tuple
+            element. Saves ~8 GB on the full 32M-paper graph. Set False when
+            downstream code only needs the graph + vid→bibcode reverse map
+            (e.g. the M3 Leiden recompute).
+
     Returns:
-        (graph, bibcode_to_id, id_to_bibcode) where graph is an igraph.Graph
-        and the dicts map between bibcodes and integer vertex IDs.
+        (graph, bibcode_to_id, id_to_bibcode) — graph is an igraph.Graph;
+        bibcode_to_id is dict[str, int] (or empty dict if ``keep_bibcode_to_id``
+        is False); id_to_bibcode is a ``list[str]`` where the vid is the list
+        index (smaller memory footprint than dict[int, str] by ~40 %).
     """
     igraph = _import_igraph()
 
     t0 = time.perf_counter()
 
     # --- Stream nodes ---
+    # bibcode_to_id stays a dict for O(1) edge lookup.
+    # id_to_bibcode is a list (vid → bibcode) — index-based, no hash overhead,
+    # and ~4-5 GB smaller than a 32M-entry dict on the full corpus.
     bibcode_to_id: dict[str, int] = {}
-    id_to_bibcode: dict[int, str] = {}
-    node_idx = 0
+    id_to_bibcode: list[str] = []
 
     with conn.cursor(name="node_cursor") as cur:
         cur.itersize = 500_000
         cur.execute("SELECT bibcode FROM papers")
         for (bibcode,) in cur:
-            bibcode_to_id[bibcode] = node_idx
-            id_to_bibcode[node_idx] = bibcode
-            node_idx += 1
+            bibcode_to_id[bibcode] = len(id_to_bibcode)
+            id_to_bibcode.append(bibcode)
 
-    node_count = len(bibcode_to_id)
-    logger.info("Loaded %d nodes in %.1fs", node_count, (time.perf_counter() - t0))
+    node_count = len(id_to_bibcode)
+    logger.info(
+        "Loaded %d nodes in %.1fs (RSS=%.2fGB)",
+        node_count,
+        (time.perf_counter() - t0),
+        _rss_gb(),
+    )
 
-    # --- Stream edges ---
+    # --- Stream edges into numpy int32 arrays ---
+    # A Python list of (src, tgt) tuples for 10^8+ edges costs ~70 bytes each
+    # (tuple + 2 PyLong) → ~20 GB peak at 298M edges. Writing directly into
+    # preallocated int32 arrays reduces this to ~2.4 GB and keeps the peak
+    # safely below system memory during igraph construction.
     t_edges = time.perf_counter()
-    edge_list: list[tuple[int, int]] = []
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM citation_edges")
+        total_rows = cur.fetchone()[0]
+    logger.info("citation_edges row count: %d (preallocating arrays)", total_rows)
+
+    # int32 holds 2.1B IDs — fine for ~32M nodes.
+    src_arr = np.empty(total_rows, dtype=np.int32)
+    tgt_arr = np.empty(total_rows, dtype=np.int32)
+    write_idx = 0
     skipped = 0
 
     with conn.cursor(name="edge_cursor") as cur:
@@ -284,20 +359,75 @@ def load_graph(
             if src_id is None or tgt_id is None:
                 skipped += 1
                 continue
-            edge_list.append((src_id, tgt_id))
+            src_arr[write_idx] = src_id
+            tgt_arr[write_idx] = tgt_id
+            write_idx += 1
 
-    edge_count = len(edge_list)
+    edge_count = write_idx
+    # Trim (cheap view) in case skips or table growth shifted the count.
+    src_arr = src_arr[:edge_count]
+    tgt_arr = tgt_arr[:edge_count]
     logger.info(
-        "Loaded %d edges (skipped %d) in %.1fs",
+        "Loaded %d edges (skipped %d) in %.1fs (RSS=%.2fGB)",
         edge_count,
         skipped,
         (time.perf_counter() - t_edges),
+        _rss_gb(),
     )
 
+    # Release the bibcode→vid dict before igraph allocates its internal
+    # representation: on the 32M-paper graph this dict is ~5-8 GB and pushes
+    # the process into OOM during Graph() construction. Downstream callers
+    # that only need the vid→bibcode map can opt out via keep_bibcode_to_id.
+    # gc.collect() marks arenas free but glibc won't return them to OS
+    # automatically — malloc_trim forces that.
+    if not keep_bibcode_to_id:
+        bibcode_to_id = {}
+        gc.collect()
+        _malloc_trim()
+        logger.info("Dropped bibcode_to_id + malloc_trim (RSS=%.2fGB)", _rss_gb())
+
     # --- Build graph ---
+    # Passing the full 298M-edge array to igraph.Graph(edges=...) materialises
+    # ~27 GB of transient Python state inside the python-igraph wrapper
+    # (measured at ~170 bytes/edge peak on 10M-edge test → ~50 GB for 298M).
+    # igraph.Graph(n=N) + chunked add_edges() holds the same final graph but
+    # peaks at only ~70 bytes/edge (~21 GB for 298M).
     t_build = time.perf_counter()
-    graph = igraph.Graph(n=node_count, edges=edge_list, directed=True)
-    logger.info("Built igraph in %.1fs", (time.perf_counter() - t_build))
+    graph = igraph.Graph(n=node_count, directed=True)
+    logger.info(
+        "Empty graph with %d vertices (RSS=%.2fGB) — adding edges in chunks...",
+        node_count,
+        _rss_gb(),
+    )
+    edge_chunk_size = 5_000_000
+    chunk_log_every = 10  # log RSS every ~50M edges
+    for chunk_idx, chunk_start in enumerate(
+        range(0, edge_count, edge_chunk_size)
+    ):
+        chunk_end = min(chunk_start + edge_chunk_size, edge_count)
+        chunk = np.column_stack(
+            (src_arr[chunk_start:chunk_end], tgt_arr[chunk_start:chunk_end])
+        )
+        graph.add_edges(chunk)
+        del chunk
+        if (chunk_idx + 1) % chunk_log_every == 0 or chunk_end == edge_count:
+            logger.info(
+                "  chunk %d: %d/%d edges added (RSS=%.2fGB)",
+                chunk_idx + 1,
+                chunk_end,
+                edge_count,
+                _rss_gb(),
+            )
+    del src_arr, tgt_arr
+    gc.collect()
+    _malloc_trim()
+    logger.info(
+        "Built igraph (%d edges) in %.1fs (RSS=%.2fGB)",
+        graph.ecount(),
+        (time.perf_counter() - t_build),
+        _rss_gb(),
+    )
 
     total_ms = _elapsed_ms(t0)
     logger.info(
@@ -307,6 +437,13 @@ def load_graph(
         skipped,
         total_ms,
     )
+
+    # Release the idle-in-transaction state left over by the server-side
+    # (named) cursors above. Downstream callers run hours of in-process work
+    # (Leiden, PageRank) before issuing another query, and holding an open
+    # read transaction that whole time blocks autovacuum, pins xmin, and
+    # risks connection-side timeouts killing the handle mid-run.
+    conn.commit()
 
     return graph, bibcode_to_id, id_to_bibcode
 
@@ -399,43 +536,95 @@ def extract_giant_component(
     t0 = time.perf_counter()
 
     components = graph.connected_components(mode="weak")
+    n_components = len(components)
+    logger.info(
+        "connected_components(weak): %d components (%.1fms)",
+        n_components,
+        _elapsed_ms(t0),
+    )
 
-    if len(components) <= 1:
+    if n_components <= 1:
         # Entire graph is one component (or empty) — nothing to extract
         logger.info(
-            "Graph has %d component(s); skipping giant-component extraction (%.1fms)",
-            len(components),
-            _elapsed_ms(t0),
+            "Graph has %d component(s); skipping giant-component extraction",
+            n_components,
         )
         return graph, bibcode_to_id, id_to_bibcode, set()
 
-    # Find the largest component by vertex count
-    giant_idx = max(range(len(components)), key=lambda i: len(components[i]))
-    giant_vids: list[int] = components[giant_idx]
-    giant_vid_set = set(giant_vids)
+    # Find the largest component. components.sizes() is a single O(V) pass;
+    # the obvious `max(range(n), key=lambda i: len(components[i]))` is
+    # O(C * V) because VertexClustering.__getitem__ scans the full membership
+    # vector on every call — pathological at 12M+ components.
+    t_sizes = time.perf_counter()
+    sizes = components.sizes()
+    giant_idx = max(range(len(sizes)), key=sizes.__getitem__)
+    logger.info(
+        "Located giant component: idx=%d size=%d (%.1fms)",
+        giant_idx,
+        sizes[giant_idx],
+        _elapsed_ms(t_sizes),
+    )
 
-    # Collect bibcodes in small components
-    small_bibcodes: set[str] = set()
-    for vid in range(graph.vcount()):
-        if vid not in giant_vid_set:
-            small_bibcodes.add(id_to_bibcode[vid])
+    # Derive giant_vids from the membership vector in a single O(V) pass —
+    # cheaper than `components[giant_idx]` which rescans membership.
+    t_vids = time.perf_counter()
+    membership = components.membership
+    giant_vids: list[int] = [
+        vid for vid, cid in enumerate(membership) if cid == giant_idx
+    ]
+    logger.info(
+        "Collected %d giant-component vids (%.1fms)",
+        len(giant_vids),
+        _elapsed_ms(t_vids),
+    )
+
+    # Collect bibcodes in small components — also one O(V) pass against the
+    # membership vector. Avoids re-hashing a 22M-element giant_vid_set.
+    t_small = time.perf_counter()
+    small_bibcodes: set[str] = {
+        id_to_bibcode[vid]
+        for vid, cid in enumerate(membership)
+        if cid != giant_idx
+    }
+    logger.info(
+        "Collected %d small-component bibcodes (%.1fms)",
+        len(small_bibcodes),
+        _elapsed_ms(t_small),
+    )
+    del membership
+    gc.collect()
+    _malloc_trim()
 
     # Extract giant component subgraph
+    t_sub = time.perf_counter()
     giant_graph = graph.induced_subgraph(giant_vids)
+    logger.info(
+        "induced_subgraph: %d vertices, %d edges (%.1fms) RSS=%.2fGB",
+        giant_graph.vcount(),
+        giant_graph.ecount(),
+        _elapsed_ms(t_sub),
+        _rss_gb(),
+    )
 
     # Build new contiguous ID mappings
+    t_map = time.perf_counter()
     giant_b2i: dict[str, int] = {}
     giant_i2b: dict[int, str] = {}
     for new_id, old_id in enumerate(giant_vids):
         bib = id_to_bibcode[old_id]
         giant_b2i[bib] = new_id
         giant_i2b[new_id] = bib
+    logger.info(
+        "Built giant id mappings (%.1fms) RSS=%.2fGB",
+        _elapsed_ms(t_map),
+        _rss_gb(),
+    )
 
     logger.info(
         "Giant component: %d nodes (%d small-component nodes in %d other components) (%.1fms)",
         len(giant_vids),
         len(small_bibcodes),
-        len(components) - 1,
+        n_components - 1,
         _elapsed_ms(t0),
     )
     return giant_graph, giant_b2i, giant_i2b, small_bibcodes

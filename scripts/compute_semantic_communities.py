@@ -213,13 +213,19 @@ class _SilhouetteReservoir:
         for vec, lbl in zip(vecs, labels):
             cid = int(lbl)
             bucket = self._buckets.setdefault(cid, [])
+            # `vec` is a row slice of the batch ndarray — a VIEW, not a
+            # copy. Storing the view keeps the entire batch alive via
+            # numpy's base-reference rules, which defeats the explicit
+            # `del vecs` in the predict loop and blocks GC of prior
+            # batches. np.array(..., copy=True) allocates a fresh buffer
+            # so the reservoir entry owns its own memory.
             if len(bucket) < self._per_cluster_cap:
-                bucket.append(np.asarray(vec, dtype=np.float32))
+                bucket.append(np.array(vec, dtype=np.float32, copy=True))
             else:
                 # Reservoir replacement so later batches aren't under-represented
                 j = int(self._rng.integers(0, self._per_cluster_cap * 2))
                 if j < self._per_cluster_cap:
-                    bucket[j] = np.asarray(vec, dtype=np.float32)
+                    bucket[j] = np.array(vec, dtype=np.float32, copy=True)
 
     def materialize(self) -> tuple[np.ndarray, np.ndarray]:
         vecs: list[np.ndarray] = []
@@ -532,6 +538,16 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch-size", type=int, default=10_000)
     parser.add_argument(
+        "--resolutions",
+        default="coarse,medium,fine",
+        help=(
+            "Comma-separated subset of resolutions to compute. Order in the "
+            "list is ignored — resolutions always run coarse -> medium -> "
+            "fine. Intended for restarting after a partial run; resolutions "
+            "already committed to paper_metrics do not need to be redone."
+        ),
+    )
+    parser.add_argument(
         "--row-limit",
         type=int,
         default=None,
@@ -612,20 +628,45 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     Path(args.results_path).parent.mkdir(parents=True, exist_ok=True)
     Path(args.run_meta_path).parent.mkdir(parents=True, exist_ok=True)
 
-    specs = [
+    requested = {r.strip() for r in args.resolutions.split(",") if r.strip()}
+    unknown = requested - set(RESOLUTION_NAMES)
+    if unknown:
+        raise SystemExit(
+            f"Unknown resolution(s): {sorted(unknown)}. "
+            f"Valid: {RESOLUTION_NAMES}"
+        )
+    all_specs = [
         ResolutionSpec("coarse", args.k_coarse),
         ResolutionSpec("medium", args.k_medium),
         ResolutionSpec("fine",   args.k_fine),
     ]
+    specs = [s for s in all_specs if s.name in requested]
+    logger.info(
+        "Running resolutions: %s", ", ".join(s.name for s in specs)
+    )
 
     results: list[ResolutionResult] = []
 
+    # Count once up front using a short-lived connection.
     with psycopg.connect(dsn) as conn:
         conn.autocommit = False
         register_vector(conn)
         n_indus = _count_indus_rows(conn)
         logger.info("paper_embeddings(model_name='indus'): %d rows", n_indus)
-        for spec in specs:
+
+    # One connection per resolution. Under autocommit=False the outer
+    # psycopg.connect wraps everything in a SINGLE implicit transaction,
+    # so nothing commits until the connection closes — `with
+    # conn.transaction()` inside _run_resolution only creates savepoints.
+    # Running all three resolutions in one tx means (a) none of the work
+    # is durable until the final exit, and (b) cross-resolution state
+    # (cursor bookkeeping, kmeans fit history, gc-detached reservoirs)
+    # accumulates in the python process. A fresh connection per
+    # resolution commits cleanly on close and resets both ends.
+    for spec in specs:
+        with psycopg.connect(dsn) as conn:
+            conn.autocommit = False
+            register_vector(conn)
             result = _run_resolution(
                 conn,
                 spec,
@@ -635,7 +676,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 train_max_rows=args.train_max_rows,
                 row_limit=args.row_limit,
             )
-            results.append(result)
+            # Explicit commit before close so the resolution's UPDATE
+            # lands immediately in the database (visible to other
+            # connections) and backend-side state is released.
+            conn.commit()
+        results.append(result)
+        gc.collect()
 
     peak_rss_mb = _peak_rss_mb()
     finished_at = datetime.now(timezone.utc).isoformat()

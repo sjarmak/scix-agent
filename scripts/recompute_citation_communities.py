@@ -29,6 +29,7 @@ Outputs:
 from __future__ import annotations
 
 import argparse
+import gc
 import io
 import json
 import logging
@@ -53,7 +54,6 @@ from scix.graph_metrics import (  # noqa: E402
     compute_leiden,
     compute_nmi,
     extract_giant_component,
-    filter_isolated_nodes,
     load_graph,
 )
 
@@ -189,27 +189,31 @@ def _compute_nmi_vs_semantic(
     if not giant_bib_to_community:
         return None
 
-    bibcodes = list(giant_bib_to_community.keys())
+    # Stream the whole populated-semantic-coarse column and filter in Python.
+    # Sending ~22M bibcodes via WHERE bibcode = ANY(%s) and fetchall()ing the
+    # response (tried previously) consumes >5 GB on the prod corpus and can
+    # blow the process budget when it overlaps Leiden's working set. A named
+    # server-side cursor streams with bounded Python memory (~1 GB for the
+    # two label arrays).
+    citation_labels: list[int] = []
+    semantic_labels: list[int] = []
 
-    # Fetch semantic-coarse labels for all giant-component bibcodes.
-    with conn.cursor() as cur:
+    with conn.cursor(name="nmi_cursor") as cur:
+        cur.itersize = 500_000
         cur.execute(
             "SELECT bibcode, community_semantic_coarse "
             "FROM paper_metrics "
-            "WHERE bibcode = ANY(%s) "
-            "  AND community_semantic_coarse IS NOT NULL",
-            (bibcodes,),
+            "WHERE community_semantic_coarse IS NOT NULL"
         )
-        rows = cur.fetchall()
+        for bib, sem in cur:
+            cid = giant_bib_to_community.get(bib)
+            if cid is None:
+                continue
+            citation_labels.append(cid)
+            semantic_labels.append(int(sem))
 
-    if not rows:
+    if not citation_labels:
         return None
-
-    citation_labels: list[int] = []
-    semantic_labels: list[int] = []
-    for bib, sem in rows:
-        citation_labels.append(giant_bib_to_community[bib])
-        semantic_labels.append(int(sem))
 
     return compute_nmi(citation_labels, semantic_labels)
 
@@ -239,25 +243,38 @@ def run(
     conn = psycopg.connect(dsn)
     try:
         # 1. Load full citation graph.
+        # keep_bibcode_to_id=False drops the 32M-entry bibcode→vid dict inside
+        # load_graph() once edges are resolved — it is not referenced after
+        # that point here, and retaining it pushes peak RSS into OOM territory
+        # during igraph.Graph() construction on the 32M/298M prod graph.
         logger.info("Loading citation graph...")
-        graph, b2i, i2b = load_graph(conn)
+        graph, b2i, i2b = load_graph(conn, keep_bibcode_to_id=False)
 
-        # 2. Filter isolated nodes → subgraph of degree ≥ 1.
-        logger.info("Filtering isolated nodes...")
-        subgraph, sub_b2i, sub_i2b, isolated_bibcodes = filter_isolated_nodes(
-            graph, b2i, i2b
-        )
+        # 2. Count degree-0 nodes for run_meta (pure metric; does not mutate graph).
+        #    This avoids the memory cost of materialising an intermediate subgraph
+        #    via filter_isolated_nodes(): extract_giant_component() already lumps
+        #    degree-0 nodes into small_bibcodes, and downstream _copy_null_rows
+        #    unions isolated + small anyway — so the filter step is redundant.
+        logger.info("Counting isolated nodes...")
+        n_isolated = sum(1 for d in graph.degree() if d == 0)
+        logger.info("Found %d isolated nodes", n_isolated)
 
-        # 3. Extract giant component.
+        # 3. Extract giant component directly from full graph.
         logger.info("Extracting giant component...")
         giant, giant_b2i, giant_i2b, small_bibcodes = extract_giant_component(
-            subgraph, sub_b2i, sub_i2b
+            graph, b2i, i2b
         )
+        # Free the full-graph representation as soon as possible — peak RSS during
+        # induced_subgraph() + giant_i2b construction was what OOM'd on prod (32M
+        # nodes / 298M edges).
+        del graph, b2i, i2b
+        gc.collect()
+
         giant_n = giant.vcount()
         logger.info(
-            "Giant component: %d nodes (isolated=%d, small-component=%d)",
+            "Giant component: %d nodes (isolated=%d, non-giant total=%d)",
             giant_n,
-            len(isolated_bibcodes),
+            n_isolated,
             len(small_bibcodes),
         )
 
@@ -286,17 +303,17 @@ def run(
 
         # 5. Stage + UPDATE paper_metrics.
         # Must run inside a single transaction so the TEMP tables survive
-        # long enough to drive the UPDATEs. ``load_graph`` left the
-        # connection in an idle-in-transaction state (server-side cursor);
-        # commit it to start a clean transaction for the writes.
-        conn.commit()
+        # long enough to drive the UPDATEs. ``load_graph`` commits its own
+        # read transaction before returning, so by this point the connection
+        # is idle (not idle-in-tx) and ``with conn.transaction()`` starts a
+        # fresh write transaction.
         with conn.transaction():
             with conn.cursor() as cur:
                 cur.execute(STAGING_TABLE_SQL)
                 cur.execute(NULL_STAGING_SQL)
             if giant_n > 0:
                 _copy_giant_rows(conn, giant_i2b, coarse, medium, fine)
-            _copy_null_rows(conn, isolated_bibcodes | small_bibcodes)
+            _copy_null_rows(conn, small_bibcodes)
             with conn.cursor() as cur:
                 cur.execute(UPDATE_GIANT_SQL)
                 giant_updated = cur.rowcount
@@ -341,8 +358,8 @@ def run(
             "fine": resolution_fine,
         },
         "giant_component_size": giant_n,
-        "isolated_node_count": len(isolated_bibcodes),
-        "small_component_node_count": len(small_bibcodes),
+        "isolated_node_count": n_isolated,
+        "small_component_node_count": len(small_bibcodes) - n_isolated,
         "n_communities": {
             "coarse": n_coarse,
             "medium": n_medium,
@@ -402,6 +419,20 @@ def main(argv: list[str] | None = None) -> int:
         logger.error(
             "Refusing to write to production DSN %s — pass --allow-prod to override",
             redact_dsn(dsn),
+        )
+        return 2
+
+    # Any --allow-prod invocation must run inside a systemd-managed unit
+    # (transient scope, service, timer, etc.) so oomd can enforce a memory
+    # ceiling without collateral-killing the gascity supervisor (see
+    # CLAUDE.md §Memory isolation). systemd sets INVOCATION_ID inside every
+    # unit and leaves it unset in plain interactive shells — making it a
+    # reliable proxy for "am I inside a cgroup oomd can manage".
+    if args.allow_prod and not os.environ.get("INVOCATION_ID"):
+        logger.error(
+            "Refusing to run --allow-prod outside a systemd scope. "
+            "Invoke via: scix-batch python %s <args...>",
+            Path(sys.argv[0]).name,
         )
         return 2
 

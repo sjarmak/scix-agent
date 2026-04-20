@@ -34,7 +34,6 @@ build-artifacts/
 
 # Internal development docs
 CLAUDE.md
-migrations/
 results/
 docs/AGENTS.md
 docs/prd/

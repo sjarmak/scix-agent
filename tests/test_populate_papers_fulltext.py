@@ -319,8 +319,15 @@ def test_dispatch_tier3_records_failure():
     assert any("tier3_not_yet_wired" in str(params) for _, params in rec_conn.calls)
 
 
-def test_dispatch_abstract_only_records_failure():
-    """_criterion_4: abstract_only branch records failure (no row written)."""
+def test_dispatch_abstract_only_is_silent_noop():
+    """_criterion_4: abstract_only branch is a defensive no-op — no DB writes.
+
+    iter_candidate_papers() filters out abstract-only rows at the SQL level,
+    so _dispatch_one only sees abstract_only if a row slipped through (e.g.
+    body becomes NULL between iteration and dispatch). In that case we want
+    a silent skip, not a papers_fulltext_failures row — those pollute the
+    failures table with non-failures.
+    """
     row = _row(body="", doctype=None, doi=[], openalex_has_pdf_url=False)
     stats = driver.DriverStats()
     rec_conn = _RecordingConn()
@@ -334,7 +341,9 @@ def test_dispatch_abstract_only_records_failure():
     assert parsed is None
     assert stats.abstract_only == 1
     assert stats.tier_counts.get("abstract_only") == 1
-    assert any("abstract_only" in str(params) for _, params in rec_conn.calls)
+    assert stats.failures == 0
+    # No INSERT into papers_fulltext_failures should have been issued.
+    assert not any("papers_fulltext_failures" in str(sql) for sql, _params in rec_conn.calls)
 
 
 def test_dispatch_tier1_parse_error_records_failure():

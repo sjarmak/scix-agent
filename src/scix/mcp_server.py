@@ -33,7 +33,20 @@ from scix.embed import _model_cache, clear_model_cache, embed_batch, load_model
 from scix.entity_resolver import EntityResolver
 from scix.session import SessionState, WorkingSetEntry
 
+# Optional import — viz/trace_stream is only needed when the viz extras are
+# installed. When absent we fall back to a no-op, and the emission hook in
+# :func:`call_tool` silently skips publishing. This keeps the MCP server
+# runnable in minimal deployments that don't ship FastAPI.
+try:
+    from scix.viz import trace_stream as _trace_stream
+except ImportError:  # pragma: no cover — viz extras not installed
+    _trace_stream = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
+
+# Cap the number of bibcodes emitted per TraceEvent to keep event payloads
+# small. SSE consumers typically only need a handful of bibcodes for linkage.
+_MAX_TRACE_BIBCODES: int = 20
 
 # ---------------------------------------------------------------------------
 # Server-level session identity (stable for the lifetime of the process)
@@ -277,6 +290,84 @@ def _log_query(
         conn.commit()
     except Exception:
         logger.warning("Failed to log query for tool=%s", tool_name, exc_info=True)
+
+
+def _extract_bibcodes_from_result(result_json: str | None) -> tuple[str, ...]:
+    """Best-effort bibcode extraction from a tool's JSON result.
+
+    Handles two common shapes:
+      * ``{"papers": [{"bibcode": ...}, ...]}`` — multi-paper result.
+      * ``{"bibcode": "..."}`` — single-paper result.
+
+    Returns an empty tuple on any parse failure or when the result
+    represents an error payload. The result is capped at
+    :data:`_MAX_TRACE_BIBCODES` entries to keep emitted TraceEvents small.
+    """
+    if not result_json:
+        return ()
+    try:
+        data = json.loads(result_json)
+    except (json.JSONDecodeError, TypeError):
+        return ()
+    if not isinstance(data, dict):
+        return ()
+
+    bibcodes: list[str] = []
+    papers = data.get("papers")
+    if isinstance(papers, list):
+        for paper in papers:
+            if not isinstance(paper, dict):
+                continue
+            bc = paper.get("bibcode")
+            if isinstance(bc, str):
+                bibcodes.append(bc)
+                if len(bibcodes) >= _MAX_TRACE_BIBCODES:
+                    break
+
+    if not bibcodes:
+        bc = data.get("bibcode")
+        if isinstance(bc, str):
+            bibcodes.append(bc)
+
+    return tuple(bibcodes)
+
+
+def _emit_trace_event(
+    tool_name: str,
+    latency_ms: float,
+    params: dict[str, Any],
+    result_json: str | None,
+    success: bool,
+) -> None:
+    """Fire-and-forget TraceEvent emission to :mod:`scix.viz.trace_stream`.
+
+    Called once per MCP tool dispatch (both success and failure paths).
+    If :mod:`scix.viz.trace_stream` is not importable, this is a no-op.
+    All exceptions are swallowed — trace emission must never break the
+    tool-call hot path.
+    """
+    if _trace_stream is None:
+        return
+    try:
+        bibcodes = _extract_bibcodes_from_result(result_json)
+        result_summary: str | None = None
+        if not success and result_json:
+            try:
+                parsed = json.loads(result_json)
+                if isinstance(parsed, dict) and "error" in parsed:
+                    result_summary = f"error: {parsed['error']}"
+            except (json.JSONDecodeError, TypeError):
+                result_summary = None
+        event = _trace_stream.TraceEvent(
+            tool_name=tool_name,
+            latency_ms=latency_ms,
+            params=dict(params) if params else {},
+            result_summary=result_summary,
+            bibcodes=bibcodes,
+        )
+        _trace_stream.publish(event)
+    except Exception:  # pragma: no cover — defensive, emission must not raise
+        logger.debug("trace emission failed for tool=%s", tool_name, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1169,6 +1260,13 @@ def create_server(_run_self_test: bool = True):
                     result_json=result_json,
                     session_id=_server_session_id,
                     is_test=_is_test_session,
+                )
+                _emit_trace_event(
+                    name,
+                    latency_ms,
+                    arguments,
+                    result_json,
+                    success,
                 )
             return [TextContent(type="text", text=result_json)]
 

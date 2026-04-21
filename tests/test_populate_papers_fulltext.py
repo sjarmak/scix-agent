@@ -111,21 +111,21 @@ def test_prod_guard_rejects_prod_dsn_without_allow_prod(monkeypatch):
 
 
 def test_prod_guard_requires_systemd_scope_with_allow_prod(monkeypatch):
-    """_criterion_3: --allow-prod without SYSTEMD_SCOPE → SystemExit non-zero."""
+    """_criterion_3: --allow-prod without INVOCATION_ID → SystemExit non-zero."""
     monkeypatch.setattr(driver, "is_production_dsn", lambda dsn: True)
     with pytest.raises(SystemExit) as exc:
-        driver.resolve_prod_guard(dsn="dbname=scix", allow_prod=True, env={})  # no SYSTEMD_SCOPE
+        driver.resolve_prod_guard(dsn="dbname=scix", allow_prod=True, env={})  # no INVOCATION_ID
     assert exc.value.code != 0
 
 
 def test_prod_guard_allows_prod_with_scope(monkeypatch):
-    """_criterion_3 (positive): --allow-prod + SYSTEMD_SCOPE passes."""
+    """_criterion_3 (positive): --allow-prod + INVOCATION_ID passes."""
     monkeypatch.setattr(driver, "is_production_dsn", lambda dsn: True)
     # No exception.
     driver.resolve_prod_guard(
         dsn="dbname=scix",
         allow_prod=True,
-        env={"SYSTEMD_SCOPE": "scix-batch.scope"},
+        env={"INVOCATION_ID": "14f316e6a8394f27a40d3fe249dee387"},
     )
 
 

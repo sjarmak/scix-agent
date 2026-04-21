@@ -31,6 +31,7 @@ from scix import search
 from scix.db import DEFAULT_DSN
 from scix.embed import _model_cache, clear_model_cache, embed_batch, load_model
 from scix.entity_resolver import EntityResolver
+from scix.jit.disambiguator import disambiguate_query
 from scix.session import SessionState, WorkingSetEntry
 
 logger = logging.getLogger(__name__)
@@ -728,6 +729,16 @@ def create_server(_run_self_test: bool = True):
                         },
                         "filters": _FILTERS_SCHEMA,
                         "limit": {"type": "integer", "default": 10},
+                        "disambiguate": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": (
+                                "If true (default), check the query for ambiguous entity "
+                                "mentions (e.g., 'Hubble' = mission or person). If ambiguity "
+                                "is detected, the server returns disambiguation candidates "
+                                "instead of search results. Set false to run the search directly."
+                            ),
+                        },
                     },
                     "required": ["query"],
                 },
@@ -1487,10 +1498,57 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
 # ---------------------------------------------------------------------------
 
 
+def _maybe_disambiguate(conn: psycopg.Connection, query: str) -> str | None:
+    """Run the query-time disambiguator and return a JSON payload iff the
+    query contains at least one ambiguous mention.
+
+    Returns ``None`` when no ambiguity is detected (the caller should then
+    proceed with the normal search path). Returns a JSON string of the form
+    ``{"disambiguation": [<MentionDisambiguation dicts>]}`` when at least one
+    mention is flagged ``ambiguous=True``. The list contains ALL
+    MentionDisambiguation results (ambiguous or not) so the caller sees the
+    full extracted context.
+
+    Disambiguator failures (DB errors, missing tables) are logged and
+    treated as "no ambiguity detected" — the search path then runs normally
+    rather than surfacing an opaque error at the MCP boundary.
+    """
+    try:
+        mentions = disambiguate_query(conn, query)
+    except Exception:
+        logger.exception("disambiguate_query failed; continuing with search")
+        return None
+
+    if not mentions:
+        return None
+    if not any(m.ambiguous for m in mentions):
+        return None
+
+    payload = {
+        "disambiguation": [dataclasses.asdict(m) for m in mentions],
+    }
+    return json.dumps(payload, indent=2, default=str)
+
+
 def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
-    """Unified search: hybrid/semantic/keyword."""
+    """Unified search: hybrid/semantic/keyword.
+
+    When ``disambiguate`` is true (default) and the query contains at least
+    one ambiguous entity mention (as determined by
+    :func:`scix.jit.disambiguator.disambiguate_query`), this returns a
+    ``{"disambiguation": [...]}`` JSON payload and skips the search. When
+    ``disambiguate`` is false, the disambiguation check is bypassed entirely
+    and the normal search path runs.
+    """
     mode = args.get("mode", "hybrid")
     query = args["query"]
+    disambiguate = args.get("disambiguate", True)
+
+    if disambiguate:
+        disamb_response = _maybe_disambiguate(conn, query)
+        if disamb_response is not None:
+            return disamb_response
+
     try:
         filters = _parse_filters(args.get("filters"))
     except ValueError as exc:

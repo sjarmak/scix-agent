@@ -62,6 +62,63 @@
       #umap-panel .empty {
         color: #888;
       }
+      #umap-legend {
+        margin-top: 12px;
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        padding: 10px 12px;
+        font-size: 12px;
+      }
+      #umap-legend h3 {
+        font-size: 13px;
+        margin: 0 0 6px;
+        color: #444;
+        font-weight: 600;
+      }
+      #umap-legend .legend-hint {
+        color: #888;
+        margin-bottom: 8px;
+        font-size: 11px;
+      }
+      .legend-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 4px 10px;
+      }
+      .legend-swatch {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        user-select: none;
+        padding: 2px 4px;
+        border-radius: 3px;
+        transition: background 120ms;
+      }
+      .legend-swatch:hover {
+        background: #f2f2f2;
+      }
+      .legend-swatch.active {
+        background: #e8f1fc;
+      }
+      .legend-swatch .chip {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+        flex-shrink: 0;
+      }
+      #umap-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+      #umap-stats {
+        color: #555;
+        font-size: 13px;
+      }
       #umap-status {
         margin-top: 8px;
         color: #b00020;
@@ -73,20 +130,30 @@
   </head>
   <body>
     <main class="viz-container">
-      <h1>UMAP Embedding Browser</h1>
+      <div id="umap-header">
+        <h1 style="margin:0">UMAP Embedding Browser</h1>
+        <span id="umap-stats">loading&hellip;</span>
+      </div>
       <p class="viz-sub">
-        2-D UMAP projection of paper embeddings. Pan and zoom to explore;
-        hover a point to see its title; click to pin a paper to the side
-        panel. Colors encode coarse community_id.
+        2-D UMAP projection of INDUS paper embeddings. Pan and zoom to explore;
+        hover a point to see its title; click to pin a paper. Click a legend
+        swatch to isolate a community.
       </p>
       <div id="umap-layout">
         <div id="umap-root" aria-label="UMAP scatter plot">
           <div id="umap-tooltip" role="tooltip"></div>
         </div>
-        <aside id="umap-panel" aria-label="Selected paper">
-          <h2>Selected paper</h2>
-          <div class="empty">Click a point to pin a paper here.</div>
-        </aside>
+        <div>
+          <aside id="umap-panel" aria-label="Selected paper">
+            <h2>Selected paper</h2>
+            <div class="empty">Click a point to pin a paper here.</div>
+          </aside>
+          <aside id="umap-legend" aria-label="Community color legend">
+            <h3>Communities (coarse)</h3>
+            <div class="legend-hint">Click to isolate · click again to reset</div>
+            <div class="legend-grid" id="umap-legend-grid"></div>
+          </aside>
+        </div>
       </div>
       <div id="umap-status" role="status" aria-live="polite"></div>
     </main>

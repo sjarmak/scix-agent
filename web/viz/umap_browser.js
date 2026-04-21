@@ -160,6 +160,62 @@
       '</div>'
   }
 
+  function _populateLegend(communityCounts, activeCommunityRef, onPick) {
+    const grid = document.getElementById('umap-legend-grid')
+    if (!grid) return
+    grid.innerHTML = ''
+    const ids = Array.from(communityCounts.keys()).sort(function (a, b) {
+      return Number(a) - Number(b)
+    })
+    ids.forEach(function (cid) {
+      const rgb = _colorForCommunity(cid)
+      const chip =
+        '<span class="chip" style="background:rgb(' +
+        rgb[0] +
+        ',' +
+        rgb[1] +
+        ',' +
+        rgb[2] +
+        ')"></span>'
+      const count = communityCounts.get(cid)
+      const label =
+        'c' +
+        cid +
+        ' <span style="color:#888">(' +
+        count.toLocaleString() +
+        ')</span>'
+      const el = document.createElement('div')
+      el.className = 'legend-swatch'
+      el.dataset.cid = String(cid)
+      el.innerHTML = chip + '<span>' + label + '</span>'
+      el.addEventListener('click', function () {
+        const newPick = activeCommunityRef.value === cid ? null : cid
+        activeCommunityRef.value = newPick
+        grid.querySelectorAll('.legend-swatch').forEach(function (sw) {
+          sw.classList.toggle('active', newPick != null && Number(sw.dataset.cid) === newPick)
+        })
+        onPick(newPick)
+      })
+      grid.appendChild(el)
+    })
+  }
+
+  function _updateStats(n, activeCid, communityCounts) {
+    const el = document.getElementById('umap-stats')
+    if (!el) return
+    if (activeCid == null) {
+      el.textContent = n.toLocaleString() + ' papers · 20 communities'
+    } else {
+      const shown = communityCounts.get(activeCid) || 0
+      el.textContent =
+        shown.toLocaleString() +
+        ' / ' +
+        n.toLocaleString() +
+        ' papers · community ' +
+        activeCid
+    }
+  }
+
   function renderUMAP(points, container) {
     const node = _resolveContainer(container)
     if (!node) {
@@ -184,6 +240,17 @@
     const bounds = _computeBounds(points)
     const initialViewState = _initialViewState(bounds, width, height)
 
+    // Tally per-community counts for the legend + stats line.
+    const communityCounts = new Map()
+    for (let i = 0; i < points.length; i += 1) {
+      const cid = points[i].community_id
+      if (cid == null) continue
+      communityCounts.set(cid, (communityCounts.get(cid) || 0) + 1)
+    }
+
+    // Mutable ref so legend clicks can update the scatter layer's color fn.
+    const activeCommunity = { value: null }
+
     const scatter = new deck.ScatterplotLayer({
       id: 'umap-scatter',
       data: points,
@@ -194,7 +261,13 @@
       },
       getRadius: 2.5,
       getFillColor: function (d) {
-        return _colorForCommunity(d.community_id)
+        const base = _colorForCommunity(d.community_id)
+        if (activeCommunity.value == null) return base
+        if (Number(d.community_id) === Number(activeCommunity.value)) return base
+        return [210, 210, 210] // dim non-selected
+      },
+      updateTriggers: {
+        getFillColor: [activeCommunity],
       },
       opacity: 0.75,
     })
@@ -242,6 +315,27 @@
         }
       },
     })
+
+    _populateLegend(communityCounts, activeCommunity, function (newPick) {
+      // Force deck.gl to re-evaluate getFillColor by swapping the layer.
+      instance.setProps({
+        layers: [
+          scatter.clone({
+            updateTriggers: {
+              getFillColor: [{ value: newPick }],
+            },
+            getFillColor: function (d) {
+              const base = _colorForCommunity(d.community_id)
+              if (newPick == null) return base
+              if (Number(d.community_id) === Number(newPick)) return base
+              return [215, 215, 215]
+            },
+          }),
+        ],
+      })
+      _updateStats(points.length, newPick, communityCounts)
+    })
+    _updateStats(points.length, null, communityCounts)
 
     return instance
   }

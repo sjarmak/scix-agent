@@ -20,9 +20,12 @@
 
   // Default dimensions used when the container has no measurable width/height
   // (e.g. during early render before layout settles).
-  const DEFAULT_WIDTH = 1100
-  const DEFAULT_HEIGHT = 520
-  const MARGIN = { top: 8, right: 120, bottom: 8, left: 60 }
+  const DEFAULT_WIDTH = 1400
+  const DEFAULT_HEIGHT = 820
+  const MARGIN = { top: 24, right: 160, bottom: 24, left: 70 }
+  // Hide tiny nodes below this share of the max node so labels stay readable
+  // on coarse + medium resolutions. Keep it conservative; no clamping for V4 demos.
+  const MIN_NODE_SHARE = 0.002
 
   // Ordinal color scale memoized across renders so repeat community IDs keep
   // a stable color when the view re-renders (e.g. on window resize).
@@ -75,10 +78,19 @@
   }
 
   function _cloneData(data) {
-    // d3-sankey mutates the input. Always pass copies so callers can safely
-    // hold onto the original dataset.
+    // Drop orphan nodes (not referenced by any link) so they don't clutter
+    // the columns as label-only vertical stripes. d3-sankey mutates the
+    // input, so we clone each object before handing it back.
+    const referenced = new Set()
+    data.links.forEach(function (l) {
+      referenced.add(typeof l.source === 'object' ? l.source.id : l.source)
+      referenced.add(typeof l.target === 'object' ? l.target.id : l.target)
+    })
+    const filtered = data.nodes.filter(function (n) {
+      return referenced.has(n.id)
+    })
     return {
-      nodes: data.nodes.map(function (n) {
+      nodes: filtered.map(function (n) {
         return Object.assign({}, n)
       }),
       links: data.links.map(function (l) {
@@ -202,7 +214,12 @@
         return _colorScale(d.community_id != null ? d.community_id : 'na')
       })
 
+    // Only label nodes tall enough that the text won't collide with neighbours.
+    const LABEL_MIN_HEIGHT = 12
     nodeSel
+      .filter(function (d) {
+        return (d.y1 || 0) - (d.y0 || 0) >= LABEL_MIN_HEIGHT
+      })
       .append('text')
       .attr('x', function (d) {
         return d.x0 < width / 2 ? d.x1 + 6 : d.x0 - 6
@@ -215,6 +232,30 @@
         return d.x0 < width / 2 ? 'start' : 'end'
       })
       .text(_formatNodeLabel)
+
+    // Decade axis along the bottom so viewers know what the columns mean.
+    const decadesByX = new Map()
+    nodes.forEach(function (n) {
+      if (n.decade == null) return
+      const x = (n.x0 + n.x1) / 2
+      if (!decadesByX.has(n.decade) || decadesByX.get(n.decade) > x) {
+        decadesByX.set(n.decade, x)
+      }
+    })
+    const axisGroup = svg
+      .append('g')
+      .attr('class', 'sankey-axis')
+      .attr('transform', 'translate(0, ' + (height - 6) + ')')
+    decadesByX.forEach(function (x, decade) {
+      axisGroup
+        .append('text')
+        .attr('x', x)
+        .attr('y', 0)
+        .attr('text-anchor', 'middle')
+        .attr('font-size', '11px')
+        .attr('fill', '#444')
+        .text(decade + 's')
+    })
 
     nodeSel.append('title').text(function (d) {
       return _formatNodeLabel(d) + '\npapers: ' + (d.paper_count != null ? d.paper_count : '—')

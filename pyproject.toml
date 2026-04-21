@@ -48,6 +48,11 @@ ner_eval = [
     "transformers>=4.36",
     "torch>=2.1",
 ]
+viz = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "orjson>=3.9",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

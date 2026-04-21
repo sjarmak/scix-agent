@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SciX — Temporal Community Flow (Sankey)</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      main.viz-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 24px 20px 48px;
+      }
+      .viz-sub {
+        color: #555;
+        margin-top: -4px;
+      }
+      #sankey-root {
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        padding: 12px;
+        min-height: 420px;
+      }
+      #sankey-root svg {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      .sankey-link {
+        fill: none;
+        stroke-opacity: 0.35;
+        mix-blend-mode: multiply;
+        transition: stroke-opacity 120ms ease-out;
+        cursor: pointer;
+      }
+      .sankey-link.dim {
+        stroke-opacity: 0.05;
+      }
+      .sankey-link.highlight {
+        stroke-opacity: 0.75;
+      }
+      .sankey-node rect {
+        stroke: #fff;
+        stroke-width: 1px;
+        transition: opacity 120ms ease-out;
+      }
+      .sankey-node.dim rect,
+      .sankey-node.dim text {
+        opacity: 0.25;
+      }
+      .sankey-node text {
+        font-size: 11px;
+        fill: #222;
+        pointer-events: none;
+      }
+      #sankey-status {
+        margin-top: 8px;
+        color: #b00020;
+        font-size: 13px;
+        min-height: 18px;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12"></script>
+  </head>
+  <body>
+    <main class="viz-container">
+      <h1>Temporal Community Flow</h1>
+      <p class="viz-sub">
+        Decade-to-decade transitions between detected communities, sized by
+        paper count. Hover a node to highlight incident links; click a link
+        to log the target community to the browser console.
+      </p>
+      <div id="sankey-root" aria-label="Temporal community Sankey diagram"></div>
+      <div id="sankey-status" role="status" aria-live="polite"></div>
+    </main>
+    <script src="./shared.js"></script>
+    <script src="./sankey.js"></script>
+    <script>
+      // Bootstrap: fetch the dataset and render. Tries the sibling path
+      // first (if someone copies sankey.json into web/viz/), then the
+      // canonical /data/viz/sankey.json location.
+      (async function bootstrap() {
+        const root = document.getElementById('sankey-root')
+        const status = document.getElementById('sankey-status')
+        const candidates = ['./sankey.json', '/data/viz/sankey.json']
+        let data = null
+        let lastErr = null
+        for (const url of candidates) {
+          try {
+            const resp = await fetch(url, { cache: 'no-store' })
+            if (!resp.ok) {
+              lastErr = new Error(url + ' -> HTTP ' + resp.status)
+              continue
+            }
+            data = await resp.json()
+            break
+          } catch (err) {
+            lastErr = err
+          }
+        }
+        if (!data) {
+          status.textContent =
+            'Could not load sankey.json (' +
+            (lastErr ? lastErr.message || String(lastErr) : 'unknown error') +
+            '). Run scripts/viz/build_temporal_sankey_data.py to generate it.'
+          return
+        }
+        if (typeof window.renderSankey !== 'function') {
+          status.textContent = 'renderSankey is not defined — sankey.js failed to load.'
+          return
+        }
+        try {
+          window.renderSankey(data, root)
+        } catch (err) {
+          status.textContent = 'Render failed: ' + (err.message || String(err))
+        }
+      })()
+    </script>
+  </body>
+</html>

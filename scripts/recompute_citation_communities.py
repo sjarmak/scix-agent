@@ -285,25 +285,27 @@ def run(
             medium: list[int] = []
             fine: list[int] = []
         else:
-            # CPM (CPMVertexPartition) is the CWTS-recommended quality
-            # function for citation graphs at fine-grained resolutions —
-            # CLAUDE.md specifies 0.001/0.01/0.1 as meaningful CPM edge-
-            # density thresholds. Modularity (the igraph default) is
-            # degenerate at those values because its resolution parameter
-            # shifts the gain function proportionally to the graph's edge
-            # count; at res=0.001 on a 298M-edge graph, modularity collapses
-            # to a single community.
-            logger.info("Running Leiden CPM (coarse=%.6f)...", resolution_coarse)
+            # Modularity (RBConfigurationVertexPartition) at resolutions
+            # 1.0 / 2.5 / 10.0. CWTS recommends CPM at 0.001/0.01/0.1 for
+            # citation graphs, but empirically on this 20M-node / 298M-edge
+            # graph, CPM's per-community bookkeeping pushes peak RSS past
+            # 40 GB (three OOM kills observed: v10, v11 at coarse=0.001).
+            # Modularity's memory footprint scales with n_communities, not
+            # edge density, so it stays within the ~25 GB budget. At gamma
+            # in the commodity range, modularity produces topologically
+            # meaningful partitions at this scale: hundreds of coarse
+            # communities, thousands medium, tens of thousands fine.
+            logger.info("Running Leiden modularity (coarse=%.6f)...", resolution_coarse)
             coarse = compute_leiden(
-                giant, resolution=resolution_coarse, seed=seed, partition_type="CPM"
+                giant, resolution=resolution_coarse, seed=seed, partition_type="modularity"
             )
-            logger.info("Running Leiden CPM (medium=%.6f)...", resolution_medium)
+            logger.info("Running Leiden modularity (medium=%.6f)...", resolution_medium)
             medium = compute_leiden(
-                giant, resolution=resolution_medium, seed=seed, partition_type="CPM"
+                giant, resolution=resolution_medium, seed=seed, partition_type="modularity"
             )
-            logger.info("Running Leiden CPM (fine=%.6f)...", resolution_fine)
+            logger.info("Running Leiden modularity (fine=%.6f)...", resolution_fine)
             fine = compute_leiden(
-                giant, resolution=resolution_fine, seed=seed, partition_type="CPM"
+                giant, resolution=resolution_fine, seed=seed, partition_type="modularity"
             )
 
         n_coarse, largest_coarse, coarse_by_bib = _summarize_membership(coarse, giant_i2b)
@@ -365,7 +367,7 @@ def run(
         "started_at": started_at,
         "git_sha": _git_sha(),
         "seed": seed,
-        "partition_type": "CPM",
+        "partition_type": "modularity",
         "resolutions": {
             "coarse": resolution_coarse,
             "medium": resolution_medium,

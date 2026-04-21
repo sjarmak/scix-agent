@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SciX — Agent Trace Overlay</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      main.viz-container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 24px 20px 48px;
+      }
+      .viz-sub {
+        color: #555;
+        margin-top: -4px;
+      }
+      #trace-layout {
+        display: grid;
+        grid-template-columns: 1fr 360px;
+        gap: 16px;
+        align-items: start;
+      }
+      #umap-root {
+        position: relative;
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        width: 100%;
+        height: 70vh;
+        min-height: 480px;
+        overflow: hidden;
+      }
+      #umap-root canvas {
+        display: block;
+      }
+      #umap-tooltip {
+        position: absolute;
+        pointer-events: none;
+        background: rgba(30, 30, 30, 0.9);
+        color: #fff;
+        font-size: 12px;
+        padding: 6px 8px;
+        border-radius: 4px;
+        max-width: 340px;
+        line-height: 1.35;
+        display: none;
+        z-index: 10;
+      }
+      #trace-panel {
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        padding: 12px 14px;
+        height: 70vh;
+        min-height: 480px;
+        overflow-y: auto;
+        font-size: 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      #trace-panel h2 {
+        font-size: 14px;
+        margin: 0 0 8px;
+        font-family: system-ui, -apple-system, sans-serif;
+      }
+      #trace-panel .empty {
+        color: #888;
+      }
+      #trace-panel .trace-line {
+        border-bottom: 1px solid #f0f0f0;
+        padding: 4px 0;
+        line-height: 1.4;
+      }
+      #trace-panel .trace-line .tool {
+        color: #0b60b0;
+        font-weight: 600;
+      }
+      #trace-panel .trace-line .ts {
+        color: #888;
+      }
+      #trace-panel .trace-line .bibs {
+        color: #444;
+      }
+      #trace-status {
+        margin-top: 8px;
+        color: #b00020;
+        font-size: 13px;
+        min-height: 18px;
+      }
+    </style>
+    <script src="https://unpkg.com/deck.gl@9/dist.min.js"></script>
+  </head>
+  <body>
+    <main class="viz-container">
+      <h1>Agent Trace Overlay</h1>
+      <p class="viz-sub">
+        Live agent tool-call trace over the UMAP scatter. Each event
+        highlights the touched papers and draws a brief line segment
+        between them; tool calls are narrated in the panel on the right.
+      </p>
+      <div id="trace-layout">
+        <div id="umap-root" aria-label="UMAP scatter plot">
+          <div id="umap-tooltip" role="tooltip"></div>
+        </div>
+        <aside id="trace-panel" aria-live="polite" aria-label="Agent trace log">
+          <h2>Agent trace</h2>
+          <div class="empty">Waiting for events…</div>
+        </aside>
+      </div>
+      <div id="trace-status" role="status" aria-live="polite"></div>
+    </main>
+    <script src="./umap_browser.js"></script>
+    <script src="./agent_trace.js"></script>
+    <script>
+      // Bootstrap: fetch the UMAP dataset, render the scatter, then open an
+      // SSE subscription to /viz/api/trace/stream and narrate events.
+      ;(async function bootstrap() {
+        const root = document.getElementById('umap-root')
+        const panel = document.getElementById('trace-panel')
+        const status = document.getElementById('trace-status')
+
+        // Clear the "Waiting for events…" placeholder the first time we
+        // append a real line.
+        function appendTraceLine(event) {
+          const empty = panel.querySelector('.empty')
+          if (empty) empty.remove()
+          const line = document.createElement('div')
+          line.className = 'trace-line'
+          const tool = (event && event.tool_name) || '(unknown tool)'
+          const ts = event && event.ts ? Number(event.ts) : Date.now() / 1000
+          const iso = new Date(ts * 1000).toISOString().slice(11, 19)
+          const bibcount =
+            event && Array.isArray(event.bibcodes) ? event.bibcodes.length : 0
+          line.innerHTML =
+            '<span class="ts">' +
+            iso +
+            '</span> ' +
+            '<span class="tool">' +
+            String(tool).replace(/[<>&]/g, '') +
+            '</span> ' +
+            '<span class="bibs">(' +
+            bibcount +
+            ' bibcode' +
+            (bibcount === 1 ? '' : 's') +
+            ')</span>'
+          panel.appendChild(line)
+          panel.scrollTop = panel.scrollHeight
+        }
+
+        // Build a {bibcode: [x, y]} lookup so flashTraceSegments can find
+        // coordinates without a second fetch.
+        const positions = Object.create(null)
+        let umapInstance = null
+
+        const candidates = ['./umap.json', '/data/viz/umap.json']
+        let data = null
+        let lastErr = null
+        for (const url of candidates) {
+          try {
+            const resp = await fetch(url, { cache: 'no-store' })
+            if (!resp.ok) {
+              lastErr = new Error(url + ' -> HTTP ' + resp.status)
+              continue
+            }
+            data = await resp.json()
+            break
+          } catch (err) {
+            lastErr = err
+          }
+        }
+        if (data && Array.isArray(data)) {
+          for (let i = 0; i < data.length; i += 1) {
+            const p = data[i]
+            if (p && p.bibcode) {
+              positions[p.bibcode] = [Number(p.x) || 0, Number(p.y) || 0]
+            }
+          }
+          if (typeof window.renderUMAP === 'function') {
+            try {
+              umapInstance = window.renderUMAP(data, root)
+              window.umapInstance = umapInstance
+            } catch (err) {
+              status.textContent = 'Render failed: ' + (err.message || String(err))
+            }
+          } else {
+            status.textContent =
+              'renderUMAP is not defined — umap_browser.js failed to load.'
+          }
+        } else {
+          status.textContent =
+            'Could not load umap.json (' +
+            (lastErr ? lastErr.message || String(lastErr) : 'unknown error') +
+            '). Trace events will still be narrated.'
+        }
+
+        function handleEvent(event) {
+          appendTraceLine(event)
+          if (
+            umapInstance &&
+            event &&
+            Array.isArray(event.bibcodes) &&
+            event.bibcodes.length >= 2 &&
+            typeof window.flashTraceSegments === 'function'
+          ) {
+            window.flashTraceSegments(umapInstance, event.bibcodes, positions)
+          }
+        }
+
+        if (typeof window.subscribeTraceStream !== 'function') {
+          status.textContent =
+            'subscribeTraceStream is not defined — agent_trace.js failed to load.'
+          return
+        }
+        window.traceStream = window.subscribeTraceStream(
+          '/viz/api/trace/stream',
+          handleEvent,
+        )
+      })()
+    </script>
+  </body>
+</html>

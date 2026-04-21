@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from scix.viz.api import router as viz_api_router
+from scix.viz.trace_stream import router as trace_stream_router
 
 # Repo-anchored path to web/viz/.
 # __file__ -> <repo>/src/scix/viz/server.py
@@ -33,6 +34,10 @@ def viz_health() -> dict[str, str]:
 # /viz/api/paper/{bibcode} resolve to the APIRouter rather than being
 # interpreted as static-file lookups.
 app.include_router(viz_api_router)
+
+# Register the trace-stream SSE router (adds GET /viz/api/trace/stream) also
+# before the static mount so /viz/api/* paths always hit the APIRouter.
+app.include_router(trace_stream_router)
 
 
 # Register the /viz health route BEFORE mounting StaticFiles so the explicit

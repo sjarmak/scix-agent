@@ -13,6 +13,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from scix.viz.api import router as viz_api_router
+
 # Repo-anchored path to web/viz/.
 # __file__ -> <repo>/src/scix/viz/server.py
 #   parents[0]=viz, [1]=scix, [2]=src, [3]=repo_root
@@ -25,6 +27,12 @@ app = FastAPI(title="SciX Viz", docs_url=None, redoc_url=None)
 def viz_health() -> dict[str, str]:
     """Health probe for the viz server. Cheap, no external calls."""
     return {"status": "ok"}
+
+
+# Register JSON API routes BEFORE the static mount so that paths like
+# /viz/api/paper/{bibcode} resolve to the APIRouter rather than being
+# interpreted as static-file lookups.
+app.include_router(viz_api_router)
 
 
 # Register the /viz health route BEFORE mounting StaticFiles so the explicit

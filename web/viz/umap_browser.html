@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SciX — UMAP Embedding Browser</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      main.viz-container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 24px 20px 48px;
+      }
+      .viz-sub {
+        color: #555;
+        margin-top: -4px;
+      }
+      #umap-layout {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 16px;
+        align-items: start;
+      }
+      #umap-root {
+        position: relative;
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        width: 100%;
+        height: 70vh;
+        min-height: 480px;
+        overflow: hidden;
+      }
+      #umap-root canvas {
+        display: block;
+      }
+      #umap-tooltip {
+        position: absolute;
+        pointer-events: none;
+        background: rgba(30, 30, 30, 0.9);
+        color: #fff;
+        font-size: 12px;
+        padding: 6px 8px;
+        border-radius: 4px;
+        max-width: 340px;
+        line-height: 1.35;
+        display: none;
+        z-index: 10;
+      }
+      #umap-panel {
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        padding: 12px 14px;
+        min-height: 200px;
+        font-size: 13px;
+      }
+      #umap-panel h2 {
+        font-size: 15px;
+        margin: 0 0 8px;
+      }
+      #umap-panel .empty {
+        color: #888;
+      }
+      #umap-status {
+        margin-top: 8px;
+        color: #b00020;
+        font-size: 13px;
+        min-height: 18px;
+      }
+    </style>
+    <script src="https://unpkg.com/deck.gl@9/dist.min.js"></script>
+  </head>
+  <body>
+    <main class="viz-container">
+      <h1>UMAP Embedding Browser</h1>
+      <p class="viz-sub">
+        2-D UMAP projection of paper embeddings. Pan and zoom to explore;
+        hover a point to see its title; click to pin a paper to the side
+        panel. Colors encode coarse community_id.
+      </p>
+      <div id="umap-layout">
+        <div id="umap-root" aria-label="UMAP scatter plot">
+          <div id="umap-tooltip" role="tooltip"></div>
+        </div>
+        <aside id="umap-panel" aria-label="Selected paper">
+          <h2>Selected paper</h2>
+          <div class="empty">Click a point to pin a paper here.</div>
+        </aside>
+      </div>
+      <div id="umap-status" role="status" aria-live="polite"></div>
+    </main>
+    <script src="./umap_browser.js"></script>
+    <script>
+      // Bootstrap: fetch the UMAP dataset and render. Tries the sibling path
+      // first (if someone copies umap.json into web/viz/), then the canonical
+      // /data/viz/umap.json location served by the static data mount.
+      ;(async function bootstrap() {
+        const root = document.getElementById('umap-root')
+        const status = document.getElementById('umap-status')
+        const candidates = ['./umap.json', '/data/viz/umap.json']
+        let data = null
+        let lastErr = null
+        for (const url of candidates) {
+          try {
+            const resp = await fetch(url, { cache: 'no-store' })
+            if (!resp.ok) {
+              lastErr = new Error(url + ' -> HTTP ' + resp.status)
+              continue
+            }
+            data = await resp.json()
+            break
+          } catch (err) {
+            lastErr = err
+          }
+        }
+        if (!data) {
+          status.textContent =
+            'Could not load umap.json (' +
+            (lastErr ? lastErr.message || String(lastErr) : 'unknown error') +
+            '). Run scripts/viz/project_embeddings_umap.py to generate it.'
+          return
+        }
+        if (typeof window.renderUMAP !== 'function') {
+          status.textContent = 'renderUMAP is not defined — umap_browser.js failed to load.'
+          return
+        }
+        try {
+          window.renderUMAP(data, root)
+        } catch (err) {
+          status.textContent = 'Render failed: ' + (err.message || String(err))
+        }
+      })()
+    </script>
+  </body>
+</html>

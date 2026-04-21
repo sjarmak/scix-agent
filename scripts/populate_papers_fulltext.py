@@ -14,7 +14,7 @@ matching tier parser, and bulk-writes parsed rows into
 Safety
 ------
 The script refuses to run against the production DSN unless both
-``--allow-prod`` is passed AND the ``SYSTEMD_SCOPE`` environment variable
+``--allow-prod`` is passed AND the ``INVOCATION_ID`` environment variable
 is set (which ``scix-batch`` / ``systemd-run --scope`` set automatically).
 See the "Memory isolation — coexisting with gascity" section of
 :file:`CLAUDE.md` for the rationale.
@@ -245,8 +245,10 @@ def resolve_prod_guard(
     Raises :class:`ProdGuardError` (a SystemExit) if:
 
     * DSN looks like production AND ``--allow-prod`` was not passed, OR
-    * ``--allow-prod`` was passed AND ``SYSTEMD_SCOPE`` is not set in
+    * ``--allow-prod`` was passed AND ``INVOCATION_ID`` is not set in
       the environment (i.e. we are not inside a systemd-managed scope).
+      This mirrors the guard in ``scripts/recompute_citation_communities.py``;
+      ``systemd-run --scope`` sets ``INVOCATION_ID`` but *not* ``SYSTEMD_SCOPE``.
 
     Callers should let the exception propagate — this is a policy guard,
     not a best-effort.
@@ -259,7 +261,7 @@ def resolve_prod_guard(
         logger.error(msg)
         raise ProdGuardError(2)
 
-    if allow_prod and not env.get("SYSTEMD_SCOPE"):
+    if allow_prod and not env.get("INVOCATION_ID"):
         msg = (
             "refusing to run --allow-prod outside a systemd scope. "
             "Invoke via: scix-batch python scripts/populate_papers_fulltext.py ..."
@@ -637,7 +639,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=DEFAULT_DSN,
         help=(
             "PostgreSQL DSN (default: $SCIX_DSN or dbname=scix). "
-            "Refuses production unless --allow-prod + SYSTEMD_SCOPE."
+            "Refuses production unless --allow-prod + INVOCATION_ID (systemd scope)."
         ),
     )
     parser.add_argument(

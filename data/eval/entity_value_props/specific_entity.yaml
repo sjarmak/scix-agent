@@ -1,0 +1,102 @@
+# Gold set for the specific_entity value prop.
+#
+# The test: given a specific entity_id (a row in the entities table),
+# do we return ONLY papers that actually mention entity X (not its
+# aliases, not its siblings, not a string collision)?
+#
+# The entity IDs / names here are intended to reference entities that
+# exist in the flagship-seed test corpus (see d3-flagship-seed). For
+# runs against a fresh DB they are used by name and the retrieval layer
+# looks up the ID at query time.
+prop: specific_entity
+description: >
+  Tests entity-id-scoped retrieval: given entity_id=X, the returned
+  papers must all be papers that actually mention entity X. Different
+  entity with the same surface form should NOT appear.
+rubric: |
+  0 — returns papers matching surface form but not the entity_id.
+  1 — partial: some papers mention the right entity, many don't.
+  2 — mostly works: most papers mention the right entity.
+  3 — works correctly: tight binding; no cross-entity contamination.
+queries:
+  - id: spec-001
+    entity_name: "Hubble Space Telescope"
+    entity_type: "mission"
+    query: "papers mentioning this specific entity"
+    expectation: >
+      All returned papers should actually reference the Hubble Space
+      Telescope mission — not papers only mentioning Edwin Hubble, and
+      not papers only mentioning "space telescope" in general.
+    tags: [mission, flagship]
+  - id: spec-002
+    entity_name: "James Webb Space Telescope"
+    entity_type: "mission"
+    query: "papers mentioning this specific entity"
+    expectation: >
+      All returned papers should reference the JWST mission — not
+      "Webb" in other contexts.
+    tags: [mission, flagship]
+  - id: spec-003
+    entity_name: "Chandra X-ray Observatory"
+    entity_type: "mission"
+    query: "papers mentioning this specific entity"
+    expectation: >
+      All returned papers should reference the Chandra mission — not
+      the subcontinent, and not the surname Chandra in unrelated papers.
+    tags: [mission, x_ray]
+  - id: spec-004
+    entity_name: "NIRSpec"
+    entity_type: "instrument"
+    query: "papers mentioning this specific instrument"
+    expectation: >
+      All returned papers should reference the JWST NIRSpec instrument
+      specifically — not MIRI or NIRCam, not earlier NIR spectrographs.
+    tags: [instrument, jwst]
+  - id: spec-005
+    entity_name: "ACIS"
+    entity_type: "instrument"
+    query: "papers mentioning this specific instrument"
+    expectation: >
+      All returned papers should reference Chandra's ACIS (Advanced CCD
+      Imaging Spectrometer), not HRC and not other ACS-like instruments.
+    tags: [instrument, chandra, x_ray]
+  - id: spec-006
+    entity_name: "ALMA"
+    entity_type: "instrument"
+    query: "papers mentioning this specific instrument"
+    expectation: >
+      All returned papers should reference the Atacama Large Millimeter
+      Array, not unrelated "alma" string matches.
+    tags: [instrument, radio]
+  - id: spec-007
+    entity_name: "Kepler Space Telescope"
+    entity_type: "mission"
+    query: "papers mentioning this specific entity"
+    expectation: >
+      All returned papers should reference the Kepler mission — not
+      Johannes Kepler, not "Kepler's laws" in a theoretical paper.
+    tags: [mission, exoplanets]
+  - id: spec-008
+    entity_name: "TRAPPIST-1b"
+    entity_type: "exoplanet"
+    query: "papers mentioning this specific exoplanet"
+    expectation: >
+      All returned papers should reference the TRAPPIST-1b planet —
+      not TRAPPIST the telescope, not other TRAPPIST-1 planets (c, d, …).
+    tags: [exoplanet, trappist]
+  - id: spec-009
+    entity_name: "Crab Pulsar"
+    entity_type: "astronomical_object"
+    query: "papers mentioning this specific pulsar"
+    expectation: >
+      All returned papers should reference PSR B0531+21 (the Crab
+      Pulsar) — not the Crab Nebula, not other "crab" objects.
+    tags: [pulsar, compact_objects]
+  - id: spec-010
+    entity_name: "Perseverance"
+    entity_type: "mission"
+    query: "papers mentioning this specific rover"
+    expectation: >
+      All returned papers should reference the Mars 2020 Perseverance
+      rover — not the English word "perseverance" in an unrelated paper.
+    tags: [mission, mars, rover]

@@ -1,0 +1,100 @@
+# Gold set for the alias_expansion value prop.
+#
+# The test: does a query written with one surface form (e.g. "HST")
+# return papers whose ONLY mention of the entity is the canonical /
+# alias form ("Hubble Space Telescope")? The judge is told both the
+# query alias and the expected canonical form, and is asked whether the
+# retrieval surfaced canonical-form-only papers in a way that would
+# have been missed by a naive substring match.
+prop: alias_expansion
+description: >
+  Tests whether the retrieval expands aliases (HST → Hubble Space Telescope,
+  JWST → James Webb Space Telescope, etc.) and returns papers that only
+  mention the expanded form. Success = the judge can point to at least one
+  canonical-form-only paper in the top results.
+rubric: |
+  0 — no alias expansion: results only mention the alias as written.
+  1 — partial: alias-only results, one or two canonical-form papers.
+  2 — mostly works: mix of alias and canonical-form papers, ranked plausibly.
+  3 — works correctly: canonical-form-only papers appear high in the ranking.
+queries:
+  - id: alias-001
+    query: "HST observations of M31"
+    alias: "HST"
+    canonical: "Hubble Space Telescope"
+    expectation: >
+      Results should include papers mentioning "Hubble Space Telescope"
+      even if the acronym "HST" is absent from the text.
+    tags: [common_alias, astronomy, instrument]
+  - id: alias-002
+    query: "JWST NIRSpec spectroscopy of high-redshift galaxies"
+    alias: "JWST"
+    canonical: "James Webb Space Telescope"
+    expectation: >
+      Should surface papers that refer to the mission by its full name,
+      including those that never use "JWST" as a token.
+    tags: [instrument, acronym, astronomy]
+  - id: alias-003
+    query: "Chandra X-ray imaging of galaxy clusters"
+    alias: "Chandra"
+    canonical: "Chandra X-ray Observatory"
+    expectation: >
+      Expect papers using "Chandra X-ray Observatory" or "CXO" even when
+      "Chandra" alone is absent.
+    tags: [instrument, alias, x_ray]
+  - id: alias-004
+    query: "CMB anisotropy constraints on inflation"
+    alias: "CMB"
+    canonical: "cosmic microwave background"
+    expectation: >
+      Should include papers using "cosmic microwave background" verbatim
+      without the CMB acronym.
+    tags: [cosmology, acronym]
+  - id: alias-005
+    query: "SNe Ia Hubble diagram"
+    alias: "SNe"
+    canonical: "Supernovae"
+    expectation: >
+      Should retrieve papers that spell out "Type Ia supernovae" even if
+      they do not use the "SNe Ia" shorthand.
+    tags: [supernova, alias, cosmology]
+  - id: alias-006
+    query: "ALMA submillimeter observations of protoplanetary disks"
+    alias: "ALMA"
+    canonical: "Atacama Large Millimeter Array"
+    expectation: >
+      Should include papers using "Atacama Large Millimeter/submillimeter
+      Array" verbatim alongside the acronym-only papers.
+    tags: [instrument, radio, alias]
+  - id: alias-007
+    query: "exoplanet atmospheric characterization"
+    alias: "exoplanet"
+    canonical: "extrasolar planet"
+    expectation: >
+      Older literature tends to use "extrasolar planet" — those papers
+      should still be retrieved.
+    tags: [exoplanets, synonym]
+  - id: alias-008
+    query: "WISE mid-infrared survey of brown dwarfs"
+    alias: "WISE"
+    canonical: "Wide-field Infrared Survey Explorer"
+    expectation: >
+      Expect full-name usage in mission description papers even without
+      "WISE" appearing by itself.
+    tags: [mission, instrument, infrared]
+  - id: alias-009
+    query: "DESI dark energy spectroscopy"
+    alias: "DESI"
+    canonical: "Dark Energy Spectroscopic Instrument"
+    expectation: >
+      Should retrieve full-name papers and avoid false matches to the
+      word "desi" in unrelated contexts.
+    tags: [instrument, cosmology, alias]
+  - id: alias-010
+    query: "Gaia astrometric parallax of nearby stars"
+    alias: "Gaia"
+    canonical: "Global Astrometric Interferometer for Astrophysics"
+    expectation: >
+      ESA mission papers — older preprints and proposal documents use
+      the full expansion; they should appear in the top results.
+    tags: [mission, astrometry, alias]

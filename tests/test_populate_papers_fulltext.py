@@ -358,6 +358,40 @@ def test_dispatch_tier1_parse_error_records_failure():
     assert any("tier1_parse_error" in str(params) for _, params in rec_conn.calls)
 
 
+def test_dispatch_serve_existing_skips(monkeypatch):
+    """_criterion_4: serve_existing branch exercised.
+
+    Defense-in-depth: the outer SQL NOT-EXISTS join normally filters rows
+    that already have a papers_fulltext entry, so the ``serve_existing``
+    tier is unreachable in practice. We still exercise the internal
+    dispatch branch directly by monkeypatching ``route_fulltext_request``
+    to force the decision — asserts no row is produced and the
+    ``skipped_existing`` counter is bumped.
+    """
+    row = _row(body="", bibstem=["ApJ"])
+    stats = driver.DriverStats()
+
+    forced = driver.RouteDecision(
+        tier="serve_existing",
+        reason="forced_for_test",
+        source_hint=None,
+    )
+    monkeypatch.setattr(driver, "route_fulltext_request", lambda _inp: forced)
+
+    parsed = driver._dispatch_one(
+        _FakeConn(),
+        row,
+        parse_fn=lambda b, bs: ([], {}),
+        sibling_fetch=lambda conn, bib: None,
+        stats=stats,
+    )
+    assert parsed is None
+    assert stats.skipped_existing == 1
+    assert stats.tier_counts.get("serve_existing") == 1
+    # No failure recorded for this branch.
+    assert stats.failures == 0
+
+
 # ---------------------------------------------------------------------------
 # Pure helpers (criterion 6 shape)
 # ---------------------------------------------------------------------------

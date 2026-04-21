@@ -334,12 +334,32 @@ def iter_candidate_papers(
     """
     resume = config.resume_from or ""
     params: list[Any] = [resume, now]
+    # Only consider papers that have a full-text source the driver can use
+    # right now: an ADS body (Tier 1) or a LaTeX-derived sibling row already
+    # in papers_fulltext (Tier 2). Papers with neither route to abstract_only,
+    # which is an expected steady-state for ~half the corpus and should not
+    # be scanned on every run or recorded as failures. When Tier 2 ingest
+    # lands, the sibling subquery below keeps those bibcodes in scope.
     sql_parts = [
         "SELECT p.bibcode, p.bibstem, p.doi, p.doctype, p.body,",
         "       COALESCE(x.openalex_has_pdf_url, false) AS openalex_has_pdf_url",
         "  FROM papers p",
         "  LEFT JOIN papers_external_ids x ON x.bibcode = p.bibcode",
         " WHERE p.bibcode > %s",
+        "   AND (",
+        "       p.body IS NOT NULL",
+        "       OR EXISTS (",
+        "           SELECT 1",
+        "             FROM papers_external_ids x1",
+        "             JOIN papers_external_ids x2",
+        "               ON (x1.doi IS NOT NULL AND x1.doi = x2.doi",
+        "                   AND x2.bibcode <> x1.bibcode)",
+        "                  OR (x1.arxiv_id IS NOT NULL AND x1.arxiv_id = x2.arxiv_id",
+        "                      AND x2.bibcode <> x1.bibcode)",
+        "             JOIN papers_fulltext pf2 ON pf2.bibcode = x2.bibcode",
+        "            WHERE x1.bibcode = p.bibcode",
+        "              AND pf2.source IN ('ar5iv', 'arxiv_local'))",
+        "   )",
         "   AND NOT EXISTS (",
         "       SELECT 1 FROM papers_fulltext pf WHERE pf.bibcode = p.bibcode)",
         "   AND NOT EXISTS (",
@@ -559,16 +579,12 @@ def _dispatch_one(
         stats.failures += 1
         return None
 
-    # abstract_only
-    record_failure(
-        conn,
-        bibcode=bibcode,
-        parser_version=ADS_PARSER_VERSION,
-        reason="abstract_only",
-        initial_delay=_FAR_FUTURE_RETRY,
-    )
+    # abstract_only — unreachable in normal flow because
+    # iter_candidate_papers() only yields papers with a Tier 1 body or a
+    # LaTeX-derived sibling. Kept as a defensive no-op for rows that slip
+    # through (e.g. body becomes NULL between iteration and dispatch, or
+    # a sibling row is deleted mid-run). Not recorded as a failure.
     stats.abstract_only += 1
-    stats.failures += 1
     return None
 
 

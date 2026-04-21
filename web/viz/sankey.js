@@ -70,11 +70,37 @@
     return container
   }
 
+  // Community-label lookup loaded lazily by renderSankey. Maps community_id
+  // (number) -> human-readable short label derived from the most frequent
+  // title terms in that community (see scripts/viz/compute_community_labels.py).
+  let _communityLabels = {}
+  // Tri-state: 'idle' | 'loading' | 'loaded' | 'failed'. Prevents the render
+  // path from kicking off a second fetch or looping on re-render.
+  let _labelsState = 'idle'
+
+  function _communityLabelFor(cid) {
+    if (cid == null) return '?'
+    const entry = _communityLabels[cid]
+    if (entry && entry.terms && entry.terms.length) {
+      // Use top-2 terms for a compact label; full list is in the tooltip.
+      return entry.terms.slice(0, 2).join(' / ')
+    }
+    return 'c' + cid
+  }
+
+  function _communityTitleFor(cid) {
+    if (cid == null) return ''
+    const entry = _communityLabels[cid]
+    if (entry && entry.terms) {
+      return 'c' + cid + ': ' + entry.terms.join(', ')
+    }
+    return 'c' + cid
+  }
+
   function _formatNodeLabel(node) {
     const decade = node.decade != null ? node.decade : '—'
-    const community = node.community_id != null ? 'c' + node.community_id : '?'
-    const count = node.paper_count != null ? ' (' + node.paper_count + ')' : ''
-    return decade + ' · ' + community + count
+    const community = _communityLabelFor(node.community_id)
+    return decade + ' · ' + community
   }
 
   function _cloneData(data) {
@@ -106,6 +132,31 @@
     return { width: width, height: height }
   }
 
+  function _loadCommunityLabels() {
+    if (_labelsState === 'loaded' || _labelsState === 'loading') {
+      return Promise.resolve()
+    }
+    _labelsState = 'loading'
+    return fetch('/viz/community_labels.json', { cache: 'no-store' })
+      .then(function (resp) {
+        return resp.ok ? resp.json() : null
+      })
+      .then(function (payload) {
+        if (!payload || !Array.isArray(payload.communities)) {
+          _labelsState = 'failed'
+          return
+        }
+        _communityLabels = {}
+        payload.communities.forEach(function (c) {
+          if (c && c.community_id != null) _communityLabels[c.community_id] = c
+        })
+        _labelsState = 'loaded'
+      })
+      .catch(function () {
+        _labelsState = 'failed'
+      })
+  }
+
   function renderSankey(data, container) {
     const node = _resolveContainer(container)
     if (!node) {
@@ -118,6 +169,16 @@
     if (typeof d3 === 'undefined' || typeof d3.sankey !== 'function') {
       _mountError(node, 'renderSankey: d3 or d3-sankey failed to load from CDN')
       return
+    }
+
+    // Labels are optional. If they haven't loaded yet, kick off the fetch
+    // and re-render once on arrival; subsequent renders use the cached copy
+    // so there's no infinite loop.
+    if (_labelsState !== 'loaded' && _labelsState !== 'failed') {
+      _loadCommunityLabels().then(function () {
+        // Re-render only once labels actually arrived.
+        if (_labelsState === 'loaded') renderSankey(data, container)
+      })
     }
 
     _clearNode(node)
@@ -258,7 +319,15 @@
     })
 
     nodeSel.append('title').text(function (d) {
-      return _formatNodeLabel(d) + '\npapers: ' + (d.paper_count != null ? d.paper_count : '—')
+      const papers = d.paper_count != null ? d.paper_count.toLocaleString() : '—'
+      const cid = d.community_id != null ? _communityTitleFor(d.community_id) : ''
+      return (
+        (d.decade != null ? d.decade + 's' : '—') +
+        '\n' +
+        cid +
+        '\npapers: ' +
+        papers
+      )
     })
 
     // Hover-to-highlight: dim everything not incident to the hovered node.

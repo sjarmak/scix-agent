@@ -1,0 +1,3736 @@
+{
+  "nodes": [
+    {
+      "id": "1800-0",
+      "decade": 1800,
+      "community_id": 0,
+      "paper_count": 1
+    },
+    {
+      "id": "1800-1",
+      "decade": 1800,
+      "community_id": 1,
+      "paper_count": 44
+    },
+    {
+      "id": "1800-2",
+      "decade": 1800,
+      "community_id": 2,
+      "paper_count": 169
+    },
+    {
+      "id": "1800-3",
+      "decade": 1800,
+      "community_id": 3,
+      "paper_count": 8
+    },
+    {
+      "id": "1800-5",
+      "decade": 1800,
+      "community_id": 5,
+      "paper_count": 16
+    },
+    {
+      "id": "1800-6",
+      "decade": 1800,
+      "community_id": 6,
+      "paper_count": 1347
+    },
+    {
+      "id": "1800-7",
+      "decade": 1800,
+      "community_id": 7,
+      "paper_count": 11
+    },
+    {
+      "id": "1800-8",
+      "decade": 1800,
+      "community_id": 8,
+      "paper_count": 1
+    },
+    {
+      "id": "1800-9",
+      "decade": 1800,
+      "community_id": 9,
+      "paper_count": 111
+    },
+    {
+      "id": "1800-10",
+      "decade": 1800,
+      "community_id": 10,
+      "paper_count": 8
+    },
+    {
+      "id": "1800-11",
+      "decade": 1800,
+      "community_id": 11,
+      "paper_count": 2
+    },
+    {
+      "id": "1800-12",
+      "decade": 1800,
+      "community_id": 12,
+      "paper_count": 10
+    },
+    {
+      "id": "1800-13",
+      "decade": 1800,
+      "community_id": 13,
+      "paper_count": 11
+    },
+    {
+      "id": "1800-14",
+      "decade": 1800,
+      "community_id": 14,
+      "paper_count": 13
+    },
+    {
+      "id": "1800-15",
+      "decade": 1800,
+      "community_id": 15,
+      "paper_count": 57
+    },
+    {
+      "id": "1800-16",
+      "decade": 1800,
+      "community_id": 16,
+      "paper_count": 7
+    },
+    {
+      "id": "1800-17",
+      "decade": 1800,
+      "community_id": 17,
+      "paper_count": 2
+    },
+    {
+      "id": "1800-18",
+      "decade": 1800,
+      "community_id": 18,
+      "paper_count": 6
+    },
+    {
+      "id": "1800-19",
+      "decade": 1800,
+      "community_id": 19,
+      "paper_count": 8
+    },
+    {
+      "id": "1810-0",
+      "decade": 1810,
+      "community_id": 0,
+      "paper_count": 1
+    },
+    {
+      "id": "1810-1",
+      "decade": 1810,
+      "community_id": 1,
+      "paper_count": 42
+    },
+    {
+      "id": "1810-2",
+      "decade": 1810,
+      "community_id": 2,
+      "paper_count": 202
+    },
+    {
+      "id": "1810-3",
+      "decade": 1810,
+      "community_id": 3,
+      "paper_count": 8
+    },
+    {
+      "id": "1810-5",
+      "decade": 1810,
+      "community_id": 5,
+      "paper_count": 24
+    },
+    {
+      "id": "1810-6",
+      "decade": 1810,
+      "community_id": 6,
+      "paper_count": 1278
+    },
+    {
+      "id": "1810-7",
+      "decade": 1810,
+      "community_id": 7,
+      "paper_count": 5
+    },
+    {
+      "id": "1810-9",
+      "decade": 1810,
+      "community_id": 9,
+      "paper_count": 109
+    },
+    {
+      "id": "1810-10",
+      "decade": 1810,
+      "community_id": 10,
+      "paper_count": 5
+    },
+    {
+      "id": "1810-11",
+      "decade": 1810,
+      "community_id": 11,
+      "paper_count": 3
+    },
+    {
+      "id": "1810-12",
+      "decade": 1810,
+      "community_id": 12,
+      "paper_count": 11
+    },
+    {
+      "id": "1810-13",
+      "decade": 1810,
+      "community_id": 13,
+      "paper_count": 14
+    },
+    {
+      "id": "1810-14",
+      "decade": 1810,
+      "community_id": 14,
+      "paper_count": 15
+    },
+    {
+      "id": "1810-15",
+      "decade": 1810,
+      "community_id": 15,
+      "paper_count": 55
+    },
+    {
+      "id": "1810-16",
+      "decade": 1810,
+      "community_id": 16,
+      "paper_count": 4
+    },
+    {
+      "id": "1810-18",
+      "decade": 1810,
+      "community_id": 18,
+      "paper_count": 6
+    },
+    {
+      "id": "1810-19",
+      "decade": 1810,
+      "community_id": 19,
+      "paper_count": 2
+    },
+    {
+      "id": "1820-0",
+      "decade": 1820,
+      "community_id": 0,
+      "paper_count": 3
+    },
+    {
+      "id": "1820-1",
+      "decade": 1820,
+      "community_id": 1,
+      "paper_count": 120
+    },
+    {
+      "id": "1820-2",
+      "decade": 1820,
+      "community_id": 2,
+      "paper_count": 414
+    },
+    {
+      "id": "1820-3",
+      "decade": 1820,
+      "community_id": 3,
+      "paper_count": 13
+    },
+    {
+      "id": "1820-5",
+      "decade": 1820,
+      "community_id": 5,
+      "paper_count": 74
+    },
+    {
+      "id": "1820-6",
+      "decade": 1820,
+      "community_id": 6,
+      "paper_count": 3157
+    },
+    {
+      "id": "1820-7",
+      "decade": 1820,
+      "community_id": 7,
+      "paper_count": 16
+    },
+    {
+      "id": "1820-8",
+      "decade": 1820,
+      "community_id": 8,
+      "paper_count": 3
+    },
+    {
+      "id": "1820-9",
+      "decade": 1820,
+      "community_id": 9,
+      "paper_count": 218
+    },
+    {
+      "id": "1820-10",
+      "decade": 1820,
+      "community_id": 10,
+      "paper_count": 7
+    },
+    {
+      "id": "1820-11",
+      "decade": 1820,
+      "community_id": 11,
+      "paper_count": 1
+    },
+    {
+      "id": "1820-12",
+      "decade": 1820,
+      "community_id": 12,
+      "paper_count": 44
+    },
+    {
+      "id": "1820-13",
+      "decade": 1820,
+      "community_id": 13,
+      "paper_count": 67
+    },
+    {
+      "id": "1820-14",
+      "decade": 1820,
+      "community_id": 14,
+      "paper_count": 25
+    },
+    {
+      "id": "1820-15",
+      "decade": 1820,
+      "community_id": 15,
+      "paper_count": 171
+    },
+    {
+      "id": "1820-16",
+      "decade": 1820,
+      "community_id": 16,
+      "paper_count": 15
+    },
+    {
+      "id": "1820-17",
+      "decade": 1820,
+      "community_id": 17,
+      "paper_count": 1
+    },
+    {
+      "id": "1820-18",
+      "decade": 1820,
+      "community_id": 18,
+      "paper_count": 2
+    },
+    {
+      "id": "1820-19",
+      "decade": 1820,
+      "community_id": 19,
+      "paper_count": 4
+    },
+    {
+      "id": "1830-0",
+      "decade": 1830,
+      "community_id": 0,
+      "paper_count": 7
+    },
+    {
+      "id": "1830-1",
+      "decade": 1830,
+      "community_id": 1,
+      "paper_count": 210
+    },
+    {
+      "id": "1830-2",
+      "decade": 1830,
+      "community_id": 2,
+      "paper_count": 550
+    },
+    {
+      "id": "1830-3",
+      "decade": 1830,
+      "community_id": 3,
+      "paper_count": 19
+    },
+    {
+      "id": "1830-4",
+      "decade": 1830,
+      "community_id": 4,
+      "paper_count": 3
+    },
+    {
+      "id": "1830-5",
+      "decade": 1830,
+      "community_id": 5,
+      "paper_count": 112
+    },
+    {
+      "id": "1830-6",
+      "decade": 1830,
+      "community_id": 6,
+      "paper_count": 4270
+    },
+    {
+      "id": "1830-7",
+      "decade": 1830,
+      "community_id": 7,
+      "paper_count": 13
+    },
+    {
+      "id": "1830-8",
+      "decade": 1830,
+      "community_id": 8,
+      "paper_count": 8
+    },
+    {
+      "id": "1830-9",
+      "decade": 1830,
+      "community_id": 9,
+      "paper_count": 354
+    },
+    {
+      "id": "1830-10",
+      "decade": 1830,
+      "community_id": 10,
+      "paper_count": 14
+    },
+    {
+      "id": "1830-11",
+      "decade": 1830,
+      "community_id": 11,
+      "paper_count": 7
+    },
+    {
+      "id": "1830-12",
+      "decade": 1830,
+      "community_id": 12,
+      "paper_count": 48
+    },
+    {
+      "id": "1830-13",
+      "decade": 1830,
+      "community_id": 13,
+      "paper_count": 50
+    },
+    {
+      "id": "1830-14",
+      "decade": 1830,
+      "community_id": 14,
+      "paper_count": 37
+    },
+    {
+      "id": "1830-15",
+      "decade": 1830,
+      "community_id": 15,
+      "paper_count": 287
+    },
+    {
+      "id": "1830-16",
+      "decade": 1830,
+      "community_id": 16,
+      "paper_count": 38
+    },
+    {
+      "id": "1830-17",
+      "decade": 1830,
+      "community_id": 17,
+      "paper_count": 7
+    },
+    {
+      "id": "1830-18",
+      "decade": 1830,
+      "community_id": 18,
+      "paper_count": 4
+    },
+    {
+      "id": "1830-19",
+      "decade": 1830,
+      "community_id": 19,
+      "paper_count": 17
+    },
+    {
+      "id": "1840-0",
+      "decade": 1840,
+      "community_id": 0,
+      "paper_count": 5
+    },
+    {
+      "id": "1840-1",
+      "decade": 1840,
+      "community_id": 1,
+      "paper_count": 280
+    },
+    {
+      "id": "1840-2",
+      "decade": 1840,
+      "community_id": 2,
+      "paper_count": 929
+    },
+    {
+      "id": "1840-3",
+      "decade": 1840,
+      "community_id": 3,
+      "paper_count": 15
+    },
+    {
+      "id": "1840-4",
+      "decade": 1840,
+      "community_id": 4,
+      "paper_count": 2
+    },
+    {
+      "id": "1840-5",
+      "decade": 1840,
+      "community_id": 5,
+      "paper_count": 156
+    },
+    {
+      "id": "1840-6",
+      "decade": 1840,
+      "community_id": 6,
+      "paper_count": 5613
+    },
+    {
+      "id": "1840-7",
+      "decade": 1840,
+      "community_id": 7,
+      "paper_count": 31
+    },
+    {
+      "id": "1840-8",
+      "decade": 1840,
+      "community_id": 8,
+      "paper_count": 13
+    },
+    {
+      "id": "1840-9",
+      "decade": 1840,
+      "community_id": 9,
+      "paper_count": 320
+    },
+    {
+      "id": "1840-10",
+      "decade": 1840,
+      "community_id": 10,
+      "paper_count": 13
+    },
+    {
+      "id": "1840-11",
+      "decade": 1840,
+      "community_id": 11,
+      "paper_count": 9
+    },
+    {
+      "id": "1840-12",
+      "decade": 1840,
+      "community_id": 12,
+      "paper_count": 62
+    },
+    {
+      "id": "1840-13",
+      "decade": 1840,
+      "community_id": 13,
+      "paper_count": 45
+    },
+    {
+      "id": "1840-14",
+      "decade": 1840,
+      "community_id": 14,
+      "paper_count": 64
+    },
+    {
+      "id": "1840-15",
+      "decade": 1840,
+      "community_id": 15,
+      "paper_count": 396
+    },
+    {
+      "id": "1840-16",
+      "decade": 1840,
+      "community_id": 16,
+      "paper_count": 39
+    },
+    {
+      "id": "1840-17",
+      "decade": 1840,
+      "community_id": 17,
+      "paper_count": 8
+    },
+    {
+      "id": "1840-18",
+      "decade": 1840,
+      "community_id": 18,
+      "paper_count": 11
+    },
+    {
+      "id": "1840-19",
+      "decade": 1840,
+      "community_id": 19,
+      "paper_count": 28
+    },
+    {
+      "id": "1850-0",
+      "decade": 1850,
+      "community_id": 0,
+      "paper_count": 18
+    },
+    {
+      "id": "1850-1",
+      "decade": 1850,
+      "community_id": 1,
+      "paper_count": 558
+    },
+    {
+      "id": "1850-2",
+      "decade": 1850,
+      "community_id": 2,
+      "paper_count": 1687
+    },
+    {
+      "id": "1850-3",
+      "decade": 1850,
+      "community_id": 3,
+      "paper_count": 43
+    },
+    {
+      "id": "1850-4",
+      "decade": 1850,
+      "community_id": 4,
+      "paper_count": 4
+    },
+    {
+      "id": "1850-5",
+      "decade": 1850,
+      "community_id": 5,
+      "paper_count": 199
+    },
+    {
+      "id": "1850-6",
+      "decade": 1850,
+      "community_id": 6,
+      "paper_count": 12302
+    },
+    {
+      "id": "1850-7",
+      "decade": 1850,
+      "community_id": 7,
+      "paper_count": 66
+    },
+    {
+      "id": "1850-8",
+      "decade": 1850,
+      "community_id": 8,
+      "paper_count": 29
+    },
+    {
+      "id": "1850-9",
+      "decade": 1850,
+      "community_id": 9,
+      "paper_count": 636
+    },
+    {
+      "id": "1850-10",
+      "decade": 1850,
+      "community_id": 10,
+      "paper_count": 109
+    },
+    {
+      "id": "1850-11",
+      "decade": 1850,
+      "community_id": 11,
+      "paper_count": 16
+    },
+    {
+      "id": "1850-12",
+      "decade": 1850,
+      "community_id": 12,
+      "paper_count": 121
+    },
+    {
+      "id": "1850-13",
+      "decade": 1850,
+      "community_id": 13,
+      "paper_count": 239
+    },
+    {
+      "id": "1850-14",
+      "decade": 1850,
+      "community_id": 14,
+      "paper_count": 59
+    },
+    {
+      "id": "1850-15",
+      "decade": 1850,
+      "community_id": 15,
+      "paper_count": 664
+    },
+    {
+      "id": "1850-16",
+      "decade": 1850,
+      "community_id": 16,
+      "paper_count": 76
+    },
+    {
+      "id": "1850-17",
+      "decade": 1850,
+      "community_id": 17,
+      "paper_count": 9
+    },
+    {
+      "id": "1850-18",
+      "decade": 1850,
+      "community_id": 18,
+      "paper_count": 27
+    },
+    {
+      "id": "1850-19",
+      "decade": 1850,
+      "community_id": 19,
+      "paper_count": 46
+    },
+    {
+      "id": "1860-0",
+      "decade": 1860,
+      "community_id": 0,
+      "paper_count": 16
+    },
+    {
+      "id": "1860-1",
+      "decade": 1860,
+      "community_id": 1,
+      "paper_count": 830
+    },
+    {
+      "id": "1860-2",
+      "decade": 1860,
+      "community_id": 2,
+      "paper_count": 2664
+    },
+    {
+      "id": "1860-3",
+      "decade": 1860,
+      "community_id": 3,
+      "paper_count": 56
+    },
+    {
+      "id": "1860-4",
+      "decade": 1860,
+      "community_id": 4,
+      "paper_count": 1
+    },
+    {
+      "id": "1860-5",
+      "decade": 1860,
+      "community_id": 5,
+      "paper_count": 193
+    },
+    {
+      "id": "1860-6",
+      "decade": 1860,
+      "community_id": 6,
+      "paper_count": 14180
+    },
+    {
+      "id": "1860-7",
+      "decade": 1860,
+      "community_id": 7,
+      "paper_count": 87
+    },
+    {
+      "id": "1860-8",
+      "decade": 1860,
+      "community_id": 8,
+      "paper_count": 37
+    },
+    {
+      "id": "1860-9",
+      "decade": 1860,
+      "community_id": 9,
+      "paper_count": 686
+    },
+    {
+      "id": "1860-10",
+      "decade": 1860,
+      "community_id": 10,
+      "paper_count": 125
+    },
+    {
+      "id": "1860-11",
+      "decade": 1860,
+      "community_id": 11,
+      "paper_count": 16
+    },
+    {
+      "id": "1860-12",
+      "decade": 1860,
+      "community_id": 12,
+      "paper_count": 166
+    },
+    {
+      "id": "1860-13",
+      "decade": 1860,
+      "community_id": 13,
+      "paper_count": 234
+    },
+    {
+      "id": "1860-14",
+      "decade": 1860,
+      "community_id": 14,
+      "paper_count": 77
+    },
+    {
+      "id": "1860-15",
+      "decade": 1860,
+      "community_id": 15,
+      "paper_count": 700
+    },
+    {
+      "id": "1860-16",
+      "decade": 1860,
+      "community_id": 16,
+      "paper_count": 66
+    },
+    {
+      "id": "1860-17",
+      "decade": 1860,
+      "community_id": 17,
+      "paper_count": 12
+    },
+    {
+      "id": "1860-18",
+      "decade": 1860,
+      "community_id": 18,
+      "paper_count": 38
+    },
+    {
+      "id": "1860-19",
+      "decade": 1860,
+      "community_id": 19,
+      "paper_count": 56
+    },
+    {
+      "id": "1870-0",
+      "decade": 1870,
+      "community_id": 0,
+      "paper_count": 34
+    },
+    {
+      "id": "1870-1",
+      "decade": 1870,
+      "community_id": 1,
+      "paper_count": 1830
+    },
+    {
+      "id": "1870-2",
+      "decade": 1870,
+      "community_id": 2,
+      "paper_count": 4254
+    },
+    {
+      "id": "1870-3",
+      "decade": 1870,
+      "community_id": 3,
+      "paper_count": 183
+    },
+    {
+      "id": "1870-4",
+      "decade": 1870,
+      "community_id": 4,
+      "paper_count": 9
+    },
+    {
+      "id": "1870-5",
+      "decade": 1870,
+      "community_id": 5,
+      "paper_count": 490
+    },
+    {
+      "id": "1870-6",
+      "decade": 1870,
+      "community_id": 6,
+      "paper_count": 26656
+    },
+    {
+      "id": "1870-7",
+      "decade": 1870,
+      "community_id": 7,
+      "paper_count": 151
+    },
+    {
+      "id": "1870-8",
+      "decade": 1870,
+      "community_id": 8,
+      "paper_count": 69
+    },
+    {
+      "id": "1870-9",
+      "decade": 1870,
+      "community_id": 9,
+      "paper_count": 754
+    },
+    {
+      "id": "1870-10",
+      "decade": 1870,
+      "community_id": 10,
+      "paper_count": 261
+    },
+    {
+      "id": "1870-11",
+      "decade": 1870,
+      "community_id": 11,
+      "paper_count": 46
+    },
+    {
+      "id": "1870-12",
+      "decade": 1870,
+      "community_id": 12,
+      "paper_count": 338
+    },
+    {
+      "id": "1870-13",
+      "decade": 1870,
+      "community_id": 13,
+      "paper_count": 391
+    },
+    {
+      "id": "1870-14",
+      "decade": 1870,
+      "community_id": 14,
+      "paper_count": 259
+    },
+    {
+      "id": "1870-15",
+      "decade": 1870,
+      "community_id": 15,
+      "paper_count": 1201
+    },
+    {
+      "id": "1870-16",
+      "decade": 1870,
+      "community_id": 16,
+      "paper_count": 173
+    },
+    {
+      "id": "1870-17",
+      "decade": 1870,
+      "community_id": 17,
+      "paper_count": 24
+    },
+    {
+      "id": "1870-18",
+      "decade": 1870,
+      "community_id": 18,
+      "paper_count": 61
+    },
+    {
+      "id": "1870-19",
+      "decade": 1870,
+      "community_id": 19,
+      "paper_count": 102
+    },
+    {
+      "id": "1880-0",
+      "decade": 1880,
+      "community_id": 0,
+      "paper_count": 49
+    },
+    {
+      "id": "1880-1",
+      "decade": 1880,
+      "community_id": 1,
+      "paper_count": 3050
+    },
+    {
+      "id": "1880-2",
+      "decade": 1880,
+      "community_id": 2,
+      "paper_count": 5343
+    },
+    {
+      "id": "1880-3",
+      "decade": 1880,
+      "community_id": 3,
+      "paper_count": 256
+    },
+    {
+      "id": "1880-4",
+      "decade": 1880,
+      "community_id": 4,
+      "paper_count": 484
+    },
+    {
+      "id": "1880-5",
+      "decade": 1880,
+      "community_id": 5,
+      "paper_count": 511
+    },
+    {
+      "id": "1880-6",
+      "decade": 1880,
+      "community_id": 6,
+      "paper_count": 40695
+    },
+    {
+      "id": "1880-7",
+      "decade": 1880,
+      "community_id": 7,
+      "paper_count": 292
+    },
+    {
+      "id": "1880-8",
+      "decade": 1880,
+      "community_id": 8,
+      "paper_count": 61
+    },
+    {
+      "id": "1880-9",
+      "decade": 1880,
+      "community_id": 9,
+      "paper_count": 1236
+    },
+    {
+      "id": "1880-10",
+      "decade": 1880,
+      "community_id": 10,
+      "paper_count": 357
+    },
+    {
+      "id": "1880-11",
+      "decade": 1880,
+      "community_id": 11,
+      "paper_count": 96
+    },
+    {
+      "id": "1880-12",
+      "decade": 1880,
+      "community_id": 12,
+      "paper_count": 542
+    },
+    {
+      "id": "1880-13",
+      "decade": 1880,
+      "community_id": 13,
+      "paper_count": 696
+    },
+    {
+      "id": "1880-14",
+      "decade": 1880,
+      "community_id": 14,
+      "paper_count": 544
+    },
+    {
+      "id": "1880-15",
+      "decade": 1880,
+      "community_id": 15,
+      "paper_count": 2002
+    },
+    {
+      "id": "1880-16",
+      "decade": 1880,
+      "community_id": 16,
+      "paper_count": 356
+    },
+    {
+      "id": "1880-17",
+      "decade": 1880,
+      "community_id": 17,
+      "paper_count": 42
+    },
+    {
+      "id": "1880-18",
+      "decade": 1880,
+      "community_id": 18,
+      "paper_count": 160
+    },
+    {
+      "id": "1880-19",
+      "decade": 1880,
+      "community_id": 19,
+      "paper_count": 174
+    },
+    {
+      "id": "1890-0",
+      "decade": 1890,
+      "community_id": 0,
+      "paper_count": 70
+    },
+    {
+      "id": "1890-1",
+      "decade": 1890,
+      "community_id": 1,
+      "paper_count": 3493
+    },
+    {
+      "id": "1890-2",
+      "decade": 1890,
+      "community_id": 2,
+      "paper_count": 6092
+    },
+    {
+      "id": "1890-3",
+      "decade": 1890,
+      "community_id": 3,
+      "paper_count": 503
+    },
+    {
+      "id": "1890-4",
+      "decade": 1890,
+      "community_id": 4,
+      "paper_count": 4082
+    },
+    {
+      "id": "1890-5",
+      "decade": 1890,
+      "community_id": 5,
+      "paper_count": 577
+    },
+    {
+      "id": "1890-6",
+      "decade": 1890,
+      "community_id": 6,
+      "paper_count": 50024
+    },
+    {
+      "id": "1890-7",
+      "decade": 1890,
+      "community_id": 7,
+      "paper_count": 343
+    },
+    {
+      "id": "1890-8",
+      "decade": 1890,
+      "community_id": 8,
+      "paper_count": 66
+    },
+    {
+      "id": "1890-9",
+      "decade": 1890,
+      "community_id": 9,
+      "paper_count": 2176
+    },
+    {
+      "id": "1890-10",
+      "decade": 1890,
+      "community_id": 10,
+      "paper_count": 462
+    },
+    {
+      "id": "1890-11",
+      "decade": 1890,
+      "community_id": 11,
+      "paper_count": 91
+    },
+    {
+      "id": "1890-12",
+      "decade": 1890,
+      "community_id": 12,
+      "paper_count": 597
+    },
+    {
+      "id": "1890-13",
+      "decade": 1890,
+      "community_id": 13,
+      "paper_count": 842
+    },
+    {
+      "id": "1890-14",
+      "decade": 1890,
+      "community_id": 14,
+      "paper_count": 693
+    },
+    {
+      "id": "1890-15",
+      "decade": 1890,
+      "community_id": 15,
+      "paper_count": 2898
+    },
+    {
+      "id": "1890-16",
+      "decade": 1890,
+      "community_id": 16,
+      "paper_count": 340
+    },
+    {
+      "id": "1890-17",
+      "decade": 1890,
+      "community_id": 17,
+      "paper_count": 54
+    },
+    {
+      "id": "1890-18",
+      "decade": 1890,
+      "community_id": 18,
+      "paper_count": 253
+    },
+    {
+      "id": "1890-19",
+      "decade": 1890,
+      "community_id": 19,
+      "paper_count": 192
+    },
+    {
+      "id": "1900-0",
+      "decade": 1900,
+      "community_id": 0,
+      "paper_count": 106
+    },
+    {
+      "id": "1900-1",
+      "decade": 1900,
+      "community_id": 1,
+      "paper_count": 3963
+    },
+    {
+      "id": "1900-2",
+      "decade": 1900,
+      "community_id": 2,
+      "paper_count": 7452
+    },
+    {
+      "id": "1900-3",
+      "decade": 1900,
+      "community_id": 3,
+      "paper_count": 869
+    },
+    {
+      "id": "1900-4",
+      "decade": 1900,
+      "community_id": 4,
+      "paper_count": 3629
+    },
+    {
+      "id": "1900-5",
+      "decade": 1900,
+      "community_id": 5,
+      "paper_count": 908
+    },
+    {
+      "id": "1900-6",
+      "decade": 1900,
+      "community_id": 6,
+      "paper_count": 62060
+    },
+    {
+      "id": "1900-7",
+      "decade": 1900,
+      "community_id": 7,
+      "paper_count": 592
+    },
+    {
+      "id": "1900-8",
+      "decade": 1900,
+      "community_id": 8,
+      "paper_count": 150
+    },
+    {
+      "id": "1900-9",
+      "decade": 1900,
+      "community_id": 9,
+      "paper_count": 3689
+    },
+    {
+      "id": "1900-10",
+      "decade": 1900,
+      "community_id": 10,
+      "paper_count": 719
+    },
+    {
+      "id": "1900-11",
+      "decade": 1900,
+      "community_id": 11,
+      "paper_count": 190
+    },
+    {
+      "id": "1900-12",
+      "decade": 1900,
+      "community_id": 12,
+      "paper_count": 959
+    },
+    {
+      "id": "1900-13",
+      "decade": 1900,
+      "community_id": 13,
+      "paper_count": 1441
+    },
+    {
+      "id": "1900-14",
+      "decade": 1900,
+      "community_id": 14,
+      "paper_count": 870
+    },
+    {
+      "id": "1900-15",
+      "decade": 1900,
+      "community_id": 15,
+      "paper_count": 3907
+    },
+    {
+      "id": "1900-16",
+      "decade": 1900,
+      "community_id": 16,
+      "paper_count": 539
+    },
+    {
+      "id": "1900-17",
+      "decade": 1900,
+      "community_id": 17,
+      "paper_count": 206
+    },
+    {
+      "id": "1900-18",
+      "decade": 1900,
+      "community_id": 18,
+      "paper_count": 294
+    },
+    {
+      "id": "1900-19",
+      "decade": 1900,
+      "community_id": 19,
+      "paper_count": 303
+    },
+    {
+      "id": "1910-0",
+      "decade": 1910,
+      "community_id": 0,
+      "paper_count": 148
+    },
+    {
+      "id": "1910-1",
+      "decade": 1910,
+      "community_id": 1,
+      "paper_count": 3907
+    },
+    {
+      "id": "1910-2",
+      "decade": 1910,
+      "community_id": 2,
+      "paper_count": 8678
+    },
+    {
+      "id": "1910-3",
+      "decade": 1910,
+      "community_id": 3,
+      "paper_count": 1345
+    },
+    {
+      "id": "1910-4",
+      "decade": 1910,
+      "community_id": 4,
+      "paper_count": 3353
+    },
+    {
+      "id": "1910-5",
+      "decade": 1910,
+      "community_id": 5,
+      "paper_count": 1259
+    },
+    {
+      "id": "1910-6",
+      "decade": 1910,
+      "community_id": 6,
+      "paper_count": 72192
+    },
+    {
+      "id": "1910-7",
+      "decade": 1910,
+      "community_id": 7,
+      "paper_count": 1028
+    },
+    {
+      "id": "1910-8",
+      "decade": 1910,
+      "community_id": 8,
+      "paper_count": 230
+    },
+    {
+      "id": "1910-9",
+      "decade": 1910,
+      "community_id": 9,
+      "paper_count": 4823
+    },
+    {
+      "id": "1910-10",
+      "decade": 1910,
+      "community_id": 10,
+      "paper_count": 1012
+    },
+    {
+      "id": "1910-11",
+      "decade": 1910,
+      "community_id": 11,
+      "paper_count": 361
+    },
+    {
+      "id": "1910-12",
+      "decade": 1910,
+      "community_id": 12,
+      "paper_count": 984
+    },
+    {
+      "id": "1910-13",
+      "decade": 1910,
+      "community_id": 13,
+      "paper_count": 2036
+    },
+    {
+      "id": "1910-14",
+      "decade": 1910,
+      "community_id": 14,
+      "paper_count": 514
+    },
+    {
+      "id": "1910-15",
+      "decade": 1910,
+      "community_id": 15,
+      "paper_count": 4943
+    },
+    {
+      "id": "1910-16",
+      "decade": 1910,
+      "community_id": 16,
+      "paper_count": 816
+    },
+    {
+      "id": "1910-17",
+      "decade": 1910,
+      "community_id": 17,
+      "paper_count": 448
+    },
+    {
+      "id": "1910-18",
+      "decade": 1910,
+      "community_id": 18,
+      "paper_count": 389
+    },
+    {
+      "id": "1910-19",
+      "decade": 1910,
+      "community_id": 19,
+      "paper_count": 485
+    },
+    {
+      "id": "1920-0",
+      "decade": 1920,
+      "community_id": 0,
+      "paper_count": 452
+    },
+    {
+      "id": "1920-1",
+      "decade": 1920,
+      "community_id": 1,
+      "paper_count": 5135
+    },
+    {
+      "id": "1920-2",
+      "decade": 1920,
+      "community_id": 2,
+      "paper_count": 9926
+    },
+    {
+      "id": "1920-3",
+      "decade": 1920,
+      "community_id": 3,
+      "paper_count": 2404
+    },
+    {
+      "id": "1920-4",
+      "decade": 1920,
+      "community_id": 4,
+      "paper_count": 2823
+    },
+    {
+      "id": "1920-5",
+      "decade": 1920,
+      "community_id": 5,
+      "paper_count": 2987
+    },
+    {
+      "id": "1920-6",
+      "decade": 1920,
+      "community_id": 6,
+      "paper_count": 96809
+    },
+    {
+      "id": "1920-7",
+      "decade": 1920,
+      "community_id": 7,
+      "paper_count": 1666
+    },
+    {
+      "id": "1920-8",
+      "decade": 1920,
+      "community_id": 8,
+      "paper_count": 393
+    },
+    {
+      "id": "1920-9",
+      "decade": 1920,
+      "community_id": 9,
+      "paper_count": 12328
+    },
+    {
+      "id": "1920-10",
+      "decade": 1920,
+      "community_id": 10,
+      "paper_count": 1224
+    },
+    {
+      "id": "1920-11",
+      "decade": 1920,
+      "community_id": 11,
+      "paper_count": 986
+    },
+    {
+      "id": "1920-12",
+      "decade": 1920,
+      "community_id": 12,
+      "paper_count": 1471
+    },
+    {
+      "id": "1920-13",
+      "decade": 1920,
+      "community_id": 13,
+      "paper_count": 3093
+    },
+    {
+      "id": "1920-14",
+      "decade": 1920,
+      "community_id": 14,
+      "paper_count": 812
+    },
+    {
+      "id": "1920-15",
+      "decade": 1920,
+      "community_id": 15,
+      "paper_count": 11406
+    },
+    {
+      "id": "1920-16",
+      "decade": 1920,
+      "community_id": 16,
+      "paper_count": 1354
+    },
+    {
+      "id": "1920-17",
+      "decade": 1920,
+      "community_id": 17,
+      "paper_count": 1018
+    },
+    {
+      "id": "1920-18",
+      "decade": 1920,
+      "community_id": 18,
+      "paper_count": 698
+    },
+    {
+      "id": "1920-19",
+      "decade": 1920,
+      "community_id": 19,
+      "paper_count": 806
+    },
+    {
+      "id": "1930-0",
+      "decade": 1930,
+      "community_id": 0,
+      "paper_count": 884
+    },
+    {
+      "id": "1930-1",
+      "decade": 1930,
+      "community_id": 1,
+      "paper_count": 6334
+    },
+    {
+      "id": "1930-2",
+      "decade": 1930,
+      "community_id": 2,
+      "paper_count": 12290
+    },
+    {
+      "id": "1930-3",
+      "decade": 1930,
+      "community_id": 3,
+      "paper_count": 4725
+    },
+    {
+      "id": "1930-4",
+      "decade": 1930,
+      "community_id": 4,
+      "paper_count": 2566
+    },
+    {
+      "id": "1930-5",
+      "decade": 1930,
+      "community_id": 5,
+      "paper_count": 4731
+    },
+    {
+      "id": "1930-6",
+      "decade": 1930,
+      "community_id": 6,
+      "paper_count": 114807
+    },
+    {
+      "id": "1930-7",
+      "decade": 1930,
+      "community_id": 7,
+      "paper_count": 2220
+    },
+    {
+      "id": "1930-8",
+      "decade": 1930,
+      "community_id": 8,
+      "paper_count": 616
+    },
+    {
+      "id": "1930-9",
+      "decade": 1930,
+      "community_id": 9,
+      "paper_count": 20917
+    },
+    {
+      "id": "1930-10",
+      "decade": 1930,
+      "community_id": 10,
+      "paper_count": 2144
+    },
+    {
+      "id": "1930-11",
+      "decade": 1930,
+      "community_id": 11,
+      "paper_count": 1627
+    },
+    {
+      "id": "1930-12",
+      "decade": 1930,
+      "community_id": 12,
+      "paper_count": 1937
+    },
+    {
+      "id": "1930-13",
+      "decade": 1930,
+      "community_id": 13,
+      "paper_count": 4916
+    },
+    {
+      "id": "1930-14",
+      "decade": 1930,
+      "community_id": 14,
+      "paper_count": 1124
+    },
+    {
+      "id": "1930-15",
+      "decade": 1930,
+      "community_id": 15,
+      "paper_count": 20894
+    },
+    {
+      "id": "1930-16",
+      "decade": 1930,
+      "community_id": 16,
+      "paper_count": 2229
+    },
+    {
+      "id": "1930-17",
+      "decade": 1930,
+      "community_id": 17,
+      "paper_count": 1641
+    },
+    {
+      "id": "1930-18",
+      "decade": 1930,
+      "community_id": 18,
+      "paper_count": 938
+    },
+    {
+      "id": "1930-19",
+      "decade": 1930,
+      "community_id": 19,
+      "paper_count": 888
+    },
+    {
+      "id": "1940-0",
+      "decade": 1940,
+      "community_id": 0,
+      "paper_count": 1176
+    },
+    {
+      "id": "1940-1",
+      "decade": 1940,
+      "community_id": 1,
+      "paper_count": 5878
+    },
+    {
+      "id": "1940-2",
+      "decade": 1940,
+      "community_id": 2,
+      "paper_count": 9371
+    },
+    {
+      "id": "1940-3",
+      "decade": 1940,
+      "community_id": 3,
+      "paper_count": 5308
+    },
+    {
+      "id": "1940-4",
+      "decade": 1940,
+      "community_id": 4,
+      "paper_count": 1277
+    },
+    {
+      "id": "1940-5",
+      "decade": 1940,
+      "community_id": 5,
+      "paper_count": 5031
+    },
+    {
+      "id": "1940-6",
+      "decade": 1940,
+      "community_id": 6,
+      "paper_count": 91886
+    },
+    {
+      "id": "1940-7",
+      "decade": 1940,
+      "community_id": 7,
+      "paper_count": 1700
+    },
+    {
+      "id": "1940-8",
+      "decade": 1940,
+      "community_id": 8,
+      "paper_count": 836
+    },
+    {
+      "id": "1940-9",
+      "decade": 1940,
+      "community_id": 9,
+      "paper_count": 20719
+    },
+    {
+      "id": "1940-10",
+      "decade": 1940,
+      "community_id": 10,
+      "paper_count": 1887
+    },
+    {
+      "id": "1940-11",
+      "decade": 1940,
+      "community_id": 11,
+      "paper_count": 2401
+    },
+    {
+      "id": "1940-12",
+      "decade": 1940,
+      "community_id": 12,
+      "paper_count": 1498
+    },
+    {
+      "id": "1940-13",
+      "decade": 1940,
+      "community_id": 13,
+      "paper_count": 5029
+    },
+    {
+      "id": "1940-14",
+      "decade": 1940,
+      "community_id": 14,
+      "paper_count": 1406
+    },
+    {
+      "id": "1940-15",
+      "decade": 1940,
+      "community_id": 15,
+      "paper_count": 17564
+    },
+    {
+      "id": "1940-16",
+      "decade": 1940,
+      "community_id": 16,
+      "paper_count": 2365
+    },
+    {
+      "id": "1940-17",
+      "decade": 1940,
+      "community_id": 17,
+      "paper_count": 1933
+    },
+    {
+      "id": "1940-18",
+      "decade": 1940,
+      "community_id": 18,
+      "paper_count": 1204
+    },
+    {
+      "id": "1940-19",
+      "decade": 1940,
+      "community_id": 19,
+      "paper_count": 1029
+    },
+    {
+      "id": "1950-0",
+      "decade": 1950,
+      "community_id": 0,
+      "paper_count": 4976
+    },
+    {
+      "id": "1950-1",
+      "decade": 1950,
+      "community_id": 1,
+      "paper_count": 15499
+    },
+    {
+      "id": "1950-2",
+      "decade": 1950,
+      "community_id": 2,
+      "paper_count": 18569
+    },
+    {
+      "id": "1950-3",
+      "decade": 1950,
+      "community_id": 3,
+      "paper_count": 13481
+    },
+    {
+      "id": "1950-4",
+      "decade": 1950,
+      "community_id": 4,
+      "paper_count": 1917
+    },
+    {
+      "id": "1950-5",
+      "decade": 1950,
+      "community_id": 5,
+      "paper_count": 15002
+    },
+    {
+      "id": "1950-6",
+      "decade": 1950,
+      "community_id": 6,
+      "paper_count": 148827
+    },
+    {
+      "id": "1950-7",
+      "decade": 1950,
+      "community_id": 7,
+      "paper_count": 2996
+    },
+    {
+      "id": "1950-8",
+      "decade": 1950,
+      "community_id": 8,
+      "paper_count": 2568
+    },
+    {
+      "id": "1950-9",
+      "decade": 1950,
+      "community_id": 9,
+      "paper_count": 52611
+    },
+    {
+      "id": "1950-10",
+      "decade": 1950,
+      "community_id": 10,
+      "paper_count": 5413
+    },
+    {
+      "id": "1950-11",
+      "decade": 1950,
+      "community_id": 11,
+      "paper_count": 7836
+    },
+    {
+      "id": "1950-12",
+      "decade": 1950,
+      "community_id": 12,
+      "paper_count": 3814
+    },
+    {
+      "id": "1950-13",
+      "decade": 1950,
+      "community_id": 13,
+      "paper_count": 12258
+    },
+    {
+      "id": "1950-14",
+      "decade": 1950,
+      "community_id": 14,
+      "paper_count": 3168
+    },
+    {
+      "id": "1950-15",
+      "decade": 1950,
+      "community_id": 15,
+      "paper_count": 64503
+    },
+    {
+      "id": "1950-16",
+      "decade": 1950,
+      "community_id": 16,
+      "paper_count": 4519
+    },
+    {
+      "id": "1950-17",
+      "decade": 1950,
+      "community_id": 17,
+      "paper_count": 2238
+    },
+    {
+      "id": "1950-18",
+      "decade": 1950,
+      "community_id": 18,
+      "paper_count": 2653
+    },
+    {
+      "id": "1950-19",
+      "decade": 1950,
+      "community_id": 19,
+      "paper_count": 1802
+    },
+    {
+      "id": "1960-0",
+      "decade": 1960,
+      "community_id": 0,
+      "paper_count": 15962
+    },
+    {
+      "id": "1960-1",
+      "decade": 1960,
+      "community_id": 1,
+      "paper_count": 48815
+    },
+    {
+      "id": "1960-2",
+      "decade": 1960,
+      "community_id": 2,
+      "paper_count": 36348
+    },
+    {
+      "id": "1960-3",
+      "decade": 1960,
+      "community_id": 3,
+      "paper_count": 40832
+    },
+    {
+      "id": "1960-4",
+      "decade": 1960,
+      "community_id": 4,
+      "paper_count": 4330
+    },
+    {
+      "id": "1960-5",
+      "decade": 1960,
+      "community_id": 5,
+      "paper_count": 55419
+    },
+    {
+      "id": "1960-6",
+      "decade": 1960,
+      "community_id": 6,
+      "paper_count": 214989
+    },
+    {
+      "id": "1960-7",
+      "decade": 1960,
+      "community_id": 7,
+      "paper_count": 5971
+    },
+    {
+      "id": "1960-8",
+      "decade": 1960,
+      "community_id": 8,
+      "paper_count": 10845
+    },
+    {
+      "id": "1960-9",
+      "decade": 1960,
+      "community_id": 9,
+      "paper_count": 84889
+    },
+    {
+      "id": "1960-10",
+      "decade": 1960,
+      "community_id": 10,
+      "paper_count": 14352
+    },
+    {
+      "id": "1960-11",
+      "decade": 1960,
+      "community_id": 11,
+      "paper_count": 25366
+    },
+    {
+      "id": "1960-12",
+      "decade": 1960,
+      "community_id": 12,
+      "paper_count": 8838
+    },
+    {
+      "id": "1960-13",
+      "decade": 1960,
+      "community_id": 13,
+      "paper_count": 24448
+    },
+    {
+      "id": "1960-14",
+      "decade": 1960,
+      "community_id": 14,
+      "paper_count": 7233
+    },
+    {
+      "id": "1960-15",
+      "decade": 1960,
+      "community_id": 15,
+      "paper_count": 206269
+    },
+    {
+      "id": "1960-16",
+      "decade": 1960,
+      "community_id": 16,
+      "paper_count": 14386
+    },
+    {
+      "id": "1960-17",
+      "decade": 1960,
+      "community_id": 17,
+      "paper_count": 4070
+    },
+    {
+      "id": "1960-18",
+      "decade": 1960,
+      "community_id": 18,
+      "paper_count": 6780
+    },
+    {
+      "id": "1960-19",
+      "decade": 1960,
+      "community_id": 19,
+      "paper_count": 3979
+    },
+    {
+      "id": "1970-0",
+      "decade": 1970,
+      "community_id": 0,
+      "paper_count": 41337
+    },
+    {
+      "id": "1970-1",
+      "decade": 1970,
+      "community_id": 1,
+      "paper_count": 119310
+    },
+    {
+      "id": "1970-2",
+      "decade": 1970,
+      "community_id": 2,
+      "paper_count": 70014
+    },
+    {
+      "id": "1970-3",
+      "decade": 1970,
+      "community_id": 3,
+      "paper_count": 80444
+    },
+    {
+      "id": "1970-4",
+      "decade": 1970,
+      "community_id": 4,
+      "paper_count": 14453
+    },
+    {
+      "id": "1970-5",
+      "decade": 1970,
+      "community_id": 5,
+      "paper_count": 122570
+    },
+    {
+      "id": "1970-6",
+      "decade": 1970,
+      "community_id": 6,
+      "paper_count": 279336
+    },
+    {
+      "id": "1970-7",
+      "decade": 1970,
+      "community_id": 7,
+      "paper_count": 16296
+    },
+    {
+      "id": "1970-8",
+      "decade": 1970,
+      "community_id": 8,
+      "paper_count": 26574
+    },
+    {
+      "id": "1970-9",
+      "decade": 1970,
+      "community_id": 9,
+      "paper_count": 118767
+    },
+    {
+      "id": "1970-10",
+      "decade": 1970,
+      "community_id": 10,
+      "paper_count": 33746
+    },
+    {
+      "id": "1970-11",
+      "decade": 1970,
+      "community_id": 11,
+      "paper_count": 65696
+    },
+    {
+      "id": "1970-12",
+      "decade": 1970,
+      "community_id": 12,
+      "paper_count": 26729
+    },
+    {
+      "id": "1970-13",
+      "decade": 1970,
+      "community_id": 13,
+      "paper_count": 48890
+    },
+    {
+      "id": "1970-14",
+      "decade": 1970,
+      "community_id": 14,
+      "paper_count": 21665
+    },
+    {
+      "id": "1970-15",
+      "decade": 1970,
+      "community_id": 15,
+      "paper_count": 431811
+    },
+    {
+      "id": "1970-16",
+      "decade": 1970,
+      "community_id": 16,
+      "paper_count": 34589
+    },
+    {
+      "id": "1970-17",
+      "decade": 1970,
+      "community_id": 17,
+      "paper_count": 8964
+    },
+    {
+      "id": "1970-18",
+      "decade": 1970,
+      "community_id": 18,
+      "paper_count": 17680
+    },
+    {
+      "id": "1970-19",
+      "decade": 1970,
+      "community_id": 19,
+      "paper_count": 20793
+    },
+    {
+      "id": "1980-0",
+      "decade": 1980,
+      "community_id": 0,
+      "paper_count": 95399
+    },
+    {
+      "id": "1980-1",
+      "decade": 1980,
+      "community_id": 1,
+      "paper_count": 184641
+    },
+    {
+      "id": "1980-2",
+      "decade": 1980,
+      "community_id": 2,
+      "paper_count": 101447
+    },
+    {
+      "id": "1980-3",
+      "decade": 1980,
+      "community_id": 3,
+      "paper_count": 127139
+    },
+    {
+      "id": "1980-4",
+      "decade": 1980,
+      "community_id": 4,
+      "paper_count": 32097
+    },
+    {
+      "id": "1980-5",
+      "decade": 1980,
+      "community_id": 5,
+      "paper_count": 177928
+    },
+    {
+      "id": "1980-6",
+      "decade": 1980,
+      "community_id": 6,
+      "paper_count": 368893
+    },
+    {
+      "id": "1980-7",
+      "decade": 1980,
+      "community_id": 7,
+      "paper_count": 31460
+    },
+    {
+      "id": "1980-8",
+      "decade": 1980,
+      "community_id": 8,
+      "paper_count": 49565
+    },
+    {
+      "id": "1980-9",
+      "decade": 1980,
+      "community_id": 9,
+      "paper_count": 161961
+    },
+    {
+      "id": "1980-10",
+      "decade": 1980,
+      "community_id": 10,
+      "paper_count": 69283
+    },
+    {
+      "id": "1980-11",
+      "decade": 1980,
+      "community_id": 11,
+      "paper_count": 119588
+    },
+    {
+      "id": "1980-12",
+      "decade": 1980,
+      "community_id": 12,
+      "paper_count": 49853
+    },
+    {
+      "id": "1980-13",
+      "decade": 1980,
+      "community_id": 13,
+      "paper_count": 76451
+    },
+    {
+      "id": "1980-14",
+      "decade": 1980,
+      "community_id": 14,
+      "paper_count": 36419
+    },
+    {
+      "id": "1980-15",
+      "decade": 1980,
+      "community_id": 15,
+      "paper_count": 556383
+    },
+    {
+      "id": "1980-16",
+      "decade": 1980,
+      "community_id": 16,
+      "paper_count": 52925
+    },
+    {
+      "id": "1980-17",
+      "decade": 1980,
+      "community_id": 17,
+      "paper_count": 16470
+    },
+    {
+      "id": "1980-18",
+      "decade": 1980,
+      "community_id": 18,
+      "paper_count": 42513
+    },
+    {
+      "id": "1980-19",
+      "decade": 1980,
+      "community_id": 19,
+      "paper_count": 28186
+    },
+    {
+      "id": "1990-0",
+      "decade": 1990,
+      "community_id": 0,
+      "paper_count": 212412
+    },
+    {
+      "id": "1990-1",
+      "decade": 1990,
+      "community_id": 1,
+      "paper_count": 279300
+    },
+    {
+      "id": "1990-2",
+      "decade": 1990,
+      "community_id": 2,
+      "paper_count": 125972
+    },
+    {
+      "id": "1990-3",
+      "decade": 1990,
+      "community_id": 3,
+      "paper_count": 196706
+    },
+    {
+      "id": "1990-4",
+      "decade": 1990,
+      "community_id": 4,
+      "paper_count": 68729
+    },
+    {
+      "id": "1990-5",
+      "decade": 1990,
+      "community_id": 5,
+      "paper_count": 299522
+    },
+    {
+      "id": "1990-6",
+      "decade": 1990,
+      "community_id": 6,
+      "paper_count": 438882
+    },
+    {
+      "id": "1990-7",
+      "decade": 1990,
+      "community_id": 7,
+      "paper_count": 69753
+    },
+    {
+      "id": "1990-8",
+      "decade": 1990,
+      "community_id": 8,
+      "paper_count": 131068
+    },
+    {
+      "id": "1990-9",
+      "decade": 1990,
+      "community_id": 9,
+      "paper_count": 237068
+    },
+    {
+      "id": "1990-10",
+      "decade": 1990,
+      "community_id": 10,
+      "paper_count": 122625
+    },
+    {
+      "id": "1990-11",
+      "decade": 1990,
+      "community_id": 11,
+      "paper_count": 228859
+    },
+    {
+      "id": "1990-12",
+      "decade": 1990,
+      "community_id": 12,
+      "paper_count": 77137
+    },
+    {
+      "id": "1990-13",
+      "decade": 1990,
+      "community_id": 13,
+      "paper_count": 104160
+    },
+    {
+      "id": "1990-14",
+      "decade": 1990,
+      "community_id": 14,
+      "paper_count": 62382
+    },
+    {
+      "id": "1990-15",
+      "decade": 1990,
+      "community_id": 15,
+      "paper_count": 725375
+    },
+    {
+      "id": "1990-16",
+      "decade": 1990,
+      "community_id": 16,
+      "paper_count": 71492
+    },
+    {
+      "id": "1990-17",
+      "decade": 1990,
+      "community_id": 17,
+      "paper_count": 39492
+    },
+    {
+      "id": "1990-18",
+      "decade": 1990,
+      "community_id": 18,
+      "paper_count": 139149
+    },
+    {
+      "id": "1990-19",
+      "decade": 1990,
+      "community_id": 19,
+      "paper_count": 38939
+    },
+    {
+      "id": "2000-0",
+      "decade": 2000,
+      "community_id": 0,
+      "paper_count": 484228
+    },
+    {
+      "id": "2000-1",
+      "decade": 2000,
+      "community_id": 1,
+      "paper_count": 425078
+    },
+    {
+      "id": "2000-2",
+      "decade": 2000,
+      "community_id": 2,
+      "paper_count": 203963
+    },
+    {
+      "id": "2000-3",
+      "decade": 2000,
+      "community_id": 3,
+      "paper_count": 292075
+    },
+    {
+      "id": "2000-4",
+      "decade": 2000,
+      "community_id": 4,
+      "paper_count": 170833
+    },
+    {
+      "id": "2000-5",
+      "decade": 2000,
+      "community_id": 5,
+      "paper_count": 429285
+    },
+    {
+      "id": "2000-6",
+      "decade": 2000,
+      "community_id": 6,
+      "paper_count": 580939
+    },
+    {
+      "id": "2000-7",
+      "decade": 2000,
+      "community_id": 7,
+      "paper_count": 159983
+    },
+    {
+      "id": "2000-8",
+      "decade": 2000,
+      "community_id": 8,
+      "paper_count": 339929
+    },
+    {
+      "id": "2000-9",
+      "decade": 2000,
+      "community_id": 9,
+      "paper_count": 341840
+    },
+    {
+      "id": "2000-10",
+      "decade": 2000,
+      "community_id": 10,
+      "paper_count": 218395
+    },
+    {
+      "id": "2000-11",
+      "decade": 2000,
+      "community_id": 11,
+      "paper_count": 409466
+    },
+    {
+      "id": "2000-12",
+      "decade": 2000,
+      "community_id": 12,
+      "paper_count": 137560
+    },
+    {
+      "id": "2000-13",
+      "decade": 2000,
+      "community_id": 13,
+      "paper_count": 162108
+    },
+    {
+      "id": "2000-14",
+      "decade": 2000,
+      "community_id": 14,
+      "paper_count": 150226
+    },
+    {
+      "id": "2000-15",
+      "decade": 2000,
+      "community_id": 15,
+      "paper_count": 885361
+    },
+    {
+      "id": "2000-16",
+      "decade": 2000,
+      "community_id": 16,
+      "paper_count": 141229
+    },
+    {
+      "id": "2000-17",
+      "decade": 2000,
+      "community_id": 17,
+      "paper_count": 96028
+    },
+    {
+      "id": "2000-18",
+      "decade": 2000,
+      "community_id": 18,
+      "paper_count": 354222
+    },
+    {
+      "id": "2000-19",
+      "decade": 2000,
+      "community_id": 19,
+      "paper_count": 97100
+    },
+    {
+      "id": "2010-0",
+      "decade": 2010,
+      "community_id": 0,
+      "paper_count": 926062
+    },
+    {
+      "id": "2010-1",
+      "decade": 2010,
+      "community_id": 1,
+      "paper_count": 589954
+    },
+    {
+      "id": "2010-2",
+      "decade": 2010,
+      "community_id": 2,
+      "paper_count": 314513
+    },
+    {
+      "id": "2010-3",
+      "decade": 2010,
+      "community_id": 3,
+      "paper_count": 545657
+    },
+    {
+      "id": "2010-4",
+      "decade": 2010,
+      "community_id": 4,
+      "paper_count": 455703
+    },
+    {
+      "id": "2010-5",
+      "decade": 2010,
+      "community_id": 5,
+      "paper_count": 623655
+    },
+    {
+      "id": "2010-6",
+      "decade": 2010,
+      "community_id": 6,
+      "paper_count": 781008
+    },
+    {
+      "id": "2010-7",
+      "decade": 2010,
+      "community_id": 7,
+      "paper_count": 402639
+    },
+    {
+      "id": "2010-8",
+      "decade": 2010,
+      "community_id": 8,
+      "paper_count": 730878
+    },
+    {
+      "id": "2010-9",
+      "decade": 2010,
+      "community_id": 9,
+      "paper_count": 503287
+    },
+    {
+      "id": "2010-10",
+      "decade": 2010,
+      "community_id": 10,
+      "paper_count": 383734
+    },
+    {
+      "id": "2010-11",
+      "decade": 2010,
+      "community_id": 11,
+      "paper_count": 628299
+    },
+    {
+      "id": "2010-12",
+      "decade": 2010,
+      "community_id": 12,
+      "paper_count": 227203
+    },
+    {
+      "id": "2010-13",
+      "decade": 2010,
+      "community_id": 13,
+      "paper_count": 328964
+    },
+    {
+      "id": "2010-14",
+      "decade": 2010,
+      "community_id": 14,
+      "paper_count": 357032
+    },
+    {
+      "id": "2010-15",
+      "decade": 2010,
+      "community_id": 15,
+      "paper_count": 931640
+    },
+    {
+      "id": "2010-16",
+      "decade": 2010,
+      "community_id": 16,
+      "paper_count": 255018
+    },
+    {
+      "id": "2010-17",
+      "decade": 2010,
+      "community_id": 17,
+      "paper_count": 237232
+    },
+    {
+      "id": "2010-18",
+      "decade": 2010,
+      "community_id": 18,
+      "paper_count": 870660
+    },
+    {
+      "id": "2010-19",
+      "decade": 2010,
+      "community_id": 19,
+      "paper_count": 319015
+    },
+    {
+      "id": "2020-0",
+      "decade": 2020,
+      "community_id": 0,
+      "paper_count": 606147
+    },
+    {
+      "id": "2020-1",
+      "decade": 2020,
+      "community_id": 1,
+      "paper_count": 353957
+    },
+    {
+      "id": "2020-2",
+      "decade": 2020,
+      "community_id": 2,
+      "paper_count": 161182
+    },
+    {
+      "id": "2020-3",
+      "decade": 2020,
+      "community_id": 3,
+      "paper_count": 330134
+    },
+    {
+      "id": "2020-4",
+      "decade": 2020,
+      "community_id": 4,
+      "paper_count": 400260
+    },
+    {
+      "id": "2020-5",
+      "decade": 2020,
+      "community_id": 5,
+      "paper_count": 324693
+    },
+    {
+      "id": "2020-6",
+      "decade": 2020,
+      "community_id": 6,
+      "paper_count": 402485
+    },
+    {
+      "id": "2020-7",
+      "decade": 2020,
+      "community_id": 7,
+      "paper_count": 369593
+    },
+    {
+      "id": "2020-8",
+      "decade": 2020,
+      "community_id": 8,
+      "paper_count": 330797
+    },
+    {
+      "id": "2020-9",
+      "decade": 2020,
+      "community_id": 9,
+      "paper_count": 256391
+    },
+    {
+      "id": "2020-10",
+      "decade": 2020,
+      "community_id": 10,
+      "paper_count": 268003
+    },
+    {
+      "id": "2020-11",
+      "decade": 2020,
+      "community_id": 11,
+      "paper_count": 210394
+    },
+    {
+      "id": "2020-12",
+      "decade": 2020,
+      "community_id": 12,
+      "paper_count": 133805
+    },
+    {
+      "id": "2020-13",
+      "decade": 2020,
+      "community_id": 13,
+      "paper_count": 266506
+    },
+    {
+      "id": "2020-14",
+      "decade": 2020,
+      "community_id": 14,
+      "paper_count": 264053
+    },
+    {
+      "id": "2020-15",
+      "decade": 2020,
+      "community_id": 15,
+      "paper_count": 396161
+    },
+    {
+      "id": "2020-16",
+      "decade": 2020,
+      "community_id": 16,
+      "paper_count": 157199
+    },
+    {
+      "id": "2020-17",
+      "decade": 2020,
+      "community_id": 17,
+      "paper_count": 67659
+    },
+    {
+      "id": "2020-18",
+      "decade": 2020,
+      "community_id": 18,
+      "paper_count": 560934
+    },
+    {
+      "id": "2020-19",
+      "decade": 2020,
+      "community_id": 19,
+      "paper_count": 190316
+    }
+  ],
+  "links": [
+    {
+      "source": "2000-15",
+      "target": "2010-15",
+      "value": 931640
+    },
+    {
+      "source": "2000-0",
+      "target": "2010-0",
+      "value": 926062
+    },
+    {
+      "source": "1990-15",
+      "target": "2000-15",
+      "value": 885361
+    },
+    {
+      "source": "2000-18",
+      "target": "2010-18",
+      "value": 870660
+    },
+    {
+      "source": "2000-6",
+      "target": "2010-6",
+      "value": 781008
+    },
+    {
+      "source": "2000-8",
+      "target": "2010-8",
+      "value": 730878
+    },
+    {
+      "source": "1980-15",
+      "target": "1990-15",
+      "value": 725375
+    },
+    {
+      "source": "2000-11",
+      "target": "2010-11",
+      "value": 628299
+    },
+    {
+      "source": "2000-5",
+      "target": "2010-5",
+      "value": 623655
+    },
+    {
+      "source": "2010-0",
+      "target": "2020-0",
+      "value": 606147
+    },
+    {
+      "source": "2000-1",
+      "target": "2010-1",
+      "value": 589954
+    },
+    {
+      "source": "1990-6",
+      "target": "2000-6",
+      "value": 580939
+    },
+    {
+      "source": "2010-18",
+      "target": "2020-18",
+      "value": 560934
+    },
+    {
+      "source": "1970-15",
+      "target": "1980-15",
+      "value": 556383
+    },
+    {
+      "source": "2000-3",
+      "target": "2010-3",
+      "value": 545657
+    },
+    {
+      "source": "2000-9",
+      "target": "2010-9",
+      "value": 503287
+    },
+    {
+      "source": "1990-0",
+      "target": "2000-0",
+      "value": 484228
+    },
+    {
+      "source": "2000-4",
+      "target": "2010-4",
+      "value": 455703
+    },
+    {
+      "source": "1980-6",
+      "target": "1990-6",
+      "value": 438882
+    },
+    {
+      "source": "1960-15",
+      "target": "1970-15",
+      "value": 431811
+    },
+    {
+      "source": "1990-5",
+      "target": "2000-5",
+      "value": 429285
+    },
+    {
+      "source": "1990-1",
+      "target": "2000-1",
+      "value": 425078
+    },
+    {
+      "source": "1990-11",
+      "target": "2000-11",
+      "value": 409466
+    },
+    {
+      "source": "2000-7",
+      "target": "2010-7",
+      "value": 402639
+    },
+    {
+      "source": "2010-6",
+      "target": "2020-6",
+      "value": 402485
+    },
+    {
+      "source": "2010-4",
+      "target": "2020-4",
+      "value": 400260
+    },
+    {
+      "source": "2010-15",
+      "target": "2020-15",
+      "value": 396161
+    },
+    {
+      "source": "2000-10",
+      "target": "2010-10",
+      "value": 383734
+    },
+    {
+      "source": "2010-7",
+      "target": "2020-7",
+      "value": 369593
+    },
+    {
+      "source": "1970-6",
+      "target": "1980-6",
+      "value": 368893
+    },
+    {
+      "source": "2000-14",
+      "target": "2010-14",
+      "value": 357032
+    },
+    {
+      "source": "1990-18",
+      "target": "2000-18",
+      "value": 354222
+    },
+    {
+      "source": "2010-1",
+      "target": "2020-1",
+      "value": 353957
+    },
+    {
+      "source": "1990-9",
+      "target": "2000-9",
+      "value": 341840
+    },
+    {
+      "source": "1990-8",
+      "target": "2000-8",
+      "value": 339929
+    },
+    {
+      "source": "2010-8",
+      "target": "2020-8",
+      "value": 330797
+    },
+    {
+      "source": "2010-3",
+      "target": "2020-3",
+      "value": 330134
+    },
+    {
+      "source": "2000-13",
+      "target": "2010-13",
+      "value": 328964
+    },
+    {
+      "source": "2010-5",
+      "target": "2020-5",
+      "value": 324693
+    },
+    {
+      "source": "2000-19",
+      "target": "2010-19",
+      "value": 319015
+    },
+    {
+      "source": "2000-2",
+      "target": "2010-2",
+      "value": 314513
+    },
+    {
+      "source": "1980-5",
+      "target": "1990-5",
+      "value": 299522
+    },
+    {
+      "source": "1990-3",
+      "target": "2000-3",
+      "value": 292075
+    },
+    {
+      "source": "1960-6",
+      "target": "1970-6",
+      "value": 279336
+    },
+    {
+      "source": "1980-1",
+      "target": "1990-1",
+      "value": 279300
+    },
+    {
+      "source": "2010-10",
+      "target": "2020-10",
+      "value": 268003
+    },
+    {
+      "source": "2010-13",
+      "target": "2020-13",
+      "value": 266506
+    },
+    {
+      "source": "2010-14",
+      "target": "2020-14",
+      "value": 264053
+    },
+    {
+      "source": "2010-9",
+      "target": "2020-9",
+      "value": 256391
+    },
+    {
+      "source": "2000-16",
+      "target": "2010-16",
+      "value": 255018
+    },
+    {
+      "source": "2000-17",
+      "target": "2010-17",
+      "value": 237232
+    },
+    {
+      "source": "1980-9",
+      "target": "1990-9",
+      "value": 237068
+    },
+    {
+      "source": "1980-11",
+      "target": "1990-11",
+      "value": 228859
+    },
+    {
+      "source": "2000-12",
+      "target": "2010-12",
+      "value": 227203
+    },
+    {
+      "source": "1990-10",
+      "target": "2000-10",
+      "value": 218395
+    },
+    {
+      "source": "1950-6",
+      "target": "1960-6",
+      "value": 214989
+    },
+    {
+      "source": "1980-0",
+      "target": "1990-0",
+      "value": 212412
+    },
+    {
+      "source": "2010-11",
+      "target": "2020-11",
+      "value": 210394
+    },
+    {
+      "source": "1950-15",
+      "target": "1960-15",
+      "value": 206269
+    },
+    {
+      "source": "1990-2",
+      "target": "2000-2",
+      "value": 203963
+    },
+    {
+      "source": "1980-3",
+      "target": "1990-3",
+      "value": 196706
+    },
+    {
+      "source": "2010-19",
+      "target": "2020-19",
+      "value": 190316
+    },
+    {
+      "source": "1970-1",
+      "target": "1980-1",
+      "value": 184641
+    },
+    {
+      "source": "1970-5",
+      "target": "1980-5",
+      "value": 177928
+    },
+    {
+      "source": "1990-4",
+      "target": "2000-4",
+      "value": 170833
+    },
+    {
+      "source": "1990-13",
+      "target": "2000-13",
+      "value": 162108
+    },
+    {
+      "source": "1970-9",
+      "target": "1980-9",
+      "value": 161961
+    },
+    {
+      "source": "2010-2",
+      "target": "2020-2",
+      "value": 161182
+    },
+    {
+      "source": "1990-7",
+      "target": "2000-7",
+      "value": 159983
+    },
+    {
+      "source": "2010-16",
+      "target": "2020-16",
+      "value": 157199
+    },
+    {
+      "source": "1990-14",
+      "target": "2000-14",
+      "value": 150226
+    },
+    {
+      "source": "1940-6",
+      "target": "1950-6",
+      "value": 148827
+    },
+    {
+      "source": "1990-16",
+      "target": "2000-16",
+      "value": 141229
+    },
+    {
+      "source": "1980-18",
+      "target": "1990-18",
+      "value": 139149
+    },
+    {
+      "source": "1990-12",
+      "target": "2000-12",
+      "value": 137560
+    },
+    {
+      "source": "2010-12",
+      "target": "2020-12",
+      "value": 133805
+    },
+    {
+      "source": "1980-8",
+      "target": "1990-8",
+      "value": 131068
+    },
+    {
+      "source": "1970-3",
+      "target": "1980-3",
+      "value": 127139
+    },
+    {
+      "source": "1980-2",
+      "target": "1990-2",
+      "value": 125972
+    },
+    {
+      "source": "1980-10",
+      "target": "1990-10",
+      "value": 122625
+    },
+    {
+      "source": "1960-5",
+      "target": "1970-5",
+      "value": 122570
+    },
+    {
+      "source": "1970-11",
+      "target": "1980-11",
+      "value": 119588
+    },
+    {
+      "source": "1960-1",
+      "target": "1970-1",
+      "value": 119310
+    },
+    {
+      "source": "1960-9",
+      "target": "1970-9",
+      "value": 118767
+    },
+    {
+      "source": "1920-6",
+      "target": "1930-6",
+      "value": 114807
+    },
+    {
+      "source": "1980-13",
+      "target": "1990-13",
+      "value": 104160
+    },
+    {
+      "source": "1970-2",
+      "target": "1980-2",
+      "value": 101447
+    },
+    {
+      "source": "1990-19",
+      "target": "2000-19",
+      "value": 97100
+    },
+    {
+      "source": "1910-6",
+      "target": "1920-6",
+      "value": 96809
+    },
+    {
+      "source": "1990-17",
+      "target": "2000-17",
+      "value": 96028
+    },
+    {
+      "source": "1970-0",
+      "target": "1980-0",
+      "value": 95399
+    },
+    {
+      "source": "1930-6",
+      "target": "1940-6",
+      "value": 91886
+    },
+    {
+      "source": "1950-9",
+      "target": "1960-9",
+      "value": 84889
+    },
+    {
+      "source": "1960-3",
+      "target": "1970-3",
+      "value": 80444
+    },
+    {
+      "source": "1980-12",
+      "target": "1990-12",
+      "value": 77137
+    },
+    {
+      "source": "1970-13",
+      "target": "1980-13",
+      "value": 76451
+    },
+    {
+      "source": "1900-6",
+      "target": "1910-6",
+      "value": 72192
+    },
+    {
+      "source": "1980-16",
+      "target": "1990-16",
+      "value": 71492
+    },
+    {
+      "source": "1960-2",
+      "target": "1970-2",
+      "value": 70014
+    },
+    {
+      "source": "1980-7",
+      "target": "1990-7",
+      "value": 69753
+    },
+    {
+      "source": "1970-10",
+      "target": "1980-10",
+      "value": 69283
+    },
+    {
+      "source": "1980-4",
+      "target": "1990-4",
+      "value": 68729
+    },
+    {
+      "source": "2010-17",
+      "target": "2020-17",
+      "value": 67659
+    },
+    {
+      "source": "1960-11",
+      "target": "1970-11",
+      "value": 65696
+    },
+    {
+      "source": "1940-15",
+      "target": "1950-15",
+      "value": 64503
+    },
+    {
+      "source": "1980-14",
+      "target": "1990-14",
+      "value": 62382
+    },
+    {
+      "source": "1890-6",
+      "target": "1900-6",
+      "value": 62060
+    },
+    {
+      "source": "1950-5",
+      "target": "1960-5",
+      "value": 55419
+    },
+    {
+      "source": "1970-16",
+      "target": "1980-16",
+      "value": 52925
+    },
+    {
+      "source": "1940-9",
+      "target": "1950-9",
+      "value": 52611
+    },
+    {
+      "source": "1880-6",
+      "target": "1890-6",
+      "value": 50024
+    },
+    {
+      "source": "1970-12",
+      "target": "1980-12",
+      "value": 49853
+    },
+    {
+      "source": "1970-8",
+      "target": "1980-8",
+      "value": 49565
+    },
+    {
+      "source": "1960-13",
+      "target": "1970-13",
+      "value": 48890
+    },
+    {
+      "source": "1950-1",
+      "target": "1960-1",
+      "value": 48815
+    },
+    {
+      "source": "1970-18",
+      "target": "1980-18",
+      "value": 42513
+    },
+    {
+      "source": "1960-0",
+      "target": "1970-0",
+      "value": 41337
+    },
+    {
+      "source": "1950-3",
+      "target": "1960-3",
+      "value": 40832
+    },
+    {
+      "source": "1870-6",
+      "target": "1880-6",
+      "value": 40695
+    },
+    {
+      "source": "1980-17",
+      "target": "1990-17",
+      "value": 39492
+    },
+    {
+      "source": "1980-19",
+      "target": "1990-19",
+      "value": 38939
+    },
+    {
+      "source": "1970-14",
+      "target": "1980-14",
+      "value": 36419
+    },
+    {
+      "source": "1950-2",
+      "target": "1960-2",
+      "value": 36348
+    },
+    {
+      "source": "1960-16",
+      "target": "1970-16",
+      "value": 34589
+    },
+    {
+      "source": "1960-10",
+      "target": "1970-10",
+      "value": 33746
+    },
+    {
+      "source": "1970-4",
+      "target": "1980-4",
+      "value": 32097
+    },
+    {
+      "source": "1970-7",
+      "target": "1980-7",
+      "value": 31460
+    },
+    {
+      "source": "1970-19",
+      "target": "1980-19",
+      "value": 28186
+    },
+    {
+      "source": "1960-12",
+      "target": "1970-12",
+      "value": 26729
+    },
+    {
+      "source": "1860-6",
+      "target": "1870-6",
+      "value": 26656
+    },
+    {
+      "source": "1960-8",
+      "target": "1970-8",
+      "value": 26574
+    },
+    {
+      "source": "1950-11",
+      "target": "1960-11",
+      "value": 25366
+    },
+    {
+      "source": "1950-13",
+      "target": "1960-13",
+      "value": 24448
+    },
+    {
+      "source": "1960-14",
+      "target": "1970-14",
+      "value": 21665
+    },
+    {
+      "source": "1920-9",
+      "target": "1930-9",
+      "value": 20917
+    },
+    {
+      "source": "1920-15",
+      "target": "1930-15",
+      "value": 20894
+    },
+    {
+      "source": "1960-19",
+      "target": "1970-19",
+      "value": 20793
+    },
+    {
+      "source": "1930-9",
+      "target": "1940-9",
+      "value": 20719
+    },
+    {
+      "source": "1940-2",
+      "target": "1950-2",
+      "value": 18569
+    },
+    {
+      "source": "1960-18",
+      "target": "1970-18",
+      "value": 17680
+    },
+    {
+      "source": "1930-15",
+      "target": "1940-15",
+      "value": 17564
+    },
+    {
+      "source": "1970-17",
+      "target": "1980-17",
+      "value": 16470
+    },
+    {
+      "source": "1960-7",
+      "target": "1970-7",
+      "value": 16296
+    },
+    {
+      "source": "1950-0",
+      "target": "1960-0",
+      "value": 15962
+    },
+    {
+      "source": "1940-1",
+      "target": "1950-1",
+      "value": 15499
+    },
+    {
+      "source": "1940-5",
+      "target": "1950-5",
+      "value": 15002
+    },
+    {
+      "source": "1960-4",
+      "target": "1970-4",
+      "value": 14453
+    },
+    {
+      "source": "1950-16",
+      "target": "1960-16",
+      "value": 14386
+    },
+    {
+      "source": "1950-10",
+      "target": "1960-10",
+      "value": 14352
+    },
+    {
+      "source": "1850-6",
+      "target": "1860-6",
+      "value": 14180
+    },
+    {
+      "source": "1940-3",
+      "target": "1950-3",
+      "value": 13481
+    },
+    {
+      "source": "1910-9",
+      "target": "1920-9",
+      "value": 12328
+    },
+    {
+      "source": "1840-6",
+      "target": "1850-6",
+      "value": 12302
+    },
+    {
+      "source": "1920-2",
+      "target": "1930-2",
+      "value": 12290
+    },
+    {
+      "source": "1940-13",
+      "target": "1950-13",
+      "value": 12258
+    },
+    {
+      "source": "1910-15",
+      "target": "1920-15",
+      "value": 11406
+    },
+    {
+      "source": "1950-8",
+      "target": "1960-8",
+      "value": 10845
+    },
+    {
+      "source": "1910-2",
+      "target": "1920-2",
+      "value": 9926
+    },
+    {
+      "source": "1930-2",
+      "target": "1940-2",
+      "value": 9371
+    },
+    {
+      "source": "1960-17",
+      "target": "1970-17",
+      "value": 8964
+    },
+    {
+      "source": "1950-12",
+      "target": "1960-12",
+      "value": 8838
+    },
+    {
+      "source": "1900-2",
+      "target": "1910-2",
+      "value": 8678
+    },
+    {
+      "source": "1940-11",
+      "target": "1950-11",
+      "value": 7836
+    },
+    {
+      "source": "1890-2",
+      "target": "1900-2",
+      "value": 7452
+    },
+    {
+      "source": "1950-14",
+      "target": "1960-14",
+      "value": 7233
+    },
+    {
+      "source": "1950-18",
+      "target": "1960-18",
+      "value": 6780
+    },
+    {
+      "source": "1920-1",
+      "target": "1930-1",
+      "value": 6334
+    },
+    {
+      "source": "1880-2",
+      "target": "1890-2",
+      "value": 6092
+    },
+    {
+      "source": "1950-7",
+      "target": "1960-7",
+      "value": 5971
+    },
+    {
+      "source": "1930-1",
+      "target": "1940-1",
+      "value": 5878
+    },
+    {
+      "source": "1830-6",
+      "target": "1840-6",
+      "value": 5613
+    },
+    {
+      "source": "1940-10",
+      "target": "1950-10",
+      "value": 5413
+    },
+    {
+      "source": "1870-2",
+      "target": "1880-2",
+      "value": 5343
+    },
+    {
+      "source": "1930-3",
+      "target": "1940-3",
+      "value": 5308
+    },
+    {
+      "source": "1910-1",
+      "target": "1920-1",
+      "value": 5135
+    },
+    {
+      "source": "1930-5",
+      "target": "1940-5",
+      "value": 5031
+    },
+    {
+      "source": "1930-13",
+      "target": "1940-13",
+      "value": 5029
+    },
+    {
+      "source": "1940-0",
+      "target": "1950-0",
+      "value": 4976
+    },
+    {
+      "source": "1900-15",
+      "target": "1910-15",
+      "value": 4943
+    },
+    {
+      "source": "1920-13",
+      "target": "1930-13",
+      "value": 4916
+    },
+    {
+      "source": "1900-9",
+      "target": "1910-9",
+      "value": 4823
+    },
+    {
+      "source": "1920-5",
+      "target": "1930-5",
+      "value": 4731
+    },
+    {
+      "source": "1920-3",
+      "target": "1930-3",
+      "value": 4725
+    },
+    {
+      "source": "1940-16",
+      "target": "1950-16",
+      "value": 4519
+    },
+    {
+      "source": "1950-4",
+      "target": "1960-4",
+      "value": 4330
+    },
+    {
+      "source": "1820-6",
+      "target": "1830-6",
+      "value": 4270
+    },
+    {
+      "source": "1860-2",
+      "target": "1870-2",
+      "value": 4254
+    },
+    {
+      "source": "1880-4",
+      "target": "1890-4",
+      "value": 4082
+    },
+    {
+      "source": "1950-17",
+      "target": "1960-17",
+      "value": 4070
+    },
+    {
+      "source": "1950-19",
+      "target": "1960-19",
+      "value": 3979
+    },
+    {
+      "source": "1890-1",
+      "target": "1900-1",
+      "value": 3963
+    },
+    {
+      "source": "1890-15",
+      "target": "1900-15",
+      "value": 3907
+    },
+    {
+      "source": "1900-1",
+      "target": "1910-1",
+      "value": 3907
+    },
+    {
+      "source": "1940-12",
+      "target": "1950-12",
+      "value": 3814
+    },
+    {
+      "source": "1890-9",
+      "target": "1900-9",
+      "value": 3689
+    },
+    {
+      "source": "1890-4",
+      "target": "1900-4",
+      "value": 3629
+    },
+    {
+      "source": "1880-1",
+      "target": "1890-1",
+      "value": 3493
+    },
+    {
+      "source": "1900-4",
+      "target": "1910-4",
+      "value": 3353
+    },
+    {
+      "source": "1940-14",
+      "target": "1950-14",
+      "value": 3168
+    },
+    {
+      "source": "1810-6",
+      "target": "1820-6",
+      "value": 3157
+    }
+  ]
+}

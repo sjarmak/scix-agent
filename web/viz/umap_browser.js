@@ -53,6 +53,34 @@
     return PALETTE[idx]
   }
 
+  // Community-label cache — filled by _loadCommunityLabels() before first
+  // render; maps community_id (number) -> {terms: [...], n_sampled: N}.
+  let _communityLabels = {}
+
+  function _labelForCommunity(cid) {
+    if (cid == null) return 'community —'
+    const entry = _communityLabels[cid]
+    if (entry && entry.terms && entry.terms.length) {
+      return entry.terms.slice(0, 3).join(' / ')
+    }
+    return 'community ' + cid
+  }
+
+  function _loadCommunityLabels() {
+    return fetch('/viz/community_labels.json', { cache: 'no-store' })
+      .then(function (resp) {
+        return resp.ok ? resp.json() : null
+      })
+      .then(function (payload) {
+        if (!payload || !Array.isArray(payload.communities)) return
+        _communityLabels = {}
+        payload.communities.forEach(function (c) {
+          if (c && c.community_id != null) _communityLabels[c.community_id] = c
+        })
+      })
+      .catch(function () {})
+  }
+
   function _resolveContainer(container) {
     if (typeof container === 'string') {
       return document.querySelector(container)
@@ -165,7 +193,8 @@
     if (!grid) return
     grid.innerHTML = ''
     const ids = Array.from(communityCounts.keys()).sort(function (a, b) {
-      return Number(a) - Number(b)
+      // Order by paper count desc so biggest communities come first.
+      return communityCounts.get(b) - communityCounts.get(a)
     })
     ids.forEach(function (cid) {
       const rgb = _colorForCommunity(cid)
@@ -178,16 +207,18 @@
         rgb[2] +
         ')"></span>'
       const count = communityCounts.get(cid)
+      const name = _labelForCommunity(cid)
       const label =
-        'c' +
-        cid +
-        ' <span style="color:#888">(' +
+        '<span class="legend-name">' +
+        name.replace(/[<>]/g, '') +
+        '</span> <span style="color:#888">(' +
         count.toLocaleString() +
         ')</span>'
       const el = document.createElement('div')
       el.className = 'legend-swatch'
       el.dataset.cid = String(cid)
       el.innerHTML = chip + '<span>' + label + '</span>'
+      el.title = 'c' + cid + ' · ' + count.toLocaleString() + ' papers in sample'
       el.addEventListener('click', function () {
         const newPick = activeCommunityRef.value === cid ? null : cid
         activeCommunityRef.value = newPick
@@ -214,6 +245,33 @@
         ' papers · community ' +
         activeCid
     }
+  }
+
+  function _communityCentroids(points) {
+    const acc = new Map()
+    for (let i = 0; i < points.length; i += 1) {
+      const p = points[i]
+      const cid = p.community_id
+      if (cid == null) continue
+      const e = acc.get(cid) || { sx: 0, sy: 0, n: 0 }
+      e.sx += Number(p.x) || 0
+      e.sy += Number(p.y) || 0
+      e.n += 1
+      acc.set(cid, e)
+    }
+    const out = []
+    acc.forEach(function (e, cid) {
+      if (e.n > 0) {
+        out.push({
+          community_id: cid,
+          x: e.sx / e.n,
+          y: e.sy / e.n,
+          n: e.n,
+          label: _labelForCommunity(cid),
+        })
+      }
+    })
+    return out
   }
 
   function renderUMAP(points, container) {
@@ -259,7 +317,7 @@
       getPosition: function (d) {
         return [Number(d.x) || 0, Number(d.y) || 0]
       },
-      getRadius: 2.5,
+      getRadius: 2,
       getFillColor: function (d) {
         const base = _colorForCommunity(d.community_id)
         if (activeCommunity.value == null) return base
@@ -269,8 +327,45 @@
       updateTriggers: {
         getFillColor: [activeCommunity],
       },
-      opacity: 0.75,
+      opacity: 0.7,
     })
+
+    // Compute centroids for label overlay. Top-N (by paper count) are
+    // rendered as halo labels directly on the canvas so the clusters are
+    // legible without hovering.
+    const centroids = _communityCentroids(points)
+    centroids.sort(function (a, b) {
+      return b.n - a.n
+    })
+    const topCentroids = centroids.slice(0, Math.min(12, centroids.length))
+
+    let labelLayer = null
+    function _makeLabelLayer() {
+      if (!deck.TextLayer) return null
+      return new deck.TextLayer({
+        id: 'umap-labels',
+        data: topCentroids,
+        pickable: false,
+        getPosition: function (d) {
+          return [d.x, d.y]
+        },
+        getText: function (d) {
+          return d.label
+        },
+        getColor: [30, 30, 30, 230],
+        getSize: 14,
+        sizeUnits: 'pixels',
+        fontWeight: 700,
+        background: true,
+        getBackgroundColor: [255, 255, 255, 210],
+        backgroundPadding: [4, 2],
+        outlineColor: [255, 255, 255],
+        outlineWidth: 2,
+        getTextAnchor: 'middle',
+        getAlignmentBaseline: 'center',
+      })
+    }
+    labelLayer = _makeLabelLayer()
 
     const instance = new deck.Deck({
       parent: node,
@@ -279,7 +374,7 @@
       views: new deck.OrthographicView({ id: 'ortho' }),
       controller: true,
       initialViewState: initialViewState,
-      layers: [scatter],
+      layers: labelLayer ? [scatter, labelLayer] : [scatter],
       onHover: function (info) {
         if (!info || !info.object) {
           _hideTooltip(tooltipEl)
@@ -317,25 +412,67 @@
     })
 
     _populateLegend(communityCounts, activeCommunity, function (newPick) {
-      // Force deck.gl to re-evaluate getFillColor by swapping the layer.
-      instance.setProps({
-        layers: [
-          scatter.clone({
-            updateTriggers: {
-              getFillColor: [{ value: newPick }],
-            },
-            getFillColor: function (d) {
-              const base = _colorForCommunity(d.community_id)
-              if (newPick == null) return base
-              if (Number(d.community_id) === Number(newPick)) return base
-              return [215, 215, 215]
-            },
-          }),
-        ],
+      const nextScatter = scatter.clone({
+        updateTriggers: {
+          getFillColor: [{ value: newPick }],
+        },
+        getFillColor: function (d) {
+          const base = _colorForCommunity(d.community_id)
+          if (newPick == null) return base
+          if (Number(d.community_id) === Number(newPick)) return base
+          return [215, 215, 215]
+        },
       })
+      // When isolating one community, show only its label.
+      const nextLabels = labelLayer
+        ? labelLayer.clone({
+            data:
+              newPick == null
+                ? topCentroids
+                : topCentroids.filter(function (c) {
+                    return Number(c.community_id) === Number(newPick)
+                  }),
+          })
+        : null
+      instance.setProps({ layers: nextLabels ? [nextScatter, nextLabels] : [nextScatter] })
       _updateStats(points.length, newPick, communityCounts)
     })
     _updateStats(points.length, null, communityCounts)
+
+    // Labels load asynchronously; re-render legend + centroid labels once
+    // the JSON arrives so they aren't stuck on generic "c5" forever.
+    _loadCommunityLabels().then(function () {
+      const refreshedCentroids = _communityCentroids(points).sort(function (a, b) {
+        return b.n - a.n
+      })
+      const top = refreshedCentroids.slice(0, Math.min(12, refreshedCentroids.length))
+      _populateLegend(communityCounts, activeCommunity, function (newPick) {
+        const nextScatter = scatter.clone({
+          updateTriggers: { getFillColor: [{ value: newPick }] },
+          getFillColor: function (d) {
+            const base = _colorForCommunity(d.community_id)
+            if (newPick == null) return base
+            if (Number(d.community_id) === Number(newPick)) return base
+            return [215, 215, 215]
+          },
+        })
+        const nextLabels = labelLayer
+          ? labelLayer.clone({
+              data:
+                newPick == null
+                  ? top
+                  : top.filter(function (c) {
+                      return Number(c.community_id) === Number(newPick)
+                    }),
+            })
+          : null
+        instance.setProps({ layers: nextLabels ? [nextScatter, nextLabels] : [nextScatter] })
+        _updateStats(points.length, newPick, communityCounts)
+      })
+      if (labelLayer) {
+        instance.setProps({ layers: [scatter, labelLayer.clone({ data: top })] })
+      }
+    })
 
     return instance
   }

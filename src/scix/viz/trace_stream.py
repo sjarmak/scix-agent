@@ -164,3 +164,35 @@ async def stream_events() -> StreamingResponse:
             yield f"data: {payload}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@router.post("/publish")
+async def publish_event(payload: dict) -> dict:
+    """Demo-only HTTP hook so external processes can inject trace events
+    into this uvicorn worker's subscriber list.
+
+    Accepts a JSON body shaped like ``TraceEvent`` fields. Missing fields
+    fall back to the dataclass defaults. Returns ``{"published": true,
+    "event_id": ...}`` on success.
+
+    Not authenticated — intended strictly for local demo driving over
+    localhost. Do not expose this endpoint on a public network.
+    """
+    tool_name = str(payload.get("tool_name") or "unknown")
+    latency_ms = float(payload.get("latency_ms") or 0.0)
+    bibcodes = payload.get("bibcodes") or []
+    if not isinstance(bibcodes, (list, tuple)):
+        bibcodes = []
+    params = payload.get("params") or {}
+    if not isinstance(params, dict):
+        params = {}
+    result_summary = payload.get("result_summary")
+    event = TraceEvent(
+        tool_name=tool_name,
+        latency_ms=latency_ms,
+        params=params,
+        result_summary=result_summary if isinstance(result_summary, str) else None,
+        bibcodes=tuple(str(b) for b in bibcodes),
+    )
+    publish(event)
+    return {"published": True, "event_id": event.event_id}

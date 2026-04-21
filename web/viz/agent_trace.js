@@ -49,40 +49,67 @@
 
   function flashTraceSegments(deckInstance, bibcodes, positions) {
     if (!deckInstance || typeof deckInstance.setProps !== 'function') return
-    if (!Array.isArray(bibcodes) || bibcodes.length < 2) return
-    if (!positions || typeof deck === 'undefined') return
+    if (!Array.isArray(bibcodes) || !positions || typeof deck === 'undefined') return
 
-    var segs = []
-    for (var i = 0; i < bibcodes.length - 1; i += 1) {
-      var a = positions[bibcodes[i]]
-      var b = positions[bibcodes[i + 1]]
-      if (!a || !b) continue
-      segs.push({ from: a, to: b })
+    var hits = []
+    for (var i = 0; i < bibcodes.length; i += 1) {
+      var pos = positions[bibcodes[i]]
+      if (pos) hits.push({ bibcode: bibcodes[i], pos: pos })
     }
-    if (!segs.length) return
+    if (!hits.length) return
 
-    var layerId = 'trace-flash-' + Date.now() + '-' + Math.floor(Math.random() * 1e6)
-    var line = new deck.LineLayer({
-      id: layerId,
-      data: segs,
-      getSourcePosition: function (d) {
-        return [Number(d.from[0]) || 0, Number(d.from[1]) || 0]
-      },
-      getTargetPosition: function (d) {
-        return [Number(d.to[0]) || 0, Number(d.to[1]) || 0]
-      },
-      getColor: [255, 64, 64, 200],
-      getWidth: 2,
-      widthUnits: 'pixels',
-    })
+    var stamp = Date.now() + '-' + Math.floor(Math.random() * 1e6)
+    var newLayers = []
 
-    // Merge into existing layers and schedule removal after the fade window.
+    // Highlight every touched point, even for single-bibcode events.
+    newLayers.push(
+      new deck.ScatterplotLayer({
+        id: 'trace-hit-' + stamp,
+        data: hits,
+        getPosition: function (d) {
+          return [Number(d.pos[0]) || 0, Number(d.pos[1]) || 0]
+        },
+        getRadius: 7,
+        radiusUnits: 'pixels',
+        getFillColor: [255, 64, 64, 230],
+        stroked: true,
+        getLineColor: [255, 255, 255, 255],
+        lineWidthMinPixels: 1,
+      }),
+    )
+
+    // Connect consecutive hits when there are >= 2.
+    if (hits.length >= 2) {
+      var segs = []
+      for (var j = 0; j < hits.length - 1; j += 1) {
+        segs.push({ from: hits[j].pos, to: hits[j + 1].pos })
+      }
+      newLayers.push(
+        new deck.LineLayer({
+          id: 'trace-link-' + stamp,
+          data: segs,
+          getSourcePosition: function (d) {
+            return [Number(d.from[0]) || 0, Number(d.from[1]) || 0]
+          },
+          getTargetPosition: function (d) {
+            return [Number(d.to[0]) || 0, Number(d.to[1]) || 0]
+          },
+          getColor: [255, 64, 64, 200],
+          getWidth: 2,
+          widthUnits: 'pixels',
+        }),
+      )
+    }
+
     var current = (deckInstance.props && deckInstance.props.layers) || []
-    deckInstance.setProps({ layers: current.concat([line]) })
+    deckInstance.setProps({ layers: current.concat(newLayers) })
+    var addedIds = newLayers.map(function (l) {
+      return l.id
+    })
     setTimeout(function () {
       var remaining = ((deckInstance.props && deckInstance.props.layers) || []).filter(
         function (layer) {
-          return layer && layer.id !== layerId
+          return layer && addedIds.indexOf(layer.id) === -1
         },
       )
       deckInstance.setProps({ layers: remaining })

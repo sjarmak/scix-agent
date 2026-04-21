@@ -47,39 +47,89 @@
         display: none;
         z-index: 10;
       }
-      #trace-panel {
+      #trace-wrap {
         background: #fff;
         border: 1px solid #e4e4e4;
         border-radius: 6px;
-        padding: 12px 14px;
+        padding: 10px 12px;
         height: 70vh;
         min-height: 480px;
+        display: flex;
+        flex-direction: column;
+      }
+      #trace-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid #f0f0f0;
+      }
+      #trace-head h2 {
+        font-size: 14px;
+        margin: 0;
+      }
+      #trace-head .trace-count {
+        color: #555;
+        font-size: 12px;
+      }
+      #trace-head button {
+        border: 1px solid #ddd;
+        background: #fafafa;
+        color: #333;
+        border-radius: 4px;
+        padding: 3px 8px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      #trace-head button:hover {
+        background: #eaeaea;
+      }
+      #trace-panel {
+        flex: 1;
         overflow-y: auto;
         font-size: 12px;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
-      #trace-panel h2 {
-        font-size: 14px;
-        margin: 0 0 8px;
-        font-family: system-ui, -apple-system, sans-serif;
-      }
       #trace-panel .empty {
         color: #888;
       }
-      #trace-panel .trace-line {
-        border-bottom: 1px solid #f0f0f0;
-        padding: 4px 0;
+      .trace-line {
+        border-bottom: 1px solid #f4f4f4;
+        padding: 4px 2px;
         line-height: 1.4;
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        flex-wrap: wrap;
       }
-      #trace-panel .trace-line .tool {
-        color: #0b60b0;
-        font-weight: 600;
+      .trace-line.flash {
+        animation: traceFlash 700ms ease-out;
       }
-      #trace-panel .trace-line .ts {
+      @keyframes traceFlash {
+        from { background: rgba(255, 230, 140, 0.65); }
+        to { background: transparent; }
+      }
+      .trace-line .ts {
         color: #888;
+        font-size: 11px;
       }
-      #trace-panel .trace-line .bibs {
-        color: #444;
+      .trace-line .tool-chip {
+        color: #fff;
+        background: #0b60b0;
+        padding: 1px 6px;
+        border-radius: 3px;
+        font-weight: 600;
+        font-size: 11px;
+        text-transform: lowercase;
+      }
+      .trace-line .bibs {
+        color: #555;
+        font-size: 11px;
+      }
+      .trace-line .latency {
+        color: #888;
+        font-size: 11px;
       }
       #trace-status {
         margin-top: 8px;
@@ -102,13 +152,20 @@
         <div id="umap-root" aria-label="UMAP scatter plot">
           <div id="umap-tooltip" role="tooltip"></div>
         </div>
-        <aside id="trace-panel" aria-live="polite" aria-label="Agent trace log">
-          <h2>Agent trace</h2>
-          <div class="empty">Waiting for events…</div>
+        <aside id="trace-wrap" aria-label="Agent trace log">
+          <div id="trace-head">
+            <h2>Agent trace</h2>
+            <span class="trace-count" id="trace-count">0 events</span>
+            <button type="button" id="trace-clear" title="Clear the trace log">clear</button>
+          </div>
+          <div id="trace-panel" aria-live="polite">
+            <div class="empty">Waiting for events…</div>
+          </div>
         </aside>
       </div>
       <div id="trace-status" role="status" aria-live="polite"></div>
     </main>
+    <script src="./shared.js"></script>
     <script src="./umap_browser.js"></script>
     <script src="./agent_trace.js"></script>
     <script>
@@ -119,32 +176,66 @@
         const panel = document.getElementById('trace-panel')
         const status = document.getElementById('trace-status')
 
-        // Clear the "Waiting for events…" placeholder the first time we
-        // append a real line.
+        // Per-tool color palette for chip backgrounds.
+        const TOOL_COLORS = {
+          search: '#0b60b0',
+          get_paper: '#188f42',
+          read_paper: '#188f42',
+          citation_chain: '#a0522d',
+          citation_graph: '#a0522d',
+          citation_similarity: '#a0522d',
+          concept_search: '#7b3fa0',
+          temporal_evolution: '#c77a00',
+          entity: '#0a8f8f',
+          entity_context: '#0a8f8f',
+          graph_context: '#a0522d',
+          find_gaps: '#b0245a',
+        }
+        let eventCount = 0
+        const countEl = document.getElementById('trace-count')
+        const clearBtn = document.getElementById('trace-clear')
+        if (clearBtn) {
+          clearBtn.addEventListener('click', function () {
+            panel.innerHTML = '<div class="empty">Cleared — waiting for events…</div>'
+            eventCount = 0
+            if (countEl) countEl.textContent = '0 events'
+          })
+        }
         function appendTraceLine(event) {
           const empty = panel.querySelector('.empty')
           if (empty) empty.remove()
           const line = document.createElement('div')
-          line.className = 'trace-line'
-          const tool = (event && event.tool_name) || '(unknown tool)'
+          line.className = 'trace-line flash'
+          const tool = (event && event.tool_name) || '(unknown)'
           const ts = event && event.ts ? Number(event.ts) : Date.now() / 1000
           const iso = new Date(ts * 1000).toISOString().slice(11, 19)
           const bibcount =
             event && Array.isArray(event.bibcodes) ? event.bibcodes.length : 0
+          const latency = event && event.latency_ms != null ? Number(event.latency_ms) : null
+          const color = TOOL_COLORS[tool] || '#555'
           line.innerHTML =
             '<span class="ts">' +
             iso +
-            '</span> ' +
-            '<span class="tool">' +
+            '</span>' +
+            '<span class="tool-chip" style="background:' +
+            color +
+            '">' +
             String(tool).replace(/[<>&]/g, '') +
-            '</span> ' +
-            '<span class="bibs">(' +
+            '</span>' +
+            '<span class="bibs">' +
             bibcount +
             ' bibcode' +
             (bibcount === 1 ? '' : 's') +
-            ')</span>'
+            '</span>' +
+            (latency != null
+              ? '<span class="latency">' + latency.toFixed(1) + ' ms</span>'
+              : '')
           panel.appendChild(line)
+          // Cap the panel so very chatty sessions don't blow memory.
+          while (panel.children.length > 400) panel.removeChild(panel.firstChild)
           panel.scrollTop = panel.scrollHeight
+          eventCount += 1
+          if (countEl) countEl.textContent = eventCount + ' events'
         }
 
         // Build a {bibcode: [x, y]} lookup so flashTraceSegments can find
@@ -199,7 +290,7 @@
             umapInstance &&
             event &&
             Array.isArray(event.bibcodes) &&
-            event.bibcodes.length >= 2 &&
+            event.bibcodes.length >= 1 &&
             typeof window.flashTraceSegments === 'function'
           ) {
             window.flashTraceSegments(umapInstance, event.bibcodes, positions)

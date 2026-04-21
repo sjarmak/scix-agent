@@ -194,7 +194,7 @@
           return
         }
         try {
-          window.renderUMAP(data, root)
+          window.umapInstance = window.renderUMAP(data, root)
         } catch (err) {
           status.textContent = 'Render failed: ' + (err.message || String(err))
         }

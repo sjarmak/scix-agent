@@ -242,20 +242,129 @@ The driver is idempotent per `(bibcode, parser_version)`:
 
 When a parser is **upgraded** (a new `parser_version` pin ships in the code),
 `papers_fulltext` rows written under the older pin are still present and will
-still be skipped by the `NOT EXISTS` filter. Backfilling under the new pin is
-an explicit operation: truncate / delete the affected rows by `parser_version`,
-then re-run the driver.
-
-```bash
-# Example: re-parse every Tier 1 row written under an older ADS parser pin.
-psql 'dbname=scix' -c "
-  DELETE FROM papers_fulltext WHERE parser_version = 'ads_body@v0';
-"
-scix-batch --mem-high 10G --mem-max 15G \
-  python scripts/populate_papers_fulltext.py \
-    --dsn 'dbname=scix' --allow-prod
-```
+still be skipped by the `NOT EXISTS` filter. The supported path for backfilling
+under the new pin is the `--reparse-from-version` flag documented in the next
+section — no manual `DELETE` required.
 
 Routine operational re-runs (cron, post-reboot, resume-after-crash) need no
 cleanup — just relaunch the driver and let the idempotency filters do their
 work.
+
+---
+
+## Re-parse (parser_version bump)
+
+Use this mode when the ADS body parser pin is bumped and existing
+`papers_fulltext` rows written under the older pin need to be refreshed
+in-place. The **current instance** of this workflow is the
+`ads_body_regex@v1` → `ads_body_inline_v2` bump that ships with the
+inline-keyword-anchor parser rewrite (see
+`docs/prd/prd_ads_body_parser_rewrite.md`). Every future parser bump follows
+the same pattern — only the `OLD_VERSION` string changes.
+
+### When to use
+
+Run `--reparse-from-version OLD_VERSION` when **all** of the following are
+true:
+
+- The `PARSER_VERSION` constant in `src/scix/sources/ads_body_parser.py` (or
+  another tier parser) has been bumped in a merged commit.
+- You want to replace the `papers_fulltext.sections` / `inline_cites` /
+  `parser_version` fields of already-written rows with fresh output from
+  the new parser, rather than only picking up papers that had no row at all.
+- You accept that the write path switches from bulk `COPY` to
+  `INSERT ... ON CONFLICT (bibcode) DO UPDATE`, with the associated
+  throughput cost described below.
+
+Do **not** use this flag for routine resume-after-crash or post-reboot
+relaunches — the default new-row mode already handles those via the
+`NOT EXISTS` filter (see [Idempotency](#idempotency)).
+
+### Command
+
+Production reparse for the current parser bump. `scix-batch` is required
+(the driver's production guard requires a systemd scope, and `scix-batch`
+wraps the process in `systemd-run --scope` with `MemoryMax` / oomd
+preference — see `CLAUDE.md` §"Memory isolation"):
+
+```bash
+SCIX_DSN="dbname=scix" scix-batch --mem-high 10G --mem-max 15G \
+  python scripts/populate_papers_fulltext.py \
+    --dsn 'dbname=scix' \
+    --reparse-from-version 'ads_body_regex@v1' \
+    --allow-prod
+```
+
+Dev / scratch reparse against `scix_test` (no systemd scope, no
+`scix-batch`, no `--allow-prod`):
+
+```bash
+python scripts/populate_papers_fulltext.py \
+  --dsn 'dbname=scix_test' \
+  --reparse-from-version 'ads_body_regex@v1' \
+  --limit 1000
+```
+
+In reparse mode the candidate iterator is driven by a SQL predicate that
+selects rows from `papers_fulltext` where
+`parser_version = OLD_VERSION AND source = 'ads_body'`. Rows whose
+`parser_version` is already the new pin are not revisited — so once a
+bibcode has been upgraded, it drops out of the candidate set automatically.
+
+### Throughput and wall-clock budget
+
+The write path difference costs real time:
+
+| Mode              | Write statement                         | Budget       |
+| ----------------- | --------------------------------------- | ------------ |
+| Default (new row) | `COPY papers_fulltext FROM STDIN`       | ~2000 rps    |
+| `--reparse-from-version` | `INSERT ... ON CONFLICT DO UPDATE` | ~500–1000 rps |
+
+The PRD acceptance target is **≤ 4 h hard cap** of wall-clock time for a
+full-corpus reparse at the current ~15M-row `papers_fulltext` size. If the
+job has not finished after 4 hours, investigate (lock contention,
+autovacuum backlog, pathological parser input) rather than letting it run.
+
+### Resume semantics
+
+Reparse mode is fully resumable, in two independent ways:
+
+1. **Automatic resume across runs.** The candidate iterator's SQL
+   predicate filters on the current `parser_version` column in
+   `papers_fulltext`. Every bibcode that the driver commits is updated
+   to the new pin, so a second run with the same
+   `--reparse-from-version OLD_VERSION` transparently skips every already-
+   upgraded bibcode and picks up only the remaining old-version rows.
+   Relaunching after a systemd-oomd kill or a planned stop needs no
+   manual bookkeeping — just re-run the same command.
+
+2. **`--resume-from BIBCODE` lower bound.** As in the default mode,
+   `--resume-from` adds a `p.bibcode > %s` clause on top of the
+   `parser_version` filter. Use it when you know the last successfully-
+   committed bibcode and want to skip the iterator's startup scan through
+   already-upgraded rows. `--resume-from` composes cleanly with
+   `--reparse-from-version`; both filters apply.
+
+Typical recovery after a mid-run crash:
+
+```bash
+# Find the last bibcode updated to the new pin:
+psql 'dbname=scix' -c "
+  SELECT max(bibcode) FROM papers_fulltext WHERE parser_version = 'ads_body_inline_v2';
+"
+
+# Relaunch — redundant with the parser_version filter but skips the head
+# of the candidate scan:
+SCIX_DSN="dbname=scix" scix-batch --mem-high 10G --mem-max 15G \
+  python scripts/populate_papers_fulltext.py \
+    --dsn 'dbname=scix' \
+    --reparse-from-version 'ads_body_regex@v1' \
+    --resume-from '2024ApJ...900A...1X' \
+    --allow-prod
+```
+
+`--reparse-from-version` **cannot** be combined with the default new-row
+mode in a single invocation — the iterator picks a different candidate
+set in each mode. If you need to both upgrade old rows and cover
+never-parsed bibcodes, run the reparse pass first and then a plain
+follow-up pass without the flag.

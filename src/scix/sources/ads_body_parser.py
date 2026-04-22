@@ -1,37 +1,38 @@
-"""Tier 1 ADS body section splitter (regex-based).
+"""Tier 1 ADS body section splitter (inline-keyword-anchor).
 
 Splits the ``body`` text of a paper (as stored in ADS JSONL / ``papers.body``)
-into structured sections by matching family-specific heading patterns. This
-is the cheap, deterministic first tier of the body-parsing ladder — higher
-tiers (LLM classification, GROBID, etc.) are reserved for bodies that this
-parser flags as low confidence.
+into structured sections by scanning for a small, canonical vocabulary of
+section markers (INTRODUCTION, METHODS, RESULTS, REFERENCES, …) with
+word-boundary anchors. Built for flat, single-line bodies produced by
+PDF text extraction, where line-anchored regexes (``^heading$``) fail
+because headings are embedded mid-line in the extracted stream.
 
 The parser is:
 
 * **Pure**: no IO, no DB, no subprocess.
-* **Family-aware**: the ``bibstem`` argument selects a regex family
-  (``mnras``, ``apj``, ``physrev``) with a ``fallback`` that tries a bank
-  of bare-heading shapes. Unknown / missing bibstems route to the fallback.
-* **Versioned**: ``PARSER_VERSION`` is bumped any time the regex bank or
-  semantics change. Downstream consumers persist this string with every
-  parse so we can re-parse stale rows after a bump.
+* **Bibstem-agnostic**: the ``bibstem`` argument is accepted for backward
+  compatibility but does not affect behaviour. One compiled vocabulary
+  regex runs against every body regardless of journal.
+* **Versioned**: ``PARSER_VERSION`` is bumped any time the vocabulary or
+  matching semantics change. Downstream consumers persist this string
+  with every parse so we can re-parse stale rows after a bump.
 
 Returned metadata fields are fixed by the public contract:
 
 ``n_sections``
     Number of ``Section`` records parsed.
 ``coverage_frac``
-    Fraction of the input body that is attributed to a section body
+    Fraction of the input body attributed to a section body
     (sum of ``len(section.text)`` / ``len(body)``), clamped to ``[0, 1]``.
 ``first_heading_offset``
-    Character offset of the first detected heading, or ``-1`` when no
+    Character offset of the first detected heading (including any numeric
+    prefix that was stripped from the heading string), or ``-1`` when no
     heading matched.
 ``bibstem_family``
-    Which regex family was selected (one of ``mnras``, ``apj``, ``physrev``,
-    ``fallback``).
+    Retained for backward compatibility. Always ``"inline_v2"`` — the
+    bibstem is no longer dispatched to a family.
 ``patterns_tried``
-    Number of patterns actually evaluated. ``1`` for a named family,
-    ``len(fallback bank)`` for the fallback family.
+    Number of compiled patterns evaluated per call. Always ``1``.
 
 ``compute_confidence`` returns a scalar in ``[0, 1]`` that downstream
 routing uses to decide whether to accept the Tier 1 parse or escalate.
@@ -46,87 +47,76 @@ from scix.sources.ar5iv import Section
 
 logger = logging.getLogger(__name__)
 
-PARSER_VERSION: str = "ads_body_regex@v1"
+PARSER_VERSION: str = "ads_body_inline_v2"
 
 __all__ = ["PARSER_VERSION", "Section", "compute_confidence", "parse_ads_body"]
 
 
 # ---------------------------------------------------------------------------
-# Regex bank
+# Vocabulary
 # ---------------------------------------------------------------------------
 
-# Named family patterns. Each pattern matches a single heading line and
-# captures the heading text (without the numbering prefix).
-_MNRAS_RE: re.Pattern[str] = re.compile(
-    r"^(?P<num>\d+)\s+(?P<heading>[A-Z][^\n]*?)\s*$",
-    re.MULTILINE,
+# Canonical section-marker vocabulary. ORDER MATTERS within the alternation:
+# ``re`` picks the leftmost match, and at the same start position it picks
+# the first-listed alternative. So longer/more-specific alternatives must
+# come first where they overlap at the same starting character:
+#
+# * ``APPENDIX\s+[A-Z]\b`` before ``APPENDIX\b`` so ``APPENDIX A`` matches
+#   as the two-token form.
+# * ``CONCLUSIONS\b`` before ``CONCLUSION\b`` so the plural wins.
+# * ``ACKNOWLEDGEMENTS\b`` before ``ACKNOWLEDGMENTS\b`` (one is a spelling
+#   superset of the other — list the longer first).
+# * ``METHODOLOGY\b`` before ``METHODS\b`` — they don't actually overlap
+#   under ``\b`` anchors since one ends at ``Y`` and the other at ``S``,
+#   but keep the longer word first as a defence-in-depth choice.
+_CANONICAL_MARKERS: tuple[str, ...] = (
+    # APPENDIX with optional trailing letter — two-token form first.
+    r"APPENDIX\s+[A-Z]\b",
+    r"APPENDIX\b",
+    # Plural-before-singular pairs.
+    r"CONCLUSIONS\b",
+    r"CONCLUSION\b",
+    r"ACKNOWLEDGEMENTS\b",
+    r"ACKNOWLEDGMENTS\b",
+    # Methodology before Methods (same start-letter, same prefix).
+    r"METHODOLOGY\b",
+    r"METHODS\b",
+    # Remaining markers — no same-start overlap, order is not load-bearing.
+    r"ABSTRACT\b",
+    r"INTRODUCTION\b",
+    r"BACKGROUND\b",
+    r"RELATED\s+WORK\b",
+    r"OBSERVATIONS\b",
+    r"DATA\b",
+    r"MODEL\b",
+    r"THEORY\b",
+    r"ANALYSIS\b",
+    r"RESULTS\b",
+    r"DISCUSSION\b",
+    r"SUMMARY\b",
+    r"REFERENCES\b",
+    r"BIBLIOGRAPHY\b",
 )
-_APJ_RE: re.Pattern[str] = re.compile(
-    r"^(?P<num>\d+)\.\s+(?P<heading>[A-Z][a-z][^\n]*?)\s*$",
-    re.MULTILINE,
-)
-_PHYSREV_RE: re.Pattern[str] = re.compile(
-    r"^(?P<num>[IVX]+)\.\s+(?P<heading>[A-Z][^\n]*?)\s*$",
-    re.MULTILINE,
+
+# Single compiled vocabulary regex — one pass per body.
+_MARKER_RE: re.Pattern[str] = re.compile(
+    r"\b(?:" + "|".join(_CANONICAL_MARKERS) + r")",
+    re.IGNORECASE,
 )
 
-# Fallback bare-heading patterns. Tried in order; the one yielding the most
-# matches wins.
-_BARE_ALLCAPS_RE: re.Pattern[str] = re.compile(
-    r"^(?P<heading>[A-Z][A-Z0-9 \-/&]{2,})\s*$",
-    re.MULTILINE,
-)
-_BARE_TITLECASE_RE: re.Pattern[str] = re.compile(
-    r"^(?P<heading>[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,5})\s*$",
-    re.MULTILINE,
-)
+# Numeric-prefix regex for ``1 INTRODUCTION`` / ``1. Introduction`` /
+# ``1.1 Background`` shapes. Matched against the small lookback window
+# immediately preceding a keyword hit. The prefix must abut the keyword
+# (end of the prefix string == start of the keyword match).
+_NUMERIC_PREFIX_RE: re.Pattern[str] = re.compile(r"\d+(?:\.\d+)*[.\s]+\Z")
 
-_NAMED_FAMILIES: dict[str, re.Pattern[str]] = {
-    "mnras": _MNRAS_RE,
-    "apj": _APJ_RE,
-    "physrev": _PHYSREV_RE,
-}
+# How many characters to look back for a numeric prefix. Comfortably
+# covers up to ``"99.99 "`` (6 chars) with slack for multi-dot variants.
+_PREFIX_LOOKBACK: int = 12
 
-_FALLBACK_BANK: tuple[re.Pattern[str], ...] = (
-    _BARE_ALLCAPS_RE,
-    _BARE_TITLECASE_RE,
-)
-
-
-# Bibstem → family. Bibstems not in this map (or ``None``) route to
-# ``"fallback"``. Bibstem matching is case-sensitive against the canonical
-# ADS form.
-_BIBSTEM_TO_FAMILY: dict[str, str] = {
-    # MNRAS family
-    "MNRAS": "mnras",
-    "MNRASL": "mnras",
-    # ApJ / A&A / AJ / PASP family (ApJ-style numbered "1. Introduction")
-    "ApJ": "apj",
-    "ApJS": "apj",
-    "ApJL": "apj",
-    "AJ": "apj",
-    "A&A": "apj",
-    "A&ARv": "apj",
-    "AAS": "apj",
-    "PASP": "apj",
-    "PASA": "apj",
-    # PhysRev family (roman-numeral headings)
-    "PhRvD": "physrev",
-    "PhRvL": "physrev",
-    "PhRvA": "physrev",
-    "PhRvB": "physrev",
-    "PhRvC": "physrev",
-    "PhRvE": "physrev",
-    "PhRvX": "physrev",
-    "RvMP": "physrev",
-}
-
-
-def _family_for(bibstem: str | None) -> str:
-    """Return the regex family for a given bibstem (or ``"fallback"``)."""
-    if bibstem is None:
-        return "fallback"
-    return _BIBSTEM_TO_FAMILY.get(bibstem, "fallback")
+# Family tag — retained for backward compatibility with downstream code
+# that reads ``metadata["bibstem_family"]``.
+_FAMILY_TAG: str = "inline_v2"
 
 
 # ---------------------------------------------------------------------------
@@ -164,25 +154,57 @@ def compute_confidence(
 # ---------------------------------------------------------------------------
 
 
-def _collect_matches(
-    body: str, pattern: re.Pattern[str]
-) -> list[tuple[int, int, str]]:
-    """Return ``(start, end, heading)`` tuples for every match of ``pattern``."""
+def _canonical_heading(raw: str) -> str:
+    """Normalize a matched heading to the canonical UPPERCASE form.
+
+    Collapses runs of internal whitespace to a single ASCII space so that
+    ``"Appendix   a"`` and ``"appendix\tA"`` both emit ``"APPENDIX A"``.
+    """
+    return re.sub(r"\s+", " ", raw).strip().upper()
+
+
+def _extend_start_for_numeric_prefix(body: str, start: int) -> int:
+    """If a numeric prefix immediately precedes ``start``, return the new start.
+
+    Returns ``start`` unchanged when no abutting prefix is present. The
+    prefix is consumed from the heading STRING (``_canonical_heading`` runs
+    on the keyword only) but included in the heading SPAN so that
+    ``section.offset`` points at the true start of the visual heading
+    ("1. INTRODUCTION" → offset at the '1').
+    """
+    if start == 0:
+        return start
+    window_lo = max(0, start - _PREFIX_LOOKBACK)
+    window = body[window_lo:start]
+    m = _NUMERIC_PREFIX_RE.search(window)
+    if m is None:
+        return start
+    return window_lo + m.start()
+
+
+def _collect_marker_hits(body: str) -> list[tuple[int, int, str]]:
+    """Return ordered ``(start, end, canonical_heading)`` tuples for marker hits.
+
+    ``start`` is extended backward to include any abutting numeric prefix so
+    that downstream text-slicing does not attribute the prefix to the
+    previous section's trailing text.
+    """
     hits: list[tuple[int, int, str]] = []
-    for m in pattern.finditer(body):
-        # Prefer the named "heading" group when present; else first group.
-        heading = m.group("heading") if "heading" in m.groupdict() else m.group(0)
-        hits.append((m.start(), m.end(), heading.strip()))
+    for m in _MARKER_RE.finditer(body):
+        raw_start, raw_end = m.start(), m.end()
+        heading = _canonical_heading(m.group(0))
+        span_start = _extend_start_for_numeric_prefix(body, raw_start)
+        hits.append((span_start, raw_end, heading))
     return hits
 
 
 def _build_sections(
-    body: str, matches: list[tuple[int, int, str]]
+    body: str, hits: list[tuple[int, int, str]]
 ) -> list[Section]:
-    """Build ``Section`` list from ordered ``(start, end, heading)`` matches."""
+    """Build ``Section`` list from ordered ``(start, end, heading)`` tuples."""
     sections: list[Section] = []
-    for i, (start, end, heading) in enumerate(matches):
-        next_start = matches[i + 1][0] if i + 1 < len(matches) else len(body)
+    for i, (start, end, heading) in enumerate(hits):
+        next_start = hits[i + 1][0] if i + 1 < len(hits) else len(body)
         text = body[end:next_start]
         sections.append(
             Section(
@@ -195,72 +217,81 @@ def _build_sections(
     return sections
 
 
+def _empty_metadata() -> dict:
+    return {
+        "n_sections": 0,
+        "coverage_frac": 0.0,
+        "first_heading_offset": -1,
+        "bibstem_family": _FAMILY_TAG,
+        "patterns_tried": 1,
+    }
+
+
 def parse_ads_body(
     body: str,
     bibstem: str | None = None,
 ) -> tuple[list[Section], dict]:
-    """Split an ADS body text into ``Section`` records by regex family.
+    """Split an ADS body text into ``Section`` records by keyword-anchor scan.
 
     Parameters
     ----------
     body:
         Plain-text body of a paper (as stored in ``papers.body``). May be
-        empty.
+        empty. Expected to be a flat, possibly single-line, stream from a
+        PDF text extractor.
     bibstem:
-        Canonical ADS bibstem (``"MNRAS"``, ``"ApJ"``, ``"PhRvD"``, …) used
-        to select the regex family. ``None`` or an unknown value routes to
-        the bare-heading fallback.
+        Accepted for backward compatibility. Ignored — the inline-anchor
+        parser applies the same canonical vocabulary regardless of journal.
 
     Returns
     -------
     tuple[list[Section], dict]
         ``(sections, metadata)`` where ``metadata`` has keys
         ``n_sections``, ``coverage_frac``, ``first_heading_offset``,
-        ``bibstem_family``, and ``patterns_tried``.
+        ``bibstem_family`` (always ``"inline_v2"``), and ``patterns_tried``
+        (always ``1``).
+
+    Notes
+    -----
+    * Headings are emitted in canonical UPPERCASE regardless of input case.
+    * Numeric prefixes (``"1 "``, ``"1. "``, ``"1.1 "``) are stripped from
+      the emitted heading string but included in the ``offset`` and
+      inter-heading text-slice spans.
+    * If fewer than 2 distinct canonical headings are found, the body is
+      considered unparseable and an empty section list is returned.
     """
-    family = _family_for(bibstem)
+    del bibstem  # Retained in signature only.
 
-    # Empty-body short-circuit: preserves the public contract with deterministic
-    # metadata rather than dividing by zero on coverage_frac.
+    # Empty-body short-circuit.
     if not body:
-        return [], {
-            "n_sections": 0,
-            "coverage_frac": 0.0,
-            "first_heading_offset": -1,
-            "bibstem_family": family,
-            "patterns_tried": 0,
-        }
+        return [], _empty_metadata()
 
-    if family in _NAMED_FAMILIES:
-        matches = _collect_matches(body, _NAMED_FAMILIES[family])
-        patterns_tried = 1
-    else:
-        # Fallback: try every pattern, pick the one with the most matches.
-        best_matches: list[tuple[int, int, str]] = []
-        for pattern in _FALLBACK_BANK:
-            found = _collect_matches(body, pattern)
-            if len(found) > len(best_matches):
-                best_matches = found
-        matches = best_matches
-        patterns_tried = len(_FALLBACK_BANK)
+    hits = _collect_marker_hits(body)
 
-    # Matches from ``finditer`` are already in document order, but be defensive:
-    # a future composite fallback could concatenate hits from several patterns.
-    matches.sort(key=lambda t: t[0])
+    # Minimum-threshold gate: need at least 2 DISTINCT canonical headings.
+    # ``APPENDIX A`` and ``APPENDIX B`` count as two distinct headings.
+    distinct = {h for _, _, h in hits}
+    if len(distinct) < 2:
+        return [], _empty_metadata()
 
-    sections = _build_sections(body, matches)
+    # finditer yields matches in document order, but after extending starts
+    # backward for numeric prefixes we sort defensively in case a prefix
+    # pushes a later match's span ahead of an earlier one (this cannot
+    # happen with non-overlapping keyword matches, but the cost is trivial).
+    hits.sort(key=lambda t: t[0])
 
-    # Metadata
+    sections = _build_sections(body, hits)
+
     n_sections = len(sections)
     total_text = sum(len(s.text) for s in sections)
-    coverage_frac = max(0.0, min(total_text / len(body), 1.0)) if body else 0.0
-    first_heading_offset = sections[0].offset if sections else -1
+    coverage_frac = max(0.0, min(total_text / len(body), 1.0))
+    first_heading_offset = sections[0].offset
 
     metadata: dict = {
         "n_sections": n_sections,
         "coverage_frac": coverage_frac,
         "first_heading_offset": first_heading_offset,
-        "bibstem_family": family,
-        "patterns_tried": patterns_tried,
+        "bibstem_family": _FAMILY_TAG,
+        "patterns_tried": 1,
     }
     return sections, metadata

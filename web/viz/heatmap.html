@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SciX — Research Topology (Citation Heatmap)</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      main.viz-container {
+        max-width: 1500px;
+        margin: 0 auto;
+        padding: 18px 20px 32px;
+      }
+      .viz-sub {
+        color: #555;
+        margin: 0 0 14px;
+      }
+      #heatmap-layout {
+        display: grid;
+        grid-template-columns: 1fr 360px;
+        gap: 16px;
+        align-items: start;
+      }
+      #heatmap-root {
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        padding: 12px;
+        min-height: 740px;
+        overflow: auto;
+      }
+      #heatmap-root svg {
+        display: block;
+      }
+      .hm-cell {
+        cursor: pointer;
+        transition: stroke 80ms;
+        stroke: transparent;
+      }
+      .hm-cell:hover {
+        stroke: #111;
+        stroke-width: 2px;
+      }
+      .hm-axis text {
+        font-size: 12px;
+        fill: #333;
+      }
+      .hm-axis .axis-title {
+        font-weight: 700;
+        font-size: 13px;
+      }
+      #heatmap-panel {
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        padding: 14px 16px;
+        font-size: 13px;
+        min-height: 300px;
+      }
+      #heatmap-panel h2 {
+        font-size: 15px;
+        margin: 0 0 8px;
+      }
+      #heatmap-panel .empty {
+        color: #888;
+      }
+      #heatmap-panel .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #eef4fa;
+        color: #0b60b0;
+        font-size: 12px;
+        margin-right: 4px;
+      }
+      #mode-toggle {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      #mode-toggle button {
+        padding: 4px 10px;
+        border: 1px solid #d0d0d0;
+        background: #fafafa;
+        color: #333;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      #mode-toggle button.active {
+        background: #0b60b0;
+        color: #fff;
+        border-color: #0b60b0;
+      }
+      .hm-legend {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        color: #444;
+        margin-bottom: 6px;
+      }
+      .hm-legend .grad {
+        flex: 1;
+        height: 10px;
+        border-radius: 2px;
+        background: linear-gradient(
+          to right,
+          #f7fbff 0%,
+          #deebf7 20%,
+          #9ecae1 40%,
+          #4292c6 60%,
+          #2171b5 80%,
+          #084594 100%
+        );
+      }
+      #heatmap-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+      #heatmap-stats {
+        color: #555;
+        font-size: 13px;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  </head>
+  <body>
+    <main class="viz-container">
+      <div id="heatmap-head">
+        <h1 style="margin:0">Research Topology — Community × Community Citation Flow</h1>
+        <span id="heatmap-stats">loading…</span>
+      </div>
+      <p class="viz-sub">
+        Where does knowledge move? Each cell (source row → target column) is
+        the number of citations from papers in source community to papers in
+        target community, aggregated over
+        <strong>297.9&nbsp;million citation edges</strong>. Diagonal = within-community
+        citations; off-diagonal = cross-discipline flow.
+      </p>
+      <div id="heatmap-layout">
+        <div>
+          <div id="mode-toggle" role="tablist" aria-label="Color encoding">
+            <button type="button" data-mode="absolute" class="active">raw counts</button>
+            <button type="button" data-mode="row">row-normalized (per source)</button>
+            <button type="button" data-mode="lift">citation lift (vs uniform)</button>
+          </div>
+          <div class="hm-legend" aria-hidden="true">
+            <span id="hm-legend-min">0</span>
+            <span class="grad"></span>
+            <span id="hm-legend-max">max</span>
+          </div>
+          <div id="heatmap-root" aria-label="Community citation heatmap"></div>
+        </div>
+        <aside id="heatmap-panel" aria-live="polite">
+          <h2>Click a cell</h2>
+          <div class="empty">
+            Hover a cell for exact count. Click to pin source/target
+            communities and their top terms here.
+          </div>
+        </aside>
+      </div>
+    </main>
+    <script src="./shared.js"></script>
+    <script src="./heatmap.js"></script>
+    <script>
+      ;(async function bootstrap() {
+        const root = document.getElementById('heatmap-root')
+        const statsEl = document.getElementById('heatmap-stats')
+        try {
+          const [cellsResp, labelsResp] = await Promise.all([
+            fetch('./citation_heatmap.json', { cache: 'no-store' }),
+            fetch('./community_labels.json', { cache: 'no-store' }),
+          ])
+          if (!cellsResp.ok) throw new Error('heatmap: HTTP ' + cellsResp.status)
+          const data = await cellsResp.json()
+          const labels = labelsResp.ok ? await labelsResp.json() : null
+          statsEl.textContent =
+            data.n_communities +
+            ' communities · ' +
+            (data.grand_total || 0).toLocaleString() +
+            ' edges'
+          window.renderHeatmap(data, labels, root)
+        } catch (err) {
+          statsEl.textContent = 'load failed'
+          root.innerHTML =
+            '<div style="padding:24px;color:#b00020">' +
+            String(err.message || err) +
+            '</div>'
+        }
+      })()
+    </script>
+  </body>
+</html>

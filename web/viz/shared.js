@@ -31,6 +31,7 @@
       { href: './sankey.html', label: 'V2 Sankey' },
       { href: './umap_browser.html', label: 'V3 UMAP' },
       { href: './agent_trace.html', label: 'V4 Trace' },
+      { href: './heatmap.html', label: 'V5 Topology' },
     ]
     pages.forEach(function (p) {
       var a = document.createElement('a')

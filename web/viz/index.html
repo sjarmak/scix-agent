@@ -76,7 +76,7 @@
     <main>
       <h1>SciX Visualization Demos</h1>
       <p class="subtitle">
-        Three orthogonal lenses on the 32.4-million-paper corpus.
+        Four lenses on the 32.4-million-paper corpus.
       </p>
       <div class="card-grid">
         <a class="card" href="./sankey.html">
@@ -100,9 +100,18 @@
           <span class="tag">V4</span>
           <h2>Live Agent-Trace Overlay</h2>
           <p>
-            Real-time SSE stream of MCP tool calls overlaid on the UMAP
-            view. Each event flashes the touched papers and connects them
-            with a line segment that fades in ~1.5 s.
+            Type a query to run real hybrid search over 32M papers. Each tool
+            call flashes the touched papers on the UMAP and narrates in the
+            panel in real time over SSE.
+          </p>
+        </a>
+        <a class="card" href="./heatmap.html">
+          <span class="tag">V5</span>
+          <h2>Research Topology</h2>
+          <p>
+            20×20 citation heatmap derived from 297.9M citation edges. Reveals
+            which communities cite which — three modes: raw counts,
+            row-normalized, and citation lift.
           </p>
         </a>
       </div>

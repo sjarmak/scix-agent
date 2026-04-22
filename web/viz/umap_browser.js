@@ -337,14 +337,17 @@
     centroids.sort(function (a, b) {
       return b.n - a.n
     })
-    const topCentroids = centroids.slice(0, Math.min(12, centroids.length))
+    // Fewer labels at default zoom so they don't overlap; we'll reveal more
+    // as the user zooms in (handled in onViewStateChange below).
+    const topCentroids = centroids.slice(0, Math.min(8, centroids.length))
+    const allCentroids = centroids.slice(0, Math.min(16, centroids.length))
 
     let labelLayer = null
-    function _makeLabelLayer() {
+    function _makeLabelLayer(dataOverride, sizeOverride) {
       if (!deck.TextLayer) return null
       return new deck.TextLayer({
         id: 'umap-labels',
-        data: topCentroids,
+        data: dataOverride || topCentroids,
         pickable: false,
         getPosition: function (d) {
           return [d.x, d.y]
@@ -352,20 +355,49 @@
         getText: function (d) {
           return d.label
         },
-        getColor: [30, 30, 30, 230],
-        getSize: 14,
+        getColor: [15, 15, 15, 255],
+        getSize: sizeOverride || 18,
         sizeUnits: 'pixels',
-        fontWeight: 700,
+        sizeScale: 1,
+        fontWeight: 800,
+        fontSettings: { sdf: true },
         background: true,
-        getBackgroundColor: [255, 255, 255, 210],
-        backgroundPadding: [4, 2],
-        outlineColor: [255, 255, 255],
-        outlineWidth: 2,
+        getBackgroundColor: [255, 255, 255, 235],
+        backgroundPadding: [8, 5],
+        getBorderColor: [0, 0, 0, 120],
+        getBorderWidth: 1.25,
+        outlineColor: [255, 255, 255, 255],
+        outlineWidth: 3,
         getTextAnchor: 'middle',
         getAlignmentBaseline: 'center',
+        billboard: true,
       })
     }
     labelLayer = _makeLabelLayer()
+
+    // Track the latest view state so label selection can react to zoom.
+    let _currentZoom = initialViewState.zoom
+    function _rebuildLabelsForZoom() {
+      if (!labelLayer) return null
+      // At low zoom show only the top-8 centroids with bigger font; as the
+      // user zooms in, reveal more labels at a smaller font so text fits
+      // the denser regions without piling up.
+      const zoom = _currentZoom
+      const baseZoom = initialViewState.zoom
+      const delta = zoom - baseZoom
+      let count, size
+      if (delta < 0.5) {
+        count = Math.min(8, topCentroids.length)
+        size = 18
+      } else if (delta < 2) {
+        count = Math.min(12, allCentroids.length)
+        size = 16
+      } else {
+        count = allCentroids.length
+        size = 14
+      }
+      return _makeLabelLayer(allCentroids.slice(0, count), size)
+    }
 
     const instance = new deck.Deck({
       parent: node,
@@ -374,6 +406,20 @@
       views: new deck.OrthographicView({ id: 'ortho' }),
       controller: true,
       initialViewState: initialViewState,
+      onViewStateChange: function (evt) {
+        if (evt && evt.viewState && typeof evt.viewState.zoom === 'number') {
+          const prev = _currentZoom
+          _currentZoom = evt.viewState.zoom
+          if (Math.abs(prev - _currentZoom) > 0.3) {
+            // Only rebuild the labels layer on meaningful zoom changes.
+            labelLayer = _rebuildLabelsForZoom()
+            const existing = (instance.props.layers || []).filter(function (l) {
+              return l && l.id !== 'umap-labels'
+            })
+            instance.setProps({ layers: labelLayer ? existing.concat([labelLayer]) : existing })
+          }
+        }
+      },
       layers: labelLayer ? [scatter, labelLayer] : [scatter],
       onHover: function (info) {
         if (!info || !info.object) {
@@ -439,13 +485,23 @@
     })
     _updateStats(points.length, null, communityCounts)
 
-    // Labels load asynchronously; re-render legend + centroid labels once
-    // the JSON arrives so they aren't stuck on generic "c5" forever.
+    // Labels load asynchronously; once they arrive, re-populate the legend
+    // with the named communities AND re-run the zoom-reactive label selector
+    // so centroids don't freeze on the pre-label "c5" names.
     _loadCommunityLabels().then(function () {
       const refreshedCentroids = _communityCentroids(points).sort(function (a, b) {
         return b.n - a.n
       })
-      const top = refreshedCentroids.slice(0, Math.min(12, refreshedCentroids.length))
+      // Mutate the outer arrays in place so _rebuildLabelsForZoom picks up
+      // the new labels without needing a second closure.
+      topCentroids.length = 0
+      allCentroids.length = 0
+      refreshedCentroids.slice(0, Math.min(8, refreshedCentroids.length)).forEach(
+        function (c) { topCentroids.push(c) },
+      )
+      refreshedCentroids.slice(0, Math.min(16, refreshedCentroids.length)).forEach(
+        function (c) { allCentroids.push(c) },
+      )
       _populateLegend(communityCounts, activeCommunity, function (newPick) {
         const nextScatter = scatter.clone({
           updateTriggers: { getFillColor: [{ value: newPick }] },
@@ -456,12 +512,13 @@
             return [215, 215, 215]
           },
         })
-        const nextLabels = labelLayer
-          ? labelLayer.clone({
+        const base = _rebuildLabelsForZoom() || labelLayer
+        const nextLabels = base
+          ? base.clone({
               data:
                 newPick == null
-                  ? top
-                  : top.filter(function (c) {
+                  ? base.props.data
+                  : allCentroids.filter(function (c) {
                       return Number(c.community_id) === Number(newPick)
                     }),
             })
@@ -469,8 +526,12 @@
         instance.setProps({ layers: nextLabels ? [nextScatter, nextLabels] : [nextScatter] })
         _updateStats(points.length, newPick, communityCounts)
       })
+      labelLayer = _rebuildLabelsForZoom()
       if (labelLayer) {
-        instance.setProps({ layers: [scatter, labelLayer.clone({ data: top })] })
+        const otherLayers = (instance.props.layers || []).filter(function (l) {
+          return l && l.id !== 'umap-labels'
+        })
+        instance.setProps({ layers: otherLayers.concat([labelLayer]) })
       }
     })
 

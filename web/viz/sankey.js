@@ -22,7 +22,9 @@
   // (e.g. during early render before layout settles).
   const DEFAULT_WIDTH = 1400
   const DEFAULT_HEIGHT = 820
-  const MARGIN = { top: 24, right: 160, bottom: 24, left: 70 }
+  const MARGIN = { top: 28, right: 220, bottom: 36, left: 110 }
+  const NODE_PADDING = 20
+  const NODE_WIDTH = 12
   // Hide tiny nodes below this share of the max node so labels stay readable
   // on coarse + medium resolutions. Keep it conservative; no clamping for V4 demos.
   const MIN_NODE_SHARE = 0.002
@@ -199,8 +201,8 @@
       .nodeId(function (d) {
         return d.id
       })
-      .nodeWidth(14)
-      .nodePadding(12)
+      .nodeWidth(NODE_WIDTH)
+      .nodePadding(NODE_PADDING)
       .extent([
         [MARGIN.left, MARGIN.top],
         [width - MARGIN.right, height - MARGIN.bottom],

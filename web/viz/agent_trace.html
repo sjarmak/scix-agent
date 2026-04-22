@@ -137,6 +137,60 @@
         font-size: 13px;
         min-height: 18px;
       }
+      #query-bar {
+        margin: 0 0 14px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      #query-bar input[type="text"] {
+        flex: 1;
+        padding: 8px 12px;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        font-size: 14px;
+        font-family: inherit;
+      }
+      #query-bar input[type="text"]:focus {
+        outline: none;
+        border-color: #0b60b0;
+        box-shadow: 0 0 0 3px rgba(11, 96, 176, 0.15);
+      }
+      #query-bar button {
+        padding: 8px 18px;
+        border: 1px solid #0b60b0;
+        background: #0b60b0;
+        color: #fff;
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #query-bar button:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+      #query-bar button:hover:not(:disabled) {
+        background: #094c8a;
+      }
+      #query-bar .quick {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-left: 4px;
+      }
+      #query-bar .quick button {
+        padding: 4px 10px;
+        background: #f4f7fb;
+        color: #0b60b0;
+        border: 1px solid #d6e3f3;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 500;
+      }
+      #query-bar .quick button:hover {
+        background: #e6eefa;
+      }
     </style>
     <script src="https://unpkg.com/deck.gl@9/dist.min.js"></script>
   </head>
@@ -144,10 +198,26 @@
     <main class="viz-container">
       <h1>Agent Trace Overlay</h1>
       <p class="viz-sub">
-        Live agent tool-call trace over the UMAP scatter. Each event
-        highlights the touched papers and draws a brief line segment
-        between them; tool calls are narrated in the panel on the right.
+        Type a query below to run a real hybrid search against the 32M-paper
+        corpus. Each tool call narrates in the panel and the touched papers
+        flash on the UMAP overlay.
       </p>
+      <form id="query-bar" autocomplete="off">
+        <input
+          id="query-input"
+          type="text"
+          placeholder="e.g. galaxy clusters at high redshift"
+          aria-label="Research query"
+        />
+        <button type="submit" id="query-submit">Search</button>
+        <div class="quick" aria-label="Example queries">
+          <button type="button" data-q="galaxy clusters dark matter">galaxy clusters</button>
+          <button type="button" data-q="exoplanet atmosphere spectroscopy">exoplanets</button>
+          <button type="button" data-q="deep learning image segmentation">deep learning</button>
+          <button type="button" data-q="protein folding prediction">protein folding</button>
+          <button type="button" data-q="earthquake fault rupture">seismology</button>
+        </div>
+      </form>
       <div id="trace-layout">
         <div id="umap-root" aria-label="UMAP scatter plot">
           <div id="umap-tooltip" role="tooltip"></div>
@@ -306,6 +376,43 @@
           '/viz/api/trace/stream',
           handleEvent,
         )
+
+        // Wire the query bar. Submits to /viz/api/demo/search which publishes
+        // trace events as it runs — the SSE subscription above does the rest.
+        const form = document.getElementById('query-bar')
+        const input = document.getElementById('query-input')
+        const submit = document.getElementById('query-submit')
+        async function runQuery(q) {
+          const query = (q || input.value || '').trim()
+          if (!query) return
+          input.value = query
+          submit.disabled = true
+          submit.textContent = 'Searching…'
+          try {
+            const resp = await fetch('/viz/api/demo/search', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ query: query, top_n: 5 }),
+            })
+            if (!resp.ok) {
+              status.textContent = 'search failed: HTTP ' + resp.status
+            }
+          } catch (err) {
+            status.textContent = 'search failed: ' + (err.message || String(err))
+          } finally {
+            submit.disabled = false
+            submit.textContent = 'Search'
+          }
+        }
+        form.addEventListener('submit', function (e) {
+          e.preventDefault()
+          runQuery()
+        })
+        document.querySelectorAll('#query-bar .quick button').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            runQuery(btn.dataset.q)
+          })
+        })
       })()
     </script>
   </body>

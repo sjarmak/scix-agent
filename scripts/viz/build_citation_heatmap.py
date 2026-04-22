@@ -73,6 +73,11 @@ def run(dsn: str, resolution: str, output: Path) -> dict:
     with psycopg.connect(dsn) as conn:
         conn.set_read_only(True)
         with conn.cursor() as cur:
+            # Boost work_mem so the 13M+ paper_metrics hash joins don't spill
+            # to base/pgsql_tmp. Medium/fine grouping fan out to 40K/400K cells
+            # respectively, and the default 256MB work_mem triggers disk spill
+            # on busy hosts. This is a session-scoped SET — no global impact.
+            cur.execute("SET work_mem = '8GB'")
             logger.info("executing aggregation (~1-3 min on 299M edges)")
             cur.execute(sql)
             rows = cur.fetchall()

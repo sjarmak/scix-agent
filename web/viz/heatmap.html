@@ -27,10 +27,32 @@
         border-radius: 6px;
         padding: 12px;
         min-height: 740px;
-        overflow: auto;
+        position: relative;
+        overflow: hidden;
       }
       #heatmap-root svg {
         display: block;
+      }
+      #heatmap-canvas {
+        display: block;
+        cursor: grab;
+        background: #fff;
+      }
+      #heatmap-canvas.dragging {
+        cursor: grabbing;
+      }
+      #heatmap-tooltip {
+        position: absolute;
+        pointer-events: none;
+        background: rgba(0, 0, 0, 0.82);
+        color: #fff;
+        font-size: 12px;
+        line-height: 1.35;
+        padding: 6px 8px;
+        border-radius: 4px;
+        max-width: 340px;
+        display: none;
+        z-index: 10;
       }
       .hm-cell {
         cursor: pointer;
@@ -73,11 +95,19 @@
         font-size: 12px;
         margin-right: 4px;
       }
+      #heatmap-panel .term-list {
+        color: #444;
+        font-size: 12px;
+        margin-top: 4px;
+      }
+      #res-toggle,
       #mode-toggle {
         display: flex;
         gap: 8px;
         margin-bottom: 10px;
+        flex-wrap: wrap;
       }
+      #res-toggle button,
       #mode-toggle button {
         padding: 4px 10px;
         border: 1px solid #d0d0d0;
@@ -87,10 +117,16 @@
         cursor: pointer;
         font-size: 12px;
       }
+      #res-toggle button.active,
       #mode-toggle button.active {
         background: #0b60b0;
         color: #fff;
         border-color: #0b60b0;
+      }
+      #res-toggle .res-hint {
+        color: #888;
+        font-size: 11px;
+        align-self: center;
       }
       .hm-legend {
         display: flex;
@@ -114,6 +150,16 @@
           #084594 100%
         );
       }
+      .hm-legend .grad.diverging {
+        background: linear-gradient(
+          to right,
+          #2166ac 0%,
+          #92c5de 25%,
+          #f7f7f7 50%,
+          #f4a582 75%,
+          #b2182b 100%
+        );
+      }
       #heatmap-head {
         display: flex;
         align-items: baseline;
@@ -124,41 +170,50 @@
         color: #555;
         font-size: 13px;
       }
+      #zoom-hint {
+        color: #777;
+        font-size: 11px;
+        margin-top: 6px;
+      }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
   </head>
   <body>
     <main class="viz-container">
       <div id="heatmap-head">
-        <h1 style="margin:0">Research Topology — Community × Community Citation Flow</h1>
+        <h1 style="margin: 0">Research Topology — Community × Community Citation Flow</h1>
         <span id="heatmap-stats">loading…</span>
       </div>
       <p class="viz-sub">
-        Where does knowledge move? Each cell (source row → target column) is
-        the number of citations from papers in source community to papers in
-        target community, aggregated over
-        <strong>297.9&nbsp;million citation edges</strong>. Diagonal = within-community
-        citations; off-diagonal = cross-discipline flow.
+        Where does knowledge move? Each cell (source row → target column) is the number of citations from papers in source community to papers in target community, aggregated over
+        <strong>297.9&nbsp;million citation edges</strong>. Diagonal = within-community citations; off-diagonal = cross-discipline flow.
       </p>
       <div id="heatmap-layout">
         <div>
+          <div id="res-toggle" role="tablist" aria-label="Resolution">
+            <button type="button" data-res="coarse">20×20 coarse</button>
+            <button type="button" data-res="medium">200×200 medium</button>
+            <span class="res-hint" id="res-hint"></span>
+          </div>
           <div id="mode-toggle" role="tablist" aria-label="Color encoding">
-            <button type="button" data-mode="absolute" class="active">raw counts</button>
+            <button type="button" data-mode="absolute">raw counts</button>
             <button type="button" data-mode="row">row-normalized (per source)</button>
             <button type="button" data-mode="lift">citation lift (vs uniform)</button>
           </div>
           <div class="hm-legend" aria-hidden="true">
             <span id="hm-legend-min">0</span>
-            <span class="grad"></span>
+            <span class="grad" id="hm-legend-grad"></span>
             <span id="hm-legend-max">max</span>
           </div>
-          <div id="heatmap-root" aria-label="Community citation heatmap"></div>
+          <div id="heatmap-root" aria-label="Community citation heatmap">
+            <div id="heatmap-tooltip"></div>
+          </div>
+          <div id="zoom-hint"></div>
         </div>
         <aside id="heatmap-panel" aria-live="polite">
           <h2>Click a cell</h2>
           <div class="empty">
-            Hover a cell for exact count. Click to pin source/target
-            communities and their top terms here.
+            Hover a cell for exact count. Click to pin source/target communities and their top terms here.
           </div>
         </aside>
       </div>
@@ -166,30 +221,88 @@
     <script src="./shared.js"></script>
     <script src="./heatmap.js"></script>
     <script>
-      ;(async function bootstrap() {
-        const root = document.getElementById('heatmap-root')
-        const statsEl = document.getElementById('heatmap-stats')
-        try {
-          const [cellsResp, labelsResp] = await Promise.all([
-            fetch('./citation_heatmap.json', { cache: 'no-store' }),
-            fetch('./community_labels.json', { cache: 'no-store' }),
-          ])
-          if (!cellsResp.ok) throw new Error('heatmap: HTTP ' + cellsResp.status)
-          const data = await cellsResp.json()
-          const labels = labelsResp.ok ? await labelsResp.json() : null
-          statsEl.textContent =
-            data.n_communities +
-            ' communities · ' +
-            (data.grand_total || 0).toLocaleString() +
-            ' edges'
-          window.renderHeatmap(data, labels, root)
-        } catch (err) {
-          statsEl.textContent = 'load failed'
-          root.innerHTML =
-            '<div style="padding:24px;color:#b00020">' +
-            String(err.message || err) +
-            '</div>'
+      ;(function bootstrap() {
+        'use strict'
+        var root = document.getElementById('heatmap-root')
+        var statsEl = document.getElementById('heatmap-stats')
+        var resHint = document.getElementById('res-hint')
+
+        function parseResolution() {
+          var params = new URLSearchParams(window.location.search)
+          var r = (params.get('resolution') || 'coarse').toLowerCase()
+          return r === 'medium' ? 'medium' : 'coarse'
         }
+
+        function resFiles(res) {
+          if (res === 'medium') {
+            return {
+              cells: './citation_heatmap_medium.json',
+              labels: './community_labels_medium.json',
+              defaultMode: 'lift',
+            }
+          }
+          return {
+            cells: './citation_heatmap.json',
+            labels: './community_labels.json',
+            defaultMode: 'absolute',
+          }
+        }
+
+        function syncResToggle(res) {
+          document.querySelectorAll('#res-toggle button').forEach(function (btn) {
+            btn.classList.toggle('active', btn.dataset.res === res)
+          })
+          if (resHint) {
+            resHint.textContent = res === 'medium' ? '(zoom + pan, ~200 fine-grained topics)' : '(dense overview, 20 coarse domains)'
+          }
+        }
+
+        function navigateTo(res) {
+          var url = new URL(window.location.href)
+          if (res === 'coarse') {
+            url.searchParams.delete('resolution')
+          } else {
+            url.searchParams.set('resolution', res)
+          }
+          window.location.assign(url.toString())
+        }
+
+        document.querySelectorAll('#res-toggle button').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            navigateTo(btn.dataset.res || 'coarse')
+          })
+        })
+
+        async function load() {
+          var res = parseResolution()
+          syncResToggle(res)
+          var files = resFiles(res)
+          try {
+            var responses = await Promise.all([
+              fetch(files.cells, { cache: 'no-store' }),
+              fetch(files.labels, { cache: 'no-store' }),
+            ])
+            if (!responses[0].ok) throw new Error('heatmap: HTTP ' + responses[0].status)
+            var data = await responses[0].json()
+            var labels = responses[1].ok ? await responses[1].json() : null
+            statsEl.textContent =
+              data.n_communities +
+              ' communities · ' +
+              (data.grand_total || 0).toLocaleString() +
+              ' edges · ' +
+              data.cells.length.toLocaleString() +
+              ' non-zero cells'
+            window.renderHeatmap(data, labels, root, {
+              resolution: res,
+              defaultMode: files.defaultMode,
+            })
+          } catch (err) {
+            statsEl.textContent = 'load failed'
+            root.innerHTML = '<div style="padding:24px;color:#b00020">' + String(err.message || err) + '</div>'
+          }
+        }
+
+        load()
       })()
     </script>
   </body>

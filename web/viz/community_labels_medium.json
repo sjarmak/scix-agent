@@ -1,0 +1,2623 @@
+{
+  "resolution": "medium",
+  "communities": [
+    {
+      "community_id": 0,
+      "n_sampled": 800,
+      "terms": [
+        "energy",
+        "heat",
+        "cycle",
+        "assessment",
+        "design",
+        "thermal",
+        "power",
+        "performance"
+      ]
+    },
+    {
+      "community_id": 1,
+      "n_sampled": 434,
+      "terms": [
+        "heat",
+        "flow",
+        "transfer",
+        "thermal",
+        "nanofluid",
+        "magnetic",
+        "convection",
+        "nanofluids"
+      ]
+    },
+    {
+      "community_id": 2,
+      "n_sampled": 800,
+      "terms": [
+        "nitrogen",
+        "soil",
+        "water",
+        "wheat",
+        "carbon",
+        "growth",
+        "yield",
+        "plant"
+      ]
+    },
+    {
+      "community_id": 4,
+      "n_sampled": 800,
+      "terms": [
+        "properties",
+        "composites",
+        "poly",
+        "mechanical",
+        "polypropylene",
+        "polymer",
+        "characterization",
+        "thermal"
+      ]
+    },
+    {
+      "community_id": 5,
+      "n_sampled": 800,
+      "terms": [
+        "water",
+        "degradation",
+        "oxidation",
+        "aqueous",
+        "organic",
+        "determination",
+        "acid",
+        "treatment"
+      ]
+    },
+    {
+      "community_id": 6,
+      "n_sampled": 800,
+      "terms": [
+        "privacy",
+        "secure",
+        "security",
+        "scheme",
+        "networks",
+        "blockchain",
+        "cloud",
+        "key"
+      ]
+    },
+    {
+      "community_id": 7,
+      "n_sampled": 736,
+      "terms": [
+        "wave",
+        "waves",
+        "flow",
+        "numerical",
+        "water",
+        "experimental",
+        "surface",
+        "wind"
+      ]
+    },
+    {
+      "community_id": 9,
+      "n_sampled": 124,
+      "terms": [
+        "transient",
+        "classification",
+        "ztf",
+        "research",
+        "graduate",
+        "fellowship",
+        "program",
+        "scat"
+      ]
+    },
+    {
+      "community_id": 10,
+      "n_sampled": 628,
+      "terms": [
+        "oxygen",
+        "reduction",
+        "hydrogen",
+        "efficient",
+        "evolution",
+        "reaction",
+        "water",
+        "carbon"
+      ]
+    },
+    {
+      "community_id": 11,
+      "n_sampled": 800,
+      "terms": [
+        "groups",
+        "algebras",
+        "graphs",
+        "group",
+        "finite",
+        "spaces",
+        "theorem",
+        "theory"
+      ]
+    },
+    {
+      "community_id": 13,
+      "n_sampled": 800,
+      "terms": [
+        "rock",
+        "soil",
+        "characteristics",
+        "numerical",
+        "seismic",
+        "strength",
+        "stability",
+        "dynamic"
+      ]
+    },
+    {
+      "community_id": 14,
+      "n_sampled": 564,
+      "terms": [
+        "gene",
+        "genes",
+        "stress",
+        "rice",
+        "identification",
+        "expression",
+        "tolerance",
+        "response"
+      ]
+    },
+    {
+      "community_id": 15,
+      "n_sampled": 800,
+      "terms": [
+        "structure",
+        "electronic",
+        "properties",
+        "spectroscopy",
+        "spectra",
+        "complexes",
+        "states",
+        "molecular"
+      ]
+    },
+    {
+      "community_id": 16,
+      "n_sampled": 800,
+      "terms": [
+        "design",
+        "cmos",
+        "power",
+        "applications",
+        "ghz",
+        "amplifier",
+        "integrated",
+        "technology"
+      ]
+    },
+    {
+      "community_id": 17,
+      "n_sampled": 800,
+      "terms": [
+        "neutrino",
+        "matter",
+        "higgs",
+        "qcd",
+        "production",
+        "dark",
+        "lhc",
+        "mass"
+      ]
+    },
+    {
+      "community_id": 18,
+      "n_sampled": 800,
+      "terms": [
+        "phase",
+        "structure",
+        "transition",
+        "liquid",
+        "alloys",
+        "structural",
+        "crystals",
+        "crystallization"
+      ]
+    },
+    {
+      "community_id": 19,
+      "n_sampled": 551,
+      "terms": [
+        "control",
+        "power",
+        "energy",
+        "microgrid",
+        "voltage",
+        "photovoltaic",
+        "grid",
+        "controller"
+      ]
+    },
+    {
+      "community_id": 20,
+      "n_sampled": 800,
+      "terms": [
+        "china",
+        "urban",
+        "development",
+        "spatial",
+        "environmental",
+        "economic",
+        "research",
+        "energy"
+      ]
+    },
+    {
+      "community_id": 22,
+      "n_sampled": 800,
+      "terms": [
+        "production",
+        "decays",
+        "gev",
+        "decay",
+        "collisions",
+        "scattering",
+        "meson",
+        "mesons"
+      ]
+    },
+    {
+      "community_id": 23,
+      "n_sampled": 800,
+      "terms": [
+        "evaluation",
+        "fuzzy",
+        "management",
+        "research",
+        "development",
+        "design",
+        "process",
+        "risk"
+      ]
+    },
+    {
+      "community_id": 24,
+      "n_sampled": 800,
+      "terms": [
+        "monitoring",
+        "satellite",
+        "surface",
+        "radar",
+        "measurements",
+        "ice",
+        "space",
+        "sensing"
+      ]
+    },
+    {
+      "community_id": 25,
+      "n_sampled": 800,
+      "terms": [
+        "gaas",
+        "quantum",
+        "growth",
+        "gan",
+        "grown",
+        "films",
+        "epitaxy",
+        "properties"
+      ]
+    },
+    {
+      "community_id": 27,
+      "n_sampled": 800,
+      "terms": [
+        "cell",
+        "brain",
+        "cells",
+        "neural",
+        "human",
+        "dynamics",
+        "networks",
+        "neuronal"
+      ]
+    },
+    {
+      "community_id": 28,
+      "n_sampled": 800,
+      "terms": [
+        "climate",
+        "sustainable",
+        "sustainability",
+        "energy",
+        "urban",
+        "development",
+        "change",
+        "policy"
+      ]
+    },
+    {
+      "community_id": 29,
+      "n_sampled": 800,
+      "terms": [
+        "properties",
+        "optical",
+        "magnetic",
+        "field",
+        "dielectric",
+        "nanoparticles",
+        "films",
+        "materials"
+      ]
+    },
+    {
+      "community_id": 30,
+      "n_sampled": 800,
+      "terms": [
+        "management",
+        "development",
+        "sustainable",
+        "performance",
+        "environmental",
+        "social",
+        "knowledge",
+        "green"
+      ]
+    },
+    {
+      "community_id": 31,
+      "n_sampled": 629,
+      "terms": [
+        "synthesis",
+        "activity",
+        "cells",
+        "molecular",
+        "cancer",
+        "human",
+        "derivatives",
+        "inhibitors"
+      ]
+    },
+    {
+      "community_id": 32,
+      "n_sampled": 479,
+      "terms": [
+        "energy",
+        "load",
+        "forecasting",
+        "power",
+        "building",
+        "consumption",
+        "electricity",
+        "demand"
+      ]
+    },
+    {
+      "community_id": 33,
+      "n_sampled": 800,
+      "terms": [
+        "equations",
+        "solutions",
+        "equation",
+        "nonlinear",
+        "spaces",
+        "problem",
+        "differential",
+        "stability"
+      ]
+    },
+    {
+      "community_id": 34,
+      "n_sampled": 800,
+      "terms": [
+        "optimization",
+        "algorithm",
+        "networks",
+        "allocation",
+        "scheduling",
+        "network",
+        "problem",
+        "routing"
+      ]
+    },
+    {
+      "community_id": 35,
+      "n_sampled": 800,
+      "terms": [
+        "liquid",
+        "droplet",
+        "flow",
+        "surface",
+        "bubble",
+        "droplets",
+        "water",
+        "dynamics"
+      ]
+    },
+    {
+      "community_id": 36,
+      "n_sampled": 800,
+      "terms": [
+        "software",
+        "applications",
+        "code",
+        "design",
+        "dynamic",
+        "framework",
+        "performance",
+        "parallel"
+      ]
+    },
+    {
+      "community_id": 37,
+      "n_sampled": 800,
+      "terms": [
+        "human",
+        "social",
+        "learning",
+        "perception",
+        "visual",
+        "research",
+        "reality",
+        "speech"
+      ]
+    },
+    {
+      "community_id": 38,
+      "n_sampled": 800,
+      "terms": [
+        "patients",
+        "exposure",
+        "cancer",
+        "risk",
+        "disease",
+        "association",
+        "cohort",
+        "rats"
+      ]
+    },
+    {
+      "community_id": 39,
+      "n_sampled": 800,
+      "terms": [
+        "galaxies",
+        "galaxy",
+        "galactic",
+        "survey",
+        "clusters",
+        "stars",
+        "radio",
+        "cluster"
+      ]
+    },
+    {
+      "community_id": 40,
+      "n_sampled": 800,
+      "terms": [
+        "health",
+        "management",
+        "ethiopia",
+        "climate",
+        "rural",
+        "development",
+        "water",
+        "africa"
+      ]
+    },
+    {
+      "community_id": 41,
+      "n_sampled": 800,
+      "terms": [
+        "molecular",
+        "spectroscopy",
+        "dynamics",
+        "structure",
+        "protein",
+        "structural",
+        "properties",
+        "conformational"
+      ]
+    },
+    {
+      "community_id": 42,
+      "n_sampled": 795,
+      "terms": [
+        "dark",
+        "cosmological",
+        "cosmic",
+        "cosmology",
+        "galaxy",
+        "matter",
+        "universe",
+        "galaxies"
+      ]
+    },
+    {
+      "community_id": 43,
+      "n_sampled": 800,
+      "terms": [
+        "forest",
+        "plant",
+        "species",
+        "soil",
+        "carbon",
+        "tree",
+        "diversity",
+        "climate"
+      ]
+    },
+    {
+      "community_id": 44,
+      "n_sampled": 800,
+      "terms": [
+        "activity",
+        "antioxidant",
+        "extract",
+        "extracts",
+        "against",
+        "rats",
+        "vitro",
+        "activities"
+      ]
+    },
+    {
+      "community_id": 46,
+      "n_sampled": 643,
+      "terms": [
+        "molecular",
+        "dynamics",
+        "carbon",
+        "properties",
+        "surface",
+        "structure",
+        "nanotubes",
+        "mechanical"
+      ]
+    },
+    {
+      "community_id": 47,
+      "n_sampled": 759,
+      "terms": [
+        "battery",
+        "fuel",
+        "batteries",
+        "cell",
+        "energy",
+        "lithium-ion",
+        "cells",
+        "storage"
+      ]
+    },
+    {
+      "community_id": 48,
+      "n_sampled": 800,
+      "terms": [
+        "atmospheric",
+        "ionospheric",
+        "solar",
+        "measurements",
+        "atmosphere",
+        "global",
+        "satellite",
+        "temperature"
+      ]
+    },
+    {
+      "community_id": 49,
+      "n_sampled": 800,
+      "terms": [
+        "nuclear",
+        "energy",
+        "mass",
+        "atomic",
+        "binding",
+        "nuclei",
+        "reactions",
+        "cross"
+      ]
+    },
+    {
+      "community_id": 50,
+      "n_sampled": 800,
+      "terms": [
+        "prediction",
+        "learning",
+        "neural",
+        "machine",
+        "network",
+        "forecasting",
+        "networks",
+        "artificial"
+      ]
+    },
+    {
+      "community_id": 51,
+      "n_sampled": 800,
+      "terms": [
+        "films",
+        "properties",
+        "thin",
+        "structure",
+        "copper",
+        "surface",
+        "magnetic",
+        "phase"
+      ]
+    },
+    {
+      "community_id": 52,
+      "n_sampled": 800,
+      "terms": [
+        "properties",
+        "alloy",
+        "microstructure",
+        "thermal",
+        "mechanical",
+        "steel",
+        "composite",
+        "composites"
+      ]
+    },
+    {
+      "community_id": 53,
+      "n_sampled": 800,
+      "terms": [
+        "management",
+        "assessment",
+        "evaluation",
+        "impact",
+        "water",
+        "risk",
+        "urban",
+        "environmental"
+      ]
+    },
+    {
+      "community_id": 54,
+      "n_sampled": 800,
+      "terms": [
+        "magnetic",
+        "structure",
+        "properties",
+        "phase",
+        "crystal",
+        "structural",
+        "electronic",
+        "pressure"
+      ]
+    },
+    {
+      "community_id": 55,
+      "n_sampled": 800,
+      "terms": [
+        "tio",
+        "films",
+        "properties",
+        "synthesis",
+        "tio2",
+        "photocatalytic",
+        "thin",
+        "sio"
+      ]
+    },
+    {
+      "community_id": 56,
+      "n_sampled": 495,
+      "terms": [
+        "learning",
+        "machine",
+        "prediction",
+        "neural",
+        "chemical",
+        "molecular",
+        "networks",
+        "deep"
+      ]
+    },
+    {
+      "community_id": 57,
+      "n_sampled": 800,
+      "terms": [
+        "design",
+        "robot",
+        "control",
+        "development",
+        "research",
+        "application",
+        "mobile",
+        "motion"
+      ]
+    },
+    {
+      "community_id": 58,
+      "n_sampled": 800,
+      "terms": [
+        "galaxies",
+        "stars",
+        "star",
+        "galaxy",
+        "formation",
+        "stellar",
+        "catalog",
+        "vizier"
+      ]
+    },
+    {
+      "community_id": 59,
+      "n_sampled": 800,
+      "terms": [
+        "random",
+        "stochastic",
+        "networks",
+        "processes",
+        "dynamics",
+        "distribution",
+        "process",
+        "time"
+      ]
+    },
+    {
+      "community_id": 60,
+      "n_sampled": 800,
+      "terms": [
+        "reliability",
+        "estimation",
+        "uncertainty",
+        "probabilistic",
+        "evaluation",
+        "assessment",
+        "design",
+        "stochastic"
+      ]
+    },
+    {
+      "community_id": 61,
+      "n_sampled": 800,
+      "terms": [
+        "water",
+        "river",
+        "climate",
+        "change",
+        "hydrological",
+        "groundwater",
+        "watershed",
+        "states"
+      ]
+    },
+    {
+      "community_id": 62,
+      "n_sampled": 800,
+      "terms": [
+        "power",
+        "converter",
+        "control",
+        "voltage",
+        "design",
+        "inverter",
+        "current",
+        "energy"
+      ]
+    },
+    {
+      "community_id": 63,
+      "n_sampled": 800,
+      "terms": [
+        "china",
+        "evolution",
+        "implications",
+        "eastern",
+        "western",
+        "basin",
+        "tectonic",
+        "central"
+      ]
+    },
+    {
+      "community_id": 64,
+      "n_sampled": 800,
+      "terms": [
+        "flow",
+        "performance",
+        "heat",
+        "wind",
+        "numerical",
+        "turbine",
+        "characteristics",
+        "design"
+      ]
+    },
+    {
+      "community_id": 65,
+      "n_sampled": 800,
+      "terms": [
+        "detection",
+        "tracking",
+        "object",
+        "estimation",
+        "image",
+        "algorithm",
+        "visual",
+        "navigation"
+      ]
+    },
+    {
+      "community_id": 66,
+      "n_sampled": 478,
+      "terms": [
+        "power",
+        "control",
+        "wind",
+        "frequency",
+        "stability",
+        "load",
+        "design",
+        "controller"
+      ]
+    },
+    {
+      "community_id": 67,
+      "n_sampled": 800,
+      "terms": [
+        "optical",
+        "imaging",
+        "fiber",
+        "laser",
+        "phase",
+        "design",
+        "measurement",
+        "light"
+      ]
+    },
+    {
+      "community_id": 68,
+      "n_sampled": 542,
+      "terms": [
+        "covid-19",
+        "pandemic",
+        "sars-cov-2",
+        "impact",
+        "health",
+        "infection",
+        "disease",
+        "epidemic"
+      ]
+    },
+    {
+      "community_id": 69,
+      "n_sampled": 800,
+      "terms": [
+        "health",
+        "patients",
+        "review",
+        "systematic",
+        "children",
+        "disease",
+        "adults",
+        "clinical"
+      ]
+    },
+    {
+      "community_id": 71,
+      "n_sampled": 800,
+      "terms": [
+        "nanoparticles",
+        "synthesis",
+        "detection",
+        "delivery",
+        "gold",
+        "cancer",
+        "cells",
+        "drug"
+      ]
+    },
+    {
+      "community_id": 72,
+      "n_sampled": 800,
+      "terms": [
+        "production",
+        "biodiesel",
+        "oil",
+        "waste",
+        "engine",
+        "biomass",
+        "diesel",
+        "properties"
+      ]
+    },
+    {
+      "community_id": 73,
+      "n_sampled": 800,
+      "terms": [
+        "dynamics",
+        "quantum",
+        "phase",
+        "nonlinear",
+        "transition",
+        "states",
+        "theory",
+        "field"
+      ]
+    },
+    {
+      "community_id": 74,
+      "n_sampled": 800,
+      "terms": [
+        "search",
+        "experiment",
+        "detector",
+        "neutrino",
+        "measurement",
+        "collisions",
+        "physics",
+        "measurements"
+      ]
+    },
+    {
+      "community_id": 75,
+      "n_sampled": 800,
+      "terms": [
+        "quantum",
+        "theory",
+        "field",
+        "manifolds",
+        "geometry",
+        "algebras",
+        "lie",
+        "symmetry"
+      ]
+    },
+    {
+      "community_id": 76,
+      "n_sampled": 800,
+      "terms": [
+        "finite",
+        "numerical",
+        "element",
+        "problems",
+        "equations",
+        "equation",
+        "algorithm",
+        "scheme"
+      ]
+    },
+    {
+      "community_id": 77,
+      "n_sampled": 655,
+      "terms": [
+        "oil",
+        "soil",
+        "water",
+        "properties",
+        "soils",
+        "surfactant",
+        "recovery",
+        "crude"
+      ]
+    },
+    {
+      "community_id": 78,
+      "n_sampled": 208,
+      "terms": [
+        "transient",
+        "discovery",
+        "ztf",
+        "alerce",
+        "gaiaalerts",
+        "atlas",
+        "pan-starrs",
+        "goto"
+      ]
+    },
+    {
+      "community_id": 79,
+      "n_sampled": 800,
+      "terms": [
+        "deformation",
+        "materials",
+        "strain",
+        "fracture",
+        "properties",
+        "stress",
+        "alloy",
+        "behavior"
+      ]
+    },
+    {
+      "community_id": 80,
+      "n_sampled": 800,
+      "terms": [
+        "aerosol",
+        "emissions",
+        "air",
+        "atmospheric",
+        "measurements",
+        "aerosols",
+        "organic",
+        "urban"
+      ]
+    },
+    {
+      "community_id": 81,
+      "n_sampled": 708,
+      "terms": [
+        "films",
+        "magnetic",
+        "thin",
+        "properties",
+        "epitaxial",
+        "surface",
+        "structure",
+        "electronic"
+      ]
+    },
+    {
+      "community_id": 83,
+      "n_sampled": 800,
+      "terms": [
+        "microbial",
+        "bacterial",
+        "community",
+        "soil",
+        "communities",
+        "bacteria",
+        "diversity",
+        "structure"
+      ]
+    },
+    {
+      "community_id": 84,
+      "n_sampled": 800,
+      "terms": [
+        "production",
+        "characterization",
+        "isolated",
+        "bacteria",
+        "bacillus",
+        "strain",
+        "nov",
+        "acid"
+      ]
+    },
+    {
+      "community_id": 85,
+      "n_sampled": 800,
+      "terms": [
+        "stars",
+        "telescope",
+        "solar",
+        "imaging",
+        "stellar",
+        "space",
+        "exoplanet",
+        "observatory"
+      ]
+    },
+    {
+      "community_id": 86,
+      "n_sampled": 800,
+      "terms": [
+        "spectroscopy",
+        "resonance",
+        "molecular",
+        "magnetic",
+        "nuclear",
+        "infrared",
+        "molecules",
+        "spectra"
+      ]
+    },
+    {
+      "community_id": 87,
+      "n_sampled": 800,
+      "terms": [
+        "properties",
+        "synthesis",
+        "characterization",
+        "carbon",
+        "structure",
+        "calcium",
+        "materials",
+        "phase"
+      ]
+    },
+    {
+      "community_id": 88,
+      "n_sampled": 800,
+      "terms": [
+        "films",
+        "zno",
+        "thin",
+        "properties",
+        "optical",
+        "structural",
+        "synthesis",
+        "doped"
+      ]
+    },
+    {
+      "community_id": 89,
+      "n_sampled": 466,
+      "terms": [
+        "editorial",
+        "editor",
+        "board",
+        "guest",
+        "editors",
+        "note",
+        "letter",
+        "letters"
+      ]
+    },
+    {
+      "community_id": 90,
+      "n_sampled": 800,
+      "terms": [
+        "characteristics",
+        "performance",
+        "experimental",
+        "heat",
+        "steel",
+        "numerical",
+        "properties",
+        "investigation"
+      ]
+    },
+    {
+      "community_id": 91,
+      "n_sampled": 800,
+      "terms": [
+        "science",
+        "education",
+        "students",
+        "learning",
+        "research",
+        "teaching",
+        "physics",
+        "engineering"
+      ]
+    },
+    {
+      "community_id": 92,
+      "n_sampled": 796,
+      "terms": [
+        "soil",
+        "growth",
+        "yield",
+        "rice",
+        "wheat",
+        "nitrogen",
+        "stress",
+        "application"
+      ]
+    },
+    {
+      "community_id": 93,
+      "n_sampled": 800,
+      "terms": [
+        "estimation",
+        "radar",
+        "channel",
+        "mimo",
+        "detection",
+        "algorithm",
+        "performance",
+        "signal"
+      ]
+    },
+    {
+      "community_id": 94,
+      "n_sampled": 800,
+      "terms": [
+        "flexible",
+        "materials",
+        "design",
+        "energy",
+        "polymer",
+        "fabrication",
+        "sensor",
+        "mechanical"
+      ]
+    },
+    {
+      "community_id": 96,
+      "n_sampled": 800,
+      "terms": [
+        "reactions",
+        "reaction",
+        "radicals",
+        "kinetics",
+        "molecular",
+        "formation",
+        "radical",
+        "mass"
+      ]
+    },
+    {
+      "community_id": 97,
+      "n_sampled": 800,
+      "terms": [
+        "power",
+        "control",
+        "design",
+        "optical",
+        "frequency",
+        "sensor",
+        "converter",
+        "current"
+      ]
+    },
+    {
+      "community_id": 98,
+      "n_sampled": 800,
+      "terms": [
+        "species",
+        "genus",
+        "china",
+        "nov",
+        "taxonomic",
+        "molecular",
+        "asteraceae",
+        "south"
+      ]
+    },
+    {
+      "community_id": 99,
+      "n_sampled": 747,
+      "terms": [
+        "plant",
+        "gene",
+        "plants",
+        "regulation",
+        "expression",
+        "development",
+        "protein",
+        "rice"
+      ]
+    },
+    {
+      "community_id": 101,
+      "n_sampled": 800,
+      "terms": [
+        "liquid",
+        "optical",
+        "crystals",
+        "dynamics",
+        "crystal",
+        "nematic",
+        "active",
+        "structures"
+      ]
+    },
+    {
+      "community_id": 102,
+      "n_sampled": 800,
+      "terms": [
+        "control",
+        "nonlinear",
+        "design",
+        "adaptive",
+        "robust",
+        "tracking",
+        "optimal",
+        "controller"
+      ]
+    },
+    {
+      "community_id": 103,
+      "n_sampled": 800,
+      "terms": [
+        "quantum",
+        "optical",
+        "scattering",
+        "surface",
+        "phonon",
+        "photonic",
+        "crystals",
+        "thermal"
+      ]
+    },
+    {
+      "community_id": 104,
+      "n_sampled": 800,
+      "terms": [
+        "surface",
+        "diffusion",
+        "adsorption",
+        "surfaces",
+        "water",
+        "carbon",
+        "oxide",
+        "films"
+      ]
+    },
+    {
+      "community_id": 105,
+      "n_sampled": 800,
+      "terms": [
+        "characteristics",
+        "estimation",
+        "magnetic",
+        "field",
+        "distribution",
+        "temperature",
+        "surface",
+        "structure"
+      ]
+    },
+    {
+      "community_id": 106,
+      "n_sampled": 800,
+      "terms": [
+        "plasma",
+        "laser",
+        "discharge",
+        "plasmas",
+        "electron",
+        "ion",
+        "pressure",
+        "surface"
+      ]
+    },
+    {
+      "community_id": 107,
+      "n_sampled": 800,
+      "terms": [
+        "grb",
+        "detection",
+        "optical",
+        "catalog",
+        "online",
+        "vizier",
+        "swift",
+        "x-ray"
+      ]
+    },
+    {
+      "community_id": 108,
+      "n_sampled": 800,
+      "terms": [
+        "nonlinear",
+        "solutions",
+        "equation",
+        "wave",
+        "dynamics",
+        "equations",
+        "networks",
+        "waves"
+      ]
+    },
+    {
+      "community_id": 109,
+      "n_sampled": 800,
+      "terms": [
+        "optical",
+        "laser",
+        "fiber",
+        "photonic",
+        "generation",
+        "tunable",
+        "terahertz",
+        "crystal"
+      ]
+    },
+    {
+      "community_id": 110,
+      "n_sampled": 800,
+      "terms": [
+        "learning",
+        "recognition",
+        "detection",
+        "classification",
+        "deep",
+        "language",
+        "network",
+        "neural"
+      ]
+    },
+    {
+      "community_id": 111,
+      "n_sampled": 800,
+      "terms": [
+        "solar",
+        "magnetic",
+        "plasma",
+        "wind",
+        "waves",
+        "reconnection",
+        "field",
+        "electron"
+      ]
+    },
+    {
+      "community_id": 112,
+      "n_sampled": 800,
+      "terms": [
+        "catalysts",
+        "catalyst",
+        "catalytic",
+        "carbon",
+        "synthesis",
+        "oxidation",
+        "supported",
+        "hydrogen"
+      ]
+    },
+    {
+      "community_id": 113,
+      "n_sampled": 800,
+      "terms": [
+        "climate",
+        "ocean",
+        "sea",
+        "global",
+        "precipitation",
+        "variability",
+        "surface",
+        "tropical"
+      ]
+    },
+    {
+      "community_id": 114,
+      "n_sampled": 800,
+      "terms": [
+        "evolution",
+        "basin",
+        "late",
+        "climate",
+        "southern",
+        "implications",
+        "sea",
+        "mars"
+      ]
+    },
+    {
+      "community_id": 115,
+      "n_sampled": 800,
+      "terms": [
+        "theory",
+        "quantum",
+        "density",
+        "functional",
+        "calculations",
+        "energy",
+        "approximation",
+        "molecular"
+      ]
+    },
+    {
+      "community_id": 116,
+      "n_sampled": 800,
+      "terms": [
+        "solar",
+        "cells",
+        "perovskite",
+        "organic",
+        "silicon",
+        "performance",
+        "layer",
+        "transistors"
+      ]
+    },
+    {
+      "community_id": 117,
+      "n_sampled": 800,
+      "terms": [
+        "laser",
+        "characterization",
+        "measurement",
+        "properties",
+        "surface",
+        "experimental",
+        "structures",
+        "evaluation"
+      ]
+    },
+    {
+      "community_id": 118,
+      "n_sampled": 800,
+      "terms": [
+        "neural",
+        "architecture",
+        "computing",
+        "networks",
+        "efficient",
+        "network",
+        "learning",
+        "memory"
+      ]
+    },
+    {
+      "community_id": 119,
+      "n_sampled": 800,
+      "terms": [
+        "basin",
+        "india",
+        "river",
+        "water",
+        "assessment",
+        "groundwater",
+        "climate",
+        "change"
+      ]
+    },
+    {
+      "community_id": 120,
+      "n_sampled": 800,
+      "terms": [
+        "thermal",
+        "steel",
+        "power",
+        "temperature",
+        "evaluation",
+        "reliability",
+        "test",
+        "electrical"
+      ]
+    },
+    {
+      "community_id": 121,
+      "n_sampled": 664,
+      "terms": [
+        "clusters",
+        "nanoparticles",
+        "quantum",
+        "cluster",
+        "dots",
+        "structure",
+        "metal",
+        "properties"
+      ]
+    },
+    {
+      "community_id": 122,
+      "n_sampled": 800,
+      "terms": [
+        "species",
+        "seed",
+        "genetic",
+        "growth",
+        "production",
+        "cultivars",
+        "quality",
+        "wheat"
+      ]
+    },
+    {
+      "community_id": 123,
+      "n_sampled": 800,
+      "terms": [
+        "imaging",
+        "detection",
+        "sensor",
+        "optical",
+        "measurement",
+        "fiber",
+        "microscopy",
+        "sensing"
+      ]
+    },
+    {
+      "community_id": 124,
+      "n_sampled": 800,
+      "terms": [
+        "detection",
+        "recognition",
+        "classification",
+        "image",
+        "network",
+        "learning",
+        "neural",
+        "algorithm"
+      ]
+    },
+    {
+      "community_id": 125,
+      "n_sampled": 800,
+      "terms": [
+        "gravitational",
+        "black",
+        "stars",
+        "gravity",
+        "relativistic",
+        "holes",
+        "theory",
+        "general"
+      ]
+    },
+    {
+      "community_id": 126,
+      "n_sampled": 800,
+      "terms": [
+        "assessment",
+        "water",
+        "heavy",
+        "metals",
+        "environmental",
+        "soil",
+        "river",
+        "groundwater"
+      ]
+    },
+    {
+      "community_id": 127,
+      "n_sampled": 800,
+      "terms": [
+        "structure",
+        "crystal",
+        "bis",
+        "activity",
+        "synthesis",
+        "acid",
+        "methyl",
+        "alkaloids"
+      ]
+    },
+    {
+      "community_id": 128,
+      "n_sampled": 800,
+      "terms": [
+        "resistance",
+        "plant",
+        "control",
+        "against",
+        "plants",
+        "virus",
+        "expression",
+        "host"
+      ]
+    },
+    {
+      "community_id": 129,
+      "n_sampled": 668,
+      "terms": [
+        "adsorption",
+        "surface",
+        "surfaces",
+        "carbon",
+        "hydrogen",
+        "electronic",
+        "adsorbed",
+        "metal"
+      ]
+    },
+    {
+      "community_id": 130,
+      "n_sampled": 800,
+      "terms": [
+        "notes",
+        "book",
+        "news",
+        "cover",
+        "reviews",
+        "planet",
+        "water",
+        "science"
+      ]
+    },
+    {
+      "community_id": 131,
+      "n_sampled": 800,
+      "terms": [
+        "power",
+        "fault",
+        "research",
+        "protection",
+        "transmission",
+        "distribution",
+        "control",
+        "current"
+      ]
+    },
+    {
+      "community_id": 132,
+      "n_sampled": 800,
+      "terms": [
+        "polymer",
+        "poly",
+        "phase",
+        "liquid",
+        "block",
+        "copolymers",
+        "properties",
+        "molecular"
+      ]
+    },
+    {
+      "community_id": 133,
+      "n_sampled": 800,
+      "terms": [
+        "networks",
+        "wireless",
+        "network",
+        "sensor",
+        "mobile",
+        "performance",
+        "routing",
+        "communication"
+      ]
+    },
+    {
+      "community_id": 134,
+      "n_sampled": 800,
+      "terms": [
+        "synthesis",
+        "molecular",
+        "reaction",
+        "chemical",
+        "chemistry",
+        "acid",
+        "und",
+        "von"
+      ]
+    },
+    {
+      "community_id": 136,
+      "n_sampled": 800,
+      "terms": [
+        "quantum",
+        "entanglement",
+        "states",
+        "state",
+        "qubits",
+        "qubit",
+        "information",
+        "control"
+      ]
+    },
+    {
+      "community_id": 137,
+      "n_sampled": 1,
+      "terms": [
+        "serpens",
+        "bandwidth",
+        "memory",
+        "accelerator",
+        "general-purpose",
+        "sparse",
+        "matrix-vector",
+        "multiplication"
+      ]
+    },
+    {
+      "community_id": 138,
+      "n_sampled": 800,
+      "terms": [
+        "research",
+        "management",
+        "big",
+        "information",
+        "database",
+        "software",
+        "science",
+        "storage"
+      ]
+    },
+    {
+      "community_id": 139,
+      "n_sampled": 800,
+      "terms": [
+        "detection",
+        "network",
+        "fault",
+        "power",
+        "monitoring",
+        "networks",
+        "identification",
+        "intrusion"
+      ]
+    },
+    {
+      "community_id": 140,
+      "n_sampled": 800,
+      "terms": [
+        "development",
+        "european",
+        "landscape",
+        "italy",
+        "urban",
+        "europe",
+        "water",
+        "heritage"
+      ]
+    },
+    {
+      "community_id": 141,
+      "n_sampled": 800,
+      "terms": [
+        "carbon",
+        "synthesis",
+        "batteries",
+        "performance",
+        "graphene",
+        "photocatalytic",
+        "efficient",
+        "porous"
+      ]
+    },
+    {
+      "community_id": 142,
+      "n_sampled": 800,
+      "terms": [
+        "cancer",
+        "cells",
+        "cell",
+        "human",
+        "gene",
+        "expression",
+        "tumor",
+        "breast"
+      ]
+    },
+    {
+      "community_id": 143,
+      "n_sampled": 800,
+      "terms": [
+        "electrochemical",
+        "electron",
+        "microscopy",
+        "surface",
+        "films",
+        "spectroscopy",
+        "scanning",
+        "thin"
+      ]
+    },
+    {
+      "community_id": 144,
+      "n_sampled": 800,
+      "terms": [
+        "solar",
+        "photovoltaic",
+        "energy",
+        "performance",
+        "power",
+        "thermal",
+        "design",
+        "water"
+      ]
+    },
+    {
+      "community_id": 145,
+      "n_sampled": 800,
+      "terms": [
+        "removal",
+        "adsorption",
+        "aqueous",
+        "carbon",
+        "water",
+        "synthesis",
+        "solution",
+        "preparation"
+      ]
+    },
+    {
+      "community_id": 146,
+      "n_sampled": 800,
+      "terms": [
+        "antenna",
+        "design",
+        "applications",
+        "microstrip",
+        "array",
+        "antennas",
+        "patch",
+        "filter"
+      ]
+    },
+    {
+      "community_id": 147,
+      "n_sampled": 800,
+      "terms": [
+        "synthesis",
+        "catalyzed",
+        "catalytic",
+        "enantioselective",
+        "reaction",
+        "catalysis",
+        "efficient",
+        "reactions"
+      ]
+    },
+    {
+      "community_id": 148,
+      "n_sampled": 800,
+      "terms": [
+        "laser",
+        "spectroscopy",
+        "optical",
+        "quantum",
+        "generation",
+        "dynamics",
+        "pulses",
+        "femtosecond"
+      ]
+    },
+    {
+      "community_id": 149,
+      "n_sampled": 800,
+      "terms": [
+        "learning",
+        "education",
+        "teaching",
+        "students",
+        "engineering",
+        "design",
+        "development",
+        "technology"
+      ]
+    },
+    {
+      "community_id": 150,
+      "n_sampled": 557,
+      "terms": [
+        "gravitational",
+        "black",
+        "waves",
+        "hole",
+        "binary",
+        "holes",
+        "wave",
+        "binaries"
+      ]
+    },
+    {
+      "community_id": 151,
+      "n_sampled": 800,
+      "terms": [
+        "cells",
+        "expression",
+        "human",
+        "protein",
+        "cell",
+        "mice",
+        "gene",
+        "stress"
+      ]
+    },
+    {
+      "community_id": 152,
+      "n_sampled": 800,
+      "terms": [
+        "genome",
+        "gene",
+        "evolution",
+        "genetic",
+        "sequencing",
+        "genomic",
+        "sequence",
+        "dna"
+      ]
+    },
+    {
+      "community_id": 154,
+      "n_sampled": 800,
+      "terms": [
+        "flow",
+        "reservoir",
+        "gas",
+        "transport",
+        "water",
+        "hydraulic",
+        "fracture",
+        "media"
+      ]
+    },
+    {
+      "community_id": 155,
+      "n_sampled": 800,
+      "terms": [
+        "magnetic",
+        "motor",
+        "design",
+        "control",
+        "magnet",
+        "permanent",
+        "field",
+        "electromagnetic"
+      ]
+    },
+    {
+      "community_id": 156,
+      "n_sampled": 800,
+      "terms": [
+        "monitoring",
+        "smart",
+        "design",
+        "wireless",
+        "detection",
+        "network",
+        "iot",
+        "sensor"
+      ]
+    },
+    {
+      "community_id": 157,
+      "n_sampled": 800,
+      "terms": [
+        "species",
+        "genus",
+        "late",
+        "early",
+        "china",
+        "sea",
+        "middle",
+        "fossil"
+      ]
+    },
+    {
+      "community_id": 158,
+      "n_sampled": 777,
+      "terms": [
+        "water",
+        "dynamics",
+        "spectroscopy",
+        "structure",
+        "hydrogen",
+        "molecular",
+        "aqueous",
+        "vibrational"
+      ]
+    },
+    {
+      "community_id": 159,
+      "n_sampled": 800,
+      "terms": [
+        "soil",
+        "soils",
+        "carbon",
+        "organic",
+        "water",
+        "oil",
+        "moisture",
+        "properties"
+      ]
+    },
+    {
+      "community_id": 160,
+      "n_sampled": 746,
+      "terms": [
+        "quantum",
+        "topological",
+        "spin",
+        "phase",
+        "lattice",
+        "states",
+        "phases",
+        "magnetic"
+      ]
+    },
+    {
+      "community_id": 161,
+      "n_sampled": 800,
+      "terms": [
+        "estimation",
+        "optimization",
+        "bayesian",
+        "learning",
+        "sparse",
+        "algorithms",
+        "regression",
+        "linear"
+      ]
+    },
+    {
+      "community_id": 162,
+      "n_sampled": 800,
+      "terms": [
+        "development",
+        "process",
+        "parameters",
+        "control",
+        "influence",
+        "conditions",
+        "energy",
+        "information"
+      ]
+    },
+    {
+      "community_id": 163,
+      "n_sampled": 800,
+      "terms": [
+        "graphene",
+        "carbon",
+        "detection",
+        "nanotubes",
+        "sensor",
+        "properties",
+        "oxide",
+        "nanotube"
+      ]
+    },
+    {
+      "community_id": 164,
+      "n_sampled": 800,
+      "terms": [
+        "combustion",
+        "gas",
+        "flow",
+        "flame",
+        "experimental",
+        "numerical",
+        "heat",
+        "flames"
+      ]
+    },
+    {
+      "community_id": 165,
+      "n_sampled": 800,
+      "terms": [
+        "genetic",
+        "species",
+        "virus",
+        "china",
+        "caused",
+        "leaf",
+        "characterization",
+        "diversity"
+      ]
+    },
+    {
+      "community_id": 166,
+      "n_sampled": 800,
+      "terms": [
+        "wastewater",
+        "removal",
+        "treatment",
+        "sludge",
+        "water",
+        "membrane",
+        "process",
+        "anaerobic"
+      ]
+    },
+    {
+      "community_id": 167,
+      "n_sampled": 800,
+      "terms": [
+        "remote",
+        "sensing",
+        "satellite",
+        "imagery",
+        "images",
+        "classification",
+        "image",
+        "land"
+      ]
+    },
+    {
+      "community_id": 168,
+      "n_sampled": 800,
+      "terms": [
+        "properties",
+        "optical",
+        "doped",
+        "structural",
+        "synthesis",
+        "crystal",
+        "magnetic",
+        "ceramics"
+      ]
+    },
+    {
+      "community_id": 169,
+      "n_sampled": 800,
+      "terms": [
+        "flow",
+        "turbulent",
+        "turbulence",
+        "boundary",
+        "layer",
+        "flows",
+        "numerical",
+        "vortex"
+      ]
+    },
+    {
+      "community_id": 170,
+      "n_sampled": 800,
+      "terms": [
+        "synthesis",
+        "detection",
+        "fluorescent",
+        "properties",
+        "fluorescence",
+        "organic",
+        "bis",
+        "probe"
+      ]
+    },
+    {
+      "community_id": 171,
+      "n_sampled": 355,
+      "terms": [
+        "thermoelectric",
+        "thermal",
+        "properties",
+        "transport",
+        "conductivity",
+        "materials",
+        "performance",
+        "electrical"
+      ]
+    },
+    {
+      "community_id": 172,
+      "n_sampled": 800,
+      "terms": [
+        "species",
+        "fish",
+        "marine",
+        "distribution",
+        "sea",
+        "population",
+        "habitat",
+        "environmental"
+      ]
+    },
+    {
+      "community_id": 173,
+      "n_sampled": 800,
+      "terms": [
+        "china",
+        "river",
+        "water",
+        "basin",
+        "sea",
+        "characteristics",
+        "plateau",
+        "soil"
+      ]
+    },
+    {
+      "community_id": 174,
+      "n_sampled": 800,
+      "terms": [
+        "quantum",
+        "graphene",
+        "electron",
+        "topological",
+        "hall",
+        "states",
+        "two-dimensional",
+        "superconductivity"
+      ]
+    },
+    {
+      "community_id": 175,
+      "n_sampled": 800,
+      "terms": [
+        "power",
+        "energy",
+        "distribution",
+        "optimal",
+        "electric",
+        "electricity",
+        "generation",
+        "management"
+      ]
+    },
+    {
+      "community_id": 176,
+      "n_sampled": 800,
+      "terms": [
+        "dynamic",
+        "vibration",
+        "characteristics",
+        "response",
+        "numerical",
+        "experimental",
+        "impact",
+        "influence"
+      ]
+    },
+    {
+      "community_id": 177,
+      "n_sampled": 800,
+      "terms": [
+        "magnetic",
+        "spin",
+        "magnetization",
+        "field",
+        "ferromagnetic",
+        "films",
+        "properties",
+        "quantum"
+      ]
+    },
+    {
+      "community_id": 178,
+      "n_sampled": 800,
+      "terms": [
+        "message",
+        "preface",
+        "science",
+        "scientific",
+        "review",
+        "research",
+        "conference",
+        "chairs"
+      ]
+    },
+    {
+      "community_id": 179,
+      "n_sampled": 800,
+      "terms": [
+        "convection",
+        "flow",
+        "instability",
+        "stability",
+        "waves",
+        "fluid",
+        "layer",
+        "turbulent"
+      ]
+    },
+    {
+      "community_id": 181,
+      "n_sampled": 800,
+      "terms": [
+        "transport",
+        "plasma",
+        "electron",
+        "monte",
+        "radiation",
+        "carlo",
+        "numerical",
+        "plasmas"
+      ]
+    },
+    {
+      "community_id": 182,
+      "n_sampled": 800,
+      "terms": [
+        "growth",
+        "soil",
+        "stress",
+        "expression",
+        "response",
+        "nitrogen",
+        "protein",
+        "rice"
+      ]
+    },
+    {
+      "community_id": 183,
+      "n_sampled": 800,
+      "terms": [
+        "protein",
+        "structural",
+        "structure",
+        "proteins",
+        "molecular",
+        "dna",
+        "binding",
+        "dynamics"
+      ]
+    },
+    {
+      "community_id": 184,
+      "n_sampled": 800,
+      "terms": [
+        "laser",
+        "beam",
+        "design",
+        "electron",
+        "development",
+        "power",
+        "x-ray",
+        "ion"
+      ]
+    },
+    {
+      "community_id": 185,
+      "n_sampled": 800,
+      "terms": [
+        "radiation",
+        "detector",
+        "neutron",
+        "detectors",
+        "x-ray",
+        "dose",
+        "imaging",
+        "nuclear"
+      ]
+    },
+    {
+      "community_id": 186,
+      "n_sampled": 479,
+      "terms": [
+        "energy",
+        "power",
+        "optimization",
+        "optimal",
+        "considering",
+        "management",
+        "strategy",
+        "scheduling"
+      ]
+    },
+    {
+      "community_id": 187,
+      "n_sampled": 800,
+      "terms": [
+        "planetary",
+        "mars",
+        "comet",
+        "earth",
+        "solar",
+        "surface",
+        "impact",
+        "lunar"
+      ]
+    },
+    {
+      "community_id": 188,
+      "n_sampled": 800,
+      "terms": [
+        "research",
+        "science",
+        "collaborative",
+        "education",
+        "climate",
+        "program",
+        "stem",
+        "students"
+      ]
+    },
+    {
+      "community_id": 189,
+      "n_sampled": 800,
+      "terms": [
+        "molecular",
+        "organic",
+        "metal",
+        "synthesis",
+        "supramolecular",
+        "complexes",
+        "properties",
+        "structure"
+      ]
+    },
+    {
+      "community_id": 190,
+      "n_sampled": 800,
+      "terms": [
+        "image",
+        "segmentation",
+        "detection",
+        "images",
+        "learning",
+        "network",
+        "deep",
+        "neural"
+      ]
+    },
+    {
+      "community_id": 191,
+      "n_sampled": 800,
+      "terms": [
+        "learning",
+        "neural",
+        "networks",
+        "deep",
+        "network",
+        "adversarial",
+        "image",
+        "generative"
+      ]
+    },
+    {
+      "community_id": 192,
+      "n_sampled": 800,
+      "terms": [
+        "growth",
+        "water",
+        "quality",
+        "characteristics",
+        "properties",
+        "indonesia",
+        "assessment",
+        "production"
+      ]
+    },
+    {
+      "community_id": 193,
+      "n_sampled": 800,
+      "terms": [
+        "black",
+        "theory",
+        "quantum",
+        "gravity",
+        "holes",
+        "string",
+        "field",
+        "theories"
+      ]
+    },
+    {
+      "community_id": 194,
+      "n_sampled": 800,
+      "terms": [
+        "forest",
+        "species",
+        "soil",
+        "vegetation",
+        "forests",
+        "change",
+        "tropical",
+        "conservation"
+      ]
+    },
+    {
+      "community_id": 195,
+      "n_sampled": 625,
+      "terms": [
+        "arabidopsis",
+        "thaliana",
+        "protein",
+        "gene",
+        "expression",
+        "plant",
+        "root",
+        "genes"
+      ]
+    },
+    {
+      "community_id": 196,
+      "n_sampled": 800,
+      "terms": [
+        "flow",
+        "fluid",
+        "flows",
+        "viscosity",
+        "shear",
+        "fluids",
+        "numerical",
+        "dynamics"
+      ]
+    },
+    {
+      "community_id": 197,
+      "n_sampled": 800,
+      "terms": [
+        "seismic",
+        "earthquake",
+        "fault",
+        "earthquakes",
+        "structure",
+        "zone",
+        "slip",
+        "deformation"
+      ]
+    },
+    {
+      "community_id": 198,
+      "n_sampled": 800,
+      "terms": [
+        "vitro",
+        "growth",
+        "plant",
+        "culture",
+        "regeneration",
+        "development",
+        "acid",
+        "cell"
+      ]
+    },
+    {
+      "community_id": 199,
+      "n_sampled": 449,
+      "terms": [
+        "ionic",
+        "liquid",
+        "polymer",
+        "electrolytes",
+        "electrolyte",
+        "batteries",
+        "lithium",
+        "liquids"
+      ]
+    }
+  ]
+}

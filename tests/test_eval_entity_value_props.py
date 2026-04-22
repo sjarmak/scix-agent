@@ -465,3 +465,189 @@ def test_no_anthropic_sdk_import_in_script() -> None:
     source = script_path.read_text(encoding="utf-8")
     assert "import anthropic" not in source
     assert "from anthropic" not in source
+
+
+# ---------------------------------------------------------------------------
+# CommunityExpansionBackend — SQL pivot wired into the eval only
+# ---------------------------------------------------------------------------
+
+
+class _FakeCursor:
+    """Minimal psycopg-like cursor that returns canned tuples per query pattern."""
+
+    def __init__(self, handlers: list[tuple[str, Any]]) -> None:
+        self._handlers = handlers
+        self._last_result: list[tuple[Any, ...]] = []
+        self.executed: list[tuple[str, tuple[Any, ...]]] = []
+
+    def __enter__(self) -> "_FakeCursor":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
+        self.executed.append((sql, params))
+        for pattern, result in self._handlers:
+            if pattern in sql:
+                self._last_result = result if isinstance(result, list) else [result]
+                return
+        self._last_result = []
+
+    def fetchone(self) -> tuple[Any, ...] | None:
+        return self._last_result[0] if self._last_result else None
+
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        return list(self._last_result)
+
+
+class _FakeConn:
+    def __init__(self, cursor: _FakeCursor) -> None:
+        self._cursor = cursor
+        self.closed = False
+
+    def cursor(self) -> _FakeCursor:
+        return self._cursor
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _community_query_gold(seed: str = "Hubble Space Telescope") -> eevp.GoldQuery:
+    return eevp.GoldQuery(
+        prop="community_expansion",
+        query_id="comm-001",
+        query="papers related to this community",
+        expectation="should surface community siblings",
+        extra={"seed_entity": seed, "community_label": "HST ecosystem"},
+    )
+
+
+def _non_community_gold() -> eevp.GoldQuery:
+    return eevp.GoldQuery(
+        prop="alias_expansion",
+        query_id="a-1",
+        query="HST observations",
+        expectation="HST→Hubble",
+    )
+
+
+def test_community_backend_delegates_non_community_props() -> None:
+    inner = eevp.StubRetrievalBackend(max_docs=2)
+    backend = eevp.CommunityExpansionBackend(inner=inner, dsn="dbname=scix_test")
+    # Do not wire _conn — delegation path must not touch the DB.
+    docs = backend.retrieve(_non_community_gold(), top_k=5)
+    assert len(docs) == 2
+    assert docs[0].bibcode.startswith("stub.alias_expansion.")
+
+
+def test_community_backend_returns_empty_when_no_seed_entity() -> None:
+    inner = eevp.StubRetrievalBackend()
+    backend = eevp.CommunityExpansionBackend(inner=inner, dsn="dbname=scix_test")
+    gold = eevp.GoldQuery(
+        prop="community_expansion",
+        query_id="comm-x",
+        query="q",
+        expectation="e",
+        extra={},  # no seed_entity
+    )
+    assert backend.retrieve(gold) == []
+
+
+def test_community_backend_returns_empty_when_seed_unresolvable() -> None:
+    inner = eevp.StubRetrievalBackend()
+    cursor = _FakeCursor(
+        handlers=[
+            ("FROM entities e", []),  # canonical-name lookup → no match
+            ("FROM entity_aliases a", []),  # alias lookup → no match
+        ]
+    )
+    backend = eevp.CommunityExpansionBackend(inner=inner, dsn="dbname=scix_test")
+    backend._conn = _FakeConn(cursor)
+    assert backend.retrieve(_community_query_gold(seed="Nonexistent Mission")) == []
+
+
+def test_community_backend_resolves_via_alias_when_canonical_miss() -> None:
+    inner = eevp.StubRetrievalBackend()
+    cursor = _FakeCursor(
+        handlers=[
+            ("FROM entities e", []),  # canonical miss
+            ("FROM entity_aliases a", [(42, 100)]),  # alias hit → entity_id=42
+            ("FROM document_entities de", [(99, 500)]),  # modal community_id=99
+            (
+                "FROM papers p",
+                [
+                    ("2024X....42...1A", "Paper 42", "abstract 42"),
+                    ("2024X....42...2B", "Paper 43", ""),
+                ],
+            ),
+        ]
+    )
+    backend = eevp.CommunityExpansionBackend(inner=inner, dsn="dbname=scix_test")
+    backend._conn = _FakeConn(cursor)
+
+    docs = backend.retrieve(_community_query_gold(seed="JWST"), top_k=2)
+    assert len(docs) == 2
+    assert docs[0].bibcode == "2024X....42...1A"
+    assert docs[0].title == "Paper 42"
+    # Verify the sibling query excluded the seed entity (param[0]) and used the community id (param[1]).
+    siblings_call = [c for c in cursor.executed if "FROM papers p" in c[0]][0]
+    assert siblings_call[1][0] == 42  # seed_entity_id
+    assert siblings_call[1][1] == 99  # community_id
+    assert siblings_call[1][2] == 2  # top_k
+
+
+def test_community_backend_returns_empty_when_no_semantic_community() -> None:
+    inner = eevp.StubRetrievalBackend()
+    cursor = _FakeCursor(
+        handlers=[
+            ("FROM entities e", [(42, 100)]),  # canonical hit
+            ("FROM document_entities de", []),  # no community assigned
+        ]
+    )
+    backend = eevp.CommunityExpansionBackend(inner=inner, dsn="dbname=scix_test")
+    backend._conn = _FakeConn(cursor)
+    assert backend.retrieve(_community_query_gold()) == []
+
+
+def test_community_backend_picks_highest_paper_count_on_ambiguous_canonical() -> None:
+    """Two entities named 'LIGO' — prefer the one with more linked papers."""
+    inner = eevp.StubRetrievalBackend()
+    cursor = _FakeCursor(
+        handlers=[
+            # Canonical-name lookup returns the highest-paper-count row
+            # by virtue of the ORDER BY n DESC LIMIT 1 — so we simulate
+            # just the winning row here.
+            ("FROM entities e", [(1588891, 1036)]),
+            ("FROM document_entities de", [(77, 300)]),
+            ("FROM papers p", [("2024LIGO..1", "GW paper", "ab")]),
+        ]
+    )
+    backend = eevp.CommunityExpansionBackend(inner=inner, dsn="dbname=scix_test")
+    backend._conn = _FakeConn(cursor)
+    docs = backend.retrieve(_community_query_gold(seed="LIGO"))
+    assert len(docs) == 1
+    # Confirm the SQL carries an ORDER BY n DESC so multi-match rows
+    # are disambiguated by paper-link count.
+    canonical_sql = [c for c in cursor.executed if "FROM entities e" in c[0]][0][0]
+    assert "ORDER BY n DESC" in canonical_sql
+
+
+def test_community_backend_close_cascades_to_inner() -> None:
+    class _Closable:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def retrieve(self, gold, *, top_k=10):  # pragma: no cover - unused
+            return []
+
+        def close(self) -> None:
+            self.closed = True
+
+    inner = _Closable()
+    cursor = _FakeCursor(handlers=[])
+    backend = eevp.CommunityExpansionBackend(inner=inner, dsn="dbname=scix_test")
+    backend._conn = _FakeConn(cursor)
+    backend.close()
+    assert inner.closed is True
+    assert backend._conn is None

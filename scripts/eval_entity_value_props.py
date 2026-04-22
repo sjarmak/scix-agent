@@ -319,6 +319,185 @@ class HybridSearchBackend:
                 self._conn = None
 
 
+@dataclass
+class CommunityExpansionBackend:
+    """Retrieval backend that implements the ``community_expansion`` value prop.
+
+    For queries whose prop is ``community_expansion``, the backend:
+
+    1. Resolves ``gold.extra['seed_entity']`` to an ``entities.id`` via
+       case-insensitive match against ``entities.canonical_name`` or
+       ``entity_aliases.alias``.
+    2. Picks the modal ``paper_metrics.community_semantic_medium`` across
+       all papers currently linked to that entity via
+       ``document_entities`` (ignoring ``NULL`` and the ``-1`` outlier
+       sentinel).
+    3. Returns the top-``top_k`` papers in that community ordered by
+       ``paper_metrics.pagerank DESC NULLS LAST``, excluding papers
+       already linked to the seed entity so the judge sees genuine
+       community *siblings* rather than seed-adjacent papers.
+
+    For every other prop the backend delegates to ``inner``.
+
+    Caveat: this is a narrow fix wired into the eval harness only —
+    ``src/scix/search.py`` is intentionally untouched (see bead
+    scix_experiments-xz4.1.34). Semantic communities are topic-based;
+    if the seed entity's papers span multiple topics, the modal
+    community can be broad (e.g. "observational astronomy") rather than
+    mission-specific.
+    """
+
+    inner: RetrievalBackend
+    dsn: str
+    _conn: Any | None = None  # psycopg.Connection
+
+    def _get_conn(self) -> Any:
+        if self._conn is None:
+            from scix.db import get_connection
+
+            self._conn = get_connection(self.dsn)
+        return self._conn
+
+    def _resolve_entity_id(self, name: str) -> int | None:
+        """Resolve a seed entity name to ``entities.id``.
+
+        Tries canonical_name first, then entity_aliases. Both matches
+        are case-insensitive (the schema has ``idx_entities_canonical_lower``
+        and ``idx_entity_aliases_lower`` btrees on the lowered forms).
+        When multiple entities match (e.g. two 'LIGO' rows), the one
+        with the most paper links wins — the community-expansion
+        rationale prefers the heavier-weight node.
+        """
+        conn = self._get_conn()
+        lowered = name.strip().lower()
+        if not lowered:
+            return None
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT e.id, COUNT(de.bibcode) AS n
+                FROM entities e
+                LEFT JOIN document_entities de ON de.entity_id = e.id
+                WHERE lower(e.canonical_name) = %s
+                GROUP BY e.id
+                ORDER BY n DESC
+                LIMIT 1
+                """,
+                (lowered,),
+            )
+            row = cur.fetchone()
+            if row is not None:
+                return int(row[0])
+            cur.execute(
+                """
+                SELECT e.id, COUNT(de.bibcode) AS n
+                FROM entity_aliases a
+                JOIN entities e ON e.id = a.entity_id
+                LEFT JOIN document_entities de ON de.entity_id = e.id
+                WHERE lower(a.alias) = %s
+                GROUP BY e.id
+                ORDER BY n DESC
+                LIMIT 1
+                """,
+                (lowered,),
+            )
+            row = cur.fetchone()
+        return int(row[0]) if row is not None else None
+
+    def _modal_community(self, entity_id: int) -> int | None:
+        """Return the most-populated ``community_semantic_medium`` for the entity.
+
+        Ignores NULL and ``-1`` (outlier sentinel). Returns ``None`` if
+        no papers linked to the entity have a semantic community assigned.
+        """
+        conn = self._get_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT pm.community_semantic_medium, COUNT(*) AS n
+                FROM document_entities de
+                JOIN paper_metrics pm ON pm.bibcode = de.bibcode
+                WHERE de.entity_id = %s
+                  AND pm.community_semantic_medium IS NOT NULL
+                  AND pm.community_semantic_medium <> -1
+                GROUP BY pm.community_semantic_medium
+                ORDER BY n DESC
+                LIMIT 1
+                """,
+                (entity_id,),
+            )
+            row = cur.fetchone()
+        return int(row[0]) if row is not None else None
+
+    def _community_siblings(
+        self, community_id: int, seed_entity_id: int, top_k: int
+    ) -> list[RetrievalDoc]:
+        """Return ``top_k`` papers in the community, excluding seed-linked papers."""
+        conn = self._get_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT p.bibcode, p.title, COALESCE(p.abstract, '')
+                FROM papers p
+                JOIN paper_metrics pm ON pm.bibcode = p.bibcode
+                LEFT JOIN document_entities de_seed
+                  ON de_seed.bibcode = p.bibcode AND de_seed.entity_id = %s
+                WHERE pm.community_semantic_medium = %s
+                  AND de_seed.bibcode IS NULL
+                ORDER BY pm.pagerank DESC NULLS LAST
+                LIMIT %s
+                """,
+                (seed_entity_id, community_id, top_k),
+            )
+            rows = cur.fetchall()
+        return [
+            RetrievalDoc(
+                bibcode=str(bibcode),
+                title=str(title or ""),
+                snippet=str(abstract or "")[:400],
+            )
+            for bibcode, title, abstract in rows
+        ]
+
+    def retrieve(self, gold: GoldQuery, *, top_k: int = DEFAULT_TOP_K) -> list[RetrievalDoc]:
+        if gold.prop != "community_expansion":
+            return self.inner.retrieve(gold, top_k=top_k)
+
+        seed = gold.extra.get("seed_entity")
+        if not isinstance(seed, str) or not seed.strip():
+            logger.info("community_expansion: query %r has no seed_entity", gold.query_id)
+            return []
+        entity_id = self._resolve_entity_id(seed)
+        if entity_id is None:
+            logger.info(
+                "community_expansion: seed %r (query %r) does not resolve to any entity",
+                seed,
+                gold.query_id,
+            )
+            return []
+        community_id = self._modal_community(entity_id)
+        if community_id is None:
+            logger.info(
+                "community_expansion: entity_id=%d (query %r) has no semantic community",
+                entity_id,
+                gold.query_id,
+            )
+            return []
+        return self._community_siblings(community_id, entity_id, top_k=top_k)
+
+    def close(self) -> None:
+        # The inner backend owns the hybrid_search connection; we only
+        # close our own.
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            finally:
+                self._conn = None
+        close_inner = getattr(self.inner, "close", None)
+        if callable(close_inner):
+            close_inner()
+
+
 # ---------------------------------------------------------------------------
 # Judge invocation (claude -p subprocess)
 # ---------------------------------------------------------------------------
@@ -847,6 +1026,13 @@ def main(argv: list[str] | None = None) -> int:
         retrieval = StubRetrievalBackend()
     else:
         retrieval = HybridSearchBackend(dsn=args.db)
+        # Wire community_expansion retrieval at the harness level.
+        # For other props this wrapper delegates to the inner backend
+        # untouched, so the addition is cost-free for non-community
+        # evals. Intentionally scoped to the eval harness only —
+        # src/scix/search.py stays untouched (see bead xz4.1.34).
+        if "community_expansion" in selected_props:
+            retrieval = CommunityExpansionBackend(inner=retrieval, dsn=args.db)
 
     judge: JudgeBackend
     if args.stub_judge:
@@ -886,8 +1072,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     finally:
         artifact_handle.close()
-        if isinstance(retrieval, HybridSearchBackend):
-            retrieval.close()
+        close_fn = getattr(retrieval, "close", None)
+        if callable(close_fn):
+            close_fn()
 
     summaries = [summarize_prop(prop, results) for prop in selected_props]
     print("[eval_entity_value_props] summary:")

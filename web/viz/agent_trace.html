@@ -198,9 +198,10 @@
     <main class="viz-container">
       <h1>Agent Trace Overlay</h1>
       <p class="viz-sub">
-        Type a query below to run a real hybrid search against the 32M-paper
-        corpus. Each tool call narrates in the panel and the touched papers
-        flash on the UMAP overlay.
+        Type a query below to run a real MCP tool sequence against the
+        32M-paper corpus. Each tool call narrates in the panel and the
+        touched papers flash on the UMAP overlay. Preset pills swap between
+        the single-tool search and the multi-step scenarios.
       </p>
       <form id="query-bar" autocomplete="off">
         <input
@@ -211,11 +212,36 @@
         />
         <button type="submit" id="query-submit">Search</button>
         <div class="quick" aria-label="Example queries">
-          <button type="button" data-q="galaxy clusters dark matter">galaxy clusters</button>
-          <button type="button" data-q="exoplanet atmosphere spectroscopy">exoplanets</button>
-          <button type="button" data-q="deep learning image segmentation">deep learning</button>
-          <button type="button" data-q="protein folding prediction">protein folding</button>
-          <button type="button" data-q="earthquake fault rupture">seismology</button>
+          <button
+            type="button"
+            data-scenario="search"
+            data-q="galaxy clusters dark matter"
+          >search</button>
+          <button
+            type="button"
+            data-scenario="survey"
+            data-q="galaxy clusters dark matter"
+          >survey</button>
+          <button
+            type="button"
+            data-scenario="methods"
+            data-q="deep learning image segmentation"
+          >methods</button>
+          <button
+            type="button"
+            data-scenario="disambig"
+            data-q="JWST NIRCam"
+          >disambig</button>
+          <button
+            type="button"
+            data-scenario="search"
+            data-q="exoplanet atmosphere spectroscopy"
+          >exoplanets</button>
+          <button
+            type="button"
+            data-scenario="search"
+            data-q="protein folding prediction"
+          >protein folding</button>
         </div>
       </form>
       <div id="trace-layout">
@@ -377,42 +403,71 @@
           handleEvent,
         )
 
-        // Wire the query bar. Submits to /viz/api/demo/search which publishes
-        // trace events as it runs — the SSE subscription above does the rest.
+        // Wire the query bar. Each scenario submits to a different endpoint
+        // under /viz/api/demo/*; every endpoint runs a real MCP tool sequence
+        // and the SSE subscription above narrates the instrumented events.
+        const SCENARIO_LABELS = {
+          search: 'Search',
+          survey: 'Survey',
+          methods: 'Methods',
+          disambig: 'Disambig',
+        }
+        const SCENARIO_ENDPOINTS = {
+          search: '/viz/api/demo/search',
+          survey: '/viz/api/demo/survey',
+          methods: '/viz/api/demo/methods',
+          disambig: '/viz/api/demo/disambig',
+        }
+        let activeScenario = 'search'
         const form = document.getElementById('query-bar')
         const input = document.getElementById('query-input')
         const submit = document.getElementById('query-submit')
-        async function runQuery(q) {
+        function setScenario(name) {
+          if (!SCENARIO_ENDPOINTS[name]) return
+          activeScenario = name
+          submit.textContent = SCENARIO_LABELS[name] || 'Run'
+        }
+        async function runScenario(q, scenario) {
           const query = (q || input.value || '').trim()
           if (!query) return
+          if (scenario) setScenario(scenario)
           input.value = query
+          const endpoint = SCENARIO_ENDPOINTS[activeScenario]
+          const label = SCENARIO_LABELS[activeScenario] || 'Running'
           submit.disabled = true
-          submit.textContent = 'Searching…'
+          submit.textContent = label + '…'
           try {
-            const resp = await fetch('/viz/api/demo/search', {
+            const resp = await fetch(endpoint, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ query: query, top_n: 5 }),
             })
             if (!resp.ok) {
-              status.textContent = 'search failed: HTTP ' + resp.status
+              status.textContent =
+                activeScenario + ' failed: HTTP ' + resp.status
+            } else {
+              status.textContent = ''
             }
           } catch (err) {
-            status.textContent = 'search failed: ' + (err.message || String(err))
+            status.textContent =
+              activeScenario + ' failed: ' + (err.message || String(err))
           } finally {
             submit.disabled = false
-            submit.textContent = 'Search'
+            submit.textContent = label
           }
         }
         form.addEventListener('submit', function (e) {
           e.preventDefault()
-          runQuery()
+          runScenario()
         })
         document.querySelectorAll('#query-bar .quick button').forEach(function (btn) {
           btn.addEventListener('click', function () {
-            runQuery(btn.dataset.q)
+            const scenario = btn.dataset.scenario || 'search'
+            runScenario(btn.dataset.q, scenario)
           })
         })
+        setScenario('search')
+        window.runScenario = runScenario
       })()
     </script>
   </body>

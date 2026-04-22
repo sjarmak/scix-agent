@@ -1232,43 +1232,11 @@ def create_server(_run_self_test: bool = True):
         ]
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-        with _get_conn() as conn:
-            # Resolve deprecated aliases for timeout lookup
-            resolved_name = _DEPRECATED_ALIASES.get(name, name)
-            _set_timeout(conn, resolved_name)
-            t0 = time.monotonic()
-            success = True
-            error_msg: str | None = None
-            result_json: str = "{}"
-            try:
-                result_json = _dispatch_tool(conn, name, arguments)
-            except Exception as exc:
-                success = False
-                error_msg = str(exc)
-                result_json = json.dumps({"error": error_msg})
-                raise
-            finally:
-                latency_ms = (time.monotonic() - t0) * 1000
-                _log_query(
-                    conn,
-                    name,
-                    arguments,
-                    latency_ms,
-                    success,
-                    error_msg,
-                    result_json=result_json,
-                    session_id=_server_session_id,
-                    is_test=_is_test_session,
-                )
-                _emit_trace_event(
-                    name,
-                    latency_ms,
-                    arguments,
-                    result_json,
-                    success,
-                )
-            return [TextContent(type="text", text=result_json)]
+    async def call_tool_handler(
+        name: str, arguments: dict[str, Any]
+    ) -> list[TextContent]:
+        result_json = call_tool(name, arguments)
+        return [TextContent(type="text", text=result_json)]
 
     if _run_self_test:
         try:
@@ -1283,6 +1251,55 @@ def create_server(_run_self_test: bool = True):
 # ---------------------------------------------------------------------------
 # Tool dispatch
 # ---------------------------------------------------------------------------
+
+
+def call_tool(name: str, arguments: dict[str, Any]) -> str:
+    """Synchronously dispatch a tool by name and return its JSON result.
+
+    Mirrors the lifecycle of the MCP request handler registered in
+    :func:`create_server`: acquires a pooled connection, sets the per-tool
+    statement_timeout, dispatches via :func:`_dispatch_tool`, and — in a
+    ``finally`` block — records a ``query_log`` row and emits a
+    :class:`scix.viz.trace_stream.TraceEvent`. Lets callers (e.g. the viz
+    demo endpoint) drive the MCP tool surface in-process without going
+    through the asyncio request handler, while still producing exactly one
+    log row and one trace event per call.
+    """
+    with _get_conn() as conn:
+        resolved_name = _DEPRECATED_ALIASES.get(name, name)
+        _set_timeout(conn, resolved_name)
+        t0 = time.monotonic()
+        success = True
+        error_msg: str | None = None
+        result_json: str = "{}"
+        try:
+            result_json = _dispatch_tool(conn, name, arguments)
+        except Exception as exc:
+            success = False
+            error_msg = str(exc)
+            result_json = json.dumps({"error": error_msg})
+            raise
+        finally:
+            latency_ms = (time.monotonic() - t0) * 1000
+            _log_query(
+                conn,
+                name,
+                arguments,
+                latency_ms,
+                success,
+                error_msg,
+                result_json=result_json,
+                session_id=_server_session_id,
+                is_test=_is_test_session,
+            )
+            _emit_trace_event(
+                name,
+                latency_ms,
+                arguments,
+                result_json,
+                success,
+            )
+        return result_json
 
 
 def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) -> str:

@@ -17,7 +17,7 @@ import time
 from typing import Callable, Optional
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 
 from scix import search as scix_search
@@ -36,6 +36,7 @@ _BIBCODE_PATTERN = r"^[A-Za-z0-9.:&'+%\-]{4,32}$"
 
 PaperDict = dict[str, object]
 FetcherCallable = Callable[[str], Optional[PaperDict]]
+EgoFetcherCallable = Callable[[str, int, int, int], Optional[PaperDict]]
 
 
 def _fetch_paper(bibcode: str) -> Optional[PaperDict]:
@@ -187,3 +188,241 @@ def demo_search(payload: DemoSearchRequest) -> dict:
             for p in papers
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Ego-network viewer: /viz/api/ego/{bibcode}
+#
+# Returns the 1-hop citation neighborhood of a paper plus a weighted sample
+# of its 2-hop neighborhood, shaped for a force-directed graph view. Direct
+# edges ("ref" = center cites neighbor, "cite" = neighbor cites center) come
+# straight from ``citation_edges``. Second-hop nodes are ranked by the number
+# of distinct 1-hop neighbors that link to them — that is the "weight".
+#
+# Edge set is intentionally flat: each edge carries {source, target, kind} so
+# the client can color/thicken without re-deriving topology. No weight >1 is
+# exposed on individual edges because ``citation_edges`` is a boolean relation
+# (PK on (source, target)); edge thickness on the frontend is driven by the
+# node weight of the 2-hop endpoint.
+# ---------------------------------------------------------------------------
+
+
+# Caps are exposed as per-request Query params (clamped) so the frontend can
+# ask for a smaller view on mobile without a server redeploy.
+MAX_DIRECT_REFS_DEFAULT = 100
+MAX_DIRECT_CITES_DEFAULT = 100
+MAX_SECOND_HOP_DEFAULT = 200
+
+# Per-neighbor cap on edges pulled during the 2-hop expansion. Highly-cited
+# papers (review articles, seminal works) can have 100k+ inbound edges; without
+# this cap, the second-hop query scans tens of millions of rows. 60 was chosen
+# empirically as the largest value that keeps a cold-cache fetch under 1s for
+# typical papers (100 refs + ~20 cites) on the 299M-edge production graph.
+_PER_NEIGHBOR_EDGE_CAP = 60
+
+
+def _fetch_ego_network(
+    center_bibcode: str,
+    max_refs: int,
+    max_cites: int,
+    max_second_hop: int,
+) -> Optional[PaperDict]:
+    """Build a 1-hop + weighted 2-hop citation neighborhood around a bibcode.
+
+    Returns ``None`` if the center bibcode is not present in ``papers``. All
+    DB errors propagate — do not swallow them (see coding-style guidance).
+
+    The structure returned:
+
+    ``{
+        "center": {bibcode, title, community_id},
+        "direct_refs":  [{bibcode, title, community_id}, ...],   # center cites
+        "direct_cites": [{bibcode, title, community_id}, ...],   # cites center
+        "second_hop_sample": [
+            {bibcode, title, community_id, weight: int}, ...
+        ],
+        "edges": [{source, target, kind: 'ref'|'cite'|'hop'}, ...]
+    }``
+    """
+    conn: psycopg.Connection = get_connection()
+    try:
+        with conn.cursor() as cur:
+            # --- 1. Center paper -------------------------------------------
+            cur.execute(
+                "SELECT p.bibcode, p.title, pm.community_id_coarse "
+                "FROM papers p "
+                "LEFT JOIN paper_metrics pm ON pm.bibcode = p.bibcode "
+                "WHERE p.bibcode = %s LIMIT 1",
+                (center_bibcode,),
+            )
+            center_row = cur.fetchone()
+            if center_row is None:
+                return None
+            center = {
+                "bibcode": center_row[0],
+                "title": center_row[1],
+                "community_id": center_row[2],
+            }
+
+            # --- 2. Direct refs + cites (one indexed lookup each) ----------
+            cur.execute(
+                "SELECT target_bibcode FROM citation_edges "
+                "WHERE source_bibcode = %s LIMIT %s",
+                (center_bibcode, max_refs),
+            )
+            ref_bibs = [r[0] for r in cur.fetchall()]
+
+            cur.execute(
+                "SELECT source_bibcode FROM citation_edges "
+                "WHERE target_bibcode = %s LIMIT %s",
+                (center_bibcode, max_cites),
+            )
+            cite_bibs = [r[0] for r in cur.fetchall()]
+
+            # --- 3. Second hop, weighted by 1-hop-path count ---------------
+            neighbor_bibs = list(dict.fromkeys(ref_bibs + cite_bibs))
+            second_hop_rows: list[tuple[str, int]] = []
+            # Map 2-hop bib -> list of 1-hop neighbors that reached it, for
+            # edge emission below.
+            second_hop_edges: dict[str, list[str]] = {}
+
+            if neighbor_bibs and max_second_hop > 0:
+                # LATERAL per-neighbor LIMIT avoids blowups on highly-cited
+                # hubs: each neighbor contributes at most
+                # ``_PER_NEIGHBOR_EDGE_CAP`` rows per direction.
+                cur.execute(
+                    """
+                    WITH n AS (
+                        SELECT unnest(%s::text[]) AS bib
+                    ),
+                    hop_raw AS (
+                        SELECT n.bib AS via, h.bib AS hop
+                        FROM n,
+                        LATERAL (
+                            (SELECT target_bibcode AS bib
+                               FROM citation_edges
+                              WHERE source_bibcode = n.bib
+                              LIMIT %s)
+                            UNION ALL
+                            (SELECT source_bibcode AS bib
+                               FROM citation_edges
+                              WHERE target_bibcode = n.bib
+                              LIMIT %s)
+                        ) h
+                    )
+                    SELECT hop,
+                           count(DISTINCT via) AS weight,
+                           array_agg(DISTINCT via) AS via_list
+                    FROM hop_raw
+                    WHERE hop <> %s
+                      AND hop <> ALL(%s::text[])
+                    GROUP BY hop
+                    ORDER BY weight DESC, hop ASC
+                    LIMIT %s
+                    """,
+                    (
+                        neighbor_bibs,
+                        _PER_NEIGHBOR_EDGE_CAP,
+                        _PER_NEIGHBOR_EDGE_CAP,
+                        center_bibcode,
+                        neighbor_bibs,
+                        max_second_hop,
+                    ),
+                )
+                for hop, weight, via_list in cur.fetchall():
+                    second_hop_rows.append((hop, int(weight)))
+                    second_hop_edges[hop] = list(via_list or [])
+
+            # --- 4. Hydrate titles + community for every node in one shot -
+            all_bibs: list[str] = list(
+                dict.fromkeys(
+                    [center_bibcode]
+                    + ref_bibs
+                    + cite_bibs
+                    + [hop for hop, _ in second_hop_rows]
+                )
+            )
+            cur.execute(
+                "SELECT p.bibcode, p.title, pm.community_id_coarse "
+                "FROM papers p "
+                "LEFT JOIN paper_metrics pm ON pm.bibcode = p.bibcode "
+                "WHERE p.bibcode = ANY(%s::text[])",
+                (all_bibs,),
+            )
+            meta: dict[str, dict[str, object]] = {}
+            for row in cur.fetchall():
+                meta[row[0]] = {"title": row[1], "community_id": row[2]}
+    finally:
+        conn.close()
+
+    def _node(bib: str) -> dict[str, object]:
+        m = meta.get(bib, {})
+        return {
+            "bibcode": bib,
+            "title": m.get("title"),
+            "community_id": m.get("community_id"),
+        }
+
+    direct_refs = [_node(b) for b in ref_bibs]
+    direct_cites = [_node(b) for b in cite_bibs]
+    second_hop_sample = [{**_node(b), "weight": w} for b, w in second_hop_rows]
+
+    # Edges: center->ref for each ref, cite->center for each cite, and for
+    # each 2-hop node, one edge per 1-hop neighbor that reached it.
+    edges: list[dict[str, object]] = []
+    for b in ref_bibs:
+        edges.append({"source": center_bibcode, "target": b, "kind": "ref"})
+    for b in cite_bibs:
+        edges.append({"source": b, "target": center_bibcode, "kind": "cite"})
+    for hop, _ in second_hop_rows:
+        for via in second_hop_edges.get(hop, []):
+            edges.append({"source": via, "target": hop, "kind": "hop"})
+
+    # Prefer the just-hydrated metadata for the center — it's the same query
+    # we used for neighbors, so the fields stay consistent.
+    if center_bibcode in meta:
+        center["community_id"] = meta[center_bibcode].get(
+            "community_id", center["community_id"]
+        )
+        if meta[center_bibcode].get("title"):
+            center["title"] = meta[center_bibcode]["title"]
+
+    return {
+        "center": center,
+        "direct_refs": direct_refs,
+        "direct_cites": direct_cites,
+        "second_hop_sample": second_hop_sample,
+        "edges": edges,
+        "counts": {
+            "direct_refs": len(direct_refs),
+            "direct_cites": len(direct_cites),
+            "second_hop": len(second_hop_sample),
+            "edges": len(edges),
+        },
+    }
+
+
+def get_ego_fetcher() -> EgoFetcherCallable:
+    """FastAPI dependency returning the concrete ego-network fetcher.
+
+    Like ``get_fetcher`` above, this lets tests swap in a stub via
+    ``app.dependency_overrides[get_ego_fetcher] = lambda: <stub>``.
+    """
+    return _fetch_ego_network
+
+
+@router.get("/ego/{bibcode}")
+def read_ego_network(
+    bibcode: str = Path(..., pattern=_BIBCODE_PATTERN),
+    max_refs: int = Query(MAX_DIRECT_REFS_DEFAULT, ge=1, le=500),
+    max_cites: int = Query(MAX_DIRECT_CITES_DEFAULT, ge=1, le=500),
+    max_second_hop: int = Query(MAX_SECOND_HOP_DEFAULT, ge=0, le=1000),
+    fetcher: EgoFetcherCallable = Depends(get_ego_fetcher),
+) -> PaperDict:
+    """Return the citation ego network for ``bibcode`` or 404 if unknown."""
+    t0 = time.time()
+    record = fetcher(bibcode, max_refs, max_cites, max_second_hop)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Paper not found: {bibcode}")
+    record["latency_ms"] = round((time.time() - t0) * 1000.0, 1)
+    return record

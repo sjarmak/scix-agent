@@ -175,16 +175,26 @@
     if (!panel) return
     const safeTitle = title || '(title unavailable)'
     const cidText = communityId != null ? String(communityId) : '—'
+    const safeBib = String(bibcode).replace(/[<>&]/g, '')
+    const egoHref =
+      './ego.html?bibcode=' + encodeURIComponent(String(bibcode))
     panel.innerHTML =
       '<h2>Selected paper</h2>' +
       '<div><strong>bibcode:</strong> <code>' +
-      String(bibcode).replace(/[<>&]/g, '') +
+      safeBib +
       '</code></div>' +
       '<div><strong>community:</strong> ' +
       cidText +
       '</div>' +
       '<div style="margin-top:6px">' +
       String(safeTitle).replace(/[<>]/g, '') +
+      '</div>' +
+      '<div style="margin-top:10px">' +
+      '<a href="' +
+      egoHref +
+      '" target="_blank" rel="noopener" class="ego-link">' +
+      'Open citation ego network →' +
+      '</a>' +
       '</div>'
   }
 

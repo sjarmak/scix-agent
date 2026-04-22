@@ -32,6 +32,7 @@
       { href: './umap_browser.html', label: 'V3 UMAP' },
       { href: './agent_trace.html', label: 'V4 Trace' },
       { href: './heatmap.html', label: 'V5 Topology' },
+      { href: './ego.html', label: 'V6 Ego' },
     ]
     pages.forEach(function (p) {
       var a = document.createElement('a')

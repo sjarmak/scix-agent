@@ -631,3 +631,483 @@ def test_driver_pins_parser_version(integ_conn):
         )
         versions = {r[0] for r in cur.fetchall()}
     assert versions == {ads_body_parser.PARSER_VERSION}
+
+
+# ---------------------------------------------------------------------------
+# Reparse mode — driver-reparse work unit
+# ---------------------------------------------------------------------------
+
+
+# Keep the OLD_VERSION token literal here — tests that check the SQL shape
+# use it as an opaque string, not as a live parser pin.
+_OLD_VERSION = "ads_body_regex@v1"
+
+
+def test_reparse_cli_flag_accepted_by_argparse():
+    """--reparse-from-version is recognised by argparse and exposed on args."""
+    args = driver._build_arg_parser().parse_args(
+        ["--reparse-from-version", _OLD_VERSION]
+    )
+    assert args.reparse_from_version == _OLD_VERSION
+
+
+def test_reparse_cli_help_lists_flag(capsys):
+    """--reparse-from-version shows up in --help output."""
+    with pytest.raises(SystemExit):
+        driver._build_arg_parser().parse_args(["--help"])
+    captured = capsys.readouterr()
+    help_text = captured.out + captured.err
+    assert "--reparse-from-version" in help_text
+
+
+def test_driver_config_default_reparse_from_version_is_none():
+    """DriverConfig without the new field still works, defaults to None."""
+    config = driver.DriverConfig(
+        dsn="dbname=scix_test",
+        chunk_size=100,
+        resume_from=None,
+        limit=None,
+        allow_prod=False,
+    )
+    assert config.reparse_from_version is None
+
+
+def test_driver_config_accepts_reparse_from_version():
+    """DriverConfig carries reparse_from_version when set."""
+    config = driver.DriverConfig(
+        dsn="dbname=scix_test",
+        chunk_size=100,
+        resume_from=None,
+        limit=None,
+        allow_prod=False,
+        reparse_from_version=_OLD_VERSION,
+    )
+    assert config.reparse_from_version == _OLD_VERSION
+
+
+def test_driver_stats_reparsed_defaults_zero_and_in_to_dict():
+    """DriverStats exposes reparsed=0 by default and it is serialised."""
+    stats = driver.DriverStats()
+    assert stats.reparsed == 0
+    d = stats.to_dict()
+    assert "reparsed" in d
+    assert d["reparsed"] == 0
+
+
+def test_driver_stats_reparsed_increments_when_bumped():
+    """DriverStats.reparsed is a plain int counter that can be incremented."""
+    stats = driver.DriverStats()
+    stats.reparsed += 3
+    assert stats.reparsed == 3
+    assert stats.to_dict()["reparsed"] == 3
+
+
+class _IterConn:
+    """Fake connection capturing (sql, params) passed to iter_candidate_papers.
+
+    The iterator uses a server-side named cursor and iterates rows. The fake
+    cursor yields no rows — the generator simply exits after ``execute()`` is
+    called, which is enough to capture the SQL shape.
+    """
+
+    def __init__(self):
+        self.executed: list[tuple[str, tuple]] = []
+
+    def cursor(self, *args, **kwargs):
+        outer = self
+
+        class _C:
+            itersize = 0
+
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *exc):
+                return False
+
+            def execute(self_inner, sql, params=()):
+                outer.executed.append((sql, tuple(params)))
+
+            @property
+            def description(self_inner):
+                return []
+
+            def __iter__(self_inner):
+                return iter([])
+
+        return _C()
+
+
+def test_iter_candidate_papers_reparse_sql_and_params(monkeypatch):
+    """Reparse mode routes to the new SQL shape with the right params."""
+    config = driver.DriverConfig(
+        dsn="dbname=scix_test",
+        chunk_size=10,
+        resume_from=None,
+        limit=None,
+        allow_prod=False,
+        reparse_from_version=_OLD_VERSION,
+    )
+    fake = _IterConn()
+    # Drive the generator to completion so execute() is captured.
+    list(driver.iter_candidate_papers(fake, config, datetime.now(timezone.utc)))
+    assert len(fake.executed) == 1
+    sql, params = fake.executed[0]
+    # Reparse branch selects from papers_fulltext joined to papers.
+    assert "FROM papers_fulltext pf" in sql
+    assert "JOIN papers p ON p.bibcode = pf.bibcode" in sql
+    assert "pf.parser_version = %s" in sql
+    assert "pf.source = 'ads_body'" in sql
+    # Does NOT use NOT EXISTS filters that the default branch applies.
+    assert "papers_fulltext_failures" not in sql
+    # First param is the OLD_VERSION value.
+    assert params[0] == _OLD_VERSION
+    # Second param is the resume key (empty string when None).
+    assert params[1] == ""
+
+
+def test_iter_candidate_papers_default_sql_unchanged(monkeypatch):
+    """Default mode still hits the new-rows SQL shape (no reparse branch)."""
+    config = driver.DriverConfig(
+        dsn="dbname=scix_test",
+        chunk_size=10,
+        resume_from=None,
+        limit=None,
+        allow_prod=False,
+        # reparse_from_version left at default None
+    )
+    fake = _IterConn()
+    list(driver.iter_candidate_papers(fake, config, datetime.now(timezone.utc)))
+    assert len(fake.executed) == 1
+    sql, _params = fake.executed[0]
+    # Default branch drives FROM papers p and joins papers_external_ids
+    # LEFT. Reparse branch would drive FROM papers_fulltext pf with a JOIN
+    # to papers — a shape that never appears in the default branch.
+    assert "  FROM papers p" in sql
+    assert "JOIN papers p ON p.bibcode = pf.bibcode" not in sql
+    # Default branch applies the failure-window filter and existing-row filter.
+    assert "papers_fulltext_failures" in sql
+    assert "NOT EXISTS" in sql
+    # Default branch does not pin pf.parser_version = %s (reparse does).
+    assert "pf.parser_version = %s" not in sql
+
+
+def test_iter_candidate_papers_reparse_honours_resume_from():
+    """--resume-from bounds the reparse iteration by bibcode."""
+    config = driver.DriverConfig(
+        dsn="dbname=scix_test",
+        chunk_size=10,
+        resume_from="2020ApJ...111..111X",
+        limit=None,
+        allow_prod=False,
+        reparse_from_version=_OLD_VERSION,
+    )
+    fake = _IterConn()
+    list(driver.iter_candidate_papers(fake, config, datetime.now(timezone.utc)))
+    sql, params = fake.executed[0]
+    assert "pf.bibcode > %s" in sql
+    assert params[1] == "2020ApJ...111..111X"
+
+
+class _UpsertCursor:
+    """Fake cursor that captures ``executemany`` calls made by upsert_batch."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, list[tuple]]] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def executemany(self, sql, params_list):
+        self.calls.append((sql, list(params_list)))
+
+
+class _UpsertConn:
+    """Fake connection exposing a single _UpsertCursor + commit counter."""
+
+    def __init__(self):
+        self.cur = _UpsertCursor()
+        self.committed = 0
+
+    def cursor(self, *args, **kwargs):
+        return self.cur
+
+    def commit(self):
+        self.committed += 1
+
+
+def test_upsert_batch_issues_insert_on_conflict_do_update():
+    """upsert_batch issues INSERT ... ON CONFLICT DO UPDATE via executemany."""
+    rows = [
+        driver.ParsedRow(
+            bibcode="2024ApJ...900A...1X",
+            source="ads_body",
+            sections_json="[]",
+            inline_cites_json="[]",
+            figures_json="[]",
+            tables_json="[]",
+            equations_json="[]",
+            parser_version="ads_body_inline_v2",
+        )
+    ]
+    conn = _UpsertConn()
+    n = driver.upsert_batch(conn, rows)
+    assert n == 1
+    assert conn.committed == 1
+    assert len(conn.cur.calls) == 1
+    sql, params_list = conn.cur.calls[0]
+    assert "INSERT INTO papers_fulltext" in sql
+    assert "ON CONFLICT (bibcode) DO UPDATE" in sql
+    # Verify the required UPDATE columns are present.
+    assert "sections" in sql
+    assert "inline_cites" in sql
+    assert "parser_version" in sql
+    # parsed_at is a real column on papers_fulltext (migration 041).
+    assert "parsed_at" in sql
+    # executemany got exactly one row's params.
+    assert len(params_list) == 1
+    # The 8 %s placeholders bind to our 8-tuple per row.
+    assert len(params_list[0]) == 8
+
+
+def test_upsert_batch_empty_rows_is_noop():
+    """upsert_batch with no rows doesn't issue any SQL and returns 0."""
+    conn = _UpsertConn()
+    assert driver.upsert_batch(conn, []) == 0
+    assert conn.cur.calls == []
+    assert conn.committed == 0
+
+
+def test_run_reparse_mode_increments_reparsed_counter(monkeypatch):
+    """run() in reparse mode dispatches to upsert_batch and bumps stats.reparsed.
+
+    We stub the connection factory to hand back fake DB connections, stub
+    iter_candidate_papers to yield a small list of rows, and stub
+    upsert_batch / write_batch so we can assert which writer was called.
+    """
+    # Stub the connection factory with a no-op context manager yielding a fake.
+    class _Noop:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def cursor(self, *a, **kw):
+            return _FakeCursor()
+
+    def fake_get_connection(_dsn):
+        return _Noop()
+
+    monkeypatch.setattr(driver._db, "get_connection", fake_get_connection)
+
+    rows = [
+        {
+            "bibcode": "2024ApJ...900A...1X",
+            "bibstem": ["ApJ"],
+            "doi": [],
+            "doctype": "article",
+            "body": "1. Intro\nhello world\n",
+            "openalex_has_pdf_url": False,
+        },
+        {
+            "bibcode": "2024ApJ...900A...2Y",
+            "bibstem": ["ApJ"],
+            "doi": [],
+            "doctype": "article",
+            "body": "1. Intro\nhi there\n",
+            "openalex_has_pdf_url": False,
+        },
+    ]
+
+    monkeypatch.setattr(driver, "iter_candidate_papers", lambda c, cfg, now: iter(rows))
+
+    upsert_calls: list[int] = []
+    copy_calls: list[int] = []
+
+    def fake_upsert(conn, batch):
+        upsert_calls.append(len(batch))
+        return len(batch)
+
+    def fake_write(conn, batch):
+        copy_calls.append(len(batch))
+        return len(batch)
+
+    monkeypatch.setattr(driver, "upsert_batch", fake_upsert)
+    monkeypatch.setattr(driver, "write_batch", fake_write)
+
+    def fake_parse(body, bibstem):
+        return [Section(heading="Intro", level=1, text="x", offset=0)], {}
+
+    config = driver.DriverConfig(
+        dsn="dbname=scix_test",
+        chunk_size=10,
+        resume_from=None,
+        limit=None,
+        allow_prod=False,
+        reparse_from_version=_OLD_VERSION,
+    )
+    stats = driver.run(config, parse_fn=fake_parse, sibling_fetch=lambda c, b: None)
+
+    # Reparse path: upsert_batch called, write_batch not called.
+    assert sum(upsert_calls) == 2
+    assert copy_calls == []
+    # stats.reparsed was incremented; stats.wrote stayed 0.
+    assert stats.reparsed == 2
+    assert stats.wrote == 0
+
+
+def test_run_default_mode_uses_copy_writer_not_upsert(monkeypatch):
+    """run() in default mode dispatches to write_batch (COPY) and keeps reparsed=0."""
+
+    class _Noop:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def cursor(self, *a, **kw):
+            return _FakeCursor()
+
+    def fake_get_connection(_dsn):
+        return _Noop()
+
+    monkeypatch.setattr(driver._db, "get_connection", fake_get_connection)
+
+    rows = [
+        {
+            "bibcode": "2024ApJ...900A...1X",
+            "bibstem": ["ApJ"],
+            "doi": [],
+            "doctype": "article",
+            "body": "1. Intro\nhello world\n",
+            "openalex_has_pdf_url": False,
+        },
+    ]
+    monkeypatch.setattr(driver, "iter_candidate_papers", lambda c, cfg, now: iter(rows))
+
+    upsert_calls: list[int] = []
+    copy_calls: list[int] = []
+
+    def fake_upsert(conn, batch):
+        upsert_calls.append(len(batch))
+        return len(batch)
+
+    def fake_write(conn, batch):
+        copy_calls.append(len(batch))
+        return len(batch)
+
+    monkeypatch.setattr(driver, "upsert_batch", fake_upsert)
+    monkeypatch.setattr(driver, "write_batch", fake_write)
+
+    def fake_parse(body, bibstem):
+        return [Section(heading="Intro", level=1, text="x", offset=0)], {}
+
+    config = driver.DriverConfig(
+        dsn="dbname=scix_test",
+        chunk_size=10,
+        resume_from=None,
+        limit=None,
+        allow_prod=False,
+        # reparse_from_version left None.
+    )
+    stats = driver.run(config, parse_fn=fake_parse, sibling_fetch=lambda c, b: None)
+
+    assert sum(copy_calls) == 1
+    assert upsert_calls == []
+    assert stats.wrote == 1
+    assert stats.reparsed == 0
+
+
+def test_prod_guard_fires_in_reparse_mode(monkeypatch):
+    """Prod-guard still rejects a prod DSN even in reparse mode (DSN-based)."""
+    monkeypatch.setattr(driver, "is_production_dsn", lambda dsn: True)
+    rc = driver.main(
+        ["--dsn", "dbname=scix", "--reparse-from-version", _OLD_VERSION]
+    )
+    assert rc != 0
+
+
+@integration
+def test_driver_reparse_updates_in_place(integ_conn):
+    """Reparse mode upserts existing ads_body rows in place.
+
+    Seeds N papers + N papers_fulltext rows at an old parser_version, runs the
+    driver in reparse mode with a stub parse_fn, and asserts:
+
+    * row count of papers_fulltext for those bibcodes is unchanged (upsert,
+      not insert + delete),
+    * parser_version has been bumped to ads_body_parser.PARSER_VERSION,
+    * sections JSONB reflects the stub's output,
+    * a second run with the same --reparse-from-version picks up zero rows
+      because the first run bumped the version.
+
+    We use a synthetic ``old_version`` that is guaranteed not to equal the
+    live ``ads_body_parser.PARSER_VERSION`` — otherwise the upsert would
+    write the same version back and the second-run assertion would be
+    vacuous.
+    """
+    # Build an OLD_VERSION string that is guaranteed distinct from the live
+    # parser pin — the driver bumps parser_version to the live pin on upsert,
+    # so we need them to differ to observe the SQL predicate filtering on
+    # the second run.
+    old_version = f"__test_old__{uuid.uuid4().hex[:8]}"
+    assert old_version != ads_body_parser.PARSER_VERSION
+
+    bibcodes = _seed_papers(integ_conn, 3)
+    # Seed existing papers_fulltext rows at the old parser version.
+    with integ_conn.cursor() as cur:
+        for bib in bibcodes:
+            cur.execute(
+                """
+                INSERT INTO papers_fulltext
+                    (bibcode, source, sections, inline_cites, figures, tables,
+                     equations, parser_version)
+                VALUES (%s, 'ads_body', %s::jsonb, '[]'::jsonb, '[]'::jsonb,
+                        '[]'::jsonb, '[]'::jsonb, %s)
+                """,
+                (
+                    bib,
+                    json.dumps([{"heading": "OLD", "level": 1, "text": "x", "offset": 0}]),
+                    old_version,
+                ),
+            )
+
+    def fake_parse(body, bibstem):
+        return [Section(heading="NEW", level=1, text="y", offset=0)], {}
+
+    config = driver.DriverConfig(
+        dsn=TEST_DSN,  # type: ignore[arg-type]
+        chunk_size=10,
+        resume_from=None,
+        limit=None,
+        allow_prod=False,
+        reparse_from_version=old_version,
+    )
+    stats = driver.run(config, parse_fn=fake_parse)
+    assert stats.reparsed == 3
+    assert stats.wrote == 0
+
+    with integ_conn.cursor() as cur:
+        cur.execute(
+            "SELECT bibcode, parser_version, sections FROM papers_fulltext "
+            "WHERE bibcode = ANY(%s)",
+            (bibcodes,),
+        )
+        rows = cur.fetchall()
+    assert len(rows) == 3  # no inserts or deletes — same row count.
+    for bib, pver, sections in rows:
+        assert pver == ads_body_parser.PARSER_VERSION
+        # Sections should have been replaced.
+        assert "NEW" in json.dumps(sections)
+        assert "OLD" not in json.dumps(sections)
+
+    # Resume semantics: re-run the same reparse → 0 rows, because the
+    # SQL predicate filters by the OLD version which is no longer present.
+    stats2 = driver.run(config, parse_fn=fake_parse)
+    assert stats2.seen == 0
+    assert stats2.reparsed == 0

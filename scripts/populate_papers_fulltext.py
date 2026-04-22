@@ -115,6 +115,13 @@ class DriverConfig:
     resume_from: str | None
     limit: int | None
     allow_prod: bool
+    # When set, the driver runs in *reparse* mode: instead of selecting
+    # new papers that lack a papers_fulltext row, it selects existing
+    # rows whose ``parser_version`` matches this value (and whose
+    # ``source`` is ``'ads_body'``) and re-runs the parser, UPSERTing
+    # the result via ``INSERT ... ON CONFLICT (bibcode) DO UPDATE``.
+    # Default None preserves the original COPY-based new-row workflow.
+    reparse_from_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -142,6 +149,10 @@ class DriverStats:
     served_sibling: int = 0
     abstract_only: int = 0
     tier3_skipped: int = 0
+    # Number of bibcodes upserted in --reparse-from-version mode. Stays
+    # 0 in the default (new-row) mode where ``wrote`` is incremented by
+    # the COPY writer instead.
+    reparsed: int = 0
     tier_counts: dict[str, int] = field(default_factory=dict)
 
     def bump_tier(self, tier: str) -> None:
@@ -156,6 +167,7 @@ class DriverStats:
             "served_sibling": self.served_sibling,
             "abstract_only": self.abstract_only,
             "tier3_skipped": self.tier3_skipped,
+            "reparsed": self.reparsed,
             "tier_counts": dict(self.tier_counts),
         }
 
@@ -322,54 +334,82 @@ def iter_candidate_papers(
 ) -> Iterator[dict[str, Any]]:
     """Yield dicts of candidate papers in bibcode order.
 
-    Skips:
+    Default (new-row) mode — skips:
 
     * bibcodes ``<= config.resume_from`` (inclusive of the resume key).
     * bibcodes that already have a ``papers_fulltext`` row (idempotency).
     * bibcodes whose latest ``papers_fulltext_failures`` row has
       ``retry_after > now`` (backoff window).
 
+    Reparse mode (``config.reparse_from_version`` is not None) — selects:
+
+    * bibcodes whose ``papers_fulltext.parser_version = OLD_VERSION``
+      AND ``source = 'ads_body'``, joined back to ``papers`` for the
+      body text. Does NOT apply the retry-after / NOT-EXISTS filters —
+      reparse explicitly targets already-parsed rows.
+
     Uses a server-side cursor so the full result set is streamed rather
     than materialised.
     """
     resume = config.resume_from or ""
-    params: list[Any] = [resume, now]
-    # Only consider papers that have a full-text source the driver can use
-    # right now: an ADS body (Tier 1) or a LaTeX-derived sibling row already
-    # in papers_fulltext (Tier 2). Papers with neither route to abstract_only,
-    # which is an expected steady-state for ~half the corpus and should not
-    # be scanned on every run or recorded as failures. When Tier 2 ingest
-    # lands, the sibling subquery below keeps those bibcodes in scope.
-    sql_parts = [
-        "SELECT p.bibcode, p.bibstem, p.doi, p.doctype, p.body,",
-        "       COALESCE(x.openalex_has_pdf_url, false) AS openalex_has_pdf_url",
-        "  FROM papers p",
-        "  LEFT JOIN papers_external_ids x ON x.bibcode = p.bibcode",
-        " WHERE p.bibcode > %s",
-        "   AND (",
-        "       p.body IS NOT NULL",
-        "       OR EXISTS (",
-        "           SELECT 1",
-        "             FROM papers_external_ids x1",
-        "             JOIN papers_external_ids x2",
-        "               ON (x1.doi IS NOT NULL AND x1.doi = x2.doi",
-        "                   AND x2.bibcode <> x1.bibcode)",
-        "                  OR (x1.arxiv_id IS NOT NULL AND x1.arxiv_id = x2.arxiv_id",
-        "                      AND x2.bibcode <> x1.bibcode)",
-        "             JOIN papers_fulltext pf2 ON pf2.bibcode = x2.bibcode",
-        "            WHERE x1.bibcode = p.bibcode",
-        "              AND pf2.source IN ('ar5iv', 'arxiv_local'))",
-        "   )",
-        "   AND NOT EXISTS (",
-        "       SELECT 1 FROM papers_fulltext pf WHERE pf.bibcode = p.bibcode)",
-        "   AND NOT EXISTS (",
-        "       SELECT 1 FROM papers_fulltext_failures f",
-        "        WHERE f.bibcode = p.bibcode AND f.retry_after > %s)",
-        " ORDER BY p.bibcode",
-    ]
-    if config.limit is not None:
-        sql_parts.append(" LIMIT %s")
-        params.append(config.limit)
+
+    if config.reparse_from_version is not None:
+        # Reparse branch: select existing ads_body rows at the old version
+        # and join back to papers for the body text.
+        params: list[Any] = [config.reparse_from_version, resume]
+        sql_parts = [
+            "SELECT p.bibcode, p.bibstem, p.doi, p.doctype, p.body,",
+            "       COALESCE(x.openalex_has_pdf_url, false) AS openalex_has_pdf_url",
+            "  FROM papers_fulltext pf",
+            "  JOIN papers p ON p.bibcode = pf.bibcode",
+            "  LEFT JOIN papers_external_ids x ON x.bibcode = p.bibcode",
+            " WHERE pf.parser_version = %s",
+            "   AND pf.source = 'ads_body'",
+            "   AND pf.bibcode > %s",
+            " ORDER BY pf.bibcode",
+        ]
+        if config.limit is not None:
+            sql_parts.append(" LIMIT %s")
+            params.append(config.limit)
+    else:
+        # Default branch: only consider papers that have a full-text source
+        # the driver can use right now: an ADS body (Tier 1) or a
+        # LaTeX-derived sibling row already in papers_fulltext (Tier 2).
+        # Papers with neither route to abstract_only, which is an expected
+        # steady-state for ~half the corpus and should not be scanned on
+        # every run or recorded as failures. When Tier 2 ingest lands, the
+        # sibling subquery below keeps those bibcodes in scope.
+        params = [resume, now]
+        sql_parts = [
+            "SELECT p.bibcode, p.bibstem, p.doi, p.doctype, p.body,",
+            "       COALESCE(x.openalex_has_pdf_url, false) AS openalex_has_pdf_url",
+            "  FROM papers p",
+            "  LEFT JOIN papers_external_ids x ON x.bibcode = p.bibcode",
+            " WHERE p.bibcode > %s",
+            "   AND (",
+            "       p.body IS NOT NULL",
+            "       OR EXISTS (",
+            "           SELECT 1",
+            "             FROM papers_external_ids x1",
+            "             JOIN papers_external_ids x2",
+            "               ON (x1.doi IS NOT NULL AND x1.doi = x2.doi",
+            "                   AND x2.bibcode <> x1.bibcode)",
+            "                  OR (x1.arxiv_id IS NOT NULL AND x1.arxiv_id = x2.arxiv_id",
+            "                      AND x2.bibcode <> x1.bibcode)",
+            "             JOIN papers_fulltext pf2 ON pf2.bibcode = x2.bibcode",
+            "            WHERE x1.bibcode = p.bibcode",
+            "              AND pf2.source IN ('ar5iv', 'arxiv_local'))",
+            "   )",
+            "   AND NOT EXISTS (",
+            "       SELECT 1 FROM papers_fulltext pf WHERE pf.bibcode = p.bibcode)",
+            "   AND NOT EXISTS (",
+            "       SELECT 1 FROM papers_fulltext_failures f",
+            "        WHERE f.bibcode = p.bibcode AND f.retry_after > %s)",
+            " ORDER BY p.bibcode",
+        ]
+        if config.limit is not None:
+            sql_parts.append(" LIMIT %s")
+            params.append(config.limit)
 
     query = "\n".join(sql_parts)
 
@@ -462,6 +502,47 @@ def write_batch(conn: psycopg.Connection, rows: Sequence[ParsedRow]) -> int:
                         r.parser_version,
                     )
                 )
+    conn.commit()
+    return len(rows)
+
+
+_UPSERT_SQL = """
+INSERT INTO papers_fulltext
+    (bibcode, source, sections, inline_cites, figures, tables, equations,
+     parser_version, parsed_at)
+VALUES (%s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, now())
+ON CONFLICT (bibcode) DO UPDATE SET
+    sections       = EXCLUDED.sections,
+    inline_cites   = EXCLUDED.inline_cites,
+    parser_version = EXCLUDED.parser_version,
+    parsed_at      = now()
+"""
+
+
+def upsert_batch(conn: psycopg.Connection, rows: Sequence[ParsedRow]) -> int:
+    """Upsert parsed rows via ``INSERT ... ON CONFLICT DO UPDATE``.
+
+    Used only in ``--reparse-from-version`` mode where existing rows must
+    be replaced in-place rather than newly inserted. Returns the number
+    of rows upserted.
+    """
+    if not rows:
+        return 0
+    params = [
+        (
+            r.bibcode,
+            r.source,
+            r.sections_json,
+            r.inline_cites_json,
+            r.figures_json,
+            r.tables_json,
+            r.equations_json,
+            r.parser_version,
+        )
+        for r in rows
+    ]
+    with conn.cursor() as cur:
+        cur.executemany(_UPSERT_SQL, params)
     conn.commit()
     return len(rows)
 
@@ -610,6 +691,19 @@ def run(
     stats = DriverStats()
     batch: list[ParsedRow] = []
 
+    reparse_mode = config.reparse_from_version is not None
+
+    def _flush(conn: psycopg.Connection, pending: list[ParsedRow]) -> None:
+        """Write pending rows via the mode-appropriate writer."""
+        if not pending:
+            return
+        if reparse_mode:
+            n = upsert_batch(conn, pending)
+            stats.reparsed += n
+        else:
+            n = write_batch(conn, pending)
+            stats.wrote += n
+
     # Two connections: one for the streaming cursor, one for writes/upserts
     # (psycopg named cursors are not compatible with simultaneous DML on the
     # same connection without savepoint gymnastics).
@@ -627,11 +721,11 @@ def run(
             if parsed is not None:
                 batch.append(parsed)
                 if len(batch) >= config.chunk_size:
-                    stats.wrote += write_batch(write_conn, batch)
+                    _flush(write_conn, batch)
                     batch.clear()
         # Final flush.
         if batch:
-            stats.wrote += write_batch(write_conn, batch)
+            _flush(write_conn, batch)
             batch.clear()
 
     return stats
@@ -687,6 +781,19 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Cap on total papers to consider (default: no limit).",
     )
     parser.add_argument(
+        "--reparse-from-version",
+        default=None,
+        metavar="OLD_VERSION",
+        help=(
+            "Reparse mode: re-run the parser over papers_fulltext rows whose "
+            "parser_version = OLD_VERSION AND source = 'ads_body'. The write "
+            "path switches from COPY to INSERT ... ON CONFLICT (bibcode) DO "
+            "UPDATE so rows are replaced in-place. Cannot be combined with "
+            "the default new-row mode — the iterator picks different rows. "
+            "--resume-from still applies as a bibcode lower bound."
+        ),
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Suppress info-level logging (errors still printed).",
@@ -710,6 +817,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         resume_from=args.resume_from,
         limit=args.limit,
         allow_prod=bool(args.allow_prod),
+        reparse_from_version=args.reparse_from_version,
     )
 
     try:
@@ -722,11 +830,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return int(exc.code) if exc.code is not None else 2
 
     logger.info(
-        "starting driver: dsn=%s chunk_size=%d resume_from=%r limit=%r",
+        "starting driver: dsn=%s chunk_size=%d resume_from=%r limit=%r"
+        " reparse_from_version=%r",
         redact_dsn(config.dsn),
         config.chunk_size,
         config.resume_from,
         config.limit,
+        config.reparse_from_version,
     )
 
     stats = run(config)

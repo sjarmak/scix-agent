@@ -24,7 +24,7 @@ from scix.sources.ads_body_parser import (
 
 def test_parser_version_constant() -> None:
     """PARSER_VERSION is the exact string required by the work unit spec."""
-    assert PARSER_VERSION == "ads_body_regex@v1"
+    assert PARSER_VERSION == "ads_body_inline_v2"
 
 
 def test_section_is_frozen_dataclass_with_required_fields() -> None:
@@ -39,7 +39,11 @@ def test_section_is_frozen_dataclass_with_required_fields() -> None:
 
 def test_return_shape_is_tuple_of_list_and_dict() -> None:
     """parse_ads_body returns (list[Section], dict) with the required keys."""
-    result = parse_ads_body("1 Introduction\nHello.\n", bibstem="MNRAS")
+    # Two canonical markers so we clear the min-2-markers threshold.
+    result = parse_ads_body(
+        "INTRODUCTION opening remarks METHODS procedure text.",
+        bibstem="MNRAS",
+    )
     assert isinstance(result, tuple)
     assert len(result) == 2
     sections, meta = result
@@ -67,100 +71,168 @@ def test_empty_body_returns_zero_sections() -> None:
     assert meta["n_sections"] == 0
     assert meta["coverage_frac"] == 0.0
     assert meta["first_heading_offset"] == -1
-    assert meta["bibstem_family"] == "mnras"
-
-
-def test_single_section_mnras_body() -> None:
-    """One MNRAS-style heading produces exactly one Section."""
-    body = "1 Introduction\nThis paper studies quasars.\n"
-    sections, meta = parse_ads_body(body, bibstem="MNRAS")
-    assert meta["n_sections"] == 1
-    assert len(sections) == 1
-    assert sections[0].heading == "Introduction"
-    assert sections[0].level == 1
-    assert "quasars" in sections[0].text
-    assert sections[0].offset == 0
-
-
-def test_mnras_numbered_headings() -> None:
-    """MNRAS pattern splits bare ``N  Heading`` headings into sections."""
-    body = (
-        "1 Introduction\n"
-        "We introduce the topic.\n"
-        "2 Methods\n"
-        "We apply standard techniques.\n"
-        "3 Results\n"
-        "Numbers follow.\n"
-    )
-    sections, meta = parse_ads_body(body, bibstem="MNRAS")
-    headings = [s.heading for s in sections]
-    assert headings == ["Introduction", "Methods", "Results"]
-    assert meta["n_sections"] == 3
-    assert meta["bibstem_family"] == "mnras"
+    assert meta["bibstem_family"] == "inline_v2"
     assert meta["patterns_tried"] == 1
 
 
-def test_apj_numbered_with_descenders() -> None:
-    """ApJ pattern matches ``N. Word-case`` headings with lowercase descenders."""
+def test_flat_single_line_body_with_zero_newlines() -> None:
+    """Flat body with no newlines yields >=4 ordered canonical sections.
+
+    This is the exact fixture from acceptance criterion 13.
+    """
     body = (
-        "1. Introduction\n"
-        "Intro prose with descenders like g, j, p, q, y.\n"
-        "2. Observations\n"
-        "Some data description.\n"
-        "3. Discussion\n"
-        "Wrap-up.\n"
+        "Some text INTRODUCTION more text METHODS data RESULTS numbers "
+        "DISCUSSION wrap-up REFERENCES bib."
     )
+    assert "\n" not in body
     sections, meta = parse_ads_body(body, bibstem="ApJ")
-    assert [s.heading for s in sections] == [
-        "Introduction",
-        "Observations",
-        "Discussion",
+    headings = [s.heading for s in sections]
+    # Acceptance criterion 13: at least 4 sections in the order they appear
+    # in the body. ``data`` is also a canonical marker (DATA) in this
+    # vocabulary, so the fixture yields 6 headings in total.
+    assert headings == [
+        "INTRODUCTION",
+        "METHODS",
+        "DATA",
+        "RESULTS",
+        "DISCUSSION",
+        "REFERENCES",
     ]
-    assert meta["bibstem_family"] == "apj"
-    # MNRAS pattern would reject "1. Introduction" because the digit needs to
-    # be followed by whitespace, not a dot; confirm the apj family is used.
-    assert meta["n_sections"] == 3
+    assert len(headings) >= 4
+    assert meta["n_sections"] == len(headings)
+    assert meta["bibstem_family"] == "inline_v2"
+    assert meta["patterns_tried"] == 1
 
 
-def test_physrev_roman_numeral_headings() -> None:
-    """PhysRev pattern recognizes ``I.`` / ``II.`` roman-numeral headings."""
-    body = (
-        "I. INTRODUCTION\n"
-        "Physics intro text.\n"
-        "II. THEORY\n"
-        "Theoretical framework.\n"
-        "III. RESULTS\n"
-        "Numerical results.\n"
-    )
-    sections, meta = parse_ads_body(body, bibstem="PhRvD")
-    assert [s.heading for s in sections] == ["INTRODUCTION", "THEORY", "RESULTS"]
-    assert meta["bibstem_family"] == "physrev"
+def test_case_insensitive_input_canonical_uppercase_output() -> None:
+    """Mixed-case keywords in the body emit canonical UPPERCASE headings."""
+    body = "Intro prose Introduction more text methods Results wrap."
+    sections, _ = parse_ads_body(body, bibstem=None)
+    assert [s.heading for s in sections] == ["INTRODUCTION", "METHODS", "RESULTS"]
 
 
-def test_bare_heading_fallback_allcaps() -> None:
-    """Fallback family matches bare ALL-CAPS headings when bibstem is None."""
-    body = (
-        "INTRODUCTION\n"
-        "Opening remarks.\n"
-        "METHODS\n"
-        "Procedure.\n"
-        "CONCLUSIONS\n"
-        "Wrap-up.\n"
-    )
+def test_numbered_prefix_variants_yield_bare_canonical_heading() -> None:
+    """``1 INTRODUCTION`` / ``1. Introduction`` / ``1.1 Background`` strip prefix."""
+    body = "1 INTRODUCTION alpha 1. Introduction beta 1.1 Background gamma."
+    sections, _ = parse_ads_body(body, bibstem="MNRAS")
+    headings = [s.heading for s in sections]
+    # Three canonical hits: INTRODUCTION, INTRODUCTION, BACKGROUND.
+    # Distinct count = 2 (INTRODUCTION, BACKGROUND) which clears the
+    # min-2-markers threshold.
+    assert headings == ["INTRODUCTION", "INTRODUCTION", "BACKGROUND"]
+    # First section's offset points at the '1' of "1 INTRODUCTION", not at
+    # the keyword 'I'.
+    assert sections[0].offset == 0
+
+
+def test_numbered_prefix_offsets_include_numeric_span() -> None:
+    """The heading SPAN (offset) includes the numeric prefix but STRING does not."""
+    # Leading preamble then "1. Introduction" at a known non-zero offset.
+    preamble = "Preamble text. "
+    body = preamble + "1. Introduction prose continues. METHODS details."
+    sections, meta = parse_ads_body(body, bibstem="MNRAS")
+    assert sections[0].heading == "INTRODUCTION"
+    assert sections[0].offset == len(preamble)
+    assert meta["first_heading_offset"] == len(preamble)
+
+
+def test_methodology_matches_methodology_not_methods() -> None:
+    """Word-boundary correctness: ``METHODOLOGY`` does not match as ``METHODS``."""
+    body = "Start INTRODUCTION body METHODOLOGY pipeline RESULTS numbers."
+    sections, _ = parse_ads_body(body, bibstem=None)
+    headings = [s.heading for s in sections]
+    assert "METHODOLOGY" in headings
+    assert "METHODS" not in headings
+    assert headings == ["INTRODUCTION", "METHODOLOGY", "RESULTS"]
+
+
+def test_conclusions_beats_conclusion_longest_match_wins() -> None:
+    """At the same start position, ``CONCLUSIONS`` wins over ``CONCLUSION``."""
+    body = "open INTRODUCTION mid CONCLUSIONS end."
+    sections, _ = parse_ads_body(body, bibstem=None)
+    headings = [s.heading for s in sections]
+    assert headings == ["INTRODUCTION", "CONCLUSIONS"]
+    # Ensure we did NOT emit the singular form.
+    assert "CONCLUSION" not in headings
+
+
+def test_conclusion_singular_still_matches_when_alone() -> None:
+    """The singular ``CONCLUSION`` still matches when not followed by 'S'."""
+    body = "open INTRODUCTION middle CONCLUSION. Final remarks."
+    sections, _ = parse_ads_body(body, bibstem=None)
+    assert [s.heading for s in sections] == ["INTRODUCTION", "CONCLUSION"]
+
+
+def test_min_two_markers_threshold_returns_empty_on_single_marker() -> None:
+    """A body with only one distinct canonical marker yields ``([], meta_zeroed)``."""
+    body = "1 Introduction and then just a single heading and prose."
+    sections, meta = parse_ads_body(body, bibstem="MNRAS")
+    assert sections == []
+    assert meta["n_sections"] == 0
+    assert meta["coverage_frac"] == 0.0
+    assert meta["first_heading_offset"] == -1
+    assert meta["bibstem_family"] == "inline_v2"
+
+
+def test_min_two_markers_threshold_counts_distinct_not_occurrences() -> None:
+    """Two occurrences of the SAME marker still fail the distinct-count gate."""
+    body = "INTRODUCTION first part INTRODUCTION second part more prose."
     sections, meta = parse_ads_body(body, bibstem=None)
-    assert [s.heading for s in sections] == ["INTRODUCTION", "METHODS", "CONCLUSIONS"]
-    assert meta["bibstem_family"] == "fallback"
-    # Fallback tries the whole bank.
-    assert meta["patterns_tried"] >= 2
+    assert sections == []
+    assert meta["n_sections"] == 0
 
 
-def test_unknown_bibstem_uses_fallback() -> None:
-    """A bibstem not in the family map routes to the fallback family."""
-    body = "INTRODUCTION\nSome text.\nMETHODS\nMore text.\n"
-    sections, meta = parse_ads_body(body, bibstem="Nature")
-    assert meta["bibstem_family"] == "fallback"
+def test_appendix_letters_emitted_as_distinct_sections() -> None:
+    """``APPENDIX A`` and ``APPENDIX B`` are two distinct canonical headings."""
+    body = "some prose APPENDIX A alpha content APPENDIX B beta content."
+    sections, meta = parse_ads_body(body, bibstem=None)
+    headings = [s.heading for s in sections]
+    assert headings == ["APPENDIX A", "APPENDIX B"]
     assert meta["n_sections"] == 2
-    assert [s.heading for s in sections] == ["INTRODUCTION", "METHODS"]
+
+
+def test_appendix_alone_matches_when_no_letter_follows() -> None:
+    """Plain ``APPENDIX`` (no trailing letter) matches the one-token form."""
+    body = "open INTRODUCTION body content APPENDIX followed by prose."
+    sections, _ = parse_ads_body(body, bibstem=None)
+    headings = [s.heading for s in sections]
+    assert "APPENDIX" in headings
+    assert "INTRODUCTION" in headings
+
+
+def test_bibstem_parameter_is_ignored() -> None:
+    """Different bibstems produce identical output — bibstem is a no-op."""
+    body = "INTRODUCTION alpha METHODS beta RESULTS gamma."
+    sections_mnras, meta_mnras = parse_ads_body(body, bibstem="MNRAS")
+    sections_apj, meta_apj = parse_ads_body(body, bibstem="ApJ")
+    sections_none, meta_none = parse_ads_body(body, bibstem=None)
+    sections_unknown, meta_unknown = parse_ads_body(body, bibstem="Nature")
+
+    headings_mnras = [s.heading for s in sections_mnras]
+    assert headings_mnras == [s.heading for s in sections_apj]
+    assert headings_mnras == [s.heading for s in sections_none]
+    assert headings_mnras == [s.heading for s in sections_unknown]
+
+    # All metadata dicts report the same inline_v2 family tag.
+    for m in (meta_mnras, meta_apj, meta_none, meta_unknown):
+        assert m["bibstem_family"] == "inline_v2"
+        assert m["patterns_tried"] == 1
+
+
+def test_section_text_is_body_slice_between_headings() -> None:
+    """Each Section's text is the body slice from end-of-heading to next-heading."""
+    body = "INTRODUCTION alpha beta METHODS gamma delta."
+    sections, _ = parse_ads_body(body, bibstem=None)
+    assert len(sections) == 2
+    # First section's text runs from the end of "INTRODUCTION" to the start
+    # of "METHODS".
+    first_text = sections[0].text
+    assert first_text.startswith(" alpha beta ")
+    assert first_text.endswith(" ")  # trailing space before "METHODS"
+    # Second section's text runs from the end of "METHODS" to EOF.
+    assert sections[1].text == " gamma delta."
+    # All sections are level 1.
+    assert all(s.level == 1 for s in sections)
 
 
 # ---------------------------------------------------------------------------
@@ -168,31 +240,24 @@ def test_unknown_bibstem_uses_fallback() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_section_offsets_are_non_decreasing() -> None:
-    """Offsets returned by parse_ads_body are monotone non-decreasing and >= 0."""
+def test_section_offsets_are_strictly_increasing_for_distinct_headings() -> None:
+    """Offsets are monotone strictly increasing for distinct well-formed headings."""
     body = (
-        "1 Introduction\n"
-        "Intro text.\n"
-        "2 Methods\n"
-        "Methods text.\n"
-        "3 Results\n"
-        "Results text.\n"
-        "4 Discussion\n"
-        "Discussion text.\n"
+        "preamble INTRODUCTION intro text METHODS methods text "
+        "RESULTS results text DISCUSSION discussion text."
     )
     sections, _ = parse_ads_body(body, bibstem="MNRAS")
     offsets = [s.offset for s in sections]
     assert all(o >= 0 for o in offsets)
     assert offsets == sorted(offsets)
-    # Strictly increasing for this well-formed input (all headings distinct).
     assert all(a < b for a, b in zip(offsets, offsets[1:], strict=False))
 
 
 def test_first_heading_offset_matches_first_section() -> None:
     """metadata.first_heading_offset == sections[0].offset when non-empty."""
-    # Put the first heading at a known non-zero offset to exercise the field.
-    preamble = "Preamble text with no heading.\n\n"
-    body = preamble + "1 Introduction\nIntroductory body.\n"
+    # Put the first heading at a known non-zero offset.
+    preamble = "Preamble text with no heading. "
+    body = preamble + "INTRODUCTION intro body. METHODS methods body."
     sections, meta = parse_ads_body(body, bibstem="MNRAS")
     assert sections, "expected at least one section"
     assert meta["first_heading_offset"] == sections[0].offset

@@ -1,0 +1,91 @@
+# Gold set for the ontology_expansion value prop.
+#
+# The test: does a query for a generic concept (e.g. "exoplanet") return
+# papers that mention specific instances of that concept (HD 209458b,
+# TRAPPIST-1b) even when the generic word never appears? This tests
+# type-aware retrieval, not just substring search.
+prop: ontology_expansion
+description: >
+  Tests whether the retrieval expands generic concept queries into
+  specific-instance matches using the entity ontology. A query for
+  "exoplanet" should return papers on HD 209458b and TRAPPIST-1b even if
+  those papers never use the word "exoplanet".
+rubric: |
+  0 — no expansion: only exact-string matches returned.
+  1 — partial: one or two specific-instance papers retrieved.
+  2 — mostly works: mix of generic-term and specific-instance papers.
+  3 — works correctly: specific-instance papers ranked plausibly in top-N.
+queries:
+  - id: ont-001
+    query: "exoplanet atmospheric composition"
+    concept: "exoplanet"
+    expected_instances: ["HD 209458b", "TRAPPIST-1b", "Kepler-452b", "WASP-39b"]
+    expectation: >
+      Results should include papers on specific hot Jupiters and
+      terrestrial exoplanets, not only generic survey papers.
+    tags: [exoplanets, ontology]
+  - id: ont-002
+    query: "galaxy cluster mass profile"
+    concept: "galaxy cluster"
+    expected_instances: ["Coma Cluster", "Virgo Cluster", "Abell 1689", "Bullet Cluster"]
+    expectation: >
+      Named-cluster papers should appear alongside generic cluster
+      cosmology papers.
+    tags: [clusters, cosmology, ontology]
+  - id: ont-003
+    query: "pulsar timing residuals"
+    concept: "pulsar"
+    expected_instances: ["Crab Pulsar", "Vela Pulsar", "PSR B1257+12", "J0737-3039"]
+    expectation: >
+      Named-pulsar papers (Crab, Vela, double pulsar) should be retrieved.
+    tags: [pulsars, ontology, compact_objects]
+  - id: ont-004
+    query: "supernova remnant shock structure"
+    concept: "supernova remnant"
+    expected_instances: ["Cassiopeia A", "SN 1006", "Tycho", "Kepler SNR"]
+    expectation: >
+      Individual named remnants should appear among the top results.
+    tags: [snr, ontology, high_energy]
+  - id: ont-005
+    query: "active galactic nuclei variability"
+    concept: "AGN"
+    expected_instances: ["NGC 1275", "M87", "3C 273", "NGC 4151"]
+    expectation: >
+      Specific AGN targets should be retrieved even if "AGN" is absent.
+    tags: [agn, ontology, active_galaxies]
+  - id: ont-006
+    query: "dwarf planet surface composition"
+    concept: "dwarf planet"
+    expected_instances: ["Pluto", "Ceres", "Eris", "Makemake"]
+    expectation: >
+      Specific dwarf planets should be represented in the top results.
+    tags: [planetary_science, ontology]
+  - id: ont-007
+    query: "Mars mission surface operations"
+    concept: "Mars rover"
+    expected_instances: ["Curiosity", "Perseverance", "Opportunity", "Spirit"]
+    expectation: >
+      Named rovers should appear in the top results.
+    tags: [planetary_science, mission, ontology]
+  - id: ont-008
+    query: "gamma-ray burst afterglow"
+    concept: "gamma-ray burst"
+    expected_instances: ["GRB 170817A", "GRB 130427A", "GRB 090510", "GRB 221009A"]
+    expectation: >
+      Specific GRB event papers should appear.
+    tags: [grb, high_energy, ontology]
+  - id: ont-009
+    query: "asteroid spectral classification"
+    concept: "asteroid"
+    expected_instances: ["Ceres", "Vesta", "Bennu", "Ryugu"]
+    expectation: >
+      Named-asteroid studies should be in the top results.
+    tags: [planetary_science, asteroids, ontology]
+  - id: ont-010
+    query: "gravitational wave detection merger"
+    concept: "gravitational wave event"
+    expected_instances: ["GW150914", "GW170817", "GW190521", "GW170814"]
+    expectation: >
+      Specific LIGO/Virgo events should be retrieved — these were the
+      flagship detections for the decade.
+    tags: [gw, ontology, compact_objects]

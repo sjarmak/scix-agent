@@ -1,0 +1,95 @@
+# Gold set for the disambiguation value prop.
+#
+# The test: when a query term has two or more entity-level meanings
+# (Hubble-the-person vs Hubble-the-mission, Psyche-the-asteroid vs
+# Psyche-the-spacecraft), does the retrieval correctly route to the
+# intended sense based on query context?
+prop: disambiguation
+description: >
+  Tests whether query-time disambiguation (see src/scix/jit/... and
+  src/scix/adeft_disambig.py) correctly routes ambiguous terms to the
+  intended entity. Each query provides enough context to pick the right
+  sense; the judge checks whether returned papers match the intended
+  sense and not the off-target sense.
+rubric: |
+  0 — wrong sense dominates the results.
+  1 — partial: mixed senses, no clear preference.
+  2 — mostly works: majority of results are the correct sense.
+  3 — works correctly: near-pure filtering to the intended sense.
+queries:
+  - id: disambig-001
+    query: "Hubble Space Telescope ultraviolet imaging"
+    intended_sense: "Hubble Space Telescope (mission)"
+    off_target_sense: "Edwin Hubble (person / biographical)"
+    expectation: >
+      Should surface mission / instrument papers, not biographical
+      papers about Edwin Hubble.
+    tags: [person_vs_mission, flagship]
+  - id: disambig-002
+    query: "Psyche mission asteroid metallic composition"
+    intended_sense: "Psyche spacecraft (NASA mission to 16 Psyche)"
+    off_target_sense: "16 Psyche (asteroid, pre-mission studies)"
+    expectation: >
+      Should prefer mission / spacecraft papers over pre-mission
+      asteroid-only studies.
+    tags: [mission_vs_target, planetary_science]
+  - id: disambig-003
+    query: "New Horizons Pluto flyby geology"
+    intended_sense: "New Horizons mission (Pluto spacecraft encounter)"
+    off_target_sense: "Pluto (dwarf planet, ground-based / HST studies)"
+    expectation: >
+      Should filter to mission-era papers, not pre-mission Pluto
+      observation papers.
+    tags: [mission_vs_target, planetary_science]
+  - id: disambig-004
+    query: "Kepler mission planetary candidates"
+    intended_sense: "Kepler Space Telescope (mission)"
+    off_target_sense: "Johannes Kepler (historical astronomer)"
+    expectation: >
+      Should prefer mission-era exoplanet discovery papers.
+    tags: [person_vs_mission, exoplanets]
+  - id: disambig-005
+    query: "Cassini Saturn ring structure"
+    intended_sense: "Cassini spacecraft / Cassini mission"
+    off_target_sense: "Giovanni Cassini (historical astronomer) OR Cassini division as concept"
+    expectation: >
+      Should prefer mission-era Saturn papers.
+    tags: [person_vs_mission, planetary_science]
+  - id: disambig-006
+    query: "Dawn spacecraft Vesta imaging"
+    intended_sense: "Dawn spacecraft (NASA mission)"
+    off_target_sense: "dawn (as time-of-observation / twilight)"
+    expectation: >
+      Should filter to spacecraft-era Vesta / Ceres papers, not papers
+      that happen to mention dawn-time observations.
+    tags: [mission_vs_noun, planetary_science]
+  - id: disambig-007
+    query: "Voyager 1 interstellar plasma observations"
+    intended_sense: "Voyager mission (NASA spacecraft)"
+    off_target_sense: "voyager as generic term / other Voyager devices"
+    expectation: >
+      Should surface Voyager-mission plasma / heliosphere papers.
+    tags: [mission_vs_generic, heliophysics]
+  - id: disambig-008
+    query: "Viking Mars lander biology experiments"
+    intended_sense: "Viking program (NASA Mars mission)"
+    off_target_sense: "Viking culture / Viking Age / ship"
+    expectation: >
+      Should surface Viking 1/2 Mars mission papers.
+    tags: [mission_vs_culture, planetary_science]
+  - id: disambig-009
+    query: "NICER pulsar timing X-ray"
+    intended_sense: "NICER mission (Neutron star Interior Composition Explorer)"
+    off_target_sense: "nicer as English comparative adjective"
+    expectation: >
+      Should exclusively return mission papers — adjective false matches
+      should not pollute the ranking.
+    tags: [mission_vs_word, x_ray]
+  - id: disambig-010
+    query: "Juno Jupiter magnetic field mapping"
+    intended_sense: "Juno spacecraft (NASA Jupiter mission)"
+    off_target_sense: "Juno (Roman goddess) / Juno in other fields"
+    expectation: >
+      Should surface Juno mission magnetometer / microwave radiometer
+      papers.
+    tags: [mission_vs_myth, planetary_science]

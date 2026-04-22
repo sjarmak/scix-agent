@@ -1,0 +1,113 @@
+# Gold set for the community_expansion value prop.
+#
+# The test: given an entity that belongs to graph community C, does
+# retrieval surface related papers whose entities are ALSO in C, even
+# when the seed entity isn't mentioned in those papers?
+#
+# Communities come from the Leiden clustering on the entity graph
+# (migrations 014_entity_communities + 021_community_rollup). The
+# "community" field is named by a representative entity; the actual
+# community_id is resolved at query time.
+prop: community_expansion
+description: >
+  Tests whether retrieval uses entity-graph communities to expand a
+  query. Given a seed entity in community C, related papers in C
+  (co-mentioned / semantically-clustered entities) should surface even
+  if they don't mention the seed by name.
+rubric: |
+  0 — no community expansion; only exact-entity papers appear.
+  1 — partial: a few community-sibling papers retrieved.
+  2 — mostly works: community-sibling papers ranked plausibly.
+  3 — works correctly: retrieval surfaces related entities in the
+      community as intended.
+queries:
+  - id: comm-001
+    seed_entity: "Hubble Space Telescope"
+    community_label: "HST ecosystem"
+    expected_siblings: ["WFC3", "STIS", "ACS", "COS", "STScI"]
+    query: "papers related to this community"
+    expectation: >
+      Should retrieve HST-instrument papers (WFC3, STIS, ACS, COS) and
+      operations-center papers (STScI) even if those papers never name
+      HST directly.
+    tags: [community, hst, instruments]
+  - id: comm-002
+    seed_entity: "James Webb Space Telescope"
+    community_label: "JWST ecosystem"
+    expected_siblings: ["NIRSpec", "NIRCam", "MIRI", "FGS", "NIRISS"]
+    query: "papers related to this community"
+    expectation: >
+      Should retrieve JWST-instrument papers even when JWST is not
+      named.
+    tags: [community, jwst, instruments]
+  - id: comm-003
+    seed_entity: "Chandra X-ray Observatory"
+    community_label: "Chandra ecosystem"
+    expected_siblings: ["ACIS", "HRC", "HETG", "LETG"]
+    query: "papers related to this community"
+    expectation: >
+      Should surface Chandra-instrument papers whose text focuses on
+      ACIS / HRC / gratings, not only on the mission.
+    tags: [community, chandra, instruments]
+  - id: comm-004
+    seed_entity: "Cassini"
+    community_label: "Cassini-Huygens science"
+    expected_siblings: ["Huygens probe", "Titan", "Enceladus", "Saturn rings"]
+    query: "papers related to this community"
+    expectation: >
+      Should retrieve Titan / Enceladus / ring-system papers even when
+      "Cassini" is absent.
+    tags: [community, planetary_science, cassini]
+  - id: comm-005
+    seed_entity: "Kepler Space Telescope"
+    community_label: "Kepler exoplanet ecosystem"
+    expected_siblings: ["KOI catalog", "Kepler-11", "Kepler-452b", "TESS"]
+    query: "papers related to this community"
+    expectation: >
+      Should surface Kepler-discovered-planet papers and follow-up
+      missions like TESS.
+    tags: [community, exoplanets, kepler]
+  - id: comm-006
+    seed_entity: "TRAPPIST-1"
+    community_label: "TRAPPIST-1 system studies"
+    expected_siblings: ["TRAPPIST-1b", "TRAPPIST-1e", "TRAPPIST-1g", "SPECULOOS"]
+    query: "papers related to this community"
+    expectation: >
+      Should retrieve individual-planet studies and the discovery-survey
+      TRAPPIST / SPECULOOS papers.
+    tags: [community, exoplanets, trappist]
+  - id: comm-007
+    seed_entity: "LIGO"
+    community_label: "Gravitational-wave observing network"
+    expected_siblings: ["Virgo", "KAGRA", "GEO600", "GW170817"]
+    query: "papers related to this community"
+    expectation: >
+      Should surface Virgo / KAGRA papers and specific detection-event
+      papers (GW170817) in the LIGO community.
+    tags: [community, gw, detectors]
+  - id: comm-008
+    seed_entity: "Mars Science Laboratory"
+    community_label: "Mars surface science"
+    expected_siblings: ["Curiosity", "Gale Crater", "ChemCam", "SAM instrument"]
+    query: "papers related to this community"
+    expectation: >
+      Should retrieve Curiosity / Gale Crater / ChemCam / SAM papers
+      even without MSL naming.
+    tags: [community, mars, instruments]
+  - id: comm-009
+    seed_entity: "Planck mission"
+    community_label: "CMB mission network"
+    expected_siblings: ["WMAP", "COBE", "LFI", "HFI", "cosmic microwave background"]
+    query: "papers related to this community"
+    expectation: >
+      Should surface WMAP / COBE and Planck-instrument (LFI/HFI) papers.
+    tags: [community, cmb, cosmology]
+  - id: comm-010
+    seed_entity: "Gaia mission"
+    community_label: "Galactic astrometry and stellar census"
+    expected_siblings: ["Hipparcos", "Tycho catalog", "RVS spectrograph", "LSST"]
+    query: "papers related to this community"
+    expectation: >
+      Should surface astrometry-predecessor missions (Hipparcos) and
+      large-scale follow-up surveys.
+    tags: [community, astrometry, milky_way]

@@ -161,3 +161,31 @@ class TestAgentViews:
 
     def test_document_first(self) -> None:
         assert AGENT_VIEWS[0] == "agent_document_context"
+
+
+# ---------------------------------------------------------------------------
+# Rewritten agent_entity_context — migration 055 regression coverage
+# ---------------------------------------------------------------------------
+
+
+class TestAgentEntityContextRewrite:
+    """Guards the d2-mv-rewrite work unit.
+
+    The rewrite changes only the MV body — the refresh contract is
+    unchanged, but we want explicit coverage that the rewritten view is
+    still part of AGENT_VIEWS and still refreshes cleanly.
+    """
+
+    def test_rewritten_view_still_listed(self) -> None:
+        assert "agent_entity_context" in AGENT_VIEWS
+
+    def test_rewritten_view_refresh_succeeds(self) -> None:
+        conn = _make_conn()
+        result = refresh_view(conn, "agent_entity_context")
+        assert result.success is True
+        assert result.view_name == "agent_entity_context"
+        assert result.error is None
+
+        cur = conn.cursor().__enter__()
+        executed = [str(c) for c in cur.execute.call_args_list]
+        assert any("REFRESH MATERIALIZED VIEW CONCURRENTLY" in s for s in executed)

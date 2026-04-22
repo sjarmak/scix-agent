@@ -1,0 +1,86 @@
+# Gold set for the type_filter value prop.
+#
+# The test: given a query plus an entity_type constraint (instrument,
+# mission, person, institution), does the retrieval return results
+# consistent with the constraint?
+prop: type_filter
+description: >
+  Tests whether the search layer respects entity_type filters.
+  e.g. entity_type='instrument' should only surface papers whose matched
+  entity is an instrument, not a mission named after a person.
+rubric: |
+  0 — filter has no effect; results include off-type entities.
+  1 — partial: majority off-type, one or two correctly typed.
+  2 — mostly works: most results match the type.
+  3 — works correctly: tight filter, off-type entities rare.
+queries:
+  - id: type-001
+    query: "infrared spectroscopy instrument calibration"
+    entity_type: "instrument"
+    expectation: >
+      Should return papers whose primary matched entity is an instrument
+      (e.g. NIRSpec, IRAC, MIRI), not mission-level papers.
+    tags: [instrument, calibration]
+  - id: type-002
+    query: "X-ray imaging detector response"
+    entity_type: "instrument"
+    expectation: >
+      Should return instrument-level papers — e.g. ACIS, HRC, EPIC — not
+      generic X-ray astrophysics review papers.
+    tags: [instrument, x_ray]
+  - id: type-003
+    query: "flagship space mission planetary exploration"
+    entity_type: "mission"
+    expectation: >
+      Should return mission-level papers: Cassini, Galileo, Voyager,
+      Juno, etc. — not instrument-only papers.
+    tags: [mission, planetary_science]
+  - id: type-004
+    query: "Mars orbiter science objectives"
+    entity_type: "mission"
+    expectation: >
+      Should return mission papers (Mars Reconnaissance Orbiter, Mars
+      Odyssey, Mars Express) — not landed-mission or instrument papers.
+    tags: [mission, planetary_science]
+  - id: type-005
+    query: "early universe inflation theory"
+    entity_type: "person"
+    expectation: >
+      Should surface papers attributed to, or extensively citing, key
+      theorists (Guth, Linde, Steinhardt) — entity_type=person.
+    tags: [person, cosmology, theory]
+  - id: type-006
+    query: "black hole physics Nobel laureate"
+    entity_type: "person"
+    expectation: >
+      Should surface papers tied to the person-entity (Penrose, Genzel,
+      Ghez) as opposed to generic black hole papers.
+    tags: [person, compact_objects]
+  - id: type-007
+    query: "space telescope operations center"
+    entity_type: "institution"
+    expectation: >
+      Should surface institution-level papers (STScI, JPL, GSFC, ESA)
+      as opposed to instrument or mission papers.
+    tags: [institution, operations]
+  - id: type-008
+    query: "astronomy data archive"
+    entity_type: "institution"
+    expectation: >
+      Should surface archive-operating institutions (NED, MAST, NASA
+      ADS, HEASARC) as matched entities.
+    tags: [institution, archive]
+  - id: type-009
+    query: "ultraviolet spectrograph high resolution"
+    entity_type: "instrument"
+    expectation: >
+      Should surface UV spectrograph instruments (COS, STIS, FUSE) as
+      matched entities — not mission or facility papers.
+    tags: [instrument, ultraviolet]
+  - id: type-010
+    query: "exoplanet discovery survey mission"
+    entity_type: "mission"
+    expectation: >
+      Should surface missions (Kepler, TESS, CHEOPS, PLATO) as matched
+      entity, not the generic exoplanet concept.
+    tags: [mission, exoplanets]

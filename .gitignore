@@ -13,6 +13,7 @@ data/eval/*
 !data/eval/*.csv
 !data/eval/*.yaml
 !data/eval/*.md
+!data/eval/*.jsonl
 !data/eval/.gitkeep
 
 # Logs

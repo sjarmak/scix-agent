@@ -89,3 +89,6 @@ Thumbs.db
 deploy/.env
 CLAUDE.local.md
 .claude/scheduled_tasks.lock
+
+# Qdrant pilot container volume (local docker mount)
+.qdrant_storage/

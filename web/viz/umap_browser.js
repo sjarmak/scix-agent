@@ -67,6 +67,23 @@
   }
 
   function _loadCommunityLabels() {
+    // Use the shared resolution config when available so switching to
+    // medium/fine picks the matching label bundle; fall back to the
+    // historical hardcoded coarse URL for backwards compatibility.
+    var scx = (typeof window !== 'undefined' && window.scixViz) || null
+    if (scx && typeof scx.resolutionFiles === 'function' && typeof scx.fetchFirstAvailable === 'function') {
+      var cfg = scx.resolutionFiles()
+      return scx
+        .fetchFirstAvailable(cfg.labels)
+        .then(function (payload) {
+          if (!payload || !Array.isArray(payload.communities)) return
+          _communityLabels = {}
+          payload.communities.forEach(function (c) {
+            if (c && c.community_id != null) _communityLabels[c.community_id] = c
+          })
+        })
+        .catch(function () {})
+    }
     return fetch('/viz/community_labels.json', { cache: 'no-store' })
       .then(function (resp) {
         return resp.ok ? resp.json() : null

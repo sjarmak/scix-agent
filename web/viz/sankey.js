@@ -139,24 +139,56 @@
       return Promise.resolve()
     }
     _labelsState = 'loading'
+    function _apply(payload) {
+      if (!payload || !Array.isArray(payload.communities)) {
+        _labelsState = 'failed'
+        return
+      }
+      _communityLabels = {}
+      payload.communities.forEach(function (c) {
+        if (c && c.community_id != null) _communityLabels[c.community_id] = c
+      })
+      _labelsState = 'loaded'
+    }
+    // Prefer the shared resolution-aware helper so that switching between
+    // coarse/medium/fine via the nav toggle pulls the matching label bundle.
+    var scx = (typeof window !== 'undefined' && window.scixViz) || null
+    if (scx && typeof scx.resolutionFiles === 'function' && typeof scx.fetchFirstAvailable === 'function') {
+      var cfg = scx.resolutionFiles()
+      return scx
+        .fetchFirstAvailable(cfg.labels)
+        .then(_apply)
+        .catch(function () {
+          _labelsState = 'failed'
+        })
+    }
     return fetch('/viz/community_labels.json', { cache: 'no-store' })
       .then(function (resp) {
         return resp.ok ? resp.json() : null
       })
-      .then(function (payload) {
-        if (!payload || !Array.isArray(payload.communities)) {
-          _labelsState = 'failed'
-          return
-        }
-        _communityLabels = {}
-        payload.communities.forEach(function (c) {
-          if (c && c.community_id != null) _communityLabels[c.community_id] = c
-        })
-        _labelsState = 'loaded'
-      })
+      .then(_apply)
       .catch(function () {
         _labelsState = 'failed'
       })
+  }
+
+  // Track last (data, container) so a resolution change can re-label the
+  // most recently rendered diagram without requiring the page to reload.
+  var _lastRender = null
+
+  function _refetchAndRerender() {
+    _communityLabels = {}
+    _labelsState = 'idle'
+    var pending = _lastRender
+    _loadCommunityLabels().then(function () {
+      if (pending) {
+        renderSankey(pending.data, pending.container)
+      }
+    })
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('scix:resolution-change', _refetchAndRerender)
   }
 
   function renderSankey(data, container) {
@@ -172,6 +204,10 @@
       _mountError(node, 'renderSankey: d3 or d3-sankey failed to load from CDN')
       return
     }
+
+    // Remember the most recent render so a resolution flip can re-label the
+    // last-seen Sankey without the page having to re-fetch sankey.json.
+    _lastRender = { data: data, container: container }
 
     // Labels are optional. If they haven't loaded yet, kick off the fetch
     // and re-render once on arrival; subsequent renders use the cached copy
@@ -279,21 +315,48 @@
 
     // Only label nodes tall enough that the text won't collide with neighbours.
     const LABEL_MIN_HEIGHT = 12
+    // Identify the leftmost and rightmost column x positions so their labels
+    // can be placed *outside* the plot area (in the margins). Middle columns
+    // still get an inside label, but with a white stroke halo so the text
+    // reads cleanly over the coloured flow paths.
+    const columnXs = Array.from(new Set(nodes.map(function (n) { return n.x0 })))
+    const minX = columnXs.length ? Math.min.apply(null, columnXs) : 0
+    const maxX = columnXs.length ? Math.max.apply(null, columnXs) : width
+
+    function _labelSide(d) {
+      // leftmost column: push label left into the left margin
+      if (d.x0 === minX) return 'left-outside'
+      // rightmost column: push label right into the right margin
+      if (d.x0 === maxX) return 'right-outside'
+      // middle columns: label sits to the right of the node, overlapping the
+      // outgoing flow band — the white halo below keeps it legible.
+      return 'right-inside'
+    }
+
     nodeSel
       .filter(function (d) {
         return (d.y1 || 0) - (d.y0 || 0) >= LABEL_MIN_HEIGHT
       })
       .append('text')
       .attr('x', function (d) {
-        return d.x0 < width / 2 ? d.x1 + 6 : d.x0 - 6
+        const side = _labelSide(d)
+        if (side === 'left-outside') return d.x0 - 6
+        return d.x1 + 6
       })
       .attr('y', function (d) {
         return ((d.y1 || 0) + (d.y0 || 0)) / 2
       })
       .attr('dy', '0.35em')
       .attr('text-anchor', function (d) {
-        return d.x0 < width / 2 ? 'start' : 'end'
+        return _labelSide(d) === 'left-outside' ? 'end' : 'start'
       })
+      // Paint a white stroke underneath the fill so the text stays readable
+      // when it sits over a coloured Sankey flow band. `paint-order: stroke`
+      // ensures the halo renders first, then the ink on top.
+      .attr('stroke', '#fff')
+      .attr('stroke-width', 3)
+      .attr('stroke-linejoin', 'round')
+      .attr('paint-order', 'stroke')
       .text(_formatNodeLabel)
 
     // Decade axis along the bottom so viewers know what the columns mean.

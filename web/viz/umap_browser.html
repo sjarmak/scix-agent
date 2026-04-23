@@ -160,44 +160,85 @@
     <script src="./shared.js"></script>
     <script src="./umap_browser.js"></script>
     <script>
-      // Bootstrap: fetch the UMAP dataset and render. Tries the sibling path
-      // first (if someone copies umap.json into web/viz/), then the canonical
-      // /data/viz/umap.json location served by the static data mount.
-      ;(async function bootstrap() {
+      // Bootstrap: fetch the UMAP dataset for the currently-selected
+      // resolution (see shared.js) and render. Re-renders when the user
+      // flips the resolution toggle in the nav.
+      ;(function bootstrap() {
         const root = document.getElementById('umap-root')
         const status = document.getElementById('umap-status')
-        const candidates = ['./umap.json', '/data/viz/umap.json']
-        let data = null
-        let lastErr = null
-        for (const url of candidates) {
-          try {
-            const resp = await fetch(url, { cache: 'no-store' })
-            if (!resp.ok) {
-              lastErr = new Error(url + ' -> HTTP ' + resp.status)
-              continue
+
+        function candidatesForCurrent() {
+          if (window.scixViz && typeof window.scixViz.resolutionFiles === 'function') {
+            return window.scixViz.resolutionFiles().umap
+          }
+          return ['./umap.json', '/data/viz/umap.json']
+        }
+
+        async function load() {
+          status.textContent = ''
+          root.setAttribute('aria-busy', 'true')
+          const urls = candidatesForCurrent()
+          let data = null
+          let lastErr = null
+          for (const url of urls) {
+            try {
+              const resp = await fetch(url, { cache: 'no-store' })
+              if (!resp.ok) {
+                lastErr = new Error(url + ' -> HTTP ' + resp.status)
+                continue
+              }
+              data = await resp.json()
+              break
+            } catch (err) {
+              lastErr = err
             }
-            data = await resp.json()
-            break
+          }
+          if (!data) {
+            root.removeAttribute('aria-busy')
+            status.textContent =
+              'Could not load umap data for resolution "' +
+              (window.scixViz ? window.scixViz.getResolution() : 'coarse') +
+              '" (' +
+              (lastErr ? lastErr.message || String(lastErr) : 'unknown error') +
+              '). Run scripts/viz/project_embeddings_umap.py to generate it.'
+            return
+          }
+          if (typeof window.renderUMAP !== 'function') {
+            root.removeAttribute('aria-busy')
+            status.textContent = 'renderUMAP is not defined — umap_browser.js failed to load.'
+            return
+          }
+          // Tear down the previous deck.gl instance before mounting a new
+          // one so resolution switches don't leak WebGL contexts.
+          if (window.umapInstance && typeof window.umapInstance.finalize === 'function') {
+            try {
+              window.umapInstance.finalize()
+            } catch (err) {
+              /* best-effort */
+            }
+          }
+          while (root.firstChild) root.removeChild(root.firstChild)
+          const tt = document.createElement('div')
+          tt.id = 'umap-tooltip'
+          tt.setAttribute('role', 'tooltip')
+          root.appendChild(tt)
+          try {
+            window.umapInstance = window.renderUMAP(data, root)
           } catch (err) {
-            lastErr = err
+            status.textContent = 'Render failed: ' + (err.message || String(err))
+          } finally {
+            root.removeAttribute('aria-busy')
           }
         }
-        if (!data) {
-          status.textContent =
-            'Could not load umap.json (' +
-            (lastErr ? lastErr.message || String(lastErr) : 'unknown error') +
-            '). Run scripts/viz/project_embeddings_umap.py to generate it.'
-          return
-        }
-        if (typeof window.renderUMAP !== 'function') {
-          status.textContent = 'renderUMAP is not defined — umap_browser.js failed to load.'
-          return
-        }
-        try {
-          window.umapInstance = window.renderUMAP(data, root)
-        } catch (err) {
-          status.textContent = 'Render failed: ' + (err.message || String(err))
-        }
+
+        // Expose for tests + resolution re-renders.
+        window.scixUmapLoad = load
+
+        window.addEventListener('scix:resolution-change', function () {
+          load()
+        })
+
+        load()
       })()
     </script>
   </body>

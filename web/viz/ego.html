@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SciX — Citation Ego Network</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      main.viz-container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 24px 20px 48px;
+      }
+      .viz-sub {
+        color: #555;
+        margin-top: -4px;
+      }
+      #ego-controls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      #ego-controls input[type='text'] {
+        flex: 1;
+        padding: 6px 10px;
+        font-size: 14px;
+        border: 1px solid #cfcfcf;
+        border-radius: 4px;
+      }
+      #ego-controls button {
+        padding: 6px 14px;
+        font-size: 13px;
+        background: #1a6fd9;
+        color: #fff;
+        border: 0;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #ego-controls button:hover {
+        background: #0b60b0;
+      }
+      #ego-stats {
+        color: #555;
+        font-size: 13px;
+      }
+      #ego-layout {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 16px;
+        align-items: start;
+      }
+      #ego-root {
+        position: relative;
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        width: 100%;
+        height: 70vh;
+        min-height: 480px;
+        overflow: hidden;
+      }
+      #ego-root svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+        cursor: grab;
+      }
+      #ego-root svg:active {
+        cursor: grabbing;
+      }
+      #ego-tooltip {
+        position: absolute;
+        pointer-events: none;
+        background: rgba(30, 30, 30, 0.9);
+        color: #fff;
+        font-size: 12px;
+        padding: 6px 8px;
+        border-radius: 4px;
+        max-width: 340px;
+        line-height: 1.35;
+        display: none;
+        z-index: 10;
+      }
+      #ego-panel {
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        padding: 12px 14px;
+        min-height: 200px;
+        font-size: 13px;
+      }
+      #ego-panel h2 {
+        font-size: 15px;
+        margin: 0 0 8px;
+      }
+      #ego-panel .row {
+        margin-bottom: 4px;
+      }
+      #ego-legend {
+        margin-top: 12px;
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        padding: 10px 12px;
+        font-size: 12px;
+      }
+      #ego-legend h3 {
+        font-size: 13px;
+        margin: 0 0 6px;
+        color: #444;
+        font-weight: 600;
+      }
+      .legend-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 4px;
+      }
+      .legend-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .node-center {
+        stroke: #111;
+        stroke-width: 2;
+      }
+      .node-ref {
+        stroke: #333;
+        stroke-width: 1;
+      }
+      .node-cite {
+        stroke: #333;
+        stroke-width: 1;
+      }
+      .node-hop {
+        stroke: #aaa;
+        stroke-width: 0.5;
+        stroke-dasharray: 2 2;
+      }
+      .edge-ref {
+        stroke: #4287f5;
+      }
+      .edge-cite {
+        stroke: #f5a142;
+      }
+      .edge-hop {
+        stroke: #bbb;
+      }
+      #ego-status {
+        margin-top: 8px;
+        color: #b00020;
+        font-size: 13px;
+        min-height: 18px;
+      }
+    </style>
+    <script src="https://unpkg.com/d3@7/dist/d3.min.js"></script>
+  </head>
+  <body>
+    <main class="viz-container">
+      <div id="ego-header" style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+        <h1 style="margin:0">Citation Ego Network</h1>
+        <span id="ego-stats">ready</span>
+      </div>
+      <p class="viz-sub">
+        Force-directed view of a paper's citation neighborhood. Blue edges are
+        papers the center cites; orange edges are papers that cite the center;
+        grey edges reach 2-hop neighbors. Drag nodes to rearrange. Click a
+        neighbor to re-center on it. Hover for bibcode + title.
+      </p>
+      <div id="ego-controls">
+        <input
+          id="ego-bibcode-input"
+          type="text"
+          placeholder="Enter a bibcode (e.g. 2023APS..MART15006K)"
+          autocomplete="off"
+        />
+        <button id="ego-load-btn" type="button">Load</button>
+      </div>
+      <div id="ego-layout">
+        <div id="ego-root" aria-label="Citation ego-network graph">
+          <div id="ego-tooltip" role="tooltip"></div>
+        </div>
+        <div>
+          <aside id="ego-panel" aria-label="Center paper">
+            <h2>Center paper</h2>
+            <div class="row" style="color:#888">No paper loaded.</div>
+          </aside>
+          <aside id="ego-legend" aria-label="Legend">
+            <h3>Edges</h3>
+            <div class="legend-row">
+              <span class="legend-dot" style="background:#4287f5"></span>
+              <span>center cites neighbor (refs)</span>
+            </div>
+            <div class="legend-row">
+              <span class="legend-dot" style="background:#f5a142"></span>
+              <span>neighbor cites center (cites)</span>
+            </div>
+            <div class="legend-row">
+              <span class="legend-dot" style="background:#bbb"></span>
+              <span>2-hop link</span>
+            </div>
+            <h3 style="margin-top:10px">Nodes</h3>
+            <div class="legend-row">
+              <span class="legend-dot" style="background:#fff;border:2px solid #111"></span>
+              <span>center (thick outline)</span>
+            </div>
+            <div class="legend-row">
+              <span class="legend-dot" style="background:#fff;border:1px solid #333"></span>
+              <span>1-hop neighbor</span>
+            </div>
+            <div class="legend-row">
+              <span class="legend-dot" style="background:#fff;border:1px dashed #aaa"></span>
+              <span>2-hop sample</span>
+            </div>
+            <div style="margin-top:8px;color:#666">
+              Fill colour = community. Radius = 1 + log2(weight) for 2-hop nodes.
+            </div>
+          </aside>
+        </div>
+      </div>
+      <div id="ego-status" role="status" aria-live="polite"></div>
+    </main>
+    <script src="./shared.js"></script>
+    <script src="./ego.js"></script>
+    <script>
+      // Bootstrap: read ?bibcode= from the URL (if present) and load that paper.
+      // Without a bibcode parameter, show the prompt bar as-is.
+      ;(function bootstrap() {
+        var input = document.getElementById('ego-bibcode-input')
+        var btn = document.getElementById('ego-load-btn')
+        var root = document.getElementById('ego-root')
+        var status = document.getElementById('ego-status')
+
+        function navigateTo(bibcode) {
+          if (!bibcode) return
+          var url = new URL(window.location.href)
+          url.searchParams.set('bibcode', bibcode)
+          window.history.replaceState(null, '', url.toString())
+          window.renderEgo(bibcode, root, function (err) {
+            if (err) {
+              status.textContent = err.message || String(err)
+            } else {
+              status.textContent = ''
+            }
+          })
+        }
+
+        btn.addEventListener('click', function () {
+          navigateTo(input.value.trim())
+        })
+        input.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') navigateTo(input.value.trim())
+        })
+
+        // Expose for cross-page navigation (UMAP click handler uses this).
+        window.scixEgoNavigate = function (bibcode) {
+          if (!bibcode) return
+          input.value = bibcode
+          navigateTo(bibcode)
+        }
+
+        var params = new URLSearchParams(window.location.search)
+        var seed = params.get('bibcode')
+        if (seed) {
+          input.value = seed
+          navigateTo(seed)
+        }
+      })()
+    </script>
+  </body>
+</html>

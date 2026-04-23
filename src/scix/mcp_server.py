@@ -34,7 +34,31 @@ from scix.entity_resolver import EntityResolver
 from scix.jit.disambiguator import disambiguate_query
 from scix.session import SessionState, WorkingSetEntry
 
+# Optional Qdrant-backed discovery tool. Feature-flagged via QDRANT_URL so the
+# default production deployment (Postgres-only) is unaffected.
+try:
+    from scix import qdrant_tools as _qdrant_tools
+except ImportError:  # pragma: no cover — qdrant-client not installed
+    _qdrant_tools = None  # type: ignore[assignment]
+
+
+def _qdrant_enabled() -> bool:
+    return _qdrant_tools is not None and _qdrant_tools.is_enabled()
+
+# Optional import — viz/trace_stream is only needed when the viz extras are
+# installed. When absent we fall back to a no-op, and the emission hook in
+# :func:`call_tool` silently skips publishing. This keeps the MCP server
+# runnable in minimal deployments that don't ship FastAPI.
+try:
+    from scix.viz import trace_stream as _trace_stream
+except ImportError:  # pragma: no cover — viz extras not installed
+    _trace_stream = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
+
+# Cap the number of bibcodes emitted per TraceEvent to keep event payloads
+# small. SSE consumers typically only need a handful of bibcodes for linkage.
+_MAX_TRACE_BIBCODES: int = 20
 
 # ---------------------------------------------------------------------------
 # Server-level session identity (stable for the lifetime of the process)
@@ -278,6 +302,84 @@ def _log_query(
         conn.commit()
     except Exception:
         logger.warning("Failed to log query for tool=%s", tool_name, exc_info=True)
+
+
+def _extract_bibcodes_from_result(result_json: str | None) -> tuple[str, ...]:
+    """Best-effort bibcode extraction from a tool's JSON result.
+
+    Handles two common shapes:
+      * ``{"papers": [{"bibcode": ...}, ...]}`` — multi-paper result.
+      * ``{"bibcode": "..."}`` — single-paper result.
+
+    Returns an empty tuple on any parse failure or when the result
+    represents an error payload. The result is capped at
+    :data:`_MAX_TRACE_BIBCODES` entries to keep emitted TraceEvents small.
+    """
+    if not result_json:
+        return ()
+    try:
+        data = json.loads(result_json)
+    except (json.JSONDecodeError, TypeError):
+        return ()
+    if not isinstance(data, dict):
+        return ()
+
+    bibcodes: list[str] = []
+    papers = data.get("papers")
+    if isinstance(papers, list):
+        for paper in papers:
+            if not isinstance(paper, dict):
+                continue
+            bc = paper.get("bibcode")
+            if isinstance(bc, str):
+                bibcodes.append(bc)
+                if len(bibcodes) >= _MAX_TRACE_BIBCODES:
+                    break
+
+    if not bibcodes:
+        bc = data.get("bibcode")
+        if isinstance(bc, str):
+            bibcodes.append(bc)
+
+    return tuple(bibcodes)
+
+
+def _emit_trace_event(
+    tool_name: str,
+    latency_ms: float,
+    params: dict[str, Any],
+    result_json: str | None,
+    success: bool,
+) -> None:
+    """Fire-and-forget TraceEvent emission to :mod:`scix.viz.trace_stream`.
+
+    Called once per MCP tool dispatch (both success and failure paths).
+    If :mod:`scix.viz.trace_stream` is not importable, this is a no-op.
+    All exceptions are swallowed — trace emission must never break the
+    tool-call hot path.
+    """
+    if _trace_stream is None:
+        return
+    try:
+        bibcodes = _extract_bibcodes_from_result(result_json)
+        result_summary: str | None = None
+        if not success and result_json:
+            try:
+                parsed = json.loads(result_json)
+                if isinstance(parsed, dict) and "error" in parsed:
+                    result_summary = f"error: {parsed['error']}"
+            except (json.JSONDecodeError, TypeError):
+                result_summary = None
+        event = _trace_stream.TraceEvent(
+            tool_name=tool_name,
+            latency_ms=latency_ms,
+            params=dict(params) if params else {},
+            result_summary=result_summary,
+            bibcodes=bibcodes,
+        )
+        _trace_stream.publish(event)
+    except Exception:  # pragma: no cover — defensive, emission must not raise
+        logger.debug("trace emission failed for tool=%s", tool_name, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -535,6 +637,16 @@ EXPECTED_TOOLS: tuple[str, ...] = (
     "facet_counts",
 )
 
+# Tools that appear only when an optional backend is wired up.
+_OPTIONAL_TOOLS: tuple[str, ...] = ("find_similar_by_examples",)
+
+
+def _expected_tool_set() -> set[str]:
+    tools = set(EXPECTED_TOOLS)
+    if _qdrant_enabled():
+        tools.update(_OPTIONAL_TOOLS)
+    return tools
+
 
 def startup_self_test(server: Any = None) -> dict[str, Any]:
     """Validate that list_tools() returns exactly 13 tools with valid schemas.
@@ -609,10 +721,12 @@ def startup_self_test(server: Any = None) -> dict[str, Any]:
         raise RuntimeError(f"startup_self_test: unexpected list_tools result shape: {result!r}")
 
     tool_count = len(tools)
-    if tool_count != 13:
-        errors.append(f"expected exactly 13 tools, got {tool_count}")
+    expected_set = _expected_tool_set()
+    if tool_count != len(expected_set):
+        errors.append(
+            f"expected exactly {len(expected_set)} tools, got {tool_count}"
+        )
 
-    expected_set = set(EXPECTED_TOOLS)
     seen: set[str] = set()
 
     for tool in tools:
@@ -698,7 +812,7 @@ def create_server(_run_self_test: bool = True):
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
-        return [
+        tool_list: list[Tool] = [
             # --- M1: Unified search ---
             Tool(
                 name="search",
@@ -1151,37 +1265,62 @@ def create_server(_run_self_test: bool = True):
             ),
         ]
 
+        # Optional Qdrant-backed discovery tool — only registered when
+        # QDRANT_URL is set. Lets the agent say "more like these papers, less
+        # like those" with optional payload filtering. Not a replacement for
+        # Postgres-backed search; an additive capability.
+        if _qdrant_enabled():
+            tool_list.append(Tool(
+                name="find_similar_by_examples",
+                description=(
+                    "Return papers most similar to a set of positive example "
+                    "bibcodes and least similar to negative examples, using "
+                    "Qdrant's discovery API over INDUS embeddings. Supports "
+                    "optional payload filters on year, doctype, arxiv_class, "
+                    "and coarse citation community. Best for \"more like "
+                    "these, less like those\" exploration — distinct from "
+                    "`search` (query text) and `citation_similarity` "
+                    "(co-citation / bibliographic coupling)."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "positive_bibcodes": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 1,
+                            "description": "Papers the result should resemble.",
+                        },
+                        "negative_bibcodes": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "default": [],
+                            "description": "Papers the result should avoid.",
+                        },
+                        "limit": {"type": "integer", "default": 10},
+                        "year_min": {"type": "integer"},
+                        "year_max": {"type": "integer"},
+                        "doctype": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "community_semantic": {"type": "integer"},
+                        "arxiv_class": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "required": ["positive_bibcodes"],
+                },
+            ))
+        return tool_list
+
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-        with _get_conn() as conn:
-            # Resolve deprecated aliases for timeout lookup
-            resolved_name = _DEPRECATED_ALIASES.get(name, name)
-            _set_timeout(conn, resolved_name)
-            t0 = time.monotonic()
-            success = True
-            error_msg: str | None = None
-            result_json: str = "{}"
-            try:
-                result_json = _dispatch_tool(conn, name, arguments)
-            except Exception as exc:
-                success = False
-                error_msg = str(exc)
-                result_json = json.dumps({"error": error_msg})
-                raise
-            finally:
-                latency_ms = (time.monotonic() - t0) * 1000
-                _log_query(
-                    conn,
-                    name,
-                    arguments,
-                    latency_ms,
-                    success,
-                    error_msg,
-                    result_json=result_json,
-                    session_id=_server_session_id,
-                    is_test=_is_test_session,
-                )
-            return [TextContent(type="text", text=result_json)]
+    async def call_tool_handler(
+        name: str, arguments: dict[str, Any]
+    ) -> list[TextContent]:
+        result_json = call_tool(name, arguments)
+        return [TextContent(type="text", text=result_json)]
 
     if _run_self_test:
         try:
@@ -1196,6 +1335,55 @@ def create_server(_run_self_test: bool = True):
 # ---------------------------------------------------------------------------
 # Tool dispatch
 # ---------------------------------------------------------------------------
+
+
+def call_tool(name: str, arguments: dict[str, Any]) -> str:
+    """Synchronously dispatch a tool by name and return its JSON result.
+
+    Mirrors the lifecycle of the MCP request handler registered in
+    :func:`create_server`: acquires a pooled connection, sets the per-tool
+    statement_timeout, dispatches via :func:`_dispatch_tool`, and — in a
+    ``finally`` block — records a ``query_log`` row and emits a
+    :class:`scix.viz.trace_stream.TraceEvent`. Lets callers (e.g. the viz
+    demo endpoint) drive the MCP tool surface in-process without going
+    through the asyncio request handler, while still producing exactly one
+    log row and one trace event per call.
+    """
+    with _get_conn() as conn:
+        resolved_name = _DEPRECATED_ALIASES.get(name, name)
+        _set_timeout(conn, resolved_name)
+        t0 = time.monotonic()
+        success = True
+        error_msg: str | None = None
+        result_json: str = "{}"
+        try:
+            result_json = _dispatch_tool(conn, name, arguments)
+        except Exception as exc:
+            success = False
+            error_msg = str(exc)
+            result_json = json.dumps({"error": error_msg})
+            raise
+        finally:
+            latency_ms = (time.monotonic() - t0) * 1000
+            _log_query(
+                conn,
+                name,
+                arguments,
+                latency_ms,
+                success,
+                error_msg,
+                result_json=result_json,
+                session_id=_server_session_id,
+                is_test=_is_test_session,
+            )
+            _emit_trace_event(
+                name,
+                latency_ms,
+                arguments,
+                result_json,
+                success,
+            )
+        return result_json
 
 
 def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) -> str:
@@ -1342,6 +1530,10 @@ def _wrap_deprecated(result_json: str, original_name: str, use_instead: str) -> 
 
 def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, Any]) -> str:
     """Dispatch to the 13 consolidated tool handlers plus legacy session/health handlers."""
+
+    # --- optional: find_similar_by_examples (Qdrant-backed) ---
+    if name == "find_similar_by_examples":
+        return _handle_find_similar_by_examples(args)
 
     # --- M1: Unified search ---
     if name == "search":
@@ -1941,6 +2133,48 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         indent=2,
         default=str,
     )
+
+
+def _handle_find_similar_by_examples(args: dict[str, Any]) -> str:
+    """Dispatch for the Qdrant-backed discovery tool.
+
+    Returns a structured error if Qdrant is not configured, so the tool can
+    live in the registered tool set even in mixed deployments where the
+    backend is not yet wired up. Callers should check the ``error`` field.
+    """
+    if not _qdrant_enabled():
+        return json.dumps({
+            "error": "qdrant_not_configured",
+            "message": (
+                "find_similar_by_examples requires the Qdrant backend "
+                "(QDRANT_URL env var)."
+            ),
+        })
+
+    positives = args.get("positive_bibcodes") or []
+    if not positives:
+        return json.dumps({"error": "positive_bibcodes is required"})
+
+    try:
+        hits = _qdrant_tools.find_similar_by_examples(
+            positive_bibcodes=list(positives),
+            negative_bibcodes=list(args.get("negative_bibcodes") or []) or None,
+            limit=int(args.get("limit", 10)),
+            year_min=args.get("year_min"),
+            year_max=args.get("year_max"),
+            doctype=args.get("doctype"),
+            community_semantic=args.get("community_semantic"),
+            arxiv_class=args.get("arxiv_class"),
+        )
+    except Exception as exc:  # noqa: BLE001 — boundary
+        logger.exception("find_similar_by_examples failed")
+        return json.dumps({"error": str(exc)})
+
+    return json.dumps({
+        "backend": "qdrant",
+        "collection": _qdrant_tools.COLLECTION,
+        "results": [dataclasses.asdict(h) for h in hits],
+    })
 
 
 def _handle_health_check(conn: psycopg.Connection) -> str:

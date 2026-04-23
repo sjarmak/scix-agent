@@ -1,0 +1,225 @@
+{
+  "resolution": "coarse",
+  "communities": [
+    {
+      "community_id": 0,
+      "n_sampled": 1500,
+      "terms": [
+        "properties",
+        "surface",
+        "energy",
+        "structure",
+        "materials"
+      ]
+    },
+    {
+      "community_id": 1,
+      "n_sampled": 1500,
+      "terms": [
+        "solar",
+        "field",
+        "galaxies",
+        "time",
+        "stars"
+      ]
+    },
+    {
+      "community_id": 2,
+      "n_sampled": 1500,
+      "terms": [
+        "formation",
+        "basin",
+        "rocks",
+        "surface",
+        "samples"
+      ]
+    },
+    {
+      "community_id": 3,
+      "n_sampled": 1500,
+      "terms": [
+        "cells",
+        "cell",
+        "protein",
+        "expression",
+        "research"
+      ]
+    },
+    {
+      "community_id": 4,
+      "n_sampled": 1500,
+      "terms": [
+        "water",
+        "flow",
+        "temperature",
+        "surface",
+        "process"
+      ]
+    },
+    {
+      "community_id": 5,
+      "n_sampled": 1500,
+      "terms": [
+        "temperature",
+        "surface",
+        "properties",
+        "process",
+        "thermal"
+      ]
+    },
+    {
+      "community_id": 6,
+      "n_sampled": 1500,
+      "terms": [
+        "project",
+        "research",
+        "students",
+        "learning",
+        "theory"
+      ]
+    },
+    {
+      "community_id": 7,
+      "n_sampled": 1500,
+      "terms": [
+        "research",
+        "development",
+        "students",
+        "project",
+        "social"
+      ]
+    },
+    {
+      "community_id": 8,
+      "n_sampled": 1500,
+      "terms": [
+        "control",
+        "algorithm",
+        "design",
+        "network",
+        "performance"
+      ]
+    },
+    {
+      "community_id": 9,
+      "n_sampled": 1500,
+      "terms": [
+        "water",
+        "chemical",
+        "process",
+        "organic",
+        "properties"
+      ]
+    },
+    {
+      "community_id": 10,
+      "n_sampled": 1500,
+      "terms": [
+        "species",
+        "soil",
+        "plant",
+        "plants",
+        "forest"
+      ]
+    },
+    {
+      "community_id": 11,
+      "n_sampled": 1500,
+      "terms": [
+        "performance",
+        "frequency",
+        "design",
+        "power",
+        "optical"
+      ]
+    },
+    {
+      "community_id": 12,
+      "n_sampled": 1500,
+      "terms": [
+        "sea",
+        "ocean",
+        "water",
+        "species",
+        "surface"
+      ]
+    },
+    {
+      "community_id": 13,
+      "n_sampled": 1500,
+      "terms": [
+        "soil",
+        "water",
+        "species",
+        "concentrations",
+        "samples"
+      ]
+    },
+    {
+      "community_id": 14,
+      "n_sampled": 1500,
+      "terms": [
+        "water",
+        "climate",
+        "precipitation",
+        "soil",
+        "surface"
+      ]
+    },
+    {
+      "community_id": 15,
+      "n_sampled": 1500,
+      "terms": [
+        "quantum",
+        "energy",
+        "field",
+        "states",
+        "magnetic"
+      ]
+    },
+    {
+      "community_id": 16,
+      "n_sampled": 1500,
+      "terms": [
+        "seismic",
+        "earthquake",
+        "flow",
+        "field",
+        "surface"
+      ]
+    },
+    {
+      "community_id": 17,
+      "n_sampled": 1164,
+      "terms": [
+        "power",
+        "control",
+        "voltage",
+        "current",
+        "converter"
+      ]
+    },
+    {
+      "community_id": 18,
+      "n_sampled": 1500,
+      "terms": [
+        "image",
+        "algorithm",
+        "learning",
+        "detection",
+        "network"
+      ]
+    },
+    {
+      "community_id": 19,
+      "n_sampled": 1500,
+      "terms": [
+        "energy",
+        "power",
+        "performance",
+        "network",
+        "optimization"
+      ]
+    }
+  ]
+}

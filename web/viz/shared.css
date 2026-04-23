@@ -1,0 +1,44 @@
+/* SciX viz shared stylesheet: baseline reset + sensible defaults. */
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+        Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #222;
+    background: #fafafa;
+}
+
+a {
+    color: #1a6fd9;
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+h1,
+h2,
+h3 {
+    font-weight: 600;
+    line-height: 1.25;
+}
+
+code,
+pre {
+    font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 0.95em;
+}

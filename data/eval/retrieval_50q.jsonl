@@ -1,0 +1,50 @@
+{"query_id": "t01", "bucket": "title", "discipline": "astrophysics", "query": "direct imaging of black hole shadow in M87", "notes": "Should match EHT M87 imaging papers; phrase is likely verbatim in titles."}
+{"query_id": "t02", "bucket": "title", "discipline": "astrophysics", "query": "gravitational wave detection from binary neutron star merger", "notes": "GW170817 / LIGO-Virgo papers; expect title matches."}
+{"query_id": "t03", "bucket": "title", "discipline": "astrophysics", "query": "pulsar timing array evidence for gravitational wave background", "notes": "NANOGrav / EPTA / PPTA results; title-matchable."}
+{"query_id": "t04", "bucket": "title", "discipline": "planetary", "query": "water ice on the surface of Europa", "notes": "Classic planetary topic; direct title matches expected."}
+{"query_id": "t05", "bucket": "title", "discipline": "planetary", "query": "mineralogy of Mars from CRISM observations", "notes": "CRISM / MRO papers frequently title-match."}
+{"query_id": "t06", "bucket": "title", "discipline": "planetary", "query": "detection of organic molecules on Titan by Cassini", "notes": "Cassini-Huygens era titles expected."}
+{"query_id": "t07", "bucket": "title", "discipline": "earth_science", "query": "Arctic sea ice extent decline from satellite observations", "notes": "NSIDC / passive microwave time-series papers; title-matchable."}
+{"query_id": "t08", "bucket": "title", "discipline": "earth_science", "query": "tropical cyclone intensity change under climate warming", "notes": "Reviewed/attribution papers; title-matchable."}
+{"query_id": "t09", "bucket": "title", "discipline": "earth_science", "query": "global ocean heat content from Argo floats", "notes": "Argo analysis titles expected."}
+{"query_id": "t10", "bucket": "title", "discipline": "heliophysics", "query": "coronal mass ejection propagation in the heliosphere", "notes": "Classic heliophysics phrasing; title-match expected."}
+{"query_id": "t11", "bucket": "title", "discipline": "heliophysics", "query": "solar wind turbulence observed by Parker Solar Probe", "notes": "PSP instrument papers; title-matchable."}
+{"query_id": "t12", "bucket": "title", "discipline": "heliophysics", "query": "magnetic reconnection in Earth's magnetotail observed by MMS", "notes": "MMS mission reconnection papers."}
+{"query_id": "c01", "bucket": "concept", "discipline": "astrophysics", "query": "reionization of the early universe by first galaxies", "notes": "Concept query — INDUS should dominate; JWST / 21cm era."}
+{"query_id": "c02", "bucket": "concept", "discipline": "astrophysics", "query": "nucleosynthesis of heavy elements in neutron star mergers", "notes": "r-process concept; cross-discipline with multi-messenger."}
+{"query_id": "c03", "bucket": "concept", "discipline": "astrophysics", "query": "substructure of dark matter halos from gravitational lensing", "notes": "Concept query; lensing + simulations."}
+{"query_id": "c04", "bucket": "concept", "discipline": "astrophysics", "query": "accretion disk physics around supermassive black holes", "notes": "Conceptual phrasing; expect review + modeling papers."}
+{"query_id": "c05", "bucket": "concept", "discipline": "planetary", "query": "biosignatures on ocean worlds in the outer solar system", "notes": "Astrobiology concept; INDUS-trained."}
+{"query_id": "c06", "bucket": "concept", "discipline": "planetary", "query": "tidal heating of icy moons and subsurface oceans", "notes": "Cross-body concept."}
+{"query_id": "c07", "bucket": "concept", "discipline": "planetary", "query": "impact cratering chronology of inner solar system bodies", "notes": "Concept; Neukum-style dating work."}
+{"query_id": "c08", "bucket": "concept", "discipline": "planetary", "query": "atmospheric escape from terrestrial exoplanets", "notes": "Concept query spanning observations + modeling."}
+{"query_id": "c09", "bucket": "concept", "discipline": "earth_science", "query": "climate sensitivity to greenhouse gas forcing", "notes": "Broad concept; expect AR6-era papers."}
+{"query_id": "c10", "bucket": "concept", "discipline": "earth_science", "query": "aerosol cloud interactions and radiative forcing", "notes": "Concept; hard for lexical search."}
+{"query_id": "c11", "bucket": "concept", "discipline": "earth_science", "query": "Atlantic meridional overturning circulation weakening", "notes": "AMOC concept; few title-exact matches."}
+{"query_id": "c12", "bucket": "concept", "discipline": "earth_science", "query": "land atmosphere coupling during summer droughts", "notes": "Concept; cross-scale."}
+{"query_id": "c13", "bucket": "concept", "discipline": "heliophysics", "query": "radiation belt electron dynamics during geomagnetic storms", "notes": "Van Allen Probes / ERG era concept."}
+{"query_id": "c14", "bucket": "concept", "discipline": "heliophysics", "query": "ionospheric response to sudden stratospheric warming", "notes": "Cross-domain concept."}
+{"query_id": "c15", "bucket": "concept", "discipline": "heliophysics", "query": "solar energetic particle acceleration at CME driven shocks", "notes": "SEP concept; acceleration mechanism."}
+{"query_id": "c16", "bucket": "concept", "discipline": "heliophysics", "query": "structure of the heliopause and interstellar boundary", "notes": "Voyager / IBEX / IMAP concept."}
+{"query_id": "m01", "bucket": "method", "discipline": "astrophysics", "query": "Bayesian hierarchical modeling of Type Ia supernova light curves", "notes": "Method described in methods sections; section retrieval should lift."}
+{"query_id": "m02", "bucket": "method", "discipline": "astrophysics", "query": "MCMC parameter estimation for exoplanet transit fitting", "notes": "Typical methods-section content."}
+{"query_id": "m03", "bucket": "method", "discipline": "astrophysics", "query": "cross-correlation analysis of 21 cm intensity mapping surveys", "notes": "Methodology; not usually in titles."}
+{"query_id": "m04", "bucket": "method", "discipline": "astrophysics", "query": "maximum likelihood estimation of CMB angular power spectrum", "notes": "Methods-section phrasing."}
+{"query_id": "m05", "bucket": "method", "discipline": "planetary", "query": "radiative transfer retrieval of exoplanet atmospheric composition", "notes": "Retrieval methodology."}
+{"query_id": "m06", "bucket": "method", "discipline": "planetary", "query": "spectral unmixing for hyperspectral planetary surface mapping", "notes": "Method-heavy phrasing."}
+{"query_id": "m07", "bucket": "method", "discipline": "planetary", "query": "N body simulation methods for protoplanetary disk dynamics", "notes": "Simulation methodology."}
+{"query_id": "m08", "bucket": "method", "discipline": "earth_science", "query": "ensemble Kalman filter data assimilation for sea surface temperature", "notes": "Methodology-heavy."}
+{"query_id": "m09", "bucket": "method", "discipline": "earth_science", "query": "machine learning downscaling of climate model precipitation output", "notes": "Methods-section content."}
+{"query_id": "m10", "bucket": "method", "discipline": "earth_science", "query": "InSAR time series analysis for measuring ground deformation", "notes": "Remote sensing methodology."}
+{"query_id": "m11", "bucket": "method", "discipline": "heliophysics", "query": "particle in cell simulation of magnetic reconnection outflow", "notes": "PIC simulation method."}
+{"query_id": "m12", "bucket": "method", "discipline": "heliophysics", "query": "MHD modeling of the solar corona with adaptive mesh refinement", "notes": "Numerical method; section retrieval lift expected."}
+{"query_id": "m13", "bucket": "method", "discipline": "heliophysics", "query": "wavelet analysis of ultra low frequency waves in the magnetosphere", "notes": "Signal processing methodology."}
+{"query_id": "m14", "bucket": "method", "discipline": "heliophysics", "query": "flux transport dynamo simulation with near surface shear", "notes": "Solar dynamo simulation technique."}
+{"query_id": "a01", "bucket": "author", "discipline": "astrophysics", "query": "Andrea Ghez galactic center supermassive black hole", "notes": "Author + topic; tests author filter behaviour."}
+{"query_id": "a02", "bucket": "author", "discipline": "astrophysics", "query": "Adam Riess Hubble constant local distance ladder", "notes": "Author + topic."}
+{"query_id": "a03", "bucket": "author", "discipline": "planetary", "query": "Sara Seager exoplanet atmosphere characterization", "notes": "Author + topic."}
+{"query_id": "a04", "bucket": "author", "discipline": "planetary", "query": "Jennifer Glass biogeochemistry of ocean worlds", "notes": "Author + topic; lower-frequency name."}
+{"query_id": "a05", "bucket": "author", "discipline": "earth_science", "query": "James Hansen climate sensitivity and paleoclimate", "notes": "Author + topic."}
+{"query_id": "a06", "bucket": "author", "discipline": "earth_science", "query": "Kerry Emanuel tropical cyclone intensity theory", "notes": "Author + topic."}
+{"query_id": "a07", "bucket": "author", "discipline": "heliophysics", "query": "Eugene Parker solar wind theoretical foundations", "notes": "Author + topic; historical."}
+{"query_id": "a08", "bucket": "author", "discipline": "heliophysics", "query": "Tamas Gombosi space weather modeling framework", "notes": "Author + topic; SWMF/BATS-R-US."}

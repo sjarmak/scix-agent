@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SciX — Visualization Demos</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      main {
+        max-width: 960px;
+        margin: 40px auto;
+        padding: 0 20px;
+      }
+      h1 {
+        margin: 0 0 8px;
+      }
+      .subtitle {
+        color: #555;
+        margin: 0 0 28px;
+      }
+      .card-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 8px;
+        padding: 18px 18px 20px;
+        text-decoration: none;
+        color: inherit;
+        transition: box-shadow 120ms ease-out, transform 120ms ease-out;
+      }
+      .card:hover {
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+        transform: translateY(-1px);
+      }
+      .card h2 {
+        margin: 0 0 6px;
+        font-size: 17px;
+      }
+      .card .tag {
+        display: inline-block;
+        font-size: 11px;
+        background: #eef1f6;
+        color: #335;
+        border-radius: 3px;
+        padding: 2px 6px;
+        margin-bottom: 8px;
+        letter-spacing: 0.02em;
+      }
+      .card p {
+        margin: 0;
+        color: #555;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .stats {
+        margin-top: 24px;
+        padding: 14px 16px;
+        background: #fafafa;
+        border: 1px solid #eaeaea;
+        border-radius: 6px;
+        font-size: 13px;
+        color: #444;
+      }
+      .stats code {
+        background: #f0f0f0;
+        padding: 1px 4px;
+        border-radius: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>SciX Visualization Demos</h1>
+      <p class="subtitle">
+        Four lenses on the 32.4-million-paper corpus.
+      </p>
+      <div class="card-grid">
+        <a class="card" href="./sankey.html">
+          <span class="tag">V2</span>
+          <h2>Temporal Community Flow</h2>
+          <p>
+            Sankey diagram of how papers move between semantic communities
+            across decades. Hover a node to isolate its incident flows.
+          </p>
+        </a>
+        <a class="card" href="./umap_browser.html">
+          <span class="tag">V3</span>
+          <h2>UMAP Embedding Browser</h2>
+          <p>
+            2-D projection of 100,000 INDUS-embedded papers, coloured by
+            coarse community. Pan, zoom, and click a legend swatch to
+            isolate a community.
+          </p>
+        </a>
+        <a class="card" href="./agent_trace.html">
+          <span class="tag">V4</span>
+          <h2>Live Agent-Trace Overlay</h2>
+          <p>
+            Type a query to run real hybrid search over 32M papers. Each tool
+            call flashes the touched papers on the UMAP and narrates in the
+            panel in real time over SSE.
+          </p>
+        </a>
+        <a class="card" href="./heatmap.html">
+          <span class="tag">V5</span>
+          <h2>Research Topology</h2>
+          <p>
+            20×20 citation heatmap derived from 297.9M citation edges. Reveals
+            which communities cite which — three modes: raw counts,
+            row-normalized, and citation lift.
+          </p>
+        </a>
+        <a class="card" href="./ego.html">
+          <span class="tag">V6</span>
+          <h2>Citation Ego Network</h2>
+          <p>
+            Force-directed graph of a paper's citation neighborhood — up to
+            100 refs + 100 cites + 200 2-hop nodes, coloured by community.
+            Drag nodes to rearrange; click a neighbor to re-center.
+          </p>
+        </a>
+      </div>
+      <div class="stats" id="corpus-stats">
+        <strong>Corpus:</strong> 32.4M papers · 32.4M INDUS embeddings ·
+        100K UMAP points · 20 coarse communities · decades 1800–2020.
+      </div>
+    </main>
+  </body>
+</html>

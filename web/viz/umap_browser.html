@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SciX — UMAP Embedding Browser</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      main.viz-container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 24px 20px 48px;
+      }
+      .viz-sub {
+        color: #555;
+        margin-top: -4px;
+      }
+      #umap-layout {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 16px;
+        align-items: start;
+      }
+      #umap-root {
+        position: relative;
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        width: 100%;
+        height: 70vh;
+        min-height: 480px;
+        overflow: hidden;
+      }
+      #umap-root canvas {
+        display: block;
+      }
+      #umap-tooltip {
+        position: absolute;
+        pointer-events: none;
+        background: rgba(30, 30, 30, 0.9);
+        color: #fff;
+        font-size: 12px;
+        padding: 6px 8px;
+        border-radius: 4px;
+        max-width: 340px;
+        line-height: 1.35;
+        display: none;
+        z-index: 10;
+      }
+      #umap-panel {
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        padding: 12px 14px;
+        min-height: 200px;
+        font-size: 13px;
+      }
+      #umap-panel h2 {
+        font-size: 15px;
+        margin: 0 0 8px;
+      }
+      #umap-panel .empty {
+        color: #888;
+      }
+      #umap-legend {
+        margin-top: 12px;
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        padding: 10px 12px;
+        font-size: 12px;
+      }
+      #umap-legend h3 {
+        font-size: 13px;
+        margin: 0 0 6px;
+        color: #444;
+        font-weight: 600;
+      }
+      #umap-legend .legend-hint {
+        color: #888;
+        margin-bottom: 8px;
+        font-size: 11px;
+      }
+      .legend-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 4px 10px;
+      }
+      .legend-swatch {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        user-select: none;
+        padding: 2px 4px;
+        border-radius: 3px;
+        transition: background 120ms;
+      }
+      .legend-swatch:hover {
+        background: #f2f2f2;
+      }
+      .legend-swatch.active {
+        background: #e8f1fc;
+      }
+      .legend-swatch .chip {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+        flex-shrink: 0;
+      }
+      #umap-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+      #umap-stats {
+        color: #555;
+        font-size: 13px;
+      }
+      #umap-status {
+        margin-top: 8px;
+        color: #b00020;
+        font-size: 13px;
+        min-height: 18px;
+      }
+    </style>
+    <script src="https://unpkg.com/deck.gl@9/dist.min.js"></script>
+  </head>
+  <body>
+    <main class="viz-container">
+      <div id="umap-header">
+        <h1 style="margin:0">UMAP Embedding Browser</h1>
+        <span id="umap-stats">loading&hellip;</span>
+      </div>
+      <p class="viz-sub">
+        2-D UMAP projection of INDUS paper embeddings. Pan and zoom to explore;
+        hover a point to see its title; click to pin a paper. Click a legend
+        swatch to isolate a community.
+      </p>
+      <div id="umap-layout">
+        <div id="umap-root" aria-label="UMAP scatter plot">
+          <div id="umap-tooltip" role="tooltip"></div>
+        </div>
+        <div>
+          <aside id="umap-panel" aria-label="Selected paper">
+            <h2>Selected paper</h2>
+            <div class="empty">Click a point to pin a paper here.</div>
+          </aside>
+          <aside id="umap-legend" aria-label="Community color legend">
+            <h3>Communities (coarse)</h3>
+            <div class="legend-hint">Click to isolate · click again to reset</div>
+            <div class="legend-grid" id="umap-legend-grid"></div>
+          </aside>
+        </div>
+      </div>
+      <div id="umap-status" role="status" aria-live="polite"></div>
+    </main>
+    <script src="./shared.js"></script>
+    <script src="./umap_browser.js"></script>
+    <script>
+      // Bootstrap: fetch the UMAP dataset for the currently-selected
+      // resolution (see shared.js) and render. Re-renders when the user
+      // flips the resolution toggle in the nav.
+      ;(function bootstrap() {
+        const root = document.getElementById('umap-root')
+        const status = document.getElementById('umap-status')
+
+        function candidatesForCurrent() {
+          if (window.scixViz && typeof window.scixViz.resolutionFiles === 'function') {
+            return window.scixViz.resolutionFiles().umap
+          }
+          return ['./umap.json', '/data/viz/umap.json']
+        }
+
+        async function load() {
+          status.textContent = ''
+          root.setAttribute('aria-busy', 'true')
+          const urls = candidatesForCurrent()
+          let data = null
+          let lastErr = null
+          for (const url of urls) {
+            try {
+              const resp = await fetch(url, { cache: 'no-store' })
+              if (!resp.ok) {
+                lastErr = new Error(url + ' -> HTTP ' + resp.status)
+                continue
+              }
+              data = await resp.json()
+              break
+            } catch (err) {
+              lastErr = err
+            }
+          }
+          if (!data) {
+            root.removeAttribute('aria-busy')
+            status.textContent =
+              'Could not load umap data for resolution "' +
+              (window.scixViz ? window.scixViz.getResolution() : 'coarse') +
+              '" (' +
+              (lastErr ? lastErr.message || String(lastErr) : 'unknown error') +
+              '). Run scripts/viz/project_embeddings_umap.py to generate it.'
+            return
+          }
+          if (typeof window.renderUMAP !== 'function') {
+            root.removeAttribute('aria-busy')
+            status.textContent = 'renderUMAP is not defined — umap_browser.js failed to load.'
+            return
+          }
+          // Tear down the previous deck.gl instance before mounting a new
+          // one so resolution switches don't leak WebGL contexts.
+          if (window.umapInstance && typeof window.umapInstance.finalize === 'function') {
+            try {
+              window.umapInstance.finalize()
+            } catch (err) {
+              /* best-effort */
+            }
+          }
+          while (root.firstChild) root.removeChild(root.firstChild)
+          const tt = document.createElement('div')
+          tt.id = 'umap-tooltip'
+          tt.setAttribute('role', 'tooltip')
+          root.appendChild(tt)
+          try {
+            window.umapInstance = window.renderUMAP(data, root)
+          } catch (err) {
+            status.textContent = 'Render failed: ' + (err.message || String(err))
+          } finally {
+            root.removeAttribute('aria-busy')
+          }
+        }
+
+        // Expose for tests + resolution re-renders.
+        window.scixUmapLoad = load
+
+        window.addEventListener('scix:resolution-change', function () {
+          load()
+        })
+
+        load()
+      })()
+    </script>
+  </body>
+</html>

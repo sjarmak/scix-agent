@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -29,6 +30,14 @@ STUB_COLUMNS = "p.bibcode, p.title, p.first_author, p.year, p.citation_count, p.
 
 # Default RRF constant (controls how much rank position matters vs raw score)
 RRF_K = 60
+
+# Halfvec cutover gate. Migrations 053/054 add paper_embeddings.embedding_hv
+# and idx_embed_hnsw_indus_hv, but were not applied to prod scix as of
+# 2026-04-22 (see bead scix_experiments-d0a). Default False so vector_search
+# stays on the legacy vector(768) column + idx_embed_hnsw_indus for INDUS.
+# Set SCIX_USE_HALFVEC=1 only after migration + scripts/backfill_halfvec.py
+# completes; see docs/runbooks/halfvec_migration.md.
+_HALFVEC_ENABLED = os.environ.get("SCIX_USE_HALFVEC", "0") == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -339,11 +348,12 @@ def vector_search(
 
     ndim = len(query_embedding)
     vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
-    # INDUS (the production dense signal) lives in the halfvec(768) shadow
-    # column backed by idx_embed_hnsw_indus_hv (halfvec_cosine_ops). All
-    # other per-model rows still use the legacy `embedding` column with
-    # vector_cosine_ops — see bead scix_experiments-0vy.
-    use_halfvec = model_name == "indus"
+    # INDUS halfvec path is gated on SCIX_USE_HALFVEC=1 because migrations
+    # 053/054 (add embedding_hv shadow column + HNSW index) have not been
+    # applied to prod scix yet — see bead scix_experiments-d0a. Default off
+    # falls back to the original vector(768) column and idx_embed_hnsw_indus.
+    # Flip the env var after the migration + backfill runbook completes.
+    use_halfvec = _HALFVEC_ENABLED and model_name == "indus"
     vec_col = "pe.embedding_hv" if use_halfvec else "pe.embedding"
     vec_cast = f"halfvec({ndim})" if use_halfvec else f"vector({ndim})"
     effective = filters or SearchFilters()
@@ -506,7 +516,8 @@ def _filter_first_vector_search(
 
     ndim = len(query_embedding)
     vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
-    use_halfvec = model_name == "indus"
+    # See gate explanation on _vector_search_hnsw — same story here.
+    use_halfvec = _HALFVEC_ENABLED and model_name == "indus"
     vec_col = "pe.embedding_hv" if use_halfvec else "pe.embedding"
     vec_cast = f"halfvec({ndim})" if use_halfvec else f"vector({ndim})"
     effective = filters or SearchFilters()

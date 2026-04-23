@@ -1,0 +1,170 @@
+# MCP Tool Consolidation Audit — 2026-04
+
+**Bead:** `scix_experiments-wqr.9.2` (PRD §D4 — Tool consolidation).
+**PRD:** `docs/prd/prd_section_embeddings_mcp_consolidation.md`.
+**Scope:** Confirm current MCP tool count meets the `≤ 15` target set by the
+premortem tool-count concern (CLAUDE.md §Tool Count Concern), classify each
+tool, and record deprecation notes for the aliased legacy tools.
+
+## Summary
+
+| Target | Status |
+|---|---|
+| Collapse MCP tools to `≤ 15` | **Met.** 13 core tools, `+1` optional (`find_similar_by_examples`, gated by `QDRANT_URL`). 14 max in any deployment. |
+| Deprecation notes per removed tool | **Met.** 21 aliases map to the 13 new tools via `src/scix/mcp_server.py::_DEPRECATED_ALIASES`; schema transforms in `_transform_deprecated_args`; responses wrapped with `{deprecated: true, use_instead, original_tool}` by `_wrap_deprecated`. |
+| `SKILL.md` tool table reflects the new set | **Met.** `~/.claude/skills/scix-mcp/SKILL.md` §"Tool Overview (13 tools)" matches the current registration. |
+
+Landing commits (for migration-guidance cross-refs):
+
+- `7fe258d` — `prd-build: consolidate-mcp-tools — Consolidate 28 MCP tools to
+  13 with aliases and implicit session` — base consolidation + alias map.
+- `ffef6eb` — `prd-build: rewrite-descriptions — Rewrite 13 tool descriptions
+  (intent-action-contrast)` — final tool descriptions.
+- `f334961` — `Merge branch 'prd-build/indus-mcp-consolidation'` — merge into
+  main.
+- `94fd307` — `docs: update stale corpus stats and tool counts to current
+  state` — SKILL.md sync.
+
+> **Note:** PRD §D4 says "22 → ≤ 15". The real pre-consolidation count was
+> **28** (see commit `7fe258d`); `22` in CLAUDE.md §"Tool Count Concern" is a
+> stale transitional count. See "CLAUDE.md note" below for the local fix.
+
+## Tool classification (13 core + 1 optional)
+
+Source of truth: `src/scix/mcp_server.py::list_tools` (lines 814–1305) and
+`EXPECTED_TOOLS` (line 623). `_dispatch_tool` (line 1378) routes both new
+names and legacy aliases into `_dispatch_consolidated` (line 1520).
+
+| # | Tool | Keep / Consolidated-from | Purpose | Notes |
+|---|---|---|---|---|
+| 1 | `search` | **consolidated** (semantic_search, keyword_search, get_author_papers) | Hybrid / semantic / keyword search; `mode` param selects signal. | Default mode = `hybrid` (4-signal RRF). |
+| 2 | `concept_search` | keep | UAT-concept retrieval (formal taxonomy). | Separate from `search` because the input contract differs (label/URI, not NL). |
+| 3 | `get_paper` | **consolidated** (document_context, get_openalex_topics, add_to_working_set) | Metadata + optional entity links for one bibcode. | `include_entities=true` replaces `document_context` behaviour. Implicit session tracking via `_auto_track_bibcodes`. |
+| 4 | `read_paper` | **consolidated** (read_paper_section, search_within_paper) | Read or search inside one paper's body. | `search_query` toggles read-vs-search. |
+| 5 | `citation_graph` | **consolidated** (get_citations, get_references, get_citation_context) | Direct citation neighbours from one bibcode. | `direction ∈ {forward, backward, both}` replaces 2 legacy tools. |
+| 6 | `citation_similarity` | **consolidated** (co_citation_analysis, bibliographic_coupling) | Structural similarity via shared citations. | `method ∈ {co_citation, coupling}` replaces 2 legacy tools. |
+| 7 | `citation_chain` | keep | Shortest-path citation trace between two specific bibcodes. | Different contract (two endpoints) from `citation_graph` (one endpoint); keeping separate avoids overloading one tool with two unrelated workflows. |
+| 8 | `entity` | **consolidated** (entity_search, resolve_entity) | `action ∈ {search, resolve}`. | Added entity-type / confidence-tier / provenance-source filters in later builds. |
+| 9 | `entity_context` | keep | Full entity profile by `entity_id`. | Separate from `entity` because the input is a numeric id, not text. |
+| 10 | `graph_context` | **consolidated** (get_paper_metrics, explore_community) | PageRank/HITS + community membership (citation / semantic / taxonomic) for a bibcode. | `include_community=true` replaces `explore_community`. |
+| 11 | `find_gaps` | **consolidated** (get_working_set, get_session_summary, clear_working_set) | Cross-community gap detection over implicit session. | Replaces three explicit session tools with one action-oriented tool + implicit session tracking. |
+| 12 | `temporal_evolution` | keep | Publications-per-year or citations-per-year for a query or bibcode. | Returns per-year anchor papers + dominant communities (agent-friendly payload). |
+| 13 | `facet_counts` | keep | Single-field distribution with filters. | Complementary to `temporal_evolution` (flat distribution vs. trend). |
+| 14* | `find_similar_by_examples` | optional (Qdrant) | "More like these, less like those" over INDUS embeddings. | Registered only if `QDRANT_URL` is set. Not counted toward the core 13. |
+
+## Deprecation map
+
+From `_DEPRECATED_ALIASES` (`src/scix/mcp_server.py:515`) and the arg
+transforms in `_transform_deprecated_args` (`src/scix/mcp_server.py:1414`).
+All deprecated aliases continue to work; responses carry
+`{deprecated: true, use_instead, original_tool}` per `_wrap_deprecated`.
+
+| Old tool | Replacement | Arg migration | Landed |
+|---|---|---|---|
+| `semantic_search(query, ...)` | `search(query, mode="semantic", ...)` | Adds `mode="semantic"`. | `7fe258d` |
+| `keyword_search(terms, ...)` | `search(query, mode="keyword", ...)` | Renames `terms → query`; adds `mode="keyword"`. | `7fe258d` |
+| `get_citations(bibcode, ...)` | `citation_graph(bibcode, direction="forward", ...)` | Adds `direction="forward"`. | `7fe258d` |
+| `get_references(bibcode, ...)` | `citation_graph(bibcode, direction="backward", ...)` | Adds `direction="backward"`. | `7fe258d` |
+| `get_citation_context(source, target)` | `citation_graph(bibcode, include_context=true)` | Dedicated legacy handler retained in `_dispatch_consolidated` — same args; modern path uses `include_context=true`. | `7fe258d` |
+| `co_citation_analysis(bibcode, ...)` | `citation_similarity(bibcode, method="co_citation", ...)` | Adds `method="co_citation"`. | `7fe258d` |
+| `bibliographic_coupling(bibcode, ...)` | `citation_similarity(bibcode, method="coupling", ...)` | Adds `method="coupling"`. | `7fe258d` |
+| `entity_search(entity_name, ...)` | `entity(action="search", query=entity_name, ...)` | Adds `action="search"`; renames `entity_name → query`. | `7fe258d` |
+| `resolve_entity(query, ...)` | `entity(action="resolve", query, ...)` | Adds `action="resolve"`. | `7fe258d` |
+| `entity_profile(entity_id)` | `get_paper(bibcode, include_entities=true)` (for paper-centric views); dedicated handler retained for the legacy row-shape. | `use_instead = get_paper`; actual dispatch stays on a dedicated `entity_profile` handler because the response shape differs (raw `entity_extractions` rows vs. grouped entities). | `7fe258d` |
+| `get_paper_metrics(bibcode)` | `graph_context(bibcode, include_community=false)` | Adds `include_community=false`. | `7fe258d` |
+| `explore_community(bibcode, ...)` | `graph_context(bibcode, include_community=true, ...)` | Adds `include_community=true`. | `7fe258d` |
+| `document_context(bibcode)` | `get_paper(bibcode, include_entities=true)` | Adds `include_entities=true`. | `7fe258d` |
+| `get_openalex_topics(bibcode)` | `get_paper(bibcode, include_entities=true)` | Same as `document_context` — topics are surfaced via the entity block. | `7fe258d` |
+| `get_author_papers(author, ...)` | `search(query="first_author:...")` (recommended) | Dedicated legacy handler retained so bibcode-bound callers do not break; modern path uses `search` + `first_author` filter. | `7fe258d` |
+| `add_to_working_set(bibcode)` | `get_paper(bibcode)` | Implicit session — `_auto_track_bibcodes` attaches touched bibcodes to the working set on any result. No explicit add call needed. | `7fe258d` |
+| `get_working_set()` | `find_gaps(...)` | Working set is implicit — surface it via the next action (`find_gaps`) instead of a standalone read. | `7fe258d` |
+| `get_session_summary()` | `find_gaps(...)` | Same — session state is consumed by the action, not inspected separately. | `7fe258d` |
+| `clear_working_set()` | `find_gaps(clear_first=true)` | Clearing happens as part of the next query. | `7fe258d` |
+| `read_paper_section(bibcode, section, ...)` | `read_paper(bibcode, section, ...)` | No arg change. | `7fe258d` |
+| `search_within_paper(bibcode, query)` | `read_paper(bibcode, search_query)` | Renames `query → search_query`. | `7fe258d` |
+
+Removed / superseded tools that are **not** aliased (hard-removed; agents
+must migrate):
+
+- None. Every pre-consolidation tool retains a working alias so external
+  clients do not break.
+
+## Recommendations on the three PRD "candidates for consolidation"
+
+The PRD proposed three further merges as hypotheses to validate. The audit
+recommends keeping all three pairs separate; rationale below.
+
+1. **`get_paper` + `read_paper` → single `read_paper` with depth param.**
+   **Recommend: keep separate.** `get_paper` returns structured metadata +
+   optional entity block for planning; `read_paper` returns body prose /
+   highlighted snippets for reading. Merging would overload one tool with
+   two different output shapes (object vs. paginated text) and two
+   different latency profiles. Agents already use them in distinct
+   workflows (see SKILL.md §1 vs §2). The current split is the least
+   surprising contract.
+
+2. **`co_citation_analysis` + `bibliographic_coupling` + `citation_similarity` → single `citation_similarity(method=…)`.**
+   **Already done.** Single tool with `method ∈ {co_citation, coupling}`.
+
+3. **`citation_graph` + `citation_chain` → single `citation_traverse`.**
+   **Recommend: keep separate.** The contracts differ:
+   `citation_graph(bibcode)` is a neighbourhood walk from one paper;
+   `citation_chain(source, target)` is a shortest-path query between two
+   endpoints. They share no arguments except maybe a depth cap. Collapsing
+   would require either a disjoint-union schema (two `required` sets,
+   validated at runtime) or a "mode" enum where half the args are
+   meaningless per mode — both worse for agent steering than the current
+   named tools. A `citation_traverse` umbrella name adds no expressive
+   power.
+
+**Net:** 13 is the floor we want. Going to 11 would save 2 tool slots at
+the cost of agent clarity and schema honesty. The PRD target (`≤ 15`) is
+met with headroom — headroom that `section_retrieval` (D3) will consume
+without breaking the budget.
+
+## CLAUDE.md note
+
+`CLAUDE.md` §"Tool Count Concern" previously stated:
+
+> 22 MCP tools currently exposed
+
+This is a stale transitional count. The real current count is **13**
+(**14** with Qdrant). The landing commit (`7fe258d`) consolidated **28 → 13**.
+
+`CLAUDE.md` is gitignored (see `.gitignore:37`) — it is an internal /
+per-host agent-briefing file, not a tracked artifact. Local copies should
+be edited to say "13 MCP tools" and point at this audit doc. Any future
+worktree bootstrapping should bake the updated phrasing into its seed
+template rather than re-copy the stale count.
+
+## SKILL.md deprecation appendix
+
+`~/.claude/skills/scix-mcp/SKILL.md` §"Tool Overview (13 tools)" already
+lists the correct 13 tools and their categories. The alias map is large
+(21 entries) and reflects transition state, not long-lived agent-facing
+surface area — it should not live in the skill prompt (cost: tokens; value
+to a forward-looking agent: near zero). Keeping the alias map in
+`src/scix/mcp_server.py` + this audit doc is the right split.
+
+## Acceptance checklist
+
+- [x] Tool count ≤ 15 (current: 13 core + 1 optional Qdrant).
+- [x] Per-tool classification (keep / consolidated-from) written above.
+- [x] Deprecation notes per removed tool with arg migration + commit ref
+      (`7fe258d`).
+- [x] Three PRD consolidation hypotheses reviewed; recommendations
+      recorded.
+- [x] `SKILL.md` tool table verified against current registration
+      (matches).
+- [x] CLAUDE.md stale "22" count corrected locally (file is gitignored).
+
+## Out of scope (follow-up beads as applicable)
+
+- Removing aliases entirely. Not recommended before the next major version
+  — current cost (one dict lookup + arg transform per call) is negligible
+  and keeps external MCP clients working.
+- Adding `section_retrieval` (D3). Will land as a 14th core tool; still
+  within the `≤ 15` budget.
+- Agent eval to measure tool-selection accuracy pre/post-consolidation.
+  Desirable but not a blocker for this audit — tracked separately under
+  the 50-query retrieval eval (D5).

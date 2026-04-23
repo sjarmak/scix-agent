@@ -1,0 +1,60 @@
+Qdrant collection: {'status': 'yellow', 'points': 400000, 'segments': 5, 'collection': 'scix_papers_v1', 'vector_name': 'indus'}
+
+Seed bibcodes (sampled across communities): ['2014NatNa...9..814C', '2013NJPh...15g8001T', '2001MNRAS.326..237T', '2013arXiv1302.5672V', '2022arXiv220317056D', '2024arXiv240705715H']
+
+(1) positive-only: more like ['2014NatNa...9..814C', '2013NJPh...15g8001T']
+---------------------------------------------------------------------------
+   1. 2012NJPh...14k8001T  2012  c=11     ax=physics.optics      s=0.721
+      Comment on ‘Encoding many channels on the same frequency through radio vorticity: first ex
+   2. 2010ACSNa...4.1889F  2010  c=5      ax=cond-mat.mes-hall,cond-mat.mtrl-sci  s=0.676
+      Thermal Conductivity of Graphene in Corbino Membrane Geometry
+   3. 2012NatMa..11..865V  2012  c=15     ax=cond-mat.mes-hall   s=0.659
+      Graphene field-effect transistors as room-temperature terahertz detectors
+   4. 2015NatNa..10..437T  2015  c=15     ax=cond-mat.mes-hall   s=0.658
+      Generation of photovoltage in graphene on a femtosecond timescale through efficient carrie
+   5. 1999PhRvL..82.2620A  1999  c=15     ax=cond-mat.supr-con   s=0.655
+      Comment on ``Experimental and Theoretical Constraints of Bipolaronic Superconductivity in
+   6. 1997PhRvL..79.3791V  1997  c=15     ax=cond-mat.str-el,cond-mat.mes-hall  s=0.646
+      Hopf Term for a Two-Dimensional Electron Gas
+   7. 2001PhRvL..87r8901Z  2001  c=15     ax=cond-mat.stat-mech,cond-mat.soft  s=0.644
+      Comment on ``Universal Fluctuations in Correlated Systems''
+   8. 2001PhRvL..87u9801D  2001  c=5      ax=cond-mat.stat-mech  s=0.644
+      Comment on ``Breakdown of the Internet under Intentional Attack''
+
+(2) positive ['2014NatNa...9..814C', '2013NJPh...15g8001T']  NEGATIVE ['2001MNRAS.326..237T']
+---------------------------------------------------------------------------------------------
+   1. 2012NJPh...14k8001T  2012  c=11     ax=physics.optics      s=0.569
+      Comment on ‘Encoding many channels on the same frequency through radio vorticity: first ex
+   2. 2012NatMa..11..865V  2012  c=15     ax=cond-mat.mes-hall   s=0.551
+      Graphene field-effect transistors as room-temperature terahertz detectors
+   3. 2006ApPhL..89h3502R  2006  c=11     ax=cond-mat.mes-hall,cond-mat.mtrl-sci  s=0.539
+      Direct and heterodyne detection of microwaves in a metallic single wall carbon nanotube
+   4. 2010ACSNa...4.1889F  2010  c=5      ax=cond-mat.mes-hall,cond-mat.mtrl-sci  s=0.539
+      Thermal Conductivity of Graphene in Corbino Membrane Geometry
+   5. 2008NatPh...4..532L  2008  c=15     ax=cond-mat.mes-hall   s=0.531
+      Dirac charge dynamics in graphene by infrared spectroscopy
+   6. 2009NanoL...9..422L  2009  c=11     ax=cond-mat.other,cond-mat.mtrl-sci  s=0.524
+      Operation of Graphene Transistors at Gigahertz Frequencies
+   7. 2007ApPhL..90i1119H  2007  c=11     ax=physics.optics      s=0.517
+      Focusing of light by a nanohole array
+   8. 2008NatPh...4..635P  2008  c=5      ax=cond-mat.mes-hall   s=0.517
+      An off-board quantum point contact as a sensitive detector of cantilever motion
+
+(3) positive + filter community_semantic=15
+-------------------------------------------
+   1. 2012NatMa..11..865V  2012  c=15     ax=cond-mat.mes-hall   s=0.659
+      Graphene field-effect transistors as room-temperature terahertz detectors
+   2. 2015NatNa..10..437T  2015  c=15     ax=cond-mat.mes-hall   s=0.658
+      Generation of photovoltage in graphene on a femtosecond timescale through efficient carrie
+   3. 1999PhRvL..82.2620A  1999  c=15     ax=cond-mat.supr-con   s=0.655
+      Comment on ``Experimental and Theoretical Constraints of Bipolaronic Superconductivity in
+   4. 1997PhRvL..79.3791V  1997  c=15     ax=cond-mat.str-el,cond-mat.mes-hall  s=0.646
+      Hopf Term for a Two-Dimensional Electron Gas
+   5. 2001PhRvL..87r8901Z  2001  c=15     ax=cond-mat.stat-mech,cond-mat.soft  s=0.644
+      Comment on ``Universal Fluctuations in Correlated Systems''
+   6. 2012arXiv1212.6959L  2012  c=15     ax=quant-ph,cond-mat.quant-gas  s=0.641
+      Reply to Comment on "Space-Time Crystals of Trapped Ions"
+   7. 2008PhRvB..78h5415K  2008  c=15     ax=cond-mat.mtrl-sci   s=0.640
+      Conductivity of defectless graphene
+   8. 2021PhRvL.127t9401S  2021  c=15     ax=physics.optics      s=0.639
+      Comment on "Spin-Momentum-Locked Edge Mode for Topological Vortex Lasing"

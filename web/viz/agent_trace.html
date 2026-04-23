@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SciX — Agent Trace Overlay</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      main.viz-container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 24px 20px 48px;
+      }
+      .viz-sub {
+        color: #555;
+        margin-top: -4px;
+      }
+      #trace-layout {
+        display: grid;
+        grid-template-columns: 1fr 360px;
+        gap: 16px;
+        align-items: start;
+      }
+      #umap-root {
+        position: relative;
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        width: 100%;
+        height: 70vh;
+        min-height: 480px;
+        overflow: hidden;
+      }
+      #umap-root canvas {
+        display: block;
+      }
+      #umap-tooltip {
+        position: absolute;
+        pointer-events: none;
+        background: rgba(30, 30, 30, 0.9);
+        color: #fff;
+        font-size: 12px;
+        padding: 6px 8px;
+        border-radius: 4px;
+        max-width: 340px;
+        line-height: 1.35;
+        display: none;
+        z-index: 10;
+      }
+      #trace-wrap {
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        padding: 10px 12px;
+        height: 70vh;
+        min-height: 480px;
+        display: flex;
+        flex-direction: column;
+      }
+      #trace-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid #f0f0f0;
+      }
+      #trace-head h2 {
+        font-size: 14px;
+        margin: 0;
+      }
+      #trace-head .trace-count {
+        color: #555;
+        font-size: 12px;
+      }
+      #trace-head button {
+        border: 1px solid #ddd;
+        background: #fafafa;
+        color: #333;
+        border-radius: 4px;
+        padding: 3px 8px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      #trace-head button:hover {
+        background: #eaeaea;
+      }
+      #trace-panel {
+        flex: 1;
+        overflow-y: auto;
+        font-size: 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      #trace-panel .empty {
+        color: #888;
+      }
+      .trace-line {
+        border-bottom: 1px solid #f4f4f4;
+        padding: 4px 2px;
+        line-height: 1.4;
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .trace-line.flash {
+        animation: traceFlash 700ms ease-out;
+      }
+      @keyframes traceFlash {
+        from { background: rgba(255, 230, 140, 0.65); }
+        to { background: transparent; }
+      }
+      .trace-line .ts {
+        color: #888;
+        font-size: 11px;
+      }
+      .trace-line .tool-chip {
+        color: #fff;
+        background: #0b60b0;
+        padding: 1px 6px;
+        border-radius: 3px;
+        font-weight: 600;
+        font-size: 11px;
+        text-transform: lowercase;
+      }
+      .trace-line .bibs {
+        color: #555;
+        font-size: 11px;
+      }
+      .trace-line .latency {
+        color: #888;
+        font-size: 11px;
+      }
+      #trace-status {
+        margin-top: 8px;
+        color: #b00020;
+        font-size: 13px;
+        min-height: 18px;
+      }
+      #query-bar {
+        margin: 0 0 14px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      #query-bar input[type="text"] {
+        flex: 1;
+        padding: 8px 12px;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        font-size: 14px;
+        font-family: inherit;
+      }
+      #query-bar input[type="text"]:focus {
+        outline: none;
+        border-color: #0b60b0;
+        box-shadow: 0 0 0 3px rgba(11, 96, 176, 0.15);
+      }
+      #query-bar button {
+        padding: 8px 18px;
+        border: 1px solid #0b60b0;
+        background: #0b60b0;
+        color: #fff;
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #query-bar button:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+      #query-bar button:hover:not(:disabled) {
+        background: #094c8a;
+      }
+      #query-bar .quick {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-left: 4px;
+      }
+      #query-bar .quick button {
+        padding: 4px 10px;
+        background: #f4f7fb;
+        color: #0b60b0;
+        border: 1px solid #d6e3f3;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 500;
+      }
+      #query-bar .quick button:hover {
+        background: #e6eefa;
+      }
+    </style>
+    <script src="https://unpkg.com/deck.gl@9/dist.min.js"></script>
+  </head>
+  <body>
+    <main class="viz-container">
+      <h1>Agent Trace Overlay</h1>
+      <p class="viz-sub">
+        Type a query below to run a real MCP tool sequence against the
+        32M-paper corpus. Each tool call narrates in the panel and the
+        touched papers flash on the UMAP overlay. Preset pills swap between
+        the single-tool search and the multi-step scenarios.
+      </p>
+      <form id="query-bar" autocomplete="off">
+        <input
+          id="query-input"
+          type="text"
+          placeholder="e.g. galaxy clusters at high redshift"
+          aria-label="Research query"
+        />
+        <button type="submit" id="query-submit">Search</button>
+        <div class="quick" aria-label="Example queries">
+          <button
+            type="button"
+            data-scenario="search"
+            data-q="galaxy clusters dark matter"
+          >search</button>
+          <button
+            type="button"
+            data-scenario="survey"
+            data-q="galaxy clusters dark matter"
+          >survey</button>
+          <button
+            type="button"
+            data-scenario="methods"
+            data-q="deep learning image segmentation"
+          >methods</button>
+          <button
+            type="button"
+            data-scenario="disambig"
+            data-q="JWST NIRCam"
+          >disambig</button>
+          <button
+            type="button"
+            data-scenario="search"
+            data-q="exoplanet atmosphere spectroscopy"
+          >exoplanets</button>
+          <button
+            type="button"
+            data-scenario="search"
+            data-q="protein folding prediction"
+          >protein folding</button>
+        </div>
+      </form>
+      <div id="trace-layout">
+        <div id="umap-root" aria-label="UMAP scatter plot">
+          <div id="umap-tooltip" role="tooltip"></div>
+        </div>
+        <aside id="trace-wrap" aria-label="Agent trace log">
+          <div id="trace-head">
+            <h2>Agent trace</h2>
+            <span class="trace-count" id="trace-count">0 events</span>
+            <button type="button" id="trace-clear" title="Clear the trace log">clear</button>
+          </div>
+          <div id="trace-panel" aria-live="polite">
+            <div class="empty">Waiting for events…</div>
+          </div>
+        </aside>
+      </div>
+      <div id="trace-status" role="status" aria-live="polite"></div>
+    </main>
+    <script src="./shared.js"></script>
+    <script src="./umap_browser.js"></script>
+    <script src="./agent_trace.js"></script>
+    <script>
+      // Bootstrap: fetch the UMAP dataset, render the scatter, then open an
+      // SSE subscription to /viz/api/trace/stream and narrate events.
+      ;(async function bootstrap() {
+        const root = document.getElementById('umap-root')
+        const panel = document.getElementById('trace-panel')
+        const status = document.getElementById('trace-status')
+
+        // Per-tool color palette for chip backgrounds.
+        const TOOL_COLORS = {
+          search: '#0b60b0',
+          get_paper: '#188f42',
+          read_paper: '#188f42',
+          citation_chain: '#a0522d',
+          citation_graph: '#a0522d',
+          citation_similarity: '#a0522d',
+          concept_search: '#7b3fa0',
+          temporal_evolution: '#c77a00',
+          entity: '#0a8f8f',
+          entity_context: '#0a8f8f',
+          graph_context: '#a0522d',
+          find_gaps: '#b0245a',
+        }
+        let eventCount = 0
+        const countEl = document.getElementById('trace-count')
+        const clearBtn = document.getElementById('trace-clear')
+        if (clearBtn) {
+          clearBtn.addEventListener('click', function () {
+            panel.innerHTML = '<div class="empty">Cleared — waiting for events…</div>'
+            eventCount = 0
+            if (countEl) countEl.textContent = '0 events'
+          })
+        }
+        function appendTraceLine(event) {
+          const empty = panel.querySelector('.empty')
+          if (empty) empty.remove()
+          const line = document.createElement('div')
+          line.className = 'trace-line flash'
+          const tool = (event && event.tool_name) || '(unknown)'
+          const ts = event && event.ts ? Number(event.ts) : Date.now() / 1000
+          const iso = new Date(ts * 1000).toISOString().slice(11, 19)
+          const bibcount =
+            event && Array.isArray(event.bibcodes) ? event.bibcodes.length : 0
+          const latency = event && event.latency_ms != null ? Number(event.latency_ms) : null
+          const color = TOOL_COLORS[tool] || '#555'
+          line.innerHTML =
+            '<span class="ts">' +
+            iso +
+            '</span>' +
+            '<span class="tool-chip" style="background:' +
+            color +
+            '">' +
+            String(tool).replace(/[<>&]/g, '') +
+            '</span>' +
+            '<span class="bibs">' +
+            bibcount +
+            ' bibcode' +
+            (bibcount === 1 ? '' : 's') +
+            '</span>' +
+            (latency != null
+              ? '<span class="latency">' + latency.toFixed(1) + ' ms</span>'
+              : '')
+          panel.appendChild(line)
+          // Cap the panel so very chatty sessions don't blow memory.
+          while (panel.children.length > 400) panel.removeChild(panel.firstChild)
+          panel.scrollTop = panel.scrollHeight
+          eventCount += 1
+          if (countEl) countEl.textContent = eventCount + ' events'
+        }
+
+        // Build a {bibcode: [x, y]} lookup so flashTraceSegments can find
+        // coordinates without a second fetch.
+        const positions = Object.create(null)
+        let umapInstance = null
+
+        const candidates = ['./umap.json', '/data/viz/umap.json']
+        let data = null
+        let lastErr = null
+        for (const url of candidates) {
+          try {
+            const resp = await fetch(url, { cache: 'no-store' })
+            if (!resp.ok) {
+              lastErr = new Error(url + ' -> HTTP ' + resp.status)
+              continue
+            }
+            data = await resp.json()
+            break
+          } catch (err) {
+            lastErr = err
+          }
+        }
+        if (data && Array.isArray(data)) {
+          for (let i = 0; i < data.length; i += 1) {
+            const p = data[i]
+            if (p && p.bibcode) {
+              positions[p.bibcode] = [Number(p.x) || 0, Number(p.y) || 0]
+            }
+          }
+          if (typeof window.renderUMAP === 'function') {
+            try {
+              umapInstance = window.renderUMAP(data, root)
+              window.umapInstance = umapInstance
+            } catch (err) {
+              status.textContent = 'Render failed: ' + (err.message || String(err))
+            }
+          } else {
+            status.textContent =
+              'renderUMAP is not defined — umap_browser.js failed to load.'
+          }
+        } else {
+          status.textContent =
+            'Could not load umap.json (' +
+            (lastErr ? lastErr.message || String(lastErr) : 'unknown error') +
+            '). Trace events will still be narrated.'
+        }
+
+        function handleEvent(event) {
+          appendTraceLine(event)
+          if (
+            umapInstance &&
+            event &&
+            Array.isArray(event.bibcodes) &&
+            event.bibcodes.length >= 1 &&
+            typeof window.flashTraceSegments === 'function'
+          ) {
+            window.flashTraceSegments(umapInstance, event.bibcodes, positions)
+          }
+        }
+
+        if (typeof window.subscribeTraceStream !== 'function') {
+          status.textContent =
+            'subscribeTraceStream is not defined — agent_trace.js failed to load.'
+          return
+        }
+        window.traceStream = window.subscribeTraceStream(
+          '/viz/api/trace/stream',
+          handleEvent,
+        )
+
+        // Wire the query bar. Each scenario submits to a different endpoint
+        // under /viz/api/demo/*; every endpoint runs a real MCP tool sequence
+        // and the SSE subscription above narrates the instrumented events.
+        const SCENARIO_LABELS = {
+          search: 'Search',
+          survey: 'Survey',
+          methods: 'Methods',
+          disambig: 'Disambig',
+        }
+        const SCENARIO_ENDPOINTS = {
+          search: '/viz/api/demo/search',
+          survey: '/viz/api/demo/survey',
+          methods: '/viz/api/demo/methods',
+          disambig: '/viz/api/demo/disambig',
+        }
+        let activeScenario = 'search'
+        const form = document.getElementById('query-bar')
+        const input = document.getElementById('query-input')
+        const submit = document.getElementById('query-submit')
+        function setScenario(name) {
+          if (!SCENARIO_ENDPOINTS[name]) return
+          activeScenario = name
+          submit.textContent = SCENARIO_LABELS[name] || 'Run'
+        }
+        async function runScenario(q, scenario) {
+          const query = (q || input.value || '').trim()
+          if (!query) return
+          if (scenario) setScenario(scenario)
+          input.value = query
+          const endpoint = SCENARIO_ENDPOINTS[activeScenario]
+          const label = SCENARIO_LABELS[activeScenario] || 'Running'
+          submit.disabled = true
+          submit.textContent = label + '…'
+          try {
+            const resp = await fetch(endpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ query: query, top_n: 5 }),
+            })
+            if (!resp.ok) {
+              status.textContent =
+                activeScenario + ' failed: HTTP ' + resp.status
+            } else {
+              status.textContent = ''
+            }
+          } catch (err) {
+            status.textContent =
+              activeScenario + ' failed: ' + (err.message || String(err))
+          } finally {
+            submit.disabled = false
+            submit.textContent = label
+          }
+        }
+        form.addEventListener('submit', function (e) {
+          e.preventDefault()
+          runScenario()
+        })
+        document.querySelectorAll('#query-bar .quick button').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            const scenario = btn.dataset.scenario || 'search'
+            runScenario(btn.dataset.q, scenario)
+          })
+        })
+        setScenario('search')
+        window.runScenario = runScenario
+      })()
+    </script>
+  </body>
+</html>

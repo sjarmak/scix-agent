@@ -13,6 +13,7 @@ data/eval/*
 !data/eval/*.csv
 !data/eval/*.yaml
 !data/eval/*.md
+!data/eval/*.jsonl
 !data/eval/.gitkeep
 # Nested gold-set subdirs — carved out explicitly so the shallow
 # data/eval/* block above does not swallow them.
@@ -93,3 +94,6 @@ Thumbs.db
 deploy/.env
 CLAUDE.local.md
 .claude/scheduled_tasks.lock
+
+# Qdrant pilot container volume (local docker mount)
+.qdrant_storage/

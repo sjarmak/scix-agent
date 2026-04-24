@@ -38,6 +38,7 @@ import argparse
 import logging
 import math
 import os
+import re
 import sys
 import zlib
 from collections import Counter
@@ -80,6 +81,79 @@ TOP_ARXIV_N = 5
 TOP_KEYWORDS_N = 10
 LABEL_ARXIV_N = 2  # embedded in the label string
 LABEL_KEYWORDS_N = 3
+
+
+# ---------------------------------------------------------------------------
+# Title-token fallback (when keyword_norm is empty)
+#
+# As of 2026-04-24 ``papers.keyword_norm`` is NULL for all 32.4M rows — the
+# normalization step planned in the original pipeline never ran. Without a
+# fallback, every community gets an empty ``top_keywords`` and a useless
+# label. The viz tool ``scripts/viz/compute_community_labels.py`` proved
+# title-text tokenization yields legible terms for the coarse semantic
+# partition; we reuse its regex and stopword list here so production labels
+# have the same quality as the viz labels.
+# ---------------------------------------------------------------------------
+
+_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9\-]{2,30}")
+
+STOPWORDS: frozenset[str] = frozenset(
+    """
+    a an the of in on at to for and or but with from by as is are was were be
+    been being have has had do does did will would should could may might can
+    that this these those it its their them they we our you your i me my
+    not no all any some many much more most each every other another such
+    which what who whose where when why how than then so also both either
+    neither one two three four five six seven eight nine ten first second
+    new novel recent present presented here study studies analysis analyse
+    analyzed results show shows shown find found finds observation
+    observations observed observing method methods used using use uses
+    models model modeled modelling modeling simulation simulations
+    approach approaches paper papers report reports reported based
+    suggest suggests suggested demonstrate demonstrates data way ways
+    between over under above below about into within without among
+    via onto upon through during after before across toward towards
+    though although because since yet while whereas therefore thus
+    hence however moreover furthermore additionally also still even
+    only just mainly primarily essentially effectively generally
+    significantly substantially notably particularly especially
+    very well good high higher low lower large larger small smaller
+    same similar different various several multiple single individual
+    sub sup loc post inf infty alpha beta gamma delta pi tau sigma phi psi
+    mml mmlmath mo mi mn mtext mfenced mrow xmlns math href span class
+    proposed showed show showing shows find found finds finding findings
+    mathrm mathit mathbf mathsf mathtt operatorname text hbox vbox overline
+    underline frac sqrt left right cdot times approx equiv propto pm mp
+    rightarrow leftarrow leftrightarrow longrightarrow longleftarrow
+    order value values function functions average mean medium strong weak
+    fig figure table section chapter abstract summary conclusion conclusions
+    effect effects type types kind kinds level levels range ranges
+    region regions area areas system systems case cases example examples
+    role role-based rate rates ratio ratios factor factors number numbers
+    non near far low-density high-density full-scale
+    """.split()
+)
+
+
+def _tokenize_title(title: Optional[str]) -> list[str]:
+    """Lower-case title tokens minus stopwords, deduplicated per paper.
+
+    Dedup-per-paper keeps a single paper from stuffing its title's repeated
+    word into the community's document-frequency count; the TF-IDF already
+    treats the community as the document, so "paper carries token" is the
+    natural unit.
+    """
+    if not title:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for w in _WORD_RE.findall(title):
+        wl = w.lower()
+        if wl in STOPWORDS or wl in seen:
+            continue
+        seen.add(wl)
+        out.append(wl)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -164,15 +238,20 @@ def _iter_rows(
     signal: str,
     resolution: str,
     cursor_name: str,
-) -> Iterator[tuple[object, str, Optional[list[str]], Optional[list[str]]]]:
-    """Stream (community_id_raw, bibcode, arxiv_class, keyword_norm) rows.
+) -> Iterator[
+    tuple[object, str, Optional[list[str]], Optional[list[str]], Optional[str]]
+]:
+    """Stream (community_id_raw, bibcode, arxiv_class, keyword_norm, title) rows.
 
     ``community_id_raw`` is INT for citation/semantic, TEXT for taxonomic.
     Callers normalise it via ``_taxonomic_id`` as needed.
+
+    ``title`` is used as a fallback term source when ``keyword_norm`` is
+    empty (see ``_tokenize_title``).
     """
     column = _community_column(signal, resolution)
     sql = (
-        f"SELECT pm.{column}, p.bibcode, p.arxiv_class, p.keyword_norm "
+        f"SELECT pm.{column}, p.bibcode, p.arxiv_class, p.keyword_norm, p.title "
         f"  FROM paper_metrics pm "
         f"  JOIN papers p ON p.bibcode = pm.bibcode "
         f" WHERE pm.{column} IS NOT NULL "
@@ -209,7 +288,7 @@ def _aggregate(
     taxonomic_text_by_id: dict[int, str] = {}
 
     with conn.transaction():
-        for raw_cid, bibcode, arxiv_class, keyword_norm in _iter_rows(
+        for raw_cid, bibcode, arxiv_class, keyword_norm, title in _iter_rows(
             conn, signal, resolution, f"gcl_{signal}_{resolution}"
         ):
             if raw_cid is None:
@@ -233,10 +312,20 @@ def _aggregate(
                 # Count each class once per paper (not per-token duplicated).
                 bucket.arxiv_counter.update(set(arxiv_class))
 
-            if keyword_norm:
-                bucket.kw_counter.update(
-                    {kw for kw in keyword_norm if kw and kw.strip()}
-                )
+            # Prefer curated keyword_norm when present; fall back to title
+            # tokens so the 100% of papers that lack keyword_norm today still
+            # yield legible labels.
+            normed = (
+                {kw for kw in keyword_norm if kw and kw.strip()}
+                if keyword_norm
+                else set()
+            )
+            if normed:
+                bucket.kw_counter.update(normed)
+            else:
+                tokens = _tokenize_title(title)
+                if tokens:
+                    bucket.kw_counter.update(tokens)
 
     return by_community, taxonomic_text_by_id
 

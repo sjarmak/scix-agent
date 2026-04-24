@@ -303,6 +303,32 @@ def test_label_format_is_stable(
 
 
 # ---------------------------------------------------------------------------
+# Test — title-token fallback
+# ---------------------------------------------------------------------------
+
+
+def test_tokenize_title_drops_stopwords_and_dedups() -> None:
+    mod = _load_script_module()
+    # Pure stopword soup → nothing comes through
+    assert mod._tokenize_title("A study of the results") == []
+    # Real tokens survive; duplicates collapse; case folded
+    tokens = mod._tokenize_title(
+        "Transformer Transformer attention for code completion"
+    )
+    assert "transformer" in tokens
+    assert "attention" in tokens
+    assert "code" in tokens
+    assert "completion" in tokens
+    assert tokens.count("transformer") == 1  # dedup within a title
+    # Empty/None handled gracefully
+    assert mod._tokenize_title(None) == []
+    assert mod._tokenize_title("") == []
+    # LaTeX artifacts filtered
+    assert "mml" not in mod._tokenize_title("A result using mml:math notation")
+    assert "sub" not in mod._tokenize_title("sub-kpc imaging")
+
+
+# ---------------------------------------------------------------------------
 # Test (c) — unknown signal value is rejected
 # ---------------------------------------------------------------------------
 

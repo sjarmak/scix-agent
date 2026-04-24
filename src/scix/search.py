@@ -1396,12 +1396,11 @@ def _fetch_query_mode_buckets(
     than N per-year queries, so cost is O(1) round-trips regardless of year
     span. Bucket ordering matches the input ``yearly_counts`` ordering.
 
-    The communities list is populated only for papers whose
-    ``community_id_medium`` is real (non-NULL, non-sentinel). When the Leiden
-    giant-component run has not been persisted (bead scix_experiments-8r3),
-    this degrades gracefully to an empty list per bucket. Communities with no
-    matching row in the ``communities`` table are omitted rather than emitted
-    with a null label.
+    The communities list is populated from the semantic partition
+    (``community_semantic_medium``) — citation Leiden Phase B has never
+    completed, so ``community_id_medium`` holds only the ``-1`` sentinel
+    or NULL. Communities with no matching row in the ``communities``
+    table are omitted rather than emitted with a null label.
     """
     if not yearly_counts:
         return []
@@ -1413,7 +1412,7 @@ def _fetch_query_mode_buckets(
         WITH ranked AS (
             SELECT {STUB_COLUMNS},
                    pm.pagerank,
-                   pm.community_id_medium,
+                   pm.community_semantic_medium,
                    ROW_NUMBER() OVER (
                        PARTITION BY p.year
                        ORDER BY pm.pagerank DESC NULLS LAST,
@@ -1439,7 +1438,7 @@ def _fetch_query_mode_buckets(
             stub["pagerank"] = row["pagerank"]
             anchors_by_year[year].append(stub)
 
-            cid = row["community_id_medium"]
+            cid = row["community_semantic_medium"]
             if cid is not None and cid != _NO_COMMUNITY_SENTINEL:
                 community_counts_by_year[year][cid] += 1
                 all_community_ids.add(cid)
@@ -1448,8 +1447,8 @@ def _fetch_query_mode_buckets(
         if all_community_ids:
             cur.execute(
                 "SELECT community_id, label FROM communities "
-                "WHERE resolution = 'medium' AND community_id = ANY(%s) "
-                "AND label IS NOT NULL",
+                "WHERE signal = 'semantic' AND resolution = 'medium' "
+                "AND community_id = ANY(%s) AND label IS NOT NULL",
                 (list(all_community_ids),),
             )
             label_map = {r["community_id"]: r["label"] for r in cur.fetchall()}
@@ -1782,26 +1781,21 @@ def _fetch_communities_for_paper(
 
 
 def get_paper_metrics(conn: psycopg.Connection, bibcode: str) -> SearchResult:
-    """Get precomputed graph metrics for a paper (PageRank, HITS, communities)."""
+    """Get precomputed graph metrics for a paper (PageRank, HITS, communities).
+
+    Community labels are surfaced via the per-signal/per-resolution
+    ``communities`` block assembled in ``_fetch_communities_for_paper``,
+    which is the single source of truth for label-joined community info.
+    We previously LEFT JOIN-ed ``communities`` directly against the
+    citation columns at the top level, but those columns hold only the
+    Phase-A sentinel (-1) or NULL today and would have to also filter by
+    ``signal`` to be correct once Phase B lands — duplicating the work
+    already done in ``_fetch_communities_for_paper``. The top-level
+    metrics row now carries only ``pm.*``.
+    """
     t0 = time.perf_counter()
 
-    sql = """
-        SELECT pm.*,
-               c_coarse.label AS community_label_coarse,
-               c_medium.label AS community_label_medium,
-               c_fine.label AS community_label_fine
-        FROM paper_metrics pm
-        LEFT JOIN communities c_coarse
-            ON c_coarse.community_id = pm.community_id_coarse
-            AND c_coarse.resolution = 'coarse'
-        LEFT JOIN communities c_medium
-            ON c_medium.community_id = pm.community_id_medium
-            AND c_medium.resolution = 'medium'
-        LEFT JOIN communities c_fine
-            ON c_fine.community_id = pm.community_id_fine
-            AND c_fine.resolution = 'fine'
-        WHERE pm.bibcode = %s
-    """
+    sql = "SELECT pm.* FROM paper_metrics pm WHERE pm.bibcode = %s"
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(sql, (bibcode,))
         row = cur.fetchone()

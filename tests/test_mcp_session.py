@@ -155,13 +155,16 @@ class TestFindGapsImplicit:
         # Focus a paper via get_paper
         mcp_server._dispatch_tool(conn, "get_paper", {"bibcode": "2024WS1"})
 
-        # Now find_gaps should use it
-        rows = [("2024GAP1", "Gap Paper", 0.05, 42)]
+        # Now find_gaps should use it. Row shape: (bibcode, title, pagerank,
+        # community_id, community_label, community_top_keywords).
+        rows = [("2024GAP1", "Gap Paper", 0.05, 42, "cs.LG · agents / rag", ["agents", "rag", "llm"])]
         conn2 = _make_conn(rows)
         result_json = mcp_server._dispatch_tool(conn2, "find_gaps", {"resolution": "coarse"})
         result = json.loads(result_json)
         assert result["total"] == 1
         assert result["papers"][0]["bibcode"] == "2024GAP1"
+        assert result["papers"][0]["community_label"] == "cs.LG · agents / rag"
+        assert result["papers"][0]["community_top_keywords"] == ["agents", "rag", "llm"]
 
     @patch("scix.search.get_paper")
     def test_clear_first_resets(self, mock_get: MagicMock) -> None:
@@ -183,6 +186,90 @@ class TestFindGapsImplicit:
         result_json = mcp_server._dispatch_tool(conn, "find_gaps", {"resolution": "invalid"})
         result = json.loads(result_json)
         assert "error" in result
+
+    def test_invalid_signal_returns_error(self) -> None:
+        mcp_server._session_state.track_focused("2024WS1")
+        conn = _make_conn()
+        result_json = mcp_server._dispatch_tool(
+            conn, "find_gaps", {"signal": "bogus"}
+        )
+        result = json.loads(result_json)
+        assert "error" in result
+
+    def test_default_signal_is_semantic(self) -> None:
+        """Default signal should be 'semantic' since citation partition is
+        currently offline (Phase B of Leiden never completed — see
+        investigation 2026-04-24)."""
+        mcp_server._session_state.track_focused("2024WS1")
+        rows = [("2024GAPS", "Semantic Gap Paper", 0.05, 7, None, None)]
+        conn = _make_conn(rows)
+        result_json = mcp_server._dispatch_tool(conn, "find_gaps", {})
+        result = json.loads(result_json)
+        assert result["signal"] == "semantic"
+        # Must query the semantic column, not the citation column
+        # (default resolution is medium as of 2026-04-24).
+        executed_sql = conn.cursor.return_value.execute.call_args[0][0]
+        assert "community_semantic_medium" in executed_sql
+        assert "community_id_medium" not in executed_sql
+
+    def test_explicit_citation_signal_queries_citation_column(self) -> None:
+        mcp_server._session_state.track_focused("2024WS1")
+        rows = [("2024GAPC", "Citation Gap Paper", 0.05, 42, None, None)]
+        conn = _make_conn(rows)
+        result_json = mcp_server._dispatch_tool(
+            conn, "find_gaps", {"signal": "citation"}
+        )
+        result = json.loads(result_json)
+        assert result["signal"] == "citation"
+        executed_sql = conn.cursor.return_value.execute.call_args[0][0]
+        # Default resolution is medium.
+        assert "community_id_medium" in executed_sql
+        assert "community_semantic_medium" not in executed_sql
+
+    def test_find_gaps_joins_communities_for_labels(self) -> None:
+        """Response must include community_label + community_top_keywords
+        so CS researchers see human-readable context, not bare IDs."""
+        mcp_server._session_state.track_focused("2024WS1")
+        conn = _make_conn()
+        mcp_server._dispatch_tool(conn, "find_gaps", {})
+        executed_sql = conn.cursor.return_value.execute.call_args[0][0]
+        assert "communities" in executed_sql
+        assert "LEFT JOIN" in executed_sql
+        assert "c.label" in executed_sql
+        assert "c.top_keywords" in executed_sql
+        # Parameters must bind signal + resolution to communities JOIN
+        executed_params = conn.cursor.return_value.execute.call_args[0][1]
+        assert executed_params[0] == "semantic"  # default signal
+        assert executed_params[1] == "medium"    # default resolution (CS-readable labels)
+
+    def test_missing_community_label_tolerated(self) -> None:
+        """LEFT JOIN returns NULL for unlabeled communities — the handler
+        must not crash and must pass None through."""
+        mcp_server._session_state.track_focused("2024WS1")
+        rows = [("2024X", "Unlabeled Community Paper", 0.01, 99, None, None)]
+        conn = _make_conn(rows)
+        result_json = mcp_server._dispatch_tool(conn, "find_gaps", {})
+        result = json.loads(result_json)
+        assert result["total"] == 1
+        assert result["papers"][0]["community_label"] is None
+        assert result["papers"][0]["community_top_keywords"] is None
+
+    def test_citation_signal_filters_sentinel(self) -> None:
+        """Citation signal must exclude community_id = -1 (Phase A sentinel
+        marking non-giant-component papers — not a real community)."""
+        mcp_server._session_state.track_focused("2024WS1")
+        conn = _make_conn()
+        mcp_server._dispatch_tool(conn, "find_gaps", {"signal": "citation"})
+        executed_sql = conn.cursor.return_value.execute.call_args[0][0]
+        # Reject rows where the citation community is the -1 sentinel.
+        assert "<> -1" in executed_sql or "!= -1" in executed_sql
+
+    def test_semantic_signal_does_not_filter_sentinel(self) -> None:
+        mcp_server._session_state.track_focused("2024WS1")
+        conn = _make_conn()
+        mcp_server._dispatch_tool(conn, "find_gaps", {"signal": "semantic"})
+        executed_sql = conn.cursor.return_value.execute.call_args[0][0]
+        assert "-1" not in executed_sql
 
 
 # ---------------------------------------------------------------------------

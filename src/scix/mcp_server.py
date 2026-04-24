@@ -1186,16 +1186,37 @@ def create_server(_run_self_test: bool = True):
                     "literature you might be missing during a research session. Reads from "
                     "implicit session state tracked across get_paper calls. Use "
                     "citation_graph instead when you want direct citations of a single "
-                    "paper rather than cross-community gap detection."
+                    "paper rather than cross-community gap detection. "
+                    "The 'signal' parameter picks which community partition to traverse: "
+                    "'semantic' (default, INDUS k-means, full 32M-paper coverage) or "
+                    "'citation' (Leiden over the citation giant component; currently "
+                    "offline — Phase B has not completed, so this path returns empty)."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
+                        "signal": {
+                            "type": "string",
+                            "enum": ["semantic", "citation"],
+                            "default": "semantic",
+                            "description": (
+                                "Which community partition to traverse. "
+                                "'semantic' covers all 32M papers today; "
+                                "'citation' is offline until Leiden Phase B lands."
+                            ),
+                        },
                         "resolution": {
                             "type": "string",
                             "enum": ["coarse", "medium", "fine"],
-                            "default": "coarse",
-                            "description": "Community resolution level",
+                            "default": "medium",
+                            "description": (
+                                "Community resolution. 'medium' (default, "
+                                "k=200) gives sharp CS-readable labels. "
+                                "'coarse' (k=20) lumps many disciplines into "
+                                "mega-buckets; 'fine' (k=2000) has crisper "
+                                "partitions but TF-IDF labels get noisy as "
+                                "buckets shrink (driven by outlier terms)."
+                            ),
                         },
                         "limit": {"type": "integer", "default": 20},
                         "clear_first": {
@@ -2058,8 +2079,19 @@ def _handle_graph_context(conn: psycopg.Connection, args: dict[str, Any]) -> str
 
 
 def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
-    """Find gaps using implicit session state (focused papers)."""
-    resolution = args.get("resolution", "coarse")
+    """Find gaps using implicit session state (focused papers).
+
+    The citation partition (``community_id_{coarse,medium,fine}``) is
+    populated by a two-phase pipeline: Phase A marks non-giant-component
+    papers with the sentinel ``-1``; Phase B overwrites giant-component
+    rows with real Leiden IDs. As of 2026-04-24 Phase B has never
+    completed on prod (repeated OOM during the Leiden call on a 20M-node
+    induced subgraph), so all non-NULL citation rows hold the sentinel.
+    The semantic partition (``community_semantic_*``) is fully populated
+    and is the default.
+    """
+    signal = args.get("signal", "semantic")
+    resolution = args.get("resolution", "medium")
     limit = min(args.get("limit", 20), 200)
     clear_first = args.get("clear_first", False)
 
@@ -2067,18 +2099,32 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         _session_state.clear_focused()
         _session_state.clear_working_set()
 
-    _RESOLUTION_COLS: dict[str, str] = {
-        "coarse": "community_id_coarse",
-        "medium": "community_id_medium",
-        "fine": "community_id_fine",
+    _SIGNAL_COLUMN_PREFIX: dict[str, str] = {
+        "citation": "community_id",
+        "semantic": "community_semantic",
     }
-    community_col = _RESOLUTION_COLS.get(resolution)
-    if community_col is None:
+    column_prefix = _SIGNAL_COLUMN_PREFIX.get(signal)
+    if column_prefix is None:
         return json.dumps(
             {
-                "error": f"Invalid resolution: {resolution}. Must be one of {sorted(_RESOLUTION_COLS)}"
+                "error": (
+                    f"Invalid signal: {signal}. "
+                    f"Must be one of {sorted(_SIGNAL_COLUMN_PREFIX)}"
+                )
             }
         )
+
+    _VALID_RESOLUTIONS = ("coarse", "medium", "fine")
+    if resolution not in _VALID_RESOLUTIONS:
+        return json.dumps(
+            {
+                "error": (
+                    f"Invalid resolution: {resolution}. "
+                    f"Must be one of {sorted(_VALID_RESOLUTIONS)}"
+                )
+            }
+        )
+    community_col = f"{column_prefix}_{resolution}"
 
     # Use focused papers (from get_paper calls) as primary source,
     # fall back to working set for backward compatibility
@@ -2092,31 +2138,56 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             {
                 "papers": [],
                 "total": 0,
+                "signal": signal,
                 "message": "No focused papers yet. Use get_paper to inspect papers first.",
             },
             indent=2,
         )
 
+    # For the citation signal, filter out the Phase-A sentinel (-1) which
+    # marks non-giant-component papers rather than a real community.
+    sentinel_filter = (
+        f"AND pm.{community_col} <> -1" if signal == "citation" else ""
+    )
+    seed_sentinel_filter = (
+        f"AND pm2.{community_col} <> -1" if signal == "citation" else ""
+    )
+
+    # LEFT JOIN communities so every result carries the community's human
+    # label + top_keywords when they've been generated
+    # (``scripts/generate_community_labels.py``). NULL labels drop through
+    # as None — not fatal, just less legible.
     query = f"""
         SELECT DISTINCT p.bibcode, p.title, pm.pagerank,
-               pm.{community_col} AS community_id
+               pm.{community_col} AS community_id,
+               c.label AS community_label,
+               c.top_keywords AS community_top_keywords
         FROM citation_edges ce
         JOIN papers p ON p.bibcode = ce.source_bibcode
         JOIN paper_metrics pm ON pm.bibcode = p.bibcode
+        LEFT JOIN communities c
+               ON c.signal = %s
+              AND c.resolution = %s
+              AND c.community_id = pm.{community_col}
         WHERE ce.target_bibcode = ANY(%s)
           AND pm.{community_col} IS NOT NULL
+          {sentinel_filter}
           AND pm.{community_col} NOT IN (
               SELECT DISTINCT pm2.{community_col}
               FROM paper_metrics pm2
               WHERE pm2.bibcode = ANY(%s)
                 AND pm2.{community_col} IS NOT NULL
+                {seed_sentinel_filter}
           )
           AND p.bibcode <> ALL(%s)
         ORDER BY pm.pagerank DESC NULLS LAST
         LIMIT %s
     """
     with conn.cursor() as cur:
-        cur.execute(query, (ws_bibcodes, ws_bibcodes, ws_bibcodes, limit))
+        cur.execute(
+            query,
+            (signal, resolution, ws_bibcodes, ws_bibcodes, ws_bibcodes, limit),
+        )
         rows = cur.fetchall()
     papers = [
         {
@@ -2124,12 +2195,19 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             "title": row[1],
             "pagerank": row[2],
             "community_id": row[3],
+            "community_label": row[4],
+            "community_top_keywords": row[5],
         }
         for row in rows
     ]
     papers = _annotate_working_set(papers)
     return json.dumps(
-        {"papers": papers, "total": len(papers), "resolution": resolution},
+        {
+            "papers": papers,
+            "total": len(papers),
+            "signal": signal,
+            "resolution": resolution,
+        },
         indent=2,
         default=str,
     )

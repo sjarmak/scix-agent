@@ -459,7 +459,8 @@ class TestFindGaps:
         # Simulate get_paper to add to focused set
         conn = MagicMock()
         cur = MagicMock()
-        cur.fetchall.return_value = [("2024GAP1", "Gap", 0.05, 42)]
+        # Row shape: bibcode, title, pagerank, community_id, label, top_keywords
+        cur.fetchall.return_value = [("2024GAP1", "Gap", 0.05, 42, None, None)]
         cur.__enter__ = lambda self: self
         cur.__exit__ = MagicMock(return_value=False)
         conn.cursor.return_value = cur

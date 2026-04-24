@@ -11,9 +11,9 @@ Usage::
 
     SCIX_TEST_DSN="dbname=scix_test" \\
     python scripts/recompute_citation_communities.py \\
-        --resolution-coarse 0.001 \\
-        --resolution-medium 0.01 \\
-        --resolution-fine 0.1 \\
+        --resolution-coarse 1.0 \\
+        --resolution-medium 2.5 \\
+        --resolution-fine 10.0 \\
         --seed 42
 
 Production runs must pass ``--allow-prod``.
@@ -407,9 +407,14 @@ def run(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--resolution-coarse", type=float, default=0.001)
-    parser.add_argument("--resolution-medium", type=float, default=0.01)
-    parser.add_argument("--resolution-fine", type=float, default=0.1)
+    # Modularity at 1.0 / 2.5 / 10.0. CPM at 0.001 / 0.01 / 0.1 (the CWTS
+    # recommendation for citation graphs) OOMs on the 20M-node giant
+    # component — see logs/zx8_3/step2.v{10,11}_*.log. Modularity's memory
+    # scales with n_communities, not edge density, and at gamma=1.0/2.5/10.0
+    # it stays within a ~25 GB RSS budget.
+    parser.add_argument("--resolution-coarse", type=float, default=1.0)
+    parser.add_argument("--resolution-medium", type=float, default=2.5)
+    parser.add_argument("--resolution-fine", type=float, default=10.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--dsn",

@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SciX — Field Growth Streamgraph</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      main.viz-container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 24px 20px 48px;
+      }
+      .viz-sub {
+        color: #555;
+        margin-top: -4px;
+      }
+      #stream-layout {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 16px;
+        align-items: start;
+      }
+      #stream-root {
+        position: relative;
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        width: 100%;
+        height: 70vh;
+        min-height: 480px;
+        overflow: hidden;
+      }
+      #stream-root svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      #stream-tooltip {
+        position: absolute;
+        pointer-events: none;
+        background: rgba(30, 30, 30, 0.92);
+        color: #fff;
+        font-size: 12px;
+        padding: 6px 8px;
+        border-radius: 4px;
+        max-width: 360px;
+        line-height: 1.35;
+        display: none;
+        z-index: 10;
+      }
+      #stream-panel {
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        padding: 12px 14px;
+        min-height: 200px;
+        font-size: 13px;
+      }
+      #stream-panel h2 {
+        font-size: 15px;
+        margin: 0 0 8px;
+      }
+      #stream-panel .empty {
+        color: #888;
+      }
+      #stream-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+      #stream-stats {
+        color: #555;
+        font-size: 13px;
+      }
+      #stream-status {
+        margin-top: 8px;
+        color: #b00020;
+        font-size: 13px;
+        min-height: 18px;
+      }
+      .stream-axis path,
+      .stream-axis line {
+        stroke: #aaa;
+      }
+      .stream-axis text {
+        fill: #555;
+        font-size: 11px;
+      }
+      .stream-band {
+        cursor: pointer;
+        transition: opacity 120ms;
+      }
+      .stream-band.dim {
+        opacity: 0.18;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  </head>
+  <body>
+    <main class="viz-container">
+      <div id="stream-header">
+        <h1 style="margin:0">Field Growth (Streamgraph)</h1>
+        <span id="stream-stats">loading&hellip;</span>
+      </div>
+      <p class="viz-sub">
+        Papers per community per year, stacked with a streamgraph offset.
+        Width of each band reflects publication volume; vertical position is
+        cosmetic. Hover a band for the community label and per-year counts.
+        Switch the resolution toggle in the nav to flip between
+        ~20 broad domains and ~200 fine-grained topics.
+      </p>
+      <div id="stream-layout">
+        <div id="stream-root" aria-label="Field growth streamgraph">
+          <div id="stream-tooltip" role="tooltip"></div>
+        </div>
+        <aside id="stream-panel" aria-label="Selected community">
+          <h2>Selected community</h2>
+          <div class="empty">Hover a band to see its label and counts.</div>
+        </aside>
+      </div>
+      <div id="stream-status" role="status" aria-live="polite"></div>
+    </main>
+    <script src="./shared.js"></script>
+    <script src="./streamgraph.js"></script>
+    <script>
+      // Bootstrap: fetch the streamgraph JSON for the current resolution
+      // (see shared.js) and render. Re-renders on resolution changes.
+      ;(function bootstrap() {
+        const root = document.getElementById('stream-root')
+        const status = document.getElementById('stream-status')
+
+        function candidates() {
+          if (window.scixViz && typeof window.scixViz.resolutionFiles === 'function') {
+            const cfg = window.scixViz.resolutionFiles()
+            // The resolution config grew a `stream` field alongside the
+            // existing `umap` and `labels` arrays. Fall back to a sensible
+            // default list so the page still works during an asset-rollout
+            // window where shared.js predates this view.
+            if (Array.isArray(cfg.stream) && cfg.stream.length) return cfg.stream
+            const r = cfg.resolution || 'coarse'
+            return [
+              './stream.' + r + '.json',
+              '/viz/stream.' + r + '.json',
+              '/data/viz/stream.' + r + '.json',
+            ]
+          }
+          return ['./stream.coarse.json', '/viz/stream.coarse.json']
+        }
+
+        async function load() {
+          status.textContent = ''
+          root.setAttribute('aria-busy', 'true')
+          const urls = candidates()
+          let payload = null
+          let lastErr = null
+          for (const url of urls) {
+            try {
+              const resp = await fetch(url, { cache: 'no-store' })
+              if (!resp.ok) {
+                lastErr = new Error(url + ' -> HTTP ' + resp.status)
+                continue
+              }
+              payload = await resp.json()
+              break
+            } catch (err) {
+              lastErr = err
+            }
+          }
+          if (!payload) {
+            root.removeAttribute('aria-busy')
+            status.textContent =
+              'Could not load streamgraph data for resolution "' +
+              (window.scixViz ? window.scixViz.getResolution() : 'coarse') +
+              '" (' +
+              (lastErr ? lastErr.message || String(lastErr) : 'unknown error') +
+              '). Run scripts/viz/build_stream_data.py to generate it.'
+            return
+          }
+          if (typeof window.renderStreamgraph !== 'function') {
+            root.removeAttribute('aria-busy')
+            status.textContent = 'renderStreamgraph is not defined — streamgraph.js failed to load.'
+            return
+          }
+          // Tear down previous SVG so resolution flips don't pile up layers.
+          while (root.firstChild) root.removeChild(root.firstChild)
+          const tt = document.createElement('div')
+          tt.id = 'stream-tooltip'
+          tt.setAttribute('role', 'tooltip')
+          root.appendChild(tt)
+          try {
+            window.streamgraphInstance = window.renderStreamgraph(payload, root)
+          } catch (err) {
+            status.textContent = 'Render failed: ' + (err.message || String(err))
+          } finally {
+            root.removeAttribute('aria-busy')
+          }
+        }
+
+        window.scixStreamgraphLoad = load
+        window.addEventListener('scix:resolution-change', function () {
+          load()
+        })
+        load()
+      })()
+    </script>
+  </body>
+</html>

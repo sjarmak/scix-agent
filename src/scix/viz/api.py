@@ -114,6 +114,7 @@ _RESOLUTION_SPECS: tuple[dict[str, Any], ...] = (
         "description": "20 broad domain-level communities.",
         "umap_filenames": ("umap.coarse.json", "umap.json"),
         "labels_filenames": ("community_labels.coarse.json", "community_labels.json"),
+        "stream_filenames": ("stream.coarse.json",),
     },
     {
         "id": "medium",
@@ -124,6 +125,7 @@ _RESOLUTION_SPECS: tuple[dict[str, Any], ...] = (
             "community_labels.medium.json",
             "community_labels_medium.json",
         ),
+        "stream_filenames": ("stream.medium.json",),
     },
     {
         "id": "fine",
@@ -134,6 +136,7 @@ _RESOLUTION_SPECS: tuple[dict[str, Any], ...] = (
             "community_labels.fine.json",
             "community_labels_fine.json",
         ),
+        "stream_filenames": ("stream.fine.json",),
     },
 )
 _DEFAULT_RESOLUTION = "coarse"
@@ -189,6 +192,7 @@ def read_resolution_config() -> dict[str, Any]:
     for spec in _RESOLUTION_SPECS:
         umap = _locate_first(spec["umap_filenames"])
         labels = _locate_first(spec["labels_filenames"])
+        stream = _locate_first(spec["stream_filenames"])
         resolutions.append(
             {
                 "id": spec["id"],
@@ -197,8 +201,10 @@ def read_resolution_config() -> dict[str, Any]:
                 "available": bool(umap and labels),
                 "umap_url": umap["url"] if umap else None,
                 "labels_url": labels["url"] if labels else None,
+                "stream_url": stream["url"] if stream else None,
                 "umap_candidates": list(spec["umap_filenames"]),
                 "labels_candidates": list(spec["labels_filenames"]),
+                "stream_candidates": list(spec["stream_filenames"]),
             }
         )
     return {

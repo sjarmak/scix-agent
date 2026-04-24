@@ -77,6 +77,11 @@
           '/viz/community_labels.coarse.json',
           '/viz/community_labels.json',
         ],
+        stream: [
+          './stream.coarse.json',
+          '/viz/stream.coarse.json',
+          '/data/viz/stream.coarse.json',
+        ],
       }
     }
     if (r === 'medium') {
@@ -93,6 +98,11 @@
           '/viz/community_labels.medium.json',
           '/viz/community_labels_medium.json',
         ],
+        stream: [
+          './stream.medium.json',
+          '/viz/stream.medium.json',
+          '/data/viz/stream.medium.json',
+        ],
       }
     }
     return {
@@ -103,6 +113,7 @@
         '/viz/community_labels.fine.json',
         '/data/viz/community_labels.fine.json',
       ],
+      stream: ['./stream.fine.json', '/viz/stream.fine.json', '/data/viz/stream.fine.json'],
     }
   }
 
@@ -225,6 +236,7 @@
       { href: './agent_trace.html', label: 'V4 Trace' },
       { href: './heatmap.html', label: 'V5 Topology' },
       { href: './ego.html', label: 'V6 Ego' },
+      { href: './streamgraph.html', label: 'V7 Streams' },
     ]
     pages.forEach(function (p) {
       var a = document.createElement('a')

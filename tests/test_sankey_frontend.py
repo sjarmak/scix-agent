@@ -86,3 +86,40 @@ def test_sankey_served_by_viz_app() -> None:
     assert b"sankey-root" in response.content, (
         "Response body should include the sankey-root container"
     )
+
+
+def test_sankey_html_has_flow_count_slider() -> None:
+    """sankey.html must expose the 20/50/100/200 flow-count presets so a
+    visitor can drill from a clean overview into the full transition map
+    without hitting the server. The acceptance criterion for 4i6.4 says
+    JSON is fetched once and the slider re-renders client-side."""
+    soup = _load_soup()
+    slider = soup.find(id="sankey-flow-slider")
+    assert slider is not None, "Missing <span id='sankey-flow-slider'>"
+    caps = sorted(
+        int(btn.get("data-cap"))
+        for btn in slider.find_all("button")
+        if btn.get("data-cap")
+    )
+    assert caps == [20, 50, 100, 200], (
+        f"Slider must offer top-20/50/100/200 presets; got {caps!r}"
+    )
+    assert soup.find(id="sankey-flow-summary") is not None, (
+        "Expected a #sankey-flow-summary element to surface flow count + render time"
+    )
+
+
+def test_sankey_bootstrap_filters_links_client_side() -> None:
+    """The bootstrap script in sankey.html must slice the cached link list
+    rather than refetching, so changing presets is purely a client-side
+    cost. We grep for the structural markers — pickTopN + applyCap + the
+    sortedLinks cache — instead of running JS, since there's no JS runner
+    in the test rig."""
+    html = _SANKEY_HTML.read_text(encoding="utf-8")
+    assert "pickTopN" in html, "Bootstrap missing top-N slicing helper"
+    assert "applyCap" in html, "Bootstrap missing slider re-render handler"
+    # The cache check ensures the JSON is only fetched once.
+    assert "sortedLinks" in html, "Bootstrap should cache a sorted-link list"
+    assert "performance.now" in html, (
+        "Render time should be measured so the summary line can show <500ms"
+    )

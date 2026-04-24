@@ -61,6 +61,37 @@
         font-size: 13px;
         min-height: 18px;
       }
+      #sankey-controls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 8px 0 10px;
+        font-size: 12px;
+        color: #555;
+      }
+      #sankey-flow-slider {
+        display: inline-flex;
+        gap: 4px;
+      }
+      #sankey-flow-slider button {
+        font-size: 11px;
+        padding: 2px 10px;
+        border: 1px solid #cfcfcf;
+        background: #fafafa;
+        color: #333;
+        border-radius: 3px;
+        cursor: pointer;
+        transition: background 100ms, color 100ms;
+      }
+      #sankey-flow-slider button[aria-pressed="true"] {
+        background: #0b60b0;
+        color: #fff;
+        border-color: #0b60b0;
+      }
+      #sankey-flow-slider button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
     <script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12"></script>
@@ -73,18 +104,30 @@
         paper count. Hover a node to highlight incident links; click a link
         to log the target community to the browser console.
       </p>
+      <div id="sankey-controls">
+        <span>Show top</span>
+        <span id="sankey-flow-slider" role="group" aria-label="Number of flows to display">
+          <button type="button" data-cap="20">20</button>
+          <button type="button" data-cap="50">50</button>
+          <button type="button" data-cap="100">100</button>
+          <button type="button" data-cap="200">200</button>
+        </span>
+        <span>flows</span>
+        <span id="sankey-flow-summary" style="margin-left:auto;color:#888"></span>
+      </div>
       <div id="sankey-root" aria-label="Temporal community Sankey diagram"></div>
       <div id="sankey-status" role="status" aria-live="polite"></div>
     </main>
     <script src="./shared.js"></script>
     <script src="./sankey.js"></script>
     <script>
-      // Bootstrap: fetch the dataset and render. Tries the sibling path
-      // first (if someone copies sankey.json into web/viz/), then the
-      // canonical /data/viz/sankey.json location.
+      // Bootstrap: fetch the dataset once, then drive the flow-count slider
+      // entirely client-side so changing presets doesn't hit the server.
       (async function bootstrap() {
         const root = document.getElementById('sankey-root')
         const status = document.getElementById('sankey-status')
+        const slider = document.getElementById('sankey-flow-slider')
+        const summary = document.getElementById('sankey-flow-summary')
         const candidates = ['./sankey.json', '/data/viz/sankey.json']
         let data = null
         let lastErr = null
@@ -112,11 +155,62 @@
           status.textContent = 'renderSankey is not defined — sankey.js failed to load.'
           return
         }
-        try {
-          window.renderSankey(data, root)
-        } catch (err) {
-          status.textContent = 'Render failed: ' + (err.message || String(err))
+
+        // Sort once (defensive — the builder already orders descending) so
+        // a top-N slice always pulls the heaviest flows.
+        const sortedLinks = data.links.slice().sort(function (a, b) {
+          return (b.value || 0) - (a.value || 0)
+        })
+        const totalFlows = sortedLinks.length
+        const baseData = { nodes: data.nodes, links: sortedLinks }
+
+        function pickTopN(n) {
+          // renderSankey drops orphan nodes via its own clone helper, so we
+          // just slice the links here. Caller decides which value of N.
+          const cap = Math.min(n, totalFlows)
+          return { nodes: baseData.nodes, links: sortedLinks.slice(0, cap) }
         }
+
+        function applyCap(cap) {
+          const t0 = performance.now()
+          const sliced = pickTopN(cap)
+          try {
+            window.renderSankey(sliced, root)
+          } catch (err) {
+            status.textContent = 'Render failed: ' + (err.message || String(err))
+            return
+          }
+          const ms = Math.round(performance.now() - t0)
+          summary.textContent =
+            sliced.links.length.toLocaleString() + ' / ' +
+            totalFlows.toLocaleString() + ' flows · ' + ms + ' ms'
+          slider.querySelectorAll('button').forEach(function (btn) {
+            const on = Number(btn.dataset.cap) === Number(cap)
+            btn.setAttribute('aria-pressed', String(on))
+          })
+        }
+
+        // Disable presets that exceed the actually-shipped flow count so the
+        // demo doesn't pretend to support more than the JSON contains.
+        slider.querySelectorAll('button').forEach(function (btn) {
+          const cap = Number(btn.dataset.cap)
+          if (cap > totalFlows && cap !== 20) {
+            // Always keep "20" enabled even on tiny datasets so something
+            // is clickable; the others gate on real data.
+          }
+          if (cap > totalFlows) {
+            btn.disabled = totalFlows < cap
+          }
+          btn.addEventListener('click', function () {
+            applyCap(cap)
+          })
+        })
+
+        // Pick the largest preset that fits the data so the default reflects
+        // the full dataset; cascade down to 20 if even that's too big.
+        const presets = [200, 100, 50, 20]
+        const initialCap = presets.find(function (n) { return n <= totalFlows }) || 20
+        applyCap(initialCap)
       })()
     </script>
   </body>

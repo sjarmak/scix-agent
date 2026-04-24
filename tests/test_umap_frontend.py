@@ -24,6 +24,8 @@ from scix.viz.server import app
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _UMAP_HTML = _REPO_ROOT / "web" / "viz" / "umap_browser.html"
 _UMAP_JS = _REPO_ROOT / "web" / "viz" / "umap_browser.js"
+_SHARED_JS = _REPO_ROOT / "web" / "viz" / "shared.js"
+_EGO_JS = _REPO_ROOT / "web" / "viz" / "ego.js"
 
 
 def _load_soup() -> BeautifulSoup:
@@ -74,6 +76,83 @@ def test_umap_js_has_render_symbol() -> None:
     assert "renderUMAP" in js_text, (
         "umap_browser.js must contain the string 'renderUMAP' "
         "(function definition or window assignment)"
+    )
+
+
+def test_palette_uses_shared_helper_not_local_constant() -> None:
+    """umap_browser.js + ego.js must defer to shared.js for community colors.
+
+    The 20-color hardcoded array used to live in both files with a
+    'kept in sync' comment. Having one canonical generator in shared.js
+    (a) eliminates drift, (b) lets the medium/fine resolutions get
+    HSL-generated hues for hundreds of communities, and (c) means a
+    future palette tweak ships everywhere at once.
+    """
+    umap_js = _UMAP_JS.read_text(encoding="utf-8")
+    ego_js = _EGO_JS.read_text(encoding="utf-8")
+    shared_js = _SHARED_JS.read_text(encoding="utf-8")
+
+    assert "scixViz.colorForCommunity" in shared_js, (
+        "shared.js must export window.scixViz.colorForCommunity"
+    )
+    # Each viz script should call through the shared helper, not redeclare a
+    # 20-element PALETTE of its own.
+    assert "scx.colorForCommunity" in umap_js
+    assert "scx.colorForCommunity" in ego_js
+    # Quick sanity: the literal color values that used to live in both files
+    # should now appear only in shared.js.
+    sentinel_color = "[31, 119, 180]"
+    assert sentinel_color in shared_js
+    assert sentinel_color not in umap_js, (
+        "umap_browser.js still has a local PALETTE — extract to shared.js"
+    )
+    assert sentinel_color not in ego_js, (
+        "ego.js still has a local PALETTE — extract to shared.js"
+    )
+
+
+def test_legend_collapses_long_tail_into_other_row() -> None:
+    """At medium/fine resolution the legend must show top-N + an 'other' row.
+
+    Showing 200 swatches in a 320px sidebar is unreadable. The legend keeps
+    the top-20 by paper count visible by name, then collapses the remaining
+    communities into an expandable 'other (N communities)' row so users can
+    drill in without losing the at-a-glance view.
+    """
+    js_text = _UMAP_JS.read_text(encoding="utf-8")
+    assert "LEGEND_TOP_N" in js_text, (
+        "umap_browser.js should declare a LEGEND_TOP_N constant for the "
+        "top-N legend cap (currently 20)."
+    )
+    assert "legend-other-toggle" in js_text, (
+        "expected a 'legend-other-toggle' row to expose the long tail"
+    )
+    assert "legend-other-grid" in js_text, (
+        "expected a 'legend-other-grid' container for the expanded tail"
+    )
+    # The hardcoded "20 communities" stats string is replaced with a
+    # dynamic count derived from the data.
+    assert "20 communities'" not in js_text, (
+        "stats line should derive the community count from communityCounts.size"
+    )
+
+
+def test_shared_palette_handles_negative_and_large_ids() -> None:
+    """The palette generator must not crash on sentinel (-1) or 200+ ids.
+
+    Citation-Leiden Phase A leaves community_id_* = -1 for non-giant
+    component papers; medium/fine semantic resolutions can run into the
+    hundreds. We assert the helper has explicit branches for both cases.
+    """
+    shared_js = _SHARED_JS.read_text(encoding="utf-8")
+    assert "SENTINEL_COLOR_RGB" in shared_js, (
+        "shared.js should define a sentinel color for negative community ids"
+    )
+    assert "GOLDEN_RATIO" in shared_js, (
+        "shared.js should declare the golden-ratio hue stepping constant"
+    )
+    assert "_hslToRgb" in shared_js, (
+        "shared.js should define an HSL->RGB converter for medium/fine palettes"
     )
 
 

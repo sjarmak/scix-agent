@@ -166,7 +166,7 @@ class _BackendChoice:
 
 
 def load_embeddings_synthetic(
-    n: int, seed: int = 42
+    n: int, seed: int = 42, resolution: str = "coarse"
 ) -> tuple[list[str], np.ndarray, list[Optional[int]]]:
     """Generate ``n`` deterministic 768-d synthetic embeddings.
 
@@ -179,15 +179,20 @@ def load_embeddings_synthetic(
         a standard normal distribution seeded by ``seed``.
     community_ids
         Length-``n`` list of integer community ids drawn from
-        ``range(20)`` (simulating the coarse community cardinality).
+        ``range(K)``, where ``K`` matches the resolution's expected
+        community cardinality (``_RESOLUTION_K``: coarse=20, medium=200,
+        fine=2000). This keeps the synthetic placeholder shape consistent
+        with prod when the visualization is exercised end-to-end without a
+        live DB.
     """
     if n <= 0:
         raise ValueError(f"synthetic n must be > 0, got {n}")
 
+    k = _RESOLUTION_K.get(resolution, 20)
     rng = np.random.default_rng(seed)
     bibcodes = [f"synthetic-{i:06d}" for i in range(n)]
     embeddings = rng.standard_normal(size=(n, _EMBEDDING_DIM)).astype(np.float32)
-    community_ids: list[Optional[int]] = [int(i % 20) for i in range(n)]
+    community_ids: list[Optional[int]] = [int(i % k) for i in range(n)]
     return bibcodes, embeddings, community_ids
 
 
@@ -658,7 +663,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             config.synthetic_n,
         )
         bibcodes, embeddings, community_ids = load_embeddings_synthetic(
-            config.synthetic_n
+            config.synthetic_n, resolution=config.resolution
         )
     else:
         logger.info(

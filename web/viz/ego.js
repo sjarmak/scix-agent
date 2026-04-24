@@ -13,22 +13,18 @@
 ;(function () {
   'use strict'
 
-  // 20-colour categorical palette — kept in sync with umap_browser.js so the
-  // same community has the same colour across views.
-  var PALETTE = [
-    [31, 119, 180], [255, 127, 14], [44, 160, 44], [214, 39, 40],
-    [148, 103, 189], [140, 86, 75], [227, 119, 194], [127, 127, 127],
-    [188, 189, 34], [23, 190, 207], [78, 121, 167], [242, 142, 43],
-    [225, 87, 89], [118, 183, 178], [89, 161, 79], [237, 201, 72],
-    [176, 122, 161], [255, 157, 167], [156, 117, 95], [186, 176, 172],
-  ]
+  // Color comes from the shared resolution-aware palette in shared.js so
+  // the ego view, UMAP, and any future viz share one source of truth. Falls
+  // back to neutral grey if shared.js failed to load.
   var FALLBACK_COLOR = 'rgb(160,160,160)'
 
   function _colorForCommunity(cid) {
-    if (cid == null || Number.isNaN(Number(cid))) return FALLBACK_COLOR
-    var idx = ((Number(cid) % PALETTE.length) + PALETTE.length) % PALETTE.length
-    var rgb = PALETTE[idx]
-    return 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')'
+    var scx = (typeof window !== 'undefined' && window.scixViz) || null
+    if (scx && typeof scx.colorForCommunity === 'function') {
+      var rgb = scx.colorForCommunity(cid)
+      return 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')'
+    }
+    return FALLBACK_COLOR
   }
 
   function _escape(s) {

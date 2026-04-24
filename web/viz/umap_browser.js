@@ -18,39 +18,20 @@
 ;(function () {
   'use strict'
 
-  // 20-color categorical palette — d3.schemeCategory10 + d3.schemeTableau10
-  // flattened. Indexed by community_id % PALETTE.length. Stored as [r,g,b]
-  // triples because deck.gl's ScatterplotLayer expects numeric color arrays.
-  const PALETTE = [
-    [31, 119, 180],
-    [255, 127, 14],
-    [44, 160, 44],
-    [214, 39, 40],
-    [148, 103, 189],
-    [140, 86, 75],
-    [227, 119, 194],
-    [127, 127, 127],
-    [188, 189, 34],
-    [23, 190, 207],
-    [78, 121, 167],
-    [242, 142, 43],
-    [225, 87, 89],
-    [118, 183, 178],
-    [89, 161, 79],
-    [237, 201, 72],
-    [176, 122, 161],
-    [255, 157, 167],
-    [156, 117, 95],
-    [186, 176, 172],
-  ]
+  // Color comes from window.scixViz.colorForCommunity in shared.js — a
+  // resolution-aware generator that returns the hand-tuned 20-color palette
+  // for coarse and a golden-ratio HSL walk for medium/fine. Keeping it
+  // central keeps the UMAP and ego views in sync without "keep this list in
+  // sync" comments. We fall back to neutral grey if shared.js isn't loaded.
   const FALLBACK_COLOR = [160, 160, 160]
 
   function _colorForCommunity(cid) {
-    if (cid == null || Number.isNaN(Number(cid))) {
-      return FALLBACK_COLOR
+    var scx = (typeof window !== 'undefined' && window.scixViz) || null
+    if (scx && typeof scx.colorForCommunity === 'function') {
+      return scx.colorForCommunity(cid)
     }
-    const idx = ((Number(cid) % PALETTE.length) + PALETTE.length) % PALETTE.length
-    return PALETTE[idx]
+    if (cid == null || Number.isNaN(Number(cid))) return FALLBACK_COLOR
+    return FALLBACK_COLOR
   }
 
   // Community-label cache — filled by _loadCommunityLabels() before first
@@ -215,46 +196,92 @@
       '</div>'
   }
 
+  // How many top communities to show by name in the legend. The remainder
+  // collapse into a single "other (N communities)" row that expands inline
+  // when clicked — at medium/fine resolution most communities are tiny but
+  // the long tail is exactly where cross-disciplinary clusters live, so we
+  // make it discoverable rather than truncating it.
+  const LEGEND_TOP_N = 20
+
+  function _renderSwatch(cid, count, activeCommunityRef, onPick) {
+    const rgb = _colorForCommunity(cid)
+    const chip =
+      '<span class="chip" style="background:rgb(' +
+      rgb[0] + ',' + rgb[1] + ',' + rgb[2] +
+      ')"></span>'
+    const name = _labelForCommunity(cid)
+    const label =
+      '<span class="legend-name">' +
+      name.replace(/[<>]/g, '') +
+      '</span> <span style="color:#888">(' +
+      count.toLocaleString() +
+      ')</span>'
+    const el = document.createElement('div')
+    el.className = 'legend-swatch'
+    el.dataset.cid = String(cid)
+    el.innerHTML = chip + '<span>' + label + '</span>'
+    el.title = 'c' + cid + ' · ' + count.toLocaleString() + ' papers in sample'
+    el.addEventListener('click', function () {
+      const newPick = activeCommunityRef.value === cid ? null : cid
+      activeCommunityRef.value = newPick
+      // Update active class across all swatches (including expanded tail).
+      const grid = el.parentElement
+      if (grid) {
+        grid.querySelectorAll('.legend-swatch').forEach(function (sw) {
+          sw.classList.toggle('active', newPick != null && Number(sw.dataset.cid) === newPick)
+        })
+      }
+      onPick(newPick)
+    })
+    return el
+  }
+
   function _populateLegend(communityCounts, activeCommunityRef, onPick) {
     const grid = document.getElementById('umap-legend-grid')
     if (!grid) return
     grid.innerHTML = ''
+
     const ids = Array.from(communityCounts.keys()).sort(function (a, b) {
       // Order by paper count desc so biggest communities come first.
       return communityCounts.get(b) - communityCounts.get(a)
     })
-    ids.forEach(function (cid) {
-      const rgb = _colorForCommunity(cid)
-      const chip =
-        '<span class="chip" style="background:rgb(' +
-        rgb[0] +
-        ',' +
-        rgb[1] +
-        ',' +
-        rgb[2] +
-        ')"></span>'
-      const count = communityCounts.get(cid)
-      const name = _labelForCommunity(cid)
-      const label =
-        '<span class="legend-name">' +
-        name.replace(/[<>]/g, '') +
-        '</span> <span style="color:#888">(' +
-        count.toLocaleString() +
-        ')</span>'
-      const el = document.createElement('div')
-      el.className = 'legend-swatch'
-      el.dataset.cid = String(cid)
-      el.innerHTML = chip + '<span>' + label + '</span>'
-      el.title = 'c' + cid + ' · ' + count.toLocaleString() + ' papers in sample'
-      el.addEventListener('click', function () {
-        const newPick = activeCommunityRef.value === cid ? null : cid
-        activeCommunityRef.value = newPick
-        grid.querySelectorAll('.legend-swatch').forEach(function (sw) {
-          sw.classList.toggle('active', newPick != null && Number(sw.dataset.cid) === newPick)
-        })
-        onPick(newPick)
-      })
-      grid.appendChild(el)
+    const topIds = ids.slice(0, LEGEND_TOP_N)
+    const tailIds = ids.slice(LEGEND_TOP_N)
+
+    topIds.forEach(function (cid) {
+      grid.appendChild(_renderSwatch(cid, communityCounts.get(cid), activeCommunityRef, onPick))
+    })
+
+    if (tailIds.length === 0) return
+
+    const tailCount = tailIds.reduce(function (s, c) { return s + communityCounts.get(c) }, 0)
+    const toggle = document.createElement('div')
+    toggle.className = 'legend-other-toggle'
+    toggle.style.cssText =
+      'grid-column:1 / -1;cursor:pointer;color:#666;padding:4px 4px;' +
+      'border-top:1px solid #eee;margin-top:4px;font-size:11px;' +
+      'user-select:none;display:flex;align-items:center;gap:6px'
+    toggle.innerHTML =
+      '<span class="caret" aria-hidden="true">▸</span>' +
+      '<span>other (' + tailIds.length.toLocaleString() + ' communities, ' +
+      tailCount.toLocaleString() + ' papers)</span>'
+    grid.appendChild(toggle)
+
+    const tailWrap = document.createElement('div')
+    tailWrap.className = 'legend-other-grid'
+    tailWrap.style.cssText =
+      'grid-column:1 / -1;display:none;grid-template-columns:repeat(2, 1fr);' +
+      'gap:4px 10px;max-height:240px;overflow-y:auto;padding-top:4px'
+    tailIds.forEach(function (cid) {
+      tailWrap.appendChild(_renderSwatch(cid, communityCounts.get(cid), activeCommunityRef, onPick))
+    })
+    grid.appendChild(tailWrap)
+
+    toggle.addEventListener('click', function () {
+      const open = tailWrap.style.display !== 'none'
+      tailWrap.style.display = open ? 'none' : 'grid'
+      const caret = toggle.querySelector('.caret')
+      if (caret) caret.textContent = open ? '▸' : '▾'
     })
   }
 
@@ -262,7 +289,9 @@
     const el = document.getElementById('umap-stats')
     if (!el) return
     if (activeCid == null) {
-      el.textContent = n.toLocaleString() + ' papers · 20 communities'
+      el.textContent =
+        n.toLocaleString() + ' papers · ' +
+        communityCounts.size.toLocaleString() + ' communities'
     } else {
       const shown = communityCounts.get(activeCid) || 0
       el.textContent =
@@ -272,6 +301,14 @@
         ' papers · community ' +
         activeCid
     }
+  }
+
+  function _updateLegendHeader() {
+    const header = document.querySelector('#umap-legend h3')
+    if (!header) return
+    var scx = (typeof window !== 'undefined' && window.scixViz) || null
+    var res = scx && typeof scx.getResolution === 'function' ? scx.getResolution() : 'coarse'
+    header.textContent = 'Communities (' + res + ')'
   }
 
   function _communityCentroids(points) {
@@ -511,6 +548,7 @@
       _updateStats(points.length, newPick, communityCounts)
     })
     _updateStats(points.length, null, communityCounts)
+    _updateLegendHeader()
 
     // Labels load asynchronously; once they arrive, re-populate the legend
     // with the named communities AND re-run the zoom-reactive label selector

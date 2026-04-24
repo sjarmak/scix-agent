@@ -137,6 +137,64 @@
   scixViz.RESOLUTION_LABELS = RESOLUTION_LABELS
   scixViz.VALID_RESOLUTIONS = VALID_RES.slice()
 
+  // --- Community color palette -------------------------------------------
+  // Hand-tuned 20-color categorical palette (d3.schemeCategory10 +
+  // d3.schemeTableau10) for coarse resolution where readers expect the
+  // "branded" demo colors. For medium (~200) / fine (~2000) resolutions we
+  // generate hues on a golden-ratio walk around the HSL wheel so adjacent
+  // community ids land far apart and there are no manual tuning gaps.
+  var COARSE_PALETTE = [
+    [31, 119, 180], [255, 127, 14], [44, 160, 44], [214, 39, 40],
+    [148, 103, 189], [140, 86, 75], [227, 119, 194], [127, 127, 127],
+    [188, 189, 34], [23, 190, 207], [78, 121, 167], [242, 142, 43],
+    [225, 87, 89], [118, 183, 178], [89, 161, 79], [237, 201, 72],
+    [176, 122, 161], [255, 157, 167], [156, 117, 95], [186, 176, 172],
+  ]
+  var FALLBACK_COLOR_RGB = [160, 160, 160]
+  var SENTINEL_COLOR_RGB = [180, 180, 180] // for negative ids (e.g. -1)
+  var GOLDEN_RATIO = 0.6180339887498949
+
+  function _hslToRgb(h, s, l) {
+    function hue2rgb(p, q, t) {
+      if (t < 0) t += 1
+      if (t > 1) t -= 1
+      if (t < 1 / 6) return p + (q - p) * 6 * t
+      if (t < 1 / 2) return q
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6
+      return p
+    }
+    if (s === 0) {
+      var v = Math.round(l * 255)
+      return [v, v, v]
+    }
+    var q = l < 0.5 ? l * (1 + s) : l + s - l * s
+    var p = 2 * l - q
+    return [
+      Math.round(hue2rgb(p, q, h + 1 / 3) * 255),
+      Math.round(hue2rgb(p, q, h) * 255),
+      Math.round(hue2rgb(p, q, h - 1 / 3) * 255),
+    ]
+  }
+
+  function colorForCommunity(cid, opts) {
+    if (cid == null || Number.isNaN(Number(cid))) return FALLBACK_COLOR_RGB.slice()
+    var n = Number(cid)
+    if (n < 0) return SENTINEL_COLOR_RGB.slice()
+    var res = (opts && opts.resolution) || getResolution()
+    if (res === 'coarse') {
+      var idx = ((n % COARSE_PALETTE.length) + COARSE_PALETTE.length) % COARSE_PALETTE.length
+      return COARSE_PALETTE[idx].slice()
+    }
+    // Hue varies on golden ratio; saturation/lightness held constant for
+    // calm, equal-perceptual-weight chips. h ∈ [0,1).
+    var hue = (n * GOLDEN_RATIO) % 1
+    if (hue < 0) hue += 1
+    return _hslToRgb(hue, 0.62, 0.55)
+  }
+
+  scixViz.colorForCommunity = colorForCommunity
+  scixViz.COARSE_PALETTE = COARSE_PALETTE.map(function (c) { return c.slice() })
+
   // --- Navigation ---------------------------------------------------------
   // Inject a small top navigation bar so the viz pages are linked, plus a
   // resolution-picker that drives the helpers above. Runs on

@@ -6,17 +6,36 @@ ALWAYS wrap in scix-batch (see CLAUDE.md memory rule on systemd-oomd):
     scix-batch --mem-high 8G --mem-max 12G \\
         python scripts/run_ner_pass.py --target abstract
 
-Examples:
-    # Sample run: first 1000 abstracts in bibcode order, dry-run (no DB writes)
+Phase 1 production recipe (battle-tested 2026-04-25 — survives a long
+abstract that would OOM at default settings):
+
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \\
+        scix-batch --mem-high 16G --mem-max 24G \\
+        python scripts/run_ner_pass.py \\
+            --target abstract \\
+            --batch-size 1000 \\
+            --inference-batch 8 \\
+            --max-text-chars 3500
+
+Why those flags:
+  - inference-batch 8 (not 16): activation memory scales O(seq_len^2);
+    a single ~768-token abstract at batch=16 spikes ~4 GB and OOMs the
+    5090 once VRAM is shared with other processes. batch=8 leaves
+    enough headroom and barely costs throughput (~75 docs/s either way).
+  - max-text-chars 3500: caps inputs around the GLiNER-large 768-token
+    window. Anything longer just wastes attention compute on truncated
+    suffix.
+  - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True: lets PyTorch
+    reuse fragmented VRAM blocks instead of failing with "X reserved
+    but unallocated".
+
+Other examples:
+    # Sample run: first 1000 abstracts, dry-run (no DB writes)
     python scripts/run_ner_pass.py --target abstract --max-papers 1000 --dry-run
 
-    # Resume an interrupted full pass from a watermark bibcode
+    # Resume from a watermark bibcode (rarely needed — checkpoints handle this)
     scix-batch python scripts/run_ner_pass.py --target abstract \\
         --since-bibcode 2020ApJ...900....1S
-
-    # Phase 1 production run — full 23 M abstracts (4 days at 100 docs/s)
-    scix-batch --mem-high 12G --mem-max 16G \\
-        python scripts/run_ner_pass.py --target abstract --batch-size 1000
 
 The pipeline is resumable: every batch is checkpointed in ``ingest_log``,
 so a killed run picks up at the next un-checkpointed batch on rerun.

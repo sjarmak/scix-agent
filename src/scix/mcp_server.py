@@ -32,6 +32,7 @@ from scix.db import DEFAULT_DSN
 from scix.embed import _model_cache, clear_model_cache, embed_batch, load_model
 from scix.entity_resolver import EntityResolver
 from scix.jit.disambiguator import disambiguate_query
+from scix.search import CrossEncoderReranker
 from scix.session import SessionState, WorkingSetEntry
 
 # Optional Qdrant-backed discovery tool. Feature-flagged via QDRANT_URL so the
@@ -562,6 +563,82 @@ def _init_model_impl() -> None:
         logger.exception("Failed to pre-load INDUS model")
 
 
+# ---------------------------------------------------------------------------
+# Cross-encoder reranker (lazy singleton)
+# ---------------------------------------------------------------------------
+#
+# The default value is intentionally ``'off'``. The M1 ablation
+# (commit 06a6cc3, see PRD prd_cross_encoder_reranker_local.md) showed both
+# candidate cross-encoders REGRESS retrieval quality on this corpus:
+#   * ms-marco-MiniLM-L-12-v2: nDCG@10 0.3255 -> 0.2802 (Δ=-0.0453, p=0.042)
+#   * BAAI/bge-reranker-large: nDCG@10 0.3255 -> 0.2699 (Δ=-0.0556, p=0.026)
+# Bonferroni-corrected significance threshold = 0.025 — the M4 rollout gate
+# FAILS for both. Operators can still flip a non-'off' model on for
+# experimentation (e.g. when a domain-tuned cross-encoder lands), but the
+# production default stays off.
+
+# Map env-var values to model_name strings consumed by CrossEncoderReranker.
+_RERANK_MODEL_ALIASES: dict[str, str] = {
+    "minilm": "cross-encoder/ms-marco-MiniLM-L-12-v2",
+    "bge-large": "BAAI/bge-reranker-large",
+}
+
+# Cap above which the reranker is bypassed even when use_rerank=True.
+# per PRD prd_cross_encoder_reranker_local.md M3: rerank only top_k <= 20
+_RERANK_TOP_K_CAP: int = 20
+
+# Module-level cache so repeated tool calls reuse the same reranker instance.
+# Construction is cheap (no weights loaded until first __call__), but caching
+# avoids repeated dict lookups and keeps the lazy weight-load amortised across
+# the process lifetime.
+_default_reranker_cache: dict[str, CrossEncoderReranker | None] = {}
+
+
+def _resolve_default_reranker_model() -> str | None:
+    """Resolve ``SCIX_RERANK_DEFAULT_MODEL`` to a sentence-transformers model name.
+
+    Returns ``None`` when the env var is unset, set to ``'off'``, or set to an
+    unrecognised value (with a warning logged for the latter — consistent with
+    how other env-driven config in this module degrades rather than crashes).
+    """
+    raw = os.environ.get("SCIX_RERANK_DEFAULT_MODEL", "off").strip().lower()
+    if raw == "off":
+        return None
+    if raw in _RERANK_MODEL_ALIASES:
+        return _RERANK_MODEL_ALIASES[raw]
+    logger.warning(
+        "Unknown SCIX_RERANK_DEFAULT_MODEL=%r; falling back to 'off'. "
+        "Allowed values: 'off', 'minilm', 'bge-large'.",
+        raw,
+    )
+    return None
+
+
+def _get_default_reranker() -> CrossEncoderReranker | None:
+    """Return the configured cross-encoder reranker, or ``None`` when disabled.
+
+    Lazy: when ``SCIX_RERANK_DEFAULT_MODEL='off'`` (the default), no
+    ``CrossEncoderReranker`` instance is constructed. When a non-'off' model is
+    configured, the reranker object is built on first call and cached for the
+    lifetime of the process; model weights are loaded lazily inside
+    ``CrossEncoderReranker.__call__`` on first rerank.
+    """
+    model_name = _resolve_default_reranker_model()
+    if model_name is None:
+        return None
+    cached = _default_reranker_cache.get(model_name)
+    if cached is not None:
+        return cached
+    reranker = CrossEncoderReranker(model_name=model_name)
+    _default_reranker_cache[model_name] = reranker
+    return reranker
+
+
+def _reset_default_reranker_cache() -> None:
+    """Test hook: drop the cached singleton so env changes take effect."""
+    _default_reranker_cache.clear()
+
+
 def _shutdown() -> None:
     """Clean up resources: close connection pool, clear model cache."""
     global _pool
@@ -903,6 +980,21 @@ def create_server(_run_self_test: bool = True):
                                 "mentions (e.g., 'Hubble' = mission or person). If ambiguity "
                                 "is detected, the server returns disambiguation candidates "
                                 "instead of search results. Set false to run the search directly."
+                            ),
+                        },
+                        "use_rerank": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": (
+                                "If true (default) AND the SCIX_RERANK_DEFAULT_MODEL env var "
+                                "is set to a model alias other than 'off' AND limit <= 20, "
+                                "rerank the fused candidate set with a cross-encoder. The "
+                                "production default for SCIX_RERANK_DEFAULT_MODEL is 'off' "
+                                "because the M1 ablation showed both candidate rerankers "
+                                "regress nDCG@10 on this corpus; this flag exists so an "
+                                "operator can flip on a future domain-tuned reranker without "
+                                "code changes. Setting use_rerank=false bypasses reranking "
+                                "even when a model is configured."
                             ),
                         },
                     },
@@ -1998,6 +2090,17 @@ def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         except ImportError:
             logger.warning("Embedding unavailable for hybrid; falling back to lexical-only")
 
+    # Cross-encoder rerank gating. Default is OFF: the M1 ablation
+    # (commit 06a6cc3) showed both candidate cross-encoders regress nDCG@10 on
+    # this corpus and fail the M4 rollout gate. The factory only constructs a
+    # CrossEncoderReranker when SCIX_RERANK_DEFAULT_MODEL != 'off', so the
+    # default code path never instantiates a model.
+    use_rerank = bool(args.get("use_rerank", True))
+    reranker: Any = None
+    # per PRD prd_cross_encoder_reranker_local.md M3: rerank only top_k <= 20
+    if use_rerank and limit <= _RERANK_TOP_K_CAP:
+        reranker = _get_default_reranker()
+
     result = search.hybrid_search(
         conn,
         query,
@@ -2005,6 +2108,7 @@ def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         model_name=model_name,
         filters=filters,
         top_n=limit,
+        reranker=reranker,
     )
     return _result_to_json(result)
 

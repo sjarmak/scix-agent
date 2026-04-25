@@ -12,7 +12,9 @@
 - **correction-events-ingest** — implement SUCCESS (dca7564), review PASS (20/20 tests, gold-200 coverage 100%). Landed.
 - **Layer 0 complete (5/5)** → Layer 1 dispatch (claim-blame-and-replications + deep-search-persona-harness in parallel).
 - **deep-search-persona-harness** — implement SUCCESS (ebddc19), review PASS (28/28 tests). Landed.
-- **Note**: unrelated upstream commit `da85d08 feat(concepts): multi-vocabulary concept_search router (dbl.7)` landed on main mid-session, touching src/scix/mcp_server.py — claim-blame-and-replications agent will likely conflict on landing.
+- **Note**: unrelated upstream commit `da85d08 feat(concepts): multi-vocabulary concept_search router (dbl.7)` landed on main mid-session, touching src/scix/mcp_server.py — claim-blame-and-replications agent rebased internally and landed cleanly.
+- **claim-blame-and-replications** — implement SUCCESS (c25de6b), review PASS (32/32 tests, EXPECTED_TOOLS=15). Landed.
+- **Layer 1 complete (2/2)** → Layer 2 dispatch (citation-grounded-gate).
 
 ## 2026-04-18 (community-detection-v2)
 

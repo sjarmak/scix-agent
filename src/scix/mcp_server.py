@@ -25,7 +25,7 @@ import uuid
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any, Generator, Sequence
 
 import psycopg
 
@@ -793,6 +793,104 @@ _FILTERS_SCHEMA = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# section_retrieval tool — filters schema + RRF + snippet helpers
+# ---------------------------------------------------------------------------
+#
+# The section_retrieval tool fuses dense HNSW search over section_embeddings
+# with BM25 over papers_fulltext.sections_tsv via Reciprocal Rank Fusion.
+# It uses a slimmer filter object than the search-tool _FILTERS_SCHEMA: only
+# discipline, year_min, year_max, bibcode_prefix.
+
+_SECTION_FILTERS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "discipline": {
+            "type": "string",
+            "description": (
+                "Restrict to papers whose papers.discipline equals this value "
+                "(e.g. 'astrophysics')."
+            ),
+        },
+        "year_min": {"type": "integer"},
+        "year_max": {"type": "integer"},
+        "bibcode_prefix": {
+            "type": "string",
+            "description": (
+                "Restrict to bibcodes that start with this prefix "
+                "(e.g. '2024ApJ' for ApJ papers from 2024)."
+            ),
+        },
+    },
+}
+
+# Reciprocal-rank-fusion default constant (Cormack et al., 2009).
+_RRF_K_DEFAULT: int = 60
+
+# Maximum snippet length emitted by section_retrieval.
+_SNIPPET_MAX_CHARS: int = 500
+
+# nomic-embed-text-v1.5 query-time prefix. Document prefix lives in
+# scix.embeddings.section_pipeline (NOMIC_DOC_PREFIX); we keep the query
+# prefix local rather than reaching into the pipeline module so consumers
+# that only need query encoding don't inherit the document prefix.
+_NOMIC_QUERY_PREFIX: str = "search_query: "
+
+
+def _truncate_snippet(text: str | None, max_chars: int = _SNIPPET_MAX_CHARS) -> str:
+    """Truncate a section text to at most ``max_chars`` characters.
+
+    Returns the empty string when ``text`` is None. Truncation is purely
+    character-based — no word-boundary cleanup. The cap is a hard contract
+    surfaced by the section_retrieval response schema.
+    """
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars]
+
+
+def _rrf_fuse(
+    ranked_lists: Sequence[Sequence[Any]],
+    k_rrf: int = _RRF_K_DEFAULT,
+) -> list[tuple[Any, float]]:
+    """Reciprocal Rank Fusion over multiple ranked lists.
+
+    For each candidate key ``d``, the fused score is
+
+        score(d) = sum over lists L of 1 / (k_rrf + rank_L(d))
+
+    where rank is 1-indexed (best = 1) and ``d`` not appearing in a list
+    contributes 0 for that list. Returns a list of ``(key, score)`` sorted
+    by score descending, with ties broken by the order in which the key
+    was first seen across the input lists (stable).
+
+    Inputs:
+        ranked_lists: a sequence of ranked iterables, each best-first.
+            Keys must be hashable.
+        k_rrf: the RRF k constant; defaults to 60 per Cormack et al. 2009.
+
+    Pure function; no DB or filesystem I/O.
+    """
+    if k_rrf <= 0:
+        raise ValueError(f"k_rrf must be positive, got {k_rrf}")
+    scores: dict[Any, float] = {}
+    first_seen: dict[Any, int] = {}
+    seen_counter = 0
+    for ranked in ranked_lists:
+        for rank_zero_based, key in enumerate(ranked):
+            rank = rank_zero_based + 1  # 1-indexed
+            scores[key] = scores.get(key, 0.0) + 1.0 / (k_rrf + rank)
+            if key not in first_seen:
+                first_seen[key] = seen_counter
+                seen_counter += 1
+    # Sort by score desc, then by first-seen order asc (stable tiebreak).
+    return sorted(
+        scores.items(),
+        key=lambda kv: (-kv[1], first_seen[kv[0]]),
+    )
+
 
 # ---------------------------------------------------------------------------
 # Expected consolidated tools (used by startup self-test)
@@ -815,6 +913,8 @@ EXPECTED_TOOLS: tuple[str, ...] = (
     # PRD MH-4 — Deep Search v1: provenance walk + replication enumeration
     "claim_blame",
     "find_replications",
+    # PRD section-embeddings-mcp-consolidation — section-grain hybrid retrieval
+    "section_retrieval",
 )
 
 # Tools that appear only when an optional backend is wired up.
@@ -976,12 +1076,23 @@ def startup_self_test(server: Any = None) -> dict[str, Any]:
 
 
 def _smoke_call_new_tools() -> list[str]:
-    """Invoke claim_blame and find_replications against SCIX_TEST_DSN.
+    """Invoke recently added tools against SCIX_TEST_DSN to catch wiring breakage.
 
     Returns a list of error strings (empty on success). Empty result sets
     are NOT errors — only raised exceptions are. This matches PRD MH-4
     acceptance criterion 7's "gracefully handle the case where
     citation_contexts.intent is all NULL" requirement.
+
+    Currently exercises:
+        * claim_blame (PRD MH-4)
+        * find_replications (PRD MH-4)
+        * section_retrieval (PRD section-embeddings-mcp-consolidation) —
+          dispatched in-process via :func:`_dispatch_tool` so we exercise
+          the full MCP routing path including filter validation. Embedding
+          import failures are tolerated (the section embedder requires
+          ``sentence-transformers`` which is an optional install) and
+          surface as a structured ``error`` payload rather than a raised
+          exception.
     """
     errors: list[str] = []
     try:
@@ -1000,6 +1111,14 @@ def _smoke_call_new_tools() -> list[str]:
                 find_replications("0000NoSuchBibcode000", conn=conn)
             except Exception as exc:  # noqa: BLE001 — log + report
                 errors.append(f"find_replications: {exc}")
+            try:
+                _dispatch_tool(
+                    conn,
+                    "section_retrieval",
+                    {"query": "startup self-test", "k": 1},
+                )
+            except Exception as exc:  # noqa: BLE001 — log + report
+                errors.append(f"section_retrieval: {exc}")
     except Exception as exc:  # noqa: BLE001 — pool acquire failure
         errors.append(f"pool: {exc}")
     return errors
@@ -1678,6 +1797,39 @@ def create_server(_run_self_test: bool = True):
                     "required": ["target_bibcode"],
                 },
             ),
+            # --- PRD section-embeddings-mcp-consolidation: section_retrieval ---
+            Tool(
+                name="section_retrieval",
+                description=(
+                    "Retrieve passages at section granularity. Encodes the query "
+                    "with a local nomic-embed-text-v1.5 model and runs a hybrid "
+                    "search that fuses (a) dense HNSW search over "
+                    "section_embeddings (halfvec(1024)) and (b) BM25 over the "
+                    "papers_fulltext.sections tsvector via Reciprocal Rank Fusion "
+                    "(k=60). Returns a ranked list of section hits each carrying "
+                    "bibcode, section_heading, a snippet (<=500 chars of the "
+                    "section text), the fused score, and a canonical_url for "
+                    "attribution. Use search instead when you need paper-level "
+                    "results rather than section-level passages; use read_paper "
+                    "to read a specific section once you have the bibcode."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Natural-language passage query.",
+                        },
+                        "k": {
+                            "type": "integer",
+                            "default": 10,
+                            "description": "Max number of section hits to return.",
+                        },
+                        "filters": _SECTION_FILTERS_SCHEMA,
+                    },
+                    "required": ["query"],
+                },
+            ),
         ]
 
         # Optional Qdrant-backed discovery tool — only registered when
@@ -2047,6 +2199,10 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
     # --- PRD MH-4: find_replications ---
     if name == "find_replications":
         return _handle_find_replications(conn, args)
+
+    # --- PRD section-embeddings-mcp-consolidation: section_retrieval ---
+    if name == "section_retrieval":
+        return _handle_section_retrieval(conn, args)
 
     # --- Legacy handlers for deprecated session tools ---
     if name == "add_to_working_set":
@@ -2909,6 +3065,356 @@ def _handle_find_replications(conn: psycopg.Connection, args: dict[str, Any]) ->
         limit=limit,
     )
     return json.dumps({"citations": result, "total": len(result)}, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# section_retrieval handler
+# ---------------------------------------------------------------------------
+
+
+def _encode_section_query(query: str, dimensions: int = 1024) -> list[float]:
+    """Encode a query string with the local nomic-embed-text-v1.5 model.
+
+    Reuses :func:`scix.embeddings.section_pipeline._load_model` (lazy) and
+    :func:`scix.embeddings.section_pipeline.encode_batch` so this module
+    inherits the same model loader the indexing pipeline uses. The query
+    is prefixed with ``"search_query: "`` per the nomic model card.
+
+    Returns a 1024-dim Python list[float]. Raises ImportError if
+    sentence_transformers is not installed (caller is expected to wrap and
+    return a structured MCP error).
+    """
+    from scix.embeddings.section_pipeline import (  # local import — lazy
+        DEFAULT_MODEL,
+        _load_model,
+        encode_batch,
+    )
+
+    model = _load_model(DEFAULT_MODEL)
+    prefixed = _NOMIC_QUERY_PREFIX + (query or "")
+    vectors = encode_batch(model, [prefixed], dimensions=dimensions)
+    if not vectors:
+        raise RuntimeError("section query encoder returned no vectors")
+    return vectors[0]
+
+
+def _section_filter_clauses(
+    filters: dict[str, Any] | None,
+) -> tuple[str, list[Any]]:
+    """Build SQL fragments + parameter list for the section_retrieval filters.
+
+    Returns a tuple of ``(extra_sql, params)`` where ``extra_sql`` is a
+    string of zero or more ``AND <clause>`` fragments referring to columns
+    on the ``papers`` row aliased as ``p``. Params are bound positionally.
+
+    Filter contract (matches _SECTION_FILTERS_SCHEMA):
+        - discipline   -> p.discipline = %s
+        - year_min     -> p.year >= %s
+        - year_max     -> p.year <= %s
+        - bibcode_prefix -> p.bibcode LIKE %s   (caller-supplied trailing % logic)
+    """
+    if not filters:
+        return "", []
+    clauses: list[str] = []
+    params: list[Any] = []
+    discipline = filters.get("discipline")
+    if discipline is not None:
+        clauses.append("AND p.discipline = %s")
+        params.append(str(discipline))
+    year_min = _coerce_year(filters.get("year_min"), "year_min")
+    if year_min is not None:
+        clauses.append("AND p.year >= %s")
+        params.append(year_min)
+    year_max = _coerce_year(filters.get("year_max"), "year_max")
+    if year_max is not None:
+        clauses.append("AND p.year <= %s")
+        params.append(year_max)
+    bibcode_prefix = filters.get("bibcode_prefix")
+    if bibcode_prefix is not None:
+        clauses.append("AND p.bibcode LIKE %s")
+        params.append(f"{bibcode_prefix}%")
+    return (" " + " ".join(clauses)) if clauses else "", params
+
+
+def _section_dense_retrieve(
+    conn: psycopg.Connection,
+    query_vector: Sequence[float],
+    filter_sql: str,
+    filter_params: list[Any],
+    fanout: int,
+) -> list[tuple[str, int, float]]:
+    """Run the dense leg of section retrieval inside an explicit transaction.
+
+    Sets ``hnsw.iterative_scan = 'relaxed'`` and ``hnsw.ef_search = 100``
+    via ``SET LOCAL`` so they roll back on transaction end and don't leak
+    to other pool consumers.
+
+    Returns a list of ``(bibcode, section_index, distance)`` tuples ordered
+    by distance ascending (best first).
+    """
+    if fanout <= 0:
+        return []
+    vector_literal = "[" + ",".join(repr(float(v)) for v in query_vector) + "]"
+    sql = f"""
+        SELECT se.bibcode, se.section_index,
+               (se.embedding <=> %s::halfvec) AS distance
+        FROM section_embeddings se
+        JOIN papers p ON p.bibcode = se.bibcode
+        WHERE TRUE
+        {filter_sql}
+        ORDER BY se.embedding <=> %s::halfvec
+        LIMIT %s
+    """
+    params = [vector_literal, *filter_params, vector_literal, fanout]
+    rows: list[tuple[str, int, float]] = []
+    with conn.cursor() as cur:
+        cur.execute("BEGIN")
+        try:
+            cur.execute("SET LOCAL hnsw.iterative_scan = 'relaxed'")
+            cur.execute("SET LOCAL hnsw.ef_search = 100")
+            cur.execute(sql, params)
+            for row in cur.fetchall():
+                rows.append((row[0], int(row[1]), float(row[2])))
+            cur.execute("COMMIT")
+        except Exception:
+            cur.execute("ROLLBACK")
+            raise
+    return rows
+
+
+def _section_bm25_retrieve(
+    conn: psycopg.Connection,
+    query: str,
+    filter_sql: str,
+    filter_params: list[Any],
+    fanout: int,
+) -> list[tuple[str, int, float]]:
+    """Run the BM25 leg over papers_fulltext.sections_tsv.
+
+    The tsvector index ranks the *paper*; we then unnest each matching
+    paper's sections and emit one row per section whose body text matches
+    the query terms via plainto_tsquery, scored by ts_rank on that section
+    text. Returns ``(bibcode, section_index, ts_rank)`` tuples sorted by
+    rank descending (higher = better).
+    """
+    if fanout <= 0:
+        return []
+    sql = f"""
+        WITH matching_papers AS (
+            SELECT pf.bibcode, pf.sections,
+                   ts_rank(pf.sections_tsv, plainto_tsquery('english', %s)) AS paper_rank
+            FROM papers_fulltext pf
+            JOIN papers p ON p.bibcode = pf.bibcode
+            WHERE pf.sections_tsv @@ plainto_tsquery('english', %s)
+            {filter_sql}
+            ORDER BY paper_rank DESC
+            LIMIT %s
+        ),
+        per_section AS (
+            SELECT mp.bibcode,
+                   (sec.ord - 1)::int AS section_index,
+                   ts_rank(
+                       to_tsvector('english',
+                           coalesce(sec.value->>'heading', '') || ' ' ||
+                           coalesce(sec.value->>'text', '')
+                       ),
+                       plainto_tsquery('english', %s)
+                   ) AS section_rank
+            FROM matching_papers mp,
+                 jsonb_array_elements(mp.sections) WITH ORDINALITY AS sec(value, ord)
+            WHERE to_tsvector('english',
+                      coalesce(sec.value->>'heading', '') || ' ' ||
+                      coalesce(sec.value->>'text', '')
+                  ) @@ plainto_tsquery('english', %s)
+        )
+        SELECT bibcode, section_index, section_rank
+        FROM per_section
+        ORDER BY section_rank DESC, bibcode, section_index
+        LIMIT %s
+    """
+    params = [
+        query,  # paper_rank ts_rank
+        query,  # paper match
+        *filter_params,
+        fanout,  # paper LIMIT
+        query,  # section_rank ts_rank
+        query,  # section match
+        fanout,  # final LIMIT
+    ]
+    rows: list[tuple[str, int, float]] = []
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        for row in cur.fetchall():
+            rows.append((row[0], int(row[1]), float(row[2])))
+    return rows
+
+
+def _hydrate_section_payload(
+    conn: psycopg.Connection,
+    keys: Sequence[tuple[str, int]],
+) -> dict[tuple[str, int], dict[str, Any]]:
+    """Fetch heading + text for each (bibcode, section_index) key.
+
+    Reads ``papers_fulltext.sections`` JSONB once per bibcode and indexes
+    into the requested section. Returns a dict keyed by (bibcode, idx)
+    whose values carry ``section_heading`` and ``snippet`` (truncated).
+    """
+    if not keys:
+        return {}
+    bibcodes = sorted({k[0] for k in keys})
+    payloads: dict[tuple[str, int], dict[str, Any]] = {}
+    sections_by_bibcode: dict[str, list[Any]] = {}
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT bibcode, sections FROM papers_fulltext WHERE bibcode = ANY(%s)",
+            (bibcodes,),
+        )
+        for bibcode, sections in cur.fetchall():
+            if isinstance(sections, (str, bytes)):
+                try:
+                    sections = json.loads(sections)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    sections = []
+            if isinstance(sections, list):
+                sections_by_bibcode[bibcode] = sections
+    for bibcode, idx in keys:
+        sections = sections_by_bibcode.get(bibcode) or []
+        section: dict[str, Any] | None = None
+        if 0 <= idx < len(sections) and isinstance(sections[idx], dict):
+            section = sections[idx]
+        heading = (section.get("heading") if section else None) or ""
+        text = (section.get("text") if section else None) or ""
+        payloads[(bibcode, idx)] = {
+            "section_heading": heading,
+            "snippet": _truncate_snippet(text, _SNIPPET_MAX_CHARS),
+        }
+    return payloads
+
+
+def _hydrate_canonical_urls(
+    conn: psycopg.Connection,
+    bibcodes: Sequence[str],
+) -> dict[str, str | None]:
+    """Map each bibcode to a canonical_url.
+
+    Uses the first identifier in ``papers.identifier`` matching the arXiv
+    pattern (mirrors :func:`scix.search._lookup_arxiv_id`) and feeds it to
+    :func:`scix.sources.ar5iv._build_canonical_url`. bibcodes without an
+    arXiv identifier map to None.
+    """
+    if not bibcodes:
+        return {}
+    from scix.sources.ar5iv import _ARXIV_ID_RE, _build_canonical_url
+
+    out: dict[str, str | None] = {bibcode: None for bibcode in bibcodes}
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT bibcode, identifier FROM papers WHERE bibcode = ANY(%s)",
+            (list(bibcodes),),
+        )
+        for bibcode, identifiers in cur.fetchall():
+            if not identifiers:
+                continue
+            for ident in identifiers:
+                if isinstance(ident, str) and _ARXIV_ID_RE.match(ident):
+                    out[bibcode] = _build_canonical_url(ident)
+                    break
+    return out
+
+
+def _handle_section_retrieval(conn: psycopg.Connection, args: dict[str, Any]) -> str:
+    """Dispatch handler for ``section_retrieval``.
+
+    Encodes the query with the local nomic model, runs dense HNSW + BM25
+    retrieval in parallel (sequentially in code, structurally independent),
+    fuses ranks via Reciprocal Rank Fusion (k=60), hydrates section text +
+    canonical_url, and returns the top ``k`` items.
+    """
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return json.dumps({"error": "query must be a non-empty string"})
+
+    try:
+        k = int(args.get("k", 10))
+    except (TypeError, ValueError):
+        return json.dumps({"error": "k must be an integer"})
+    if k <= 0:
+        return json.dumps({"error": "k must be positive"})
+    # Cap fanout to keep blast radius bounded; matches the convention used
+    # elsewhere in this module (find_gaps caps at 200).
+    k = min(k, 200)
+
+    try:
+        filter_sql, filter_params = _section_filter_clauses(args.get("filters"))
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
+
+    # Encode the query with the local nomic model.
+    try:
+        query_vector = _encode_section_query(query)
+    except ImportError:
+        return json.dumps(
+            {
+                "error": "embedding_dependency_missing",
+                "hint": (
+                    "section_retrieval requires sentence-transformers. "
+                    "Install with: pip install -e .[search]"
+                ),
+            }
+        )
+    except Exception as exc:  # noqa: BLE001 — boundary
+        logger.exception("section_retrieval encode failed")
+        return json.dumps({"error": f"encode_failed: {exc}"})
+
+    fanout = max(50, k * 10)
+
+    # Dense leg — explicit txn so SET LOCAL settings apply.
+    try:
+        dense_rows = _section_dense_retrieve(
+            conn, query_vector, filter_sql, filter_params, fanout
+        )
+    except Exception as exc:  # noqa: BLE001 — boundary
+        logger.exception("section_retrieval dense leg failed")
+        return json.dumps({"error": f"dense_retrieve_failed: {exc}"})
+
+    # BM25 leg.
+    try:
+        bm25_rows = _section_bm25_retrieve(
+            conn, query, filter_sql, filter_params, fanout
+        )
+    except Exception as exc:  # noqa: BLE001 — boundary
+        logger.exception("section_retrieval bm25 leg failed")
+        return json.dumps({"error": f"bm25_retrieve_failed: {exc}"})
+
+    dense_keys: list[tuple[str, int]] = [(b, i) for (b, i, _d) in dense_rows]
+    bm25_keys: list[tuple[str, int]] = [(b, i) for (b, i, _r) in bm25_rows]
+
+    fused = _rrf_fuse([dense_keys, bm25_keys], k_rrf=_RRF_K_DEFAULT)
+    top_keys = [key for (key, _score) in fused[:k]]
+
+    payloads = _hydrate_section_payload(conn, top_keys)
+    bibcodes = sorted({k_[0] for k_ in top_keys})
+    canonical_urls = _hydrate_canonical_urls(conn, bibcodes)
+
+    score_by_key = {key: score for (key, score) in fused}
+    results: list[dict[str, Any]] = []
+    for key in top_keys:
+        bibcode, idx = key
+        payload = payloads.get(key) or {}
+        results.append(
+            {
+                "bibcode": bibcode,
+                "section_heading": payload.get("section_heading", ""),
+                "snippet": payload.get("snippet", ""),
+                "score": float(score_by_key.get(key, 0.0)),
+                "canonical_url": canonical_urls.get(bibcode),
+            }
+        )
+    return json.dumps(
+        {"results": results, "total": len(results)},
+        indent=2,
+        default=str,
+    )
 
 
 def _handle_entity_profile(conn: psycopg.Connection, args: dict[str, Any]) -> str:

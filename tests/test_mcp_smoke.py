@@ -1,11 +1,12 @@
-"""Smoke tests for all 15 consolidated MCP tools.
+"""Smoke tests for all 16 consolidated MCP tools.
 
 These tests catch total breakage of any tool on every deploy. They:
 
 1. Verify ``startup_self_test`` succeeds against a freshly-created server
-   (15 tools, valid schemas) — 13 baseline + 2 PRD MH-4 tools
-   (claim_blame, find_replications).
-2. Call each of the 15 consolidated tools via ``_dispatch_tool`` with a
+   (16 tools, valid schemas) — 13 baseline + 2 PRD MH-4 tools
+   (claim_blame, find_replications) + 1 section_retrieval tool from the
+   section-embeddings-mcp-consolidation PRD.
+2. Call each of the 16 consolidated tools via ``_dispatch_tool`` with a
    minimal golden-path input and assert the returned JSON is a valid
    non-error response (no exception raised, no top-level ``error`` key).
 
@@ -87,10 +88,11 @@ def mock_conn() -> MagicMock:
 class TestStartupSelfTest:
     """Validates the server's self-test catches missing/broken tools."""
 
-    def test_expected_tools_has_15_entries(self) -> None:
+    def test_expected_tools_has_16_entries(self) -> None:
         # PRD MH-4 grew the baseline of 13 by 2 (claim_blame, find_replications).
-        assert len(EXPECTED_TOOLS) == 15
-        assert len(set(EXPECTED_TOOLS)) == 15  # no duplicates
+        # PRD section-embeddings-mcp-consolidation added section_retrieval.
+        assert len(EXPECTED_TOOLS) == 16
+        assert len(set(EXPECTED_TOOLS)) == 16  # no duplicates
 
     def test_self_test_passes_on_fresh_server(self) -> None:
         """A freshly created server must pass the self-test."""
@@ -103,7 +105,7 @@ class TestStartupSelfTest:
             status = startup_self_test()
 
         assert status["ok"] is True
-        assert status["tool_count"] == 15
+        assert status["tool_count"] == 16
         assert status["errors"] == []
         assert sorted(EXPECTED_TOOLS) == status["tool_names"]
 
@@ -114,7 +116,7 @@ class TestStartupSelfTest:
         except ImportError:
             pytest.skip("mcp SDK not installed")
 
-        # Build a fake server where the list_tools handler returns 14 tools
+        # Build a fake server where the list_tools handler returns 15 tools
         # (one short of EXPECTED_TOOLS).
         fake_server = MagicMock()
         bad_tools = [
@@ -123,7 +125,7 @@ class TestStartupSelfTest:
                 description="x",
                 inputSchema={"type": "object", "properties": {}},
             )
-            for i in range(14)
+            for i in range(15)
         ]
 
         async def bad_handler(_req: Any) -> Any:
@@ -141,7 +143,7 @@ class TestStartupSelfTest:
         except ImportError:
             pytest.skip("mcp SDK not installed")
 
-        # 15 tools but one expected name replaced with a bogus one.
+        # 16 tools but one expected name replaced with a bogus one.
         swapped = list(EXPECTED_TOOLS)
         swapped[0] = "not_a_real_tool"
         bad_tools = [
@@ -169,7 +171,7 @@ class TestStartupSelfTest:
 
 
 class TestToolSmoke:
-    """Golden-path smoke test for each of the 15 consolidated tools."""
+    """Golden-path smoke test for each of the 16 consolidated tools."""
 
     @patch("scix.mcp_server._log_query")
     @patch(
@@ -458,6 +460,30 @@ class TestToolSmoke:
         data = _assert_non_error(out, "find_replications")
         assert "citations" in data
         assert "total" in data
+
+    @patch("scix.mcp_server._log_query")
+    @patch(
+        "scix.mcp_server._encode_section_query",
+        return_value=[0.0] * 1024,
+    )
+    def test_section_retrieval(
+        self,
+        _mock_encode: MagicMock,
+        _mock_log: MagicMock,
+        mock_conn: MagicMock,
+    ) -> None:
+        """PRD section-embeddings-mcp-consolidation: section_retrieval dispatch returns results envelope."""
+        # mock_conn's cursor.fetchall returns []; both retrieval legs come
+        # back empty and the tool returns {results: [], total: 0}.
+        out = _dispatch_tool(
+            mock_conn,
+            "section_retrieval",
+            {"query": "Hubble constant tension"},
+        )
+        data = _assert_non_error(out, "section_retrieval")
+        assert "results" in data
+        assert "total" in data
+        assert data["total"] == 0
 
     @patch("scix.mcp_server._log_query")
     @patch("scix.search.facet_counts")

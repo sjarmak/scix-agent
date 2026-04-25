@@ -152,3 +152,84 @@ your Cloudflare Access app.
 - Cloudflare Zero Trust → Logs → Access → per-user access log.
 - Rebuild image monthly to pick up base-image CVE fixes:
   `docker compose build --no-cache scix-mcp && docker compose up -d`.
+
+## Rerank rollout
+
+The `mcp__scix__search` tool exposes a `use_rerank: bool = True` flag
+which, when honored, runs the retrieved candidates through a cross-
+encoder reranker selected by the `SCIX_RERANK_DEFAULT_MODEL` environment
+variable (wired in commit `1ea69b7`).
+
+**Active value: `SCIX_RERANK_DEFAULT_MODEL=off` (the shipped default).**
+
+This default exists because the M1 ablation (commit `06a6cc3`,
+[`results/retrieval_eval_50q_rerank_local.md`](../results/retrieval_eval_50q_rerank_local.md))
+showed both candidate rerankers regress nDCG@10 vs the unranked
+INDUS-hybrid baseline at the Bonferroni-corrected α=0.025 threshold:
+
+| Config             | nDCG@10 | Δ vs baseline | Wilcoxon p | Verdict             |
+|--------------------|---------|---------------|------------|---------------------|
+| `hybrid_indus`     | 0.3255  | —             | —          | baseline (winner)   |
+| `minilm`           | 0.2802  | −0.0453       | 0.042      | regression          |
+| `bge-large`        | 0.2699  | −0.0556       | 0.026      | regression          |
+
+Neither candidate clears the gate, so M4 closed with rerank disabled.
+The negative result is documented above so future operators don't re-run
+the same A/B with the same models expecting a different answer.
+
+### Flipping rerank on (operator opt-in)
+
+A fresh-eyes operator who wants to experiment can set the env var to one
+of the two known model paths and restart the MCP server:
+
+```bash
+# Option A: MiniLM (~80 MB, fast — the default operator-flip target)
+echo 'SCIX_RERANK_DEFAULT_MODEL=minilm' >> deploy/.env
+
+# Option B: BAAI/bge-reranker-large (~1.3 GB, slower; weights expected
+# under models/bge-reranker-large or HF cache)
+echo 'SCIX_RERANK_DEFAULT_MODEL=bge-large' >> deploy/.env
+
+docker restart scix-mcp
+```
+
+Implications:
+
+- Per-call latency grows by the rerank stage. M1 measurements: MiniLM
+  p95 ≈ 70 ms (CPU, 50 candidates); bge-reranker-large p95 ≈ 570 ms (GPU)
+  / 4+ s (CPU). On the deployed server (CPU-only) bge-reranker-large is
+  in 4-second territory per call.
+- Retrieval quality is *expected to drop* on the 50-query gold set per
+  M1. If the operator's experiment depends on a different metric (e.g.
+  per-query Top-1 quality on a domain-specific subset) that's a valid
+  reason to flip, but the headline nDCG@10 number will look worse.
+- Roll back by restoring `SCIX_RERANK_DEFAULT_MODEL=off` (or removing
+  the line entirely; `off` is the hard-coded fallback) and restarting
+  the container.
+
+## Daily canaries
+
+Even with rerank disabled by default, we run a small daily smoke test
+against the MiniLM checkpoint. The canary catches model behaviour drift
+(e.g. an upstream HuggingFace re-upload that silently changes weights)
+and verifies the `CrossEncoderReranker` integration surface still loads
++ scores end-to-end, so when a follow-up reranker lands we have
+continuity.
+
+| Canary             | Script                              | Purpose                                                    |
+|--------------------|-------------------------------------|------------------------------------------------------------|
+| MiniLM rerank      | [`scripts/canary_rerank.py`](../scripts/canary_rerank.py) | 20 fixed (query, paper) pairs; alert on >5% score drift |
+| NER drift          | [`scripts/canary_ner.py`](../scripts/canary_ner.py)       | 10 fixed snippets; alert on >5% per-entity F1 drift     |
+
+Sample cron entries (operators add their own — nothing is auto-installed):
+
+```cron
+# Daily MiniLM rerank drift check at 06:00 local
+0 6 * * * cd /home/ds/projects/scix_experiments && .venv/bin/python scripts/canary_rerank.py >> logs/canary_rerank/cron.log 2>&1
+
+# Daily NER drift check at 03:00 local
+0 3 * * * cd /home/ds/projects/scix_experiments && .venv/bin/python scripts/canary_ner.py >> logs/canary_ner/cron.log 2>&1
+```
+
+Both canaries exit non-zero on drift, so any cron-mail or
+log-monitoring wrapper picks up the failure for free.

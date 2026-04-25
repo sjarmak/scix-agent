@@ -1,0 +1,170 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-04-25T16:23:47Z",
+  "model_name": "cross-encoder/ms-marco-MiniLM-L-12-v2",
+  "drift_threshold": 0.05,
+  "gold_path": "results/retrieval_eval_50q.json",
+  "abstract_snippet_chars": 1000,
+  "pairs": [
+    {
+      "query_id": "2012AuJES..59..253J",
+      "paper_id": "1948RSPSA.193..120P",
+      "query": "Using the phase diagram of liquid water to search for life. The correlation between liquid water and life may be our most reliable tool in the search for extraterrestrial life. To help develop this tool, we explore the complex relationship between liquid water, partial pressure, and solute freezing point depression on Earth and Mars and discuss the conditions under which liquid",
+      "paper_title": "Natural Evaporation from Open Water, Bare Soil and Grass",
+      "paper_abstract_snippet": "Two theoretical approaches to evaporation from saturated surfaces are outlined, the first being on an aerodynamic basis in which evaporation is regarded as due to turbulent transport of vapour by a process of eddy diffusion, and the second being on an energy basis in which evaporation is regarded as one of the ways of degrading incoming radiation. Neither approach is new, but a combination is suggested that eliminates the parameter measured with most difficulty-surface temperature-and provides for the first time an opportunity to make theoretical estimates of evaporation rates from standard meteorological data, estimates that can be retrospective. Experimental work to test these theories shows that the aerodynamic approach is not adequate and an empirical expression, previously obtained in America, is a better description of evaporation from open water. The energy balance is found to be quite successful. Evaporation rates from wet bare soil and from turf with an adequate supply of wate",
+      "baseline_score": -3.792707920074463
+    },
+    {
+      "query_id": "2023NuPhB.99416323D",
+      "paper_id": "1973PhRvD...8.1226L",
+      "query": "Flavour and Higgs physics in Z<SUB>2</SUB>-symmetric 2HD models near the decoupling limit. With no evidence of any exotic particle detected so far beyond the Standard Model, the new physics may lie above the presently accessible energies at colliders and, at low-energies, can be accounted for via an effective description. The interplay of flavour and Higgs physics data allows setting stringent bounds on",
+      "paper_title": "A Theory of Spontaneous T Violation",
+      "paper_abstract_snippet": "A theory of spontaneous T violation is presented. The total Lagrangian is assumed to be invariant under the time reversal T and a gauge transformation (e.g., the hypercharge gauge), but the physical solutions are not. In addition to the spin-1 gauge field and the known matter fields, in its simplest form the theory consists of two complex spin-0 fields. Through the spontaneous symmetry-breaking mechanism of Goldstone and Higgs, the vacuum expectation values of these two spin-0 fields can be characterized by the shape of a triangle and their quantum fluctuations by its vibrational modes, just like a triangular molecule. T violations can be produced among the known particles through virtual excitations of the vibrational modes of the triangle which has a built-in T-violating phase angle. Examples of both Abelian and non-Abelian gauge groups are discussed. For renormalizable theories, all spontaneously T-violating effects are finite. It is found that at low energy, below the threshold of ",
+      "baseline_score": -0.6218470335006714
+    },
+    {
+      "query_id": "2024JSAES.14805180L",
+      "paper_id": "1965PCE.....6..133T",
+      "query": "Serra Negra granites as a record of Tonian rifting within the Sergipano Orogenic System, NE Brazil. The Serra Negra batholith (940 \u00b1 7 Ma) is one of the most important intrusions related to the Cariris Velhos event (0.9\u20131.0 Ga) in the southern Borborema Province, NE Brazil. This body crops out as discontinuous slices tectonically intercalated with metasedimentary sequences of the Maranc\u00f3 Domain in the northwestern segment",
+      "paper_title": "The application of trace element data to problems in petrology",
+      "paper_abstract_snippet": "",
+      "baseline_score": 0.39678841829299927
+    },
+    {
+      "query_id": "2022FrASS...8..244H",
+      "paper_id": "1984JGR....89.6329C",
+      "query": "Atmospheric, Geomorphological and Compositional analysis of Martian Asimov and Hale Craters: implications for Recurring Slope Lineae. Recurring Slope Lineae (RSL) are small, dark, seasonal albedo features lengthening down \"warm\" Martian steep slopes. Their origin has been attributed to both liquid and dry processes, hence representing one of the major open science questions on present day Mars. In the present study, we report a catalog of previous",
+      "paper_title": "Reflectance spectroscopy: quantitative analysis techniques for remotesensing applications.",
+      "paper_abstract_snippet": "The empirical methods and scattering theories that are important for solving remote sensing problems are among the methods for remotely sensed reflectance data analysis presently compared. In the case of the photon mean optical path length concept's implications for reflectance spectra modeling, it is shown that the mean optical path length in a particulate surface is in roughly inverse proportion to the square root of the absorption coefficient. Absorption bands, which are Gaussian in shape when plotted as true absorptance vs photon energy, are also Gaussians in apparent absorptance, although they have a smaller intensity. An apparent continuum in a reflectance spectrum is modeled as a mathematical function that is used to isolate a particular absorption feature for analysis, and it is noted that this continuum should be removed by dividing it into the reflectance spectrum.",
+      "baseline_score": -2.5775554180145264
+    },
+    {
+      "query_id": "2021AngCh.13319513B",
+      "paper_id": "1987ApPhL..51..913T",
+      "query": "Tetrabenzo[ a , c ]phenazine Backbone for Highly Efficient Orange-Red Thermally Activated Delayed Fluorescence with Completely Horizontal Molecular Orientation. Three thermally activated delayed fluorescence (TADF) molecules, namely PQ1, PQ2, and PQ3, are composed of electron-accepting (A) tetrabenzo[a,c]phenazine (TBPZ) and electron-donating (D) phenoxazine (PXZ) units are designed and characterized. The combined effects of planar acceptor manipulation and high steric hindrance between D and A units endow high molecular rigidity that",
+      "paper_title": "Organic electroluminescent diodes",
+      "paper_abstract_snippet": "A novel electroluminescent device is constructed using organic materials as the emitting elements. The diode has a double-layer structure of organic thin films, prepared by vapor deposition. Efficient injection of holes and electrons is provided from an indium-tin-oxide anode and an alloyed Mg:Ag cathode. Electron-hole recombination and green electroluminescent emission are confined near the organic interface region. High external quantum efficiency (1% photon/electron), luminous efficiency (1.5 lm/W), and brightness (&gt;1000 cd/m<SUP>2</SUP>) are achievable at a driving voltage below 10 V.",
+      "baseline_score": 2.160130023956299
+    },
+    {
+      "query_id": "2025JHEP...01..081A",
+      "paper_id": "1956PhRv..101..860W",
+      "query": "Higher-dimensional Willmore energy as holographic entanglement entropy. The vacuum entanglement entropy of a general conformal field theory (CFT) in d = 5 spacetime dimensions contains a universal term, F(A), which has a complicated and non-local dependence on the geometric details of the region A and the theory. Analogously to the previously known d = 3 case, we",
+      "paper_title": "Quantum Field Theory in Terms of Vacuum Expectation Values",
+      "paper_abstract_snippet": "Vacuum expectation values of products of neutral scalar field operators are discussed. The properties of these distributions arising from Lorentz invariance, the absence of negative energy states and the positive definiteness of the scalar product are determined. The vacuum expectation values are shown to be boundary values of analytic functions. Local commutativity of the field is shown to be equivalent to a symmetry property of the analytic functions. The problem of determining a theory of a neutral scalar field given its vacuum expectation values is posed and solved.",
+      "baseline_score": -3.7986159324645996
+    },
+    {
+      "query_id": "2022arXiv220713544W",
+      "paper_id": "1996PhRvD..53.4991B",
+      "query": "Anomalies in charged-current $B$ decays. This paper reviews the recent progresses of the flavor and collider searches that can probe New Physics effects responsible for the current discrepancy in the lepton flavor universality ratio of $R_{D^{(*)}}$ between the experimental measurements and SM values.",
+      "paper_title": "B<SUB>c</SUB> meson lifetime",
+      "paper_abstract_snippet": "We investigate the total inclusive decay rate of the (ground state) B<SUB>c</SUB> meson within the framework of an operator product expansion in inverse powers of the heavy quark masses and subsequent matching onto nonrelativistic QCD. The expansion is organized as a series in the strong coupling and in powers of the heavy quark velocities in the B<SUB>c</SUB>, reflecting the nonrelativistic nature of a heavy-heavy bound state. In this aspect the character of the expansion differs from the more familiar case of heavy-light mesons. The framework incorporates systematically corrections to the leading b- and c-quark decays due to binding effects, as well as contributions from weak annihilation and Pauli interference. Based on this approach we find for the B<SUB>c</SUB> meson lifetime \u03c4<SUB>B<SUB>c</SUB></SUB>=(0.4-0.7) ps, the dominant mechanism being the decay of the charm constituent.",
+      "baseline_score": -2.7593350410461426
+    },
+    {
+      "query_id": "2023arXiv230313711A",
+      "paper_id": "1935NW.....23..807S",
+      "query": "Aspects of Holographic Entanglement Entropy in Cubic Curvature Gravity. In this thesis we explore general aspects of the entanglement entropy (EE) for Conformal Field Theories (CFTs) dual to Cubic Curvature Gravity. We derived a covariant expression for the EE by using a scheme inherited from the bulk renormalization method through extrinsic counterterms. We evaluate this functional in different entangling",
+      "paper_title": "Die gegenw\u00e4rtige Situation in der Quantenmechanik",
+      "paper_abstract_snippet": "",
+      "baseline_score": 5.618993282318115
+    },
+    {
+      "query_id": "2022PgERS..88..535C",
+      "paper_id": "2006ITGRS..44.2839M",
+      "query": "TPPI: A Novel Network Framework and Model for Efficient Hyperspectral Image Classification. Hyperspectral image (HSI) classification is the most vibrant research field in the hyperspectral community, aiming to assign each pixel in the image to one certain land cover category based on its spectral or spectral-spatial characteristics. Recently, some spectral-spatial\u2013feature deep learning\u2013based convolutional neural networks have been proposed and demonstrated remarkable classification",
+      "paper_title": "Partially Supervised Oil-Slick Detection by SAR Imagery Using Kernel Expansion",
+      "paper_abstract_snippet": "Spaceborne synthetic aperture radar (SAR) is well adapted to detect ocean pollution independently from daily or weather conditions. In fact, oil slicks have a specific impact on ocean wave spectra. Initial wave spectra may be characterized by three kinds of waves, namely big, medium, and small, which correspond physically to gravity and gravity-capillary waves. The increase of viscosity, due to the presence of oil damps gravity-capillary waves. This induces not only a damping of the backseat-tering to the sensor but also a damping of the energy of the wave spectra. Thus, local segmentation of wave spectra may be achieved by the segmentation of a multiscale decomposition of the original SAR image. In this paper, a semisupervised oil-slick detection is proposed by using a kernel-based abnormal detection into the wavelet decomposition of a SAR image. It performs accurate detection with no consideration to signal stationarity nor to the presence of strong backscatters (such as a ship). The",
+      "baseline_score": -3.1914663314819336
+    },
+    {
+      "query_id": "2022JARS...16c4534W",
+      "paper_id": "2003ITGRS..41.1940B",
+      "query": "Hyperspectral image classification method by coupling particle swarm optimization and multiple kernel support vector machine. There are two heterogeneous data types in hyperspectral image (HSI): rich spectral data and spatial information. Recent research has shown that the application of spectral-spatial information significantly improves HSI accuracy; thus, multiple-feature combination-based methods have been favored by researchers in the field of HSI classification. A multiple-feature combination approach, based",
+      "paper_title": "Classification and Feature Extraction for Remote Sensing Images From Urban Areas Based on Morphological Transformations",
+      "paper_abstract_snippet": "Classification of panchromatic high-resolution data from urban areas using morphological and neural approaches is investigated. The proposed approach is based on three steps. First, the composition of geodesic opening and closing operations of different sizes is used in order to build a differential morphological profile that records image structural information. Although, the original panchromatic image only has one data channel, the use of the composition operations will give many additional channels, which may contain redundancies. Therefore, feature extraction or feature selection is applied in the second step. Both discriminant analysis feature extraction and decision boundary feature extraction are investigated in the second step along with a simple feature selection based on picking the largest indexes of the differential morphological profiles. Third, a neural network is used to classify the features from the second step. The proposed approach is applied in experiments on high-",
+      "baseline_score": 1.3344707489013672
+    },
+    {
+      "query_id": "2022NucFu..62l6051G",
+      "paper_id": "1994PPCF...36.1307M",
+      "query": "Simulation study of the influence of upstream density and power in the scrape-off layer on the double-peaked density profile at the divertor target. The double-peaked distribution of particle deposition at divertor targets has been observed in various tokamaks, and is considered a potential approach for mitigating divertor particles and heat load in future fusion reactors. Recently, the systematical analysis of the double-peaked distribution behavior during EAST experiments shows that the appearance of the",
+      "paper_title": "Experimental investigation of marfes and the density limit in the ASDEX upgrade",
+      "paper_abstract_snippet": "",
+      "baseline_score": -2.576742172241211
+    },
+    {
+      "query_id": "2016JFuE...35...31S",
+      "paper_id": "2007NucFu..47S.203L",
+      "query": "Tokamak Power Exhaust with the Snowflake Divertor: Present Results and Outstanding Issues. A snowflake divertor magnetic configuration (Ryutov in Phys Plasmas 14(6):064502, 2007) with the second-order poloidal field null offers a number of possible advantages for tokamak plasma heat and particle exhaust in comparison with the standard poloidal divertor with the first-order null. Results from snowflake divertor experiments are briefly reviewed and",
+      "paper_title": "Chapter 4: Power and particle control",
+      "paper_abstract_snippet": "Progress, since the ITER Physics Basis publication (ITER Physics Basis Editors et al <A>1999 Nucl. Fusion 39 2137-2664</A>), in understanding the processes that will determine the properties of the plasma edge and its interaction with material elements in ITER is described. Experimental areas where significant progress has taken place are energy transport in the scrape-off layer (SOL) in particular of the anomalous transport scaling, particle transport in the SOL that plays a major role in the interaction of diverted plasmas with the main-chamber material elements, edge localized mode (ELM) energy deposition on material elements and the transport mechanism for the ELM energy from the main plasma to the plasma facing components, the physics of plasma detachment and neutral dynamics including the edge density profile structure and the control of plasma particle content and He removal, the erosion of low- and high-Z materials in fusion devices, their transport to the core plasma and their",
+      "baseline_score": 4.166356086730957
+    },
+    {
+      "query_id": "2017Icar..290..215S",
+      "paper_id": "1963Icar....2..293P",
+      "query": "Biotoxicity of Mars soils: 2. Survival of Bacillus subtilis and Enterococcus faecalis in aqueous extracts derived from six Mars analog soils. The search for an extant microbiota on Mars depends on exploring sites that contain transient or permanent liquid water near the surface. Examples of possible sites for liquid water may be active recurring slope lineae (RSL) and fluid inclusions in ice or salt deposits. The presence of saline fluids on",
+      "paper_title": "Biological Contamination of Mars II. Cold and Aridity as Constraints on the Survival of Terrestrial Microorganisms in Simulated Martian Environments",
+      "paper_abstract_snippet": "It has been postulated that the accidental introduction of terrestial microorganisms to other planets during the course of space exploration may impede or bias the detection of organic matter and possible indigenous organisms, and thereby obscure subsequent studies of extraterrestial life. To assess the likelihood of biological contamination of Mars, we have applied the principle of natural selection on a laboratory scale. Terrestial microorganisms were collected from a variety of environments, including regions of high alkalinity, low mean daily temperature, and low annual rainfall. The air-dried soils were then subjected in the presence of a dessicant to a stimulated Martian environment involving 12-hour freeze-thaw cycles from about -60\u00b0C to about +20\u00b0C; atmospheres of 95% nitrogen, 5% carbon dioxide, and low moisture content; \u22640.1 atm pressure; and a total ultraviolet dose at 2537A\u02daof 10 <SUP>9</SUP> erg cm <SUP>-2</SUP>. Survivors were scored on supplemented agar. Preliminary resu",
+      "baseline_score": 0.284368097782135
+    },
+    {
+      "query_id": "2016ITPS...44.3445S",
+      "paper_id": "1992JNuM..196..347R",
+      "query": "Snowflake Divertor Experiments in the DIII-D, NSTX, and NSTX-U Tokamaks Aimed at the Development of the Divertor Power Exhaust Solution. Experimental results from the National Spherical Torus Experiment (NSTX), a medium-size spherical tokamak with a compact divertor, and DIII-D, a large conventional aspect ratio tokamak, demonstrate that the snowflake (SF) divertor configuration may provide a promising solution for mitigating divertor heat loads and target plate erosion compatible with core H-mode",
+      "paper_title": "A fully implicit, time dependent 2-D fluid code for modeling tokamak edge plasmas",
+      "paper_abstract_snippet": "A fully implicit, time dependent 2-D fluid code is described that models the edge plasma region of a tokamak with a divertor or limiter. Equations solved are for particle continuity, parallel momentum, electron energy, ion energy, electrostatic potential, and neutral gas diffusion. We include the effects of parallel currents and cross-field drifts so that divertor biasing can be investigated. The core plasma is poloidally periodic, and the inner and outer private flux regions are properly connected. An implicit method-of-lines scheme is used to advance the variables in time utilizing the Krylov technique which does not require explicit formation or solution of the Jacobian matrix. However, for good performance, the problem needs to be preconditioned; a numerically generated Jacobian is used for this stage. The Jacobian can also be used to obtain the steady state solution by standard Newton iteration. Results are presented on the effects of biasing and parallel currents for DIII-D singl",
+      "baseline_score": 5.60623836517334
+    },
+    {
+      "query_id": "2020JHEP...12..016A",
+      "paper_id": "1974PhRvL..32..438G",
+      "query": "B anomalies under the lens of electroweak precision. The measurements carried out at LEP and SLC projected us into the precision era of electroweak physics. This has also been relevant in the theoretical interpretation of LHCb and Belle measurements of rare B semileptonic decays, paving the road for new physics with the inference of lepton universality violation in",
+      "paper_title": "Unity of All Elementary-Particle Forces",
+      "paper_abstract_snippet": "Strong, electromagnetic, and weak forces are conjectured to arise from a single fundamental interaction based on the gauge group SU(5).",
+      "baseline_score": -0.29962486028671265
+    },
+    {
+      "query_id": "2020Sust...12.5246S",
+      "paper_id": "1995EnvER...1..195T",
+      "query": "Education for Sustainability in Practice: A Review of Current Strategies within Italian Universities. Universities play a crucial role in the short-term implementation of education for sustainable development goals (SDGs). The fourth SDG aims to \"ensure inclusive and equitable quality education and to promote lifelong learning opportunities for all\". Indeed, SDG4 is not intended as a goal in itself, but rather, a tool to",
+      "paper_title": "Environmental Education for Sustainability: defining the new focus of environmental education in the 1990s",
+      "paper_abstract_snippet": "",
+      "baseline_score": -1.2136423587799072
+    },
+    {
+      "query_id": "2021PhRvD.103a5018F",
+      "paper_id": "1961NucPh..22..579G",
+      "query": "Gravitational wave signatures of lepton universality violation. We analyze the prospects for using gravitational waves produced in early universe phase transitions as a complementary probe of the flavor anomalies in B meson decays. We focus on the left-right SU(4) model, for which the strength of the observed lepton universality violation and consistency with other experiments impose a",
+      "paper_title": "Partial-symmetries of weak interactions",
+      "paper_abstract_snippet": "Weak and electromagnetic interactions of the leptons are examined under the hypothesis that the weak interactions are mediated by vector bosons. With only an isotopic triplet of leptons coupled to a triplet of vector bosons (two charged decay-intermediaries and the photon) the theory possesses no partial-symmetries. Such symmetries may be established if additional vector bosons or additional leptons are introduced. Since the latter possibility yields a theory disagreeing with experiment, the simplest partially-symmetric model reproducing the observed electromagnetic and weak interactions of leptons requires the existence of at least four vector-boson fields (including the photon). Corresponding partially-conserved quantities suggest leptonic analogues to the conserved quantities associated with strong interactions: strangeness and isobaric spin.",
+      "baseline_score": 1.31980562210083
+    },
+    {
+      "query_id": "2021EnInt.15606635R",
+      "paper_id": "1979RSEnv...8..127T",
+      "query": "Multiple environmental exposures along daily mobility paths and depressive symptoms: A smartphone-based tracking study. Few studies go beyond the residential environment in assessments of the environment-mental health association, despite multiple environments being encountered in daily life. This study investigated 1) the associations between multiple environmental exposures and depressive symptoms, both in the residential environment and along the daily mobility path, 2) examined differences in",
+      "paper_title": "Red and photographic infrared linear combinations for monitoring vegetation",
+      "paper_abstract_snippet": "In situ collected spectrometer data were used to evaluate and quantify the relationships between various linear combinations of red and photographic infrared radiances and experimental plot biomass, leaf water content, and chlorophyll content. The radiance variables evaluated included the red and photographic infrared (IR) radiance and the linear combinations of the IR/red ratio, the square root of the IR/red ratio, the IR-red difference, the vegetation index, and the transformed vegetation index. In addition, the corresponding green and red linear combinations were evaluated for comparative purposes. Three data sets were used from June, September, and October sampling periods. <P />Regression analysis showed the increased utility of the IR and red linear combinations vis-\u00e0-vis the same green and red linear combinations. The red and IR linear combinations had 7% and 14% greater regression significance than the green and red linear combinations for the June and September sampling period",
+      "baseline_score": 4.370033264160156
+    },
+    {
+      "query_id": "2023PhRvD.108l4075A",
+      "paper_id": "1960PhRv..117.1595A",
+      "query": "Aspects of higher-curvature gravities with covariant derivatives. We study various aspects of higher-curvature theories of gravity built from contractions of the metric, the Riemann tensor, and the covariant derivative, L (g<SUP>a b</SUP>,R<SUB>a b c d</SUB>,\u2207<SUB>a</SUB>). We characterize the linearized spectrum of these theories and compute the modified Newton potential in the general case. Then, we present the",
+      "paper_title": "Canonical Variables for General Relativity",
+      "paper_abstract_snippet": "The general theory of relativity is cast into normal Hamiltonian form in terms of two pairs of independent conjugate field variables. These variables are explicitly exhibited and obey ordinary Poisson bracket relations. This form is reached by imposing a simple set of coordinate conditions. It is shown that those functionals of the metric used as invariant coordinates do not appear explicitly in the Hamiltonian and momentum densities, so that the standard differential conservation laws hold. The bearing of these results on the quantization problem is discussed.",
+      "baseline_score": 2.293708324432373
+    },
+    {
+      "query_id": "2012A&A...547A..14Z",
+      "paper_id": "1951PhRv...83..307L",
+      "query": "Kelvin-Helmholtz instability of kink waves in photospheric twisted flux tubes. <BR /> Aims: We investigate conditions under which kink magnetohydrodynamic waves propagating along photospheric uniformly twisted flux tubes with axial mass flows become unstable as a consequence of the Kelvin-Helmholtz instability. <BR /> Methods: We employed the dispersion relations of kink waves derived from the linearised magnetohydrodynamic equations. We assumed",
+      "paper_title": "On the Stability of Magneto-Hydrostatic Fields",
+      "paper_abstract_snippet": "The stability of static magnetic fields in an electrically conducting liquid is investigated. The result of the study is applied to the stability of twisted cylindric magnetic fields. It is shown that instabilities may by caused by the twisting of a homogeneous field.",
+      "baseline_score": 7.33487606048584
+    }
+  ]
+}

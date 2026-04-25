@@ -281,6 +281,13 @@ def process_paper(
 # Batch pipeline
 # ---------------------------------------------------------------------------
 
+# Max chars of context_text persisted to the citation_contexts table.
+# v_claim_edges (migrations/057) already truncates to 1000 chars at view-build
+# time, so any additional bytes here are storage overhead with no downstream
+# consumer. Cap matches the view to halve per-row size at scale; before this
+# cap, full ~250-word windows averaged ~1900 bytes (1.45 GB at 825K rows).
+_CONTEXT_TEXT_MAX_CHARS = 1000
+
 _SELECT_PAPERS = """
     SELECT p.bibcode, p.body, p.raw
     FROM papers p
@@ -393,7 +400,7 @@ def run_pipeline(
                         (
                             ctx.source_bibcode,
                             ctx.target_bibcode,
-                            ctx.context_text,
+                            ctx.context_text[:_CONTEXT_TEXT_MAX_CHARS],
                             ctx.char_offset,
                             ctx.section_name,
                             ctx.intent,

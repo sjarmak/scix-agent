@@ -651,3 +651,165 @@ def test_community_backend_close_cascades_to_inner() -> None:
     backend.close()
     assert inner.closed is True
     assert backend._conn is None
+
+
+# ---------------------------------------------------------------------------
+# SpecificEntityBackend — entity_id-scoped retrieval wired into the eval
+# ---------------------------------------------------------------------------
+
+
+def _specific_query_gold(entity_name: str = "Hubble Space Telescope") -> eevp.GoldQuery:
+    return eevp.GoldQuery(
+        prop="specific_entity",
+        query_id="spec-001",
+        query="papers mentioning this specific entity",
+        expectation="all results should mention entity_id=X",
+        extra={"entity_name": entity_name, "entity_type": "mission"},
+    )
+
+
+def test_specific_backend_delegates_non_specific_props() -> None:
+    inner = eevp.StubRetrievalBackend(max_docs=2)
+    backend = eevp.SpecificEntityBackend(inner=inner, dsn="dbname=scix_test")
+    docs = backend.retrieve(_non_community_gold(), top_k=5)
+    assert len(docs) == 2
+    assert docs[0].bibcode.startswith("stub.alias_expansion.")
+
+
+def test_specific_backend_returns_empty_when_no_entity_name() -> None:
+    inner = eevp.StubRetrievalBackend()
+    backend = eevp.SpecificEntityBackend(inner=inner, dsn="dbname=scix_test")
+    gold = eevp.GoldQuery(
+        prop="specific_entity",
+        query_id="spec-x",
+        query="q",
+        expectation="e",
+        extra={},  # no entity_name
+    )
+    assert backend.retrieve(gold) == []
+
+
+def test_specific_backend_returns_empty_when_entity_unresolvable() -> None:
+    inner = eevp.StubRetrievalBackend()
+    cursor = _FakeCursor(
+        handlers=[
+            # Resolver runs the union-CTE query (typed pass and fallback) — both empty.
+            ("WITH candidates", []),
+        ]
+    )
+    backend = eevp.SpecificEntityBackend(inner=inner, dsn="dbname=scix_test")
+    backend._conn = _FakeConn(cursor)
+    assert backend.retrieve(_specific_query_gold("Nonexistent Mission")) == []
+
+
+def test_specific_backend_resolves_via_union_of_canonical_and_alias() -> None:
+    """Resolver does a single union-CTE search across canonical_name and aliases."""
+    inner = eevp.StubRetrievalBackend()
+    cursor = _FakeCursor(
+        handlers=[
+            ("WITH candidates", [(42, 100)]),  # union hit -> entity_id=42
+            (
+                "FROM document_entities de\n                JOIN papers p",
+                [
+                    ("2024X....42...1A", "Paper 42", "abstract 42"),
+                    ("2024X....42...2B", "Paper 43", ""),
+                ],
+            ),
+        ]
+    )
+    backend = eevp.SpecificEntityBackend(inner=inner, dsn="dbname=scix_test")
+    backend._conn = _FakeConn(cursor)
+
+    docs = backend.retrieve(_specific_query_gold("JWST"), top_k=2)
+    assert len(docs) == 2
+    assert docs[0].bibcode == "2024X....42...1A"
+    papers_call = [
+        c for c in cursor.executed if "FROM document_entities de\n                JOIN papers p" in c[0]
+    ][0]
+    assert papers_call[1][0] == 42  # entity_id
+    assert papers_call[1][1] == 2  # top_k
+
+
+def test_specific_backend_returns_papers_filtered_by_entity_id() -> None:
+    inner = eevp.StubRetrievalBackend()
+    cursor = _FakeCursor(
+        handlers=[
+            ("WITH candidates", [(1588866, 5000)]),  # union hit, JWST-like
+            (
+                "FROM document_entities de\n                JOIN papers p",
+                [
+                    ("2023JWST.001", "Paper A", "abs A"),
+                    ("2023JWST.002", "Paper B", "abs B"),
+                    ("2023JWST.003", "Paper C", ""),
+                ],
+            ),
+        ]
+    )
+    backend = eevp.SpecificEntityBackend(inner=inner, dsn="dbname=scix_test")
+    backend._conn = _FakeConn(cursor)
+    docs = backend.retrieve(_specific_query_gold("James Webb Space Telescope"), top_k=3)
+    assert [d.bibcode for d in docs] == ["2023JWST.001", "2023JWST.002", "2023JWST.003"]
+    papers_sql = [
+        c for c in cursor.executed if "FROM document_entities de\n                JOIN papers p" in c[0]
+    ][0][0]
+    assert "pagerank DESC NULLS LAST" in papers_sql
+    assert "de.entity_id = %s" in papers_sql
+
+
+def test_specific_backend_resolver_applies_entity_type_hint() -> None:
+    """Type hint should restrict the candidate set in the first query pass."""
+    inner = eevp.StubRetrievalBackend()
+    cursor = _FakeCursor(
+        handlers=[
+            ("WITH candidates", [(1588887, 13006)]),  # typed hit
+            ("FROM document_entities de\n                JOIN papers p", [("2024A.1", "ALMA paper", "")]),
+        ]
+    )
+    backend = eevp.SpecificEntityBackend(inner=inner, dsn="dbname=scix_test")
+    backend._conn = _FakeConn(cursor)
+    backend.retrieve(_specific_query_gold("ALMA"), top_k=1)  # gold has entity_type="mission"; resolver should pass it through
+
+    resolver_calls = [c for c in cursor.executed if "WITH candidates" in c[0]]
+    # First call: typed pass with entity_type as 3rd param.
+    typed_call = resolver_calls[0]
+    assert "e.entity_type = %s" in typed_call[0]
+    assert typed_call[1][2] == "mission"
+
+
+def test_specific_backend_resolver_falls_back_when_typed_search_empty() -> None:
+    """If typed search yields nothing, untyped search runs as a fallback."""
+    inner = eevp.StubRetrievalBackend()
+    cursor = _FakeCursor(
+        handlers=[
+            ("WITH candidates", []),  # both passes share the same handler match → both empty
+        ]
+    )
+    backend = eevp.SpecificEntityBackend(inner=inner, dsn="dbname=scix_test")
+    backend._conn = _FakeConn(cursor)
+    backend.retrieve(_specific_query_gold("Mystery"), top_k=1)
+
+    resolver_calls = [c for c in cursor.executed if "WITH candidates" in c[0]]
+    # Two passes ran: one typed, one untyped.
+    assert len(resolver_calls) == 2
+    assert "e.entity_type = %s" in resolver_calls[0][0]
+    assert "e.entity_type = %s" not in resolver_calls[1][0]
+
+
+def test_specific_backend_close_cascades_to_inner() -> None:
+    class _Closable:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def retrieve(self, gold, *, top_k=10):  # pragma: no cover - unused
+            return []
+
+        def close(self) -> None:
+            self.closed = True
+
+    inner = _Closable()
+    cursor = _FakeCursor(handlers=[])
+    backend = eevp.SpecificEntityBackend(inner=inner, dsn="dbname=scix_test")
+    backend._conn = _FakeConn(cursor)
+    backend.close()
+    assert inner.closed is True
+    assert backend._conn is None

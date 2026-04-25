@@ -119,6 +119,8 @@ DEFAULT_GOLD_DIR: Path = Path("data/eval/entity_value_props")
 
 DEFAULT_JUDGE_TIMEOUT_S: int = 120
 DEFAULT_TOP_K: int = 10
+DEFAULT_JUDGE_RETRIES: int = 3
+DEFAULT_JUDGE_RETRY_BASE_DELAY_S: float = 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +500,152 @@ class CommunityExpansionBackend:
             close_inner()
 
 
+@dataclass
+class SpecificEntityBackend:
+    """Retrieval backend that implements the ``specific_entity`` value prop.
+
+    For queries whose prop is ``specific_entity``, the backend:
+
+    1. Resolves ``gold.extra['entity_name']`` to an ``entities.id`` via
+       case-insensitive match against ``entities.canonical_name`` first,
+       then ``entity_aliases.alias``. On ambiguity (multiple rows with
+       the same surface form), the entity with the most paper links
+       wins — matches :class:`CommunityExpansionBackend` policy.
+    2. Returns the top-``top_k`` papers linked to that entity via
+       ``document_entities``, ordered by ``paper_metrics.pagerank
+       DESC NULLS LAST``. This guarantees results actually mention the
+       resolved entity_id rather than colliding on surface form.
+
+    For every other prop the backend delegates to ``inner``.
+
+    Caveat (matches :class:`CommunityExpansionBackend`): this is a
+    narrow fix wired into the eval harness only — ``src/scix/search.py``
+    is intentionally untouched (see bead scix_experiments-xz4.1.39).
+    Adding ``specific_entity`` to MCP ``search`` is a separate decision.
+    """
+
+    inner: RetrievalBackend
+    dsn: str
+    _conn: Any | None = None  # psycopg.Connection
+
+    def _get_conn(self) -> Any:
+        if self._conn is None:
+            from scix.db import get_connection
+
+            self._conn = get_connection(self.dsn)
+        return self._conn
+
+    def _resolve_entity_id(
+        self, name: str, *, entity_type: str | None = None
+    ) -> int | None:
+        """Resolve an entity name to ``entities.id``.
+
+        Searches both canonical_name and entity_aliases case-insensitively
+        in a single union, then picks the row with the most paper links.
+        When ``entity_type`` is provided, only entities of that type are
+        considered — this prevents e.g. 'ALMA' from binding to the
+        planetary target ``Alma`` when the eval gold says the type is
+        'instrument'. If the typed search yields nothing, falls back to
+        the untyped search so we still resolve when the gold's type hint
+        is wrong/missing.
+        """
+        conn = self._get_conn()
+        lowered = name.strip().lower()
+        if not lowered:
+            return None
+
+        with conn.cursor() as cur:
+            for type_filter in ([entity_type] if entity_type else []) + [None]:
+                params: list[Any] = [lowered, lowered]
+                type_clause = ""
+                if type_filter is not None:
+                    type_clause = " AND e.entity_type = %s"
+                    params.append(type_filter)
+                cur.execute(
+                    f"""
+                    WITH candidates AS (
+                        SELECT e.id, e.entity_type
+                        FROM entities e
+                        WHERE lower(e.canonical_name) = %s
+                        UNION
+                        SELECT e.id, e.entity_type
+                        FROM entity_aliases a
+                        JOIN entities e ON e.id = a.entity_id
+                        WHERE lower(a.alias) = %s
+                    )
+                    SELECT c.id, COUNT(de.bibcode) AS n
+                    FROM candidates c
+                    JOIN entities e ON e.id = c.id
+                    LEFT JOIN document_entities de ON de.entity_id = c.id
+                    WHERE TRUE{type_clause}
+                    GROUP BY c.id
+                    ORDER BY n DESC, c.id ASC
+                    LIMIT 1
+                    """,
+                    tuple(params),
+                )
+                row = cur.fetchone()
+                if row is not None:
+                    return int(row[0])
+        return None
+
+    def _entity_papers(self, entity_id: int, top_k: int) -> list[RetrievalDoc]:
+        """Return ``top_k`` papers linked to the entity, ranked by pagerank."""
+        conn = self._get_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT p.bibcode, p.title, COALESCE(p.abstract, '')
+                FROM document_entities de
+                JOIN papers p ON p.bibcode = de.bibcode
+                LEFT JOIN paper_metrics pm ON pm.bibcode = p.bibcode
+                WHERE de.entity_id = %s
+                ORDER BY pm.pagerank DESC NULLS LAST
+                LIMIT %s
+                """,
+                (entity_id, top_k),
+            )
+            rows = cur.fetchall()
+        return [
+            RetrievalDoc(
+                bibcode=str(bibcode),
+                title=str(title or ""),
+                snippet=str(abstract or "")[:400],
+            )
+            for bibcode, title, abstract in rows
+        ]
+
+    def retrieve(self, gold: GoldQuery, *, top_k: int = DEFAULT_TOP_K) -> list[RetrievalDoc]:
+        if gold.prop != "specific_entity":
+            return self.inner.retrieve(gold, top_k=top_k)
+
+        name = gold.extra.get("entity_name")
+        if not isinstance(name, str) or not name.strip():
+            logger.info("specific_entity: query %r has no entity_name", gold.query_id)
+            return []
+        entity_type_hint = gold.extra.get("entity_type")
+        type_str = entity_type_hint if isinstance(entity_type_hint, str) else None
+        entity_id = self._resolve_entity_id(name, entity_type=type_str)
+        if entity_id is None:
+            logger.info(
+                "specific_entity: name %r (query %r) does not resolve to any entity",
+                name,
+                gold.query_id,
+            )
+            return []
+        return self._entity_papers(entity_id, top_k=top_k)
+
+    def close(self) -> None:
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            finally:
+                self._conn = None
+        close_inner = getattr(self.inner, "close", None)
+        if callable(close_inner):
+            close_inner()
+
+
 # ---------------------------------------------------------------------------
 # Judge invocation (claude -p subprocess)
 # ---------------------------------------------------------------------------
@@ -546,6 +694,8 @@ class ClaudeSubprocessJudge:
 
     claude_binary: str = "claude"
     timeout_s: int = DEFAULT_JUDGE_TIMEOUT_S
+    retries: int = DEFAULT_JUDGE_RETRIES
+    retry_base_delay_s: float = DEFAULT_JUDGE_RETRY_BASE_DELAY_S
 
     def __post_init__(self) -> None:
         if shutil.which(self.claude_binary) is None:
@@ -588,30 +738,48 @@ class ClaudeSubprocessJudge:
 
     def judge(self, gold: GoldQuery, docs: list[RetrievalDoc]) -> tuple[int, str]:
         prompt = self._build_prompt(gold, docs)
-        try:
-            # nosec B603 — deliberate exec of the Claude CLI with no shell
-            # expansion. ``prompt`` is a single argv entry.
-            completed = subprocess.run(
-                [self.claude_binary, "-p", "--output-format=json", prompt],
-                capture_output=True,
-                text=True,
-                timeout=self.timeout_s,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(
-                f"claude -p timed out after {self.timeout_s}s for {gold.query_id!r}"
-            ) from exc
-        except FileNotFoundError as exc:  # extremely late race with the __post_init__ check
-            raise RuntimeError(f"claude binary disappeared: {exc}") from exc
+        last_err: str = ""
+        attempts = max(1, self.retries)
+        for attempt in range(1, attempts + 1):
+            try:
+                # nosec B603 — deliberate exec of the Claude CLI with no shell
+                # expansion. ``prompt`` is a single argv entry.
+                completed = subprocess.run(
+                    [self.claude_binary, "-p", "--output-format=json", prompt],
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout_s,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired:
+                last_err = f"timed out after {self.timeout_s}s"
+            except FileNotFoundError as exc:
+                raise RuntimeError(f"claude binary disappeared: {exc}") from exc
+            else:
+                if completed.returncode == 0:
+                    return _parse_judge_stdout(completed.stdout)
+                last_err = (
+                    f"exited {completed.returncode} "
+                    f"stderr={completed.stderr[:200]!r} "
+                    f"stdout={completed.stdout[:200]!r}"
+                )
 
-        if completed.returncode != 0:
-            raise RuntimeError(
-                f"claude -p exited {completed.returncode} for {gold.query_id!r}: "
-                f"stderr={completed.stderr[:500]!r}"
-            )
+            if attempt < attempts:
+                # Exponential backoff: 5s, 10s, 20s, ...
+                delay = self.retry_base_delay_s * (2 ** (attempt - 1))
+                logger.warning(
+                    "claude -p attempt %d/%d failed for %s (%s); retrying in %.1fs",
+                    attempt,
+                    attempts,
+                    gold.query_id,
+                    last_err,
+                    delay,
+                )
+                time.sleep(delay)
 
-        return _parse_judge_stdout(completed.stdout)
+        raise RuntimeError(
+            f"claude -p failed after {attempts} attempts for {gold.query_id!r}: {last_err}"
+        )
 
 
 def _parse_judge_stdout(raw: str) -> tuple[int, str]:
@@ -955,6 +1123,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Path to the Claude Code CLI (used only when judging live).",
     )
     parser.add_argument(
+        "--judge-timeout-s",
+        type=int,
+        default=DEFAULT_JUDGE_TIMEOUT_S,
+        help=(
+            "Per-invocation wall-clock cap on the claude -p judge subprocess. "
+            f"Default: {DEFAULT_JUDGE_TIMEOUT_S}s. Bump when judge calls are slow."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Load gold sets, print the planned prop list, and exit 0.",
@@ -1026,13 +1203,15 @@ def main(argv: list[str] | None = None) -> int:
         retrieval = StubRetrievalBackend()
     else:
         retrieval = HybridSearchBackend(dsn=args.db)
-        # Wire community_expansion retrieval at the harness level.
-        # For other props this wrapper delegates to the inner backend
-        # untouched, so the addition is cost-free for non-community
-        # evals. Intentionally scoped to the eval harness only —
-        # src/scix/search.py stays untouched (see bead xz4.1.34).
+        # Wire prop-aware backends at the harness level. Each delegates
+        # to the inner backend for non-matching props, so additions are
+        # cost-free for unaffected evals. Intentionally scoped to the
+        # eval harness only — src/scix/search.py stays untouched
+        # (beads xz4.1.34, xz4.1.39).
         if "community_expansion" in selected_props:
             retrieval = CommunityExpansionBackend(inner=retrieval, dsn=args.db)
+        if "specific_entity" in selected_props:
+            retrieval = SpecificEntityBackend(inner=retrieval, dsn=args.db)
 
     judge: JudgeBackend
     if args.stub_judge:
@@ -1040,7 +1219,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         try:
             judge = ClaudeSubprocessJudge(
-                claude_binary=args.claude_binary, timeout_s=DEFAULT_JUDGE_TIMEOUT_S
+                claude_binary=args.claude_binary, timeout_s=args.judge_timeout_s
             )
         except FileNotFoundError as exc:
             print(f"[eval_entity_value_props] {exc}", file=sys.stderr)

@@ -96,6 +96,13 @@ LABEL_TO_ENTITY_TYPE: dict[str, str] = {
 #: VRAM under ~6 GB on average abstracts.
 DEFAULT_INFERENCE_BATCH = 8
 
+#: Hard cap on input text length (chars). Abstracts above this are dropped
+#: from the batch — GLiNER truncates internally anyway (768 tokens for
+#: large, 384 for medium) and the long-tail is dominated by junk like
+#: pasted-in tables. The text-pass-through threshold for v1 covers ~99%
+#: of real ADS abstracts.
+DEFAULT_MAX_TEXT_CHARS = 5000
+
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -189,12 +196,16 @@ class GlinerExtractor:
         device: str = "cuda",
         model: Any = None,  # injectable for tests
         inference_batch: int = DEFAULT_INFERENCE_BATCH,
+        max_text_chars: int = DEFAULT_MAX_TEXT_CHARS,
+        compile_model: bool = False,
     ) -> None:
         self.model_name = model_name
         self.labels = labels
         self.confidence = confidence
         self.device = device
         self.inference_batch = inference_batch
+        self.max_text_chars = max_text_chars
+        self.compile_model = compile_model
         self._model = model  # may be None; loaded lazily
 
     def _load(self) -> Any:
@@ -205,6 +216,14 @@ class GlinerExtractor:
         logger.info("ner_pass: loading %s on %s", self.model_name, self.device)
         m = GLiNER.from_pretrained(self.model_name)
         m = m.to(self.device).eval()
+        if self.compile_model:
+            # torch.compile takes ~60-90s on first call but then improves
+            # steady-state throughput by 30-50% on the 5090. Worth it for
+            # multi-day runs; skip for short / sample / dev runs.
+            import torch
+
+            logger.info("ner_pass: compiling model (this takes ~60s)…")
+            m = torch.compile(m, mode="reduce-overhead")
         self._model = m
         return m
 
@@ -217,8 +236,8 @@ class GlinerExtractor:
         model = self._load()
         texts = [p.text or "" for p in papers]
         # GLiNER's batch entry point silently broke on empty strings in some
-        # versions. Filter and re-thread by index.
-        active_idx = [i for i, t in enumerate(texts) if t.strip()]
+        # versions. Filter empties + length-clip and re-thread by index.
+        active_idx = [i for i, t in enumerate(texts) if t.strip() and len(t) <= self.max_text_chars]
         active_texts = [texts[i] for i in active_idx]
 
         per_doc_raw: list[list[dict[str, Any]]] = [[] for _ in papers]

@@ -36,6 +36,7 @@ from scix.db import get_connection
 from scix.extract.ner_pass import (  # noqa: E402
     DEFAULT_CONFIDENCE,
     DEFAULT_INFERENCE_BATCH,
+    DEFAULT_MAX_TEXT_CHARS,
     DEFAULT_MODEL_NAME,
     NER_SOURCE_VERSION,
     GlinerExtractor,
@@ -84,6 +85,18 @@ def main() -> int:
         help="GLiNER batch_predict batch size.",
     )
     p.add_argument(
+        "--max-text-chars",
+        type=int,
+        default=DEFAULT_MAX_TEXT_CHARS,
+        help=f"Skip texts longer than this (default: {DEFAULT_MAX_TEXT_CHARS}).",
+    )
+    p.add_argument(
+        "--compile",
+        dest="compile_model",
+        action="store_true",
+        help="torch.compile the model (~60s warmup, +30-50%% steady-state).",
+    )
+    p.add_argument(
         "--dry-run",
         action="store_true",
         help="Run inference but skip DB writes (for sample / quality checks).",
@@ -113,6 +126,8 @@ def main() -> int:
         model_name=args.model,
         confidence=args.confidence,
         inference_batch=args.inference_batch,
+        max_text_chars=args.max_text_chars,
+        compile_model=args.compile_model,
     )
 
     conn = get_connection(args.dsn)

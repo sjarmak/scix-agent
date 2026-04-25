@@ -271,7 +271,8 @@ class TestSearchWithinPaperADR006Guard:
             "headline": "...studies <b>dark matter</b> halos in galaxy clusters...",
         }
         fulltext_row = {"source": "ads_body"}
-        conn = _make_multi_cursor_conn([search_row, fulltext_row])
+        # Cursor sequence: search, ts_rank (M5 section scoring), provenance check.
+        conn = _make_multi_cursor_conn([search_row, None, fulltext_row])
 
         result = search_within_paper(conn, "2024ApJ...001A", "dark matter")
 
@@ -289,7 +290,8 @@ class TestSearchWithinPaperADR006Guard:
             "headline": "...studies <b>dark matter</b> halos...",
         }
         fulltext_row = None
-        conn = _make_multi_cursor_conn([search_row, fulltext_row])
+        # Cursor sequence: search, ts_rank (M5 section scoring), provenance check.
+        conn = _make_multi_cursor_conn([search_row, None, fulltext_row])
 
         result = search_within_paper(conn, "2024ApJ...001A", "dark matter")
 
@@ -308,7 +310,8 @@ class TestSearchWithinPaperADR006Guard:
         }
         fulltext_row = {"source": "ar5iv"}
         identifier_row = {"identifier": ["2301.12345"]}
-        conn = _make_multi_cursor_conn([search_row, fulltext_row, identifier_row])
+        # Cursor sequence: search, ts_rank (M5 section scoring), provenance, identifier.
+        conn = _make_multi_cursor_conn([search_row, None, fulltext_row, identifier_row])
 
         result = search_within_paper(conn, "2024ApJ...001A", "dark matter")
 

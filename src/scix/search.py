@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -2805,16 +2806,182 @@ def read_paper_section(
 
 
 # ---------------------------------------------------------------------------
-# Search within paper (ts_headline on body column)
+# Search within paper (section-level rerank — M5 of prd_full_text_applications_v2)
 # ---------------------------------------------------------------------------
+
+# Map env-var values to model_name strings consumed by CrossEncoderReranker.
+# Duplicated from mcp_server._RERANK_MODEL_ALIASES to avoid an upward import
+# (search.py is below mcp_server.py in the layering). Keep in sync.
+_SEARCH_RERANK_MODEL_ALIASES: dict[str, str] = {
+    "minilm": "cross-encoder/ms-marco-MiniLM-L-12-v2",
+    "bge-large": "BAAI/bge-reranker-large",
+}
+
+
+def _resolve_section_rerank_model() -> str | None:
+    """Return the configured cross-encoder model name, or ``None`` when off.
+
+    Reads ``SCIX_RERANK_DEFAULT_MODEL`` (default ``'off'``). Unknown values
+    fall back to ``None`` with a warning, matching mcp_server's behaviour.
+    """
+    raw = os.environ.get("SCIX_RERANK_DEFAULT_MODEL", "off").strip().lower()
+    if raw == "off":
+        return None
+    if raw in _SEARCH_RERANK_MODEL_ALIASES:
+        return _SEARCH_RERANK_MODEL_ALIASES[raw]
+    logger.warning(
+        "Unknown SCIX_RERANK_DEFAULT_MODEL=%r in search_within_paper; "
+        "falling back to 'off'. Allowed values: 'off', 'minilm', 'bge-large'.",
+        raw,
+    )
+    return None
+
+
+# Cached reranker per-process to amortise the lazy weight load.
+_section_rerank_cache: dict[str, Any] = {}
+
+
+def _get_section_reranker() -> CrossEncoderReranker | None:
+    """Return a CrossEncoderReranker honoring SCIX_RERANK_DEFAULT_MODEL.
+
+    Returns None when the env var is 'off' (the default), which is the M4-FAIL
+    ship-with-default-off behaviour. Cached so repeated calls within a process
+    reuse the same lazy-loaded model.
+    """
+    model_name = _resolve_section_rerank_model()
+    if model_name is None:
+        return None
+    cached = _section_rerank_cache.get(model_name)
+    if cached is not None:
+        return cached
+    reranker = CrossEncoderReranker(model_name=model_name)
+    _section_rerank_cache[model_name] = reranker
+    return reranker
+
+
+def _reset_section_rerank_cache() -> None:
+    """Test hook: drop the cached singleton so env changes take effect."""
+    _section_rerank_cache.clear()
+
+
+def _section_snippet(section_text: str, query: str, window: int = 150) -> str:
+    """Build a snippet around the first query-token match in a section.
+
+    Mechanical context-window extraction — no semantic judgement. Falls back
+    to the first ``2 * window`` characters when no token matches.
+    """
+    if not section_text:
+        return ""
+    tokens = [t for t in re.findall(r"\w+", query.lower()) if len(t) >= 2]
+    if not tokens:
+        return section_text[: 2 * window].strip()
+    lower = section_text.lower()
+    best_pos: int | None = None
+    for tok in tokens:
+        pos = lower.find(tok)
+        if pos == -1:
+            continue
+        if best_pos is None or pos < best_pos:
+            best_pos = pos
+    if best_pos is None:
+        return section_text[: 2 * window].strip()
+    start = max(0, best_pos - window)
+    end = min(len(section_text), best_pos + window)
+    snippet = section_text[start:end].strip()
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(section_text):
+        snippet = snippet + "..."
+    return snippet
+
+
+def _python_section_score(section_text: str, query: str) -> float:
+    """Deterministic Python fallback when PostgreSQL ts_rank is unavailable.
+
+    Counts query-token occurrences in the section (case-insensitive, word
+    boundaries) and normalises by the section length. This is a transparent
+    mechanical proxy — no semantic judgement — used as a last-resort fallback
+    when the ts_rank SQL call fails (e.g. inside unit-test mocks).
+    """
+    if not section_text:
+        return 0.0
+    tokens = [t for t in re.findall(r"\w+", query.lower()) if len(t) >= 2]
+    if not tokens:
+        return 0.0
+    lower = section_text.lower()
+    matches = 0
+    for tok in tokens:
+        matches += len(re.findall(rf"\b{re.escape(tok)}\b", lower))
+    if matches == 0:
+        return 0.0
+    # Length-normalised count; the +50 guards against tiny-section blow-up.
+    return matches / (len(section_text) + 50)
+
+
+def _score_sections_ts_rank(
+    conn: psycopg.Connection,
+    section_texts: list[str],
+    query: str,
+) -> list[float]:
+    """Score each section against the query using PostgreSQL ts_rank.
+
+    Issues a single batched query via ``unnest`` so we get one round-trip
+    regardless of section count. Returns scores in input order. Falls back to
+    a deterministic Python proxy when the SQL call raises (keeps the function
+    usable inside unit-test mocks that don't simulate full cursor behaviour).
+    """
+    if not section_texts:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT ts_rank(to_tsvector('english', t), plainto_tsquery('english', %s)) AS score
+                FROM unnest(%s::text[]) WITH ORDINALITY AS u(t, ord)
+                ORDER BY ord
+                """,
+                (query, list(section_texts)),
+            )
+            rows = list(cur.fetchall())
+    except Exception:
+        logger.debug(
+            "ts_rank section scoring failed; falling back to Python proxy",
+            exc_info=True,
+        )
+        return [_python_section_score(t, query) for t in section_texts]
+
+    if len(rows) != len(section_texts):
+        # Mock cursors often return an empty/MagicMock fetchall; degrade
+        # gracefully rather than emitting zeros that hide real-world bugs.
+        return [_python_section_score(t, query) for t in section_texts]
+
+    scores: list[float] = []
+    for row in rows:
+        # Cursor may be tuple-returning or dict-returning depending on caller.
+        if isinstance(row, dict):
+            scores.append(float(row.get("score") or 0.0))
+        else:
+            scores.append(float(row[0] or 0.0))
+    return scores
 
 
 def search_within_paper(
     conn: psycopg.Connection,
     bibcode: str,
     query: str,
+    *,
+    top_k: int = 20,
+    use_rerank: bool = True,
 ) -> SearchResult:
-    """Search within a paper's body text using PostgreSQL ts_headline.
+    """Search within a paper's body text with section-level ranking.
+
+    The body is split into sections via :func:`scix.section_parser.parse_sections`,
+    each section is scored against the query via PostgreSQL ``ts_rank``, the
+    top-``top_k`` candidates are optionally re-scored by a cross-encoder
+    (``CrossEncoderReranker``) and the best three are returned in a new
+    ``sections`` field on the result paper. The legacy ``ts_headline`` blob
+    is still surfaced as ``headline`` (top-1 section snippet for backward
+    compatibility with callers that read only that field).
 
     Parameters
     ----------
@@ -2823,13 +2990,25 @@ def search_within_paper(
         ADS bibcode.
     query : str
         Search terms to find within the paper body.
+    top_k : int, optional
+        Number of BM25 candidate sections to keep before reranking. Default 20.
+    use_rerank : bool, optional
+        If True (default), route candidates through the cross-encoder reranker
+        when ``SCIX_RERANK_DEFAULT_MODEL`` resolves to a model. With the
+        default env value ``'off'`` no model is constructed and the candidates
+        retain their ts_rank ordering — mirrors the ship-with-default-off
+        gate established in the prior cross-encoder-reranker build.
 
     Returns
     -------
     SearchResult
-        papers list contains a single dict with bibcode, headline (matching
-        passages with context), and has_body flag.
+        ``papers`` list contains a single dict with ``bibcode``, ``title``,
+        ``headline`` (top-1 section snippet for backward compat), ``has_body``,
+        and ``sections`` (up to 3 entries of
+        ``{"section_name", "score", "snippet"}``).
     """
+    from scix.section_parser import parse_sections
+
     t0 = time.perf_counter()
 
     with conn.cursor(row_factory=dict_row) as cur:
@@ -2879,18 +3058,97 @@ def search_within_paper(
                 },
             )
 
-    headline = row["headline"] or ""
+    body = row.get("body") or ""
+    headline = row.get("headline") or ""
+
+    # Section-level candidate retrieval (M5).
+    parsed = parse_sections(body)
+    # parse_sections always returns at least one tuple. Drop empty-text entries
+    # so we don't waste a rerank slot on a section that'll score zero.
+    candidate_sections: list[tuple[str, str]] = [
+        (name, text) for (name, _start, _end, text) in parsed if (text or "").strip()
+    ]
+
+    if candidate_sections:
+        scores = _score_sections_ts_rank(
+            conn, [text for _name, text in candidate_sections], query
+        )
+        scored = [
+            (name, text, score)
+            for (name, text), score in zip(candidate_sections, scores)
+        ]
+    else:
+        scored = []
+
+    scored.sort(key=lambda x: x[2], reverse=True)
+    candidates = scored[: max(1, top_k)]
+
+    # Optional cross-encoder rerank.
+    rerank_used = False
+    if use_rerank and len(candidates) > 1:
+        reranker = _get_section_reranker()
+        if reranker is not None:
+            paper_dicts = [
+                {
+                    "section_name": name,
+                    "title": name,
+                    "abstract_snippet": text,
+                    "_section_text": text,
+                    "_ts_rank": score,
+                }
+                for (name, text, score) in candidates
+            ]
+            reranked = reranker(query, paper_dicts, top_n=3)
+            top_sections = [
+                (
+                    p["section_name"],
+                    p["_section_text"],
+                    float(p.get("rerank_score", p.get("_ts_rank", 0.0))),
+                )
+                for p in reranked
+            ]
+            rerank_used = True
+        else:
+            top_sections = [(n, t, s) for (n, t, s) in candidates[:3]]
+    else:
+        top_sections = [(n, t, s) for (n, t, s) in candidates[:3]]
+
+    sections_payload: list[dict[str, Any]] = [
+        {
+            "section_name": name,
+            "score": round(score, 6),
+            "snippet": _section_snippet(text, query),
+        }
+        for (name, text, score) in top_sections
+    ]
+
+    # Backward-compat: prefer the legacy ts_headline blob when present;
+    # otherwise fall back to the top-1 section snippet so callers that only
+    # read ``headline`` still get something.
+    top1_snippet = sections_payload[0]["snippet"] if sections_payload else ""
+    headline_out = headline or top1_snippet
 
     # ADR-006 guard: check if this bibcode's body is LaTeX-derived.
     latex_source = _check_body_latex_provenance(conn, bibcode)
     if latex_source is not None:
         arxiv_id = _get_arxiv_id_for_bibcode(conn, bibcode)
         budget_result = apply_snippet_budget_if_needed(
-            body_text=headline,
+            body_text=headline_out,
             source=latex_source,
             bibcode=bibcode,
             arxiv_id=arxiv_id,
         )
+        # Apply snippet budget to each section snippet too so ADR-006 holds
+        # uniformly across the new 'sections' field.
+        guarded_sections: list[dict[str, Any]] = []
+        for sec in sections_payload:
+            guarded = apply_snippet_budget_if_needed(
+                body_text=sec["snippet"],
+                source=latex_source,
+                bibcode=bibcode,
+                arxiv_id=arxiv_id,
+            )
+            guarded_sections.append({**sec, "snippet": guarded["snippet"]})
         return SearchResult(
             papers=[
                 {
@@ -2899,11 +3157,18 @@ def search_within_paper(
                     "headline": budget_result["snippet"],
                     "has_body": True,
                     "canonical_url": budget_result["canonical_url"],
+                    "sections": guarded_sections,
                 }
             ],
             total=1,
             timing_ms={"query_ms": query_ms},
-            metadata={"has_body": True, "adr006_guarded": True, "source": latex_source},
+            metadata={
+                "has_body": True,
+                "adr006_guarded": True,
+                "source": latex_source,
+                "rerank_used": rerank_used,
+                "candidate_count": len(candidates),
+            },
         )
 
     return SearchResult(
@@ -2911,13 +3176,18 @@ def search_within_paper(
             {
                 "bibcode": row["bibcode"],
                 "title": row["title"],
-                "headline": headline,
+                "headline": headline_out,
                 "has_body": True,
+                "sections": sections_payload,
             }
         ],
         total=1,
         timing_ms={"query_ms": query_ms},
-        metadata={"has_body": True},
+        metadata={
+            "has_body": True,
+            "rerank_used": rerank_used,
+            "candidate_count": len(candidates),
+        },
     )
 
 

@@ -72,6 +72,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -171,8 +172,7 @@ def is_specific_surface(surface: str) -> bool:
     * contains a slash (mission-prefixed alias like ``Chandra/ACIS``), OR
     * length ≥ :data:`SAFE_COMPOUND_MIN_CHARS` (6) AND contains at least
       one lowercase letter (CamelCase tokens like ``NIRSpec``, ``NIRCam``,
-      ``NIRISS``, ``NICMOS``, ``LSSTCam`` survive the tsvector lemmatizer
-      as a unique lexeme).
+      ``LSSTCam`` survive the tsvector lemmatizer as a unique lexeme).
 
     Bare uppercase acronyms ``OM``, ``ACS``, ``COS``, ``HRC``, ``IRS``,
     ``MDI``, ``BOSS``, ``EPIC``, ``ACIS``, ``RGS``, ``MIPS``, ``IRAC``,
@@ -190,6 +190,92 @@ def is_specific_surface(surface: str) -> bool:
         return True
     if len(s) >= SAFE_COMPOUND_MIN_CHARS and any(ch.islower() for ch in s):
         return True
+    return False
+
+
+_ACRONYM_RE = re.compile(r"\b[A-Z][A-Z0-9]{1,9}\b")
+
+
+def extract_mission_acronyms(mission_tokens: tuple[str, ...]) -> tuple[str, ...]:
+    """Extract the disambiguating acronyms from a mission's name/aliases.
+
+    Pulls out runs of uppercase letters and digits (length ≥ 2) from each
+    mission token. Generic English words like ``Observatory``, ``Telescope``,
+    ``Mission``, ``Survey`` are deliberately not matched because they are
+    not all-uppercase. Useful for catching instrument-side surfaces that
+    name the mission acronym but not its full canonical (e.g. ``LSST
+    Camera`` carries the ``LSST`` acronym matching parent alias ``LSST
+    Observatory``).
+    """
+    acronyms: set[str] = set()
+    for tok in mission_tokens:
+        for match in _ACRONYM_RE.findall(tok or ""):
+            acronyms.add(match.lower())
+    return tuple(sorted(acronyms))
+
+
+def is_mission_disambiguated_surface(
+    surface: str,
+    mission_tokens: tuple[str, ...],
+    mission_acronyms: tuple[str, ...] = (),
+) -> bool:
+    """Return True if ``surface`` is precise enough for a child instrument.
+
+    Used for instruments that have a parent mission to filter the surface
+    list down to "ultra-precise" forms. A surface qualifies if either:
+
+    * It contains any mission token (canonical name or alias) as a
+      substring (case-insensitive). E.g. ``HST/STIS`` contains ``HST``
+      (mission alias of HST); ``Chandra ACIS`` contains ``Chandra``;
+      ``JWST/NIRSpec`` contains ``JWST``.
+    * It contains any extracted mission acronym (≥2 chars, uppercase).
+      E.g. ``LSST Camera`` contains ``LSST`` even though the mission
+      canonical is ``Vera C. Rubin Observatory``.
+    * It's a long-form descriptive alias (≥10 chars AND multi-word) that
+      isn't itself the mission name. E.g. ``Advanced CCD Imaging
+      Spectrometer``, ``Near-Infrared Spectrograph``. These are
+      inherently unambiguous.
+
+    Bare instrument canonicals like ``NIRSpec`` and ``ACS`` are rejected
+    even when they pass :func:`is_specific_surface`, because they
+    collide with name-twin instruments on other missions (the Keck
+    NIRSPEC echelle, the ESA ACS X-ray detector, etc.). The
+    mission-prefixed aliases carry the disambiguation.
+    """
+    s = surface.strip()
+    if not s:
+        return False
+    s_lower = s.lower()
+
+    # Reject the surface if it IS a mission token verbatim — e.g.
+    # surface 'LSST' equal to mission acronym 'LSST' would match every
+    # LSST survey paper, not just the camera-instrument-specific ones.
+    if any(s_lower == tok.strip().lower() for tok in mission_tokens):
+        return False
+    if any(s_lower == acr for acr in mission_acronyms):
+        return False
+
+    # Mission-token (canonical / alias) substring co-mention.
+    for tok in mission_tokens:
+        tok_lower = tok.strip().lower()
+        if tok_lower and tok_lower in s_lower and tok_lower != s_lower:
+            return True
+
+    # Mission-acronym substring co-mention. We require a word-boundary on
+    # both sides so 'classy' doesn't match 'lass' acronym etc. Skip the
+    # case where the surface IS the acronym (handled above).
+    for acr in mission_acronyms:
+        if not acr or acr == s_lower:
+            continue
+        if re.search(rf"(?<![A-Za-z0-9]){re.escape(acr)}(?![A-Za-z0-9])", s_lower):
+            return True
+
+    # Long-form descriptive alias that isn't the mission itself.
+    if len(s) >= DISAMBIGUATOR_MIN_CHARS and (
+        any(ch.isspace() for ch in s) or "-" in s
+    ):
+        return True
+
     return False
 
 
@@ -262,6 +348,14 @@ _INSERT_PARENT_DOC_ENTITIES_SQL = """
        AND de.link_type = %(instrument_link_type)s
        AND de.tier = %(tier)s::smallint
     ON CONFLICT (bibcode, entity_id, link_type, tier) DO NOTHING
+"""
+
+# Delete the rows this script previously inserted, identified by their
+# match_method values. Used by --delete-prior for clean re-runs after a
+# precision tightening of the surface-form policy.
+_DELETE_PRIOR_BACKFILL_SQL = """
+    DELETE FROM document_entities
+     WHERE match_method IN (%(instrument_method)s, %(parent_method)s)
 """
 
 
@@ -420,17 +514,44 @@ def insert_parent_doc_entities(
 # ---------------------------------------------------------------------------
 
 
+def delete_prior_backfill(conn: psycopg.Connection) -> int:
+    """Delete document_entities rows previously inserted by this backfill.
+
+    Identifies rows by ``match_method`` so the operation is precise and
+    won't touch unrelated abstract_match / keyword_match rows. Returns
+    the deleted row count. Caller is responsible for committing.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            _DELETE_PRIOR_BACKFILL_SQL,
+            {
+                "instrument_method": INSTRUMENT_MATCH_METHOD,
+                "parent_method": PARENT_MATCH_METHOD,
+            },
+        )
+        return cur.rowcount or 0
+
+
 def run_backfill(
     conn: psycopg.Connection,
     *,
     dry_run: bool = False,
     sources: tuple[str, ...] = TRUSTED_PART_OF_SOURCES,
+    delete_prior: bool = False,
 ) -> BackfillStats:
     """Execute the backfill end-to-end.
 
     On ``dry_run=True`` rolls back at the end; the returned stats reflect
     what *would have been* inserted.
+
+    On ``delete_prior=True`` deletes any rows previously inserted by this
+    backfill (identified by ``match_method``) before re-running. Use after
+    tightening the surface-form policy.
     """
+    if delete_prior:
+        deleted = delete_prior_backfill(conn)
+        logger.info("deleted %d prior backfill rows", deleted)
+
     edges = fetch_part_of_edges(conn, sources=sources)
     logger.info("found %d part_of edges from sources %s", len(edges), sources)
 
@@ -441,15 +562,32 @@ def run_backfill(
 
     for edge in edges:
         all_surfaces = fetch_surfaces(conn, edge.instrument_id)
-        specific_surfaces = [s for s in all_surfaces if is_specific_surface(s)]
-        if not specific_surfaces:
+
+        # When the instrument has a parent mission we tighten the surface
+        # list to mission-disambiguated forms only — bare CamelCase
+        # canonicals like 'NIRSpec' collide with the unrelated Keck
+        # NIRSPEC echelle and would silently inflate the count with
+        # off-target papers. The mission's own canonical_name + aliases
+        # form the disambiguator vocabulary; we also extract uppercase
+        # acronyms (HST, JWST, LSST, ...) so e.g. 'LSST Camera' qualifies
+        # via parent alias 'LSST Observatory'.
+        mission_tokens = tuple(fetch_surfaces(conn, edge.mission_id))
+        mission_acronyms = extract_mission_acronyms(mission_tokens)
+        chosen_surfaces = [
+            s
+            for s in all_surfaces
+            if is_mission_disambiguated_surface(s, mission_tokens, mission_acronyms)
+        ]
+
+        if not chosen_surfaces:
             instruments_skipped += 1
             logger.warning(
-                "skipping instrument %r (id=%d): no specific surfaces "
-                "(all surfaces: %s)",
+                "skipping instrument %r (id=%d): no mission-disambiguated "
+                "surfaces (all surfaces: %s, mission tokens: %s)",
                 edge.instrument_name,
                 edge.instrument_id,
                 all_surfaces,
+                mission_tokens,
             )
             continue
         instruments_with_surfaces += 1
@@ -457,7 +595,7 @@ def run_backfill(
         instr_inserted = insert_instrument_doc_entities(
             conn,
             instrument_id=edge.instrument_id,
-            surfaces=specific_surfaces,
+            surfaces=chosen_surfaces,
         )
         instrument_rows_inserted += instr_inserted
 
@@ -476,7 +614,7 @@ def run_backfill(
             edge.mission_name,
             instr_inserted,
             parent_inserted,
-            specific_surfaces,
+            chosen_surfaces,
         )
 
     if dry_run:
@@ -575,6 +713,16 @@ def main(argv: Optional[list[str]] = None) -> int:
             f"Default: {list(TRUSTED_PART_OF_SOURCES)}."
         ),
     )
+    parser.add_argument(
+        "--delete-prior",
+        action="store_true",
+        default=False,
+        help=(
+            "Delete document_entities rows previously inserted by this "
+            "backfill (identified by match_method) before re-running. "
+            "Use after tightening the surface-form policy."
+        ),
+    )
     parser.add_argument("--verbose", "-v", action="store_true", default=False)
     args = parser.parse_args(argv)
 
@@ -602,6 +750,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             conn,
             dry_run=args.dry_run,
             sources=tuple(args.sources),
+            delete_prior=args.delete_prior,
         )
     finally:
         conn.close()

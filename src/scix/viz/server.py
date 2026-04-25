@@ -8,20 +8,36 @@ of the MCP server so the two processes can evolve separately.
 
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from scix import mcp_server
 from scix.viz.api import router as viz_api_router
 from scix.viz.trace_stream import router as trace_stream_router
+
+logger = logging.getLogger(__name__)
 
 # Repo-anchored path to web/viz/.
 # __file__ -> <repo>/src/scix/viz/server.py
 #   parents[0]=viz, [1]=scix, [2]=src, [3]=repo_root
 WEB_VIZ_DIR: Path = Path(__file__).resolve().parents[3] / "web" / "viz"
 
-app = FastAPI(title="SciX Viz", docs_url=None, redoc_url=None)
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # Pre-load INDUS so the first semantic/hybrid search isn't a 30 s cold
+    # start. _init_model_impl already swallows ImportError/Exception, so a
+    # missing torch/GPU degrades to lexical-only without blocking startup.
+    mcp_server._init_model_impl()
+    yield
+
+
+app = FastAPI(title="SciX Viz", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 
 @app.get("/viz/health")

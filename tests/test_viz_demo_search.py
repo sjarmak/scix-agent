@@ -76,7 +76,10 @@ def test_demo_search_dispatches_through_mcp_call_tool(
     tool_names = [name for name, _ in captured_calls]
     assert tool_names == ["search", "get_paper", "get_paper", "get_paper"]
 
-    # Search uses keyword mode for the fast lexical path.
+    # Default mode is keyword (lexical-only). The dense path is gated on
+    # SCIX_USE_HALFVEC because hybrid against the full float32 HNSW on 32M
+    # rows blows past the prod statement_timeout. See test_demo_search_uses_
+    # hybrid_when_halfvec_enabled for the post-migration path.
     search_args = captured_calls[0][1]
     assert search_args["query"] == "dark matter"
     assert search_args["mode"] == "keyword"
@@ -88,6 +91,22 @@ def test_demo_search_dispatches_through_mcp_call_tool(
         "2024B",
         "2024C",
     ]
+
+
+def test_demo_search_uses_hybrid_when_halfvec_enabled(
+    captured_calls: list[tuple[str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once SCIX_USE_HALFVEC=1 is set (post-migration), demo flips to hybrid."""
+    monkeypatch.setenv("SCIX_USE_HALFVEC", "1")
+
+    response = client.post(
+        "/viz/api/demo/search", json={"query": "dark matter", "top_n": 5}
+    )
+    assert response.status_code == 200, response.text
+
+    search_args = captured_calls[0][1]
+    assert search_args["mode"] == "hybrid"
 
 
 def test_demo_search_does_not_publish_trace_events_directly(

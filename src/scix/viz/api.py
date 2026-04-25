@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path as _FsPath
@@ -243,8 +244,17 @@ def demo_search(payload: DemoSearchRequest) -> dict:
         raise HTTPException(status_code=400, detail="empty query")
 
     # Real search dispatch — the MCP hook publishes one TraceEvent with the
-    # full result set (bibcodes drive the line-flash on UMAP).
-    search_args = {"query": query, "mode": "keyword", "limit": payload.top_n}
+    # full result set (bibcodes drive the line-flash on UMAP). Hybrid mode
+    # lets the server-side preloaded INDUS model contribute a dense signal,
+    # but vector_search on the full ``pe.embedding`` (float32 768d) HNSW
+    # over the 32M-row prod corpus blows past the 30s statement_timeout. We
+    # therefore gate the hybrid switch on ``SCIX_USE_HALFVEC`` — the same
+    # flag ``scix.search`` uses to pick the halfvec column. Until migrations
+    # 053/054 are applied (bead d0a) and the flag is flipped on, the demo
+    # stays in keyword mode so it doesn't 500 on prod.
+    use_hybrid = os.environ.get("SCIX_USE_HALFVEC", "0") == "1"
+    mode = "hybrid" if use_hybrid else "keyword"
+    search_args = {"query": query, "mode": mode, "limit": payload.top_n}
     search_json = mcp_server.call_tool("search", search_args)
     search_payload = json.loads(search_json)
 

@@ -23,6 +23,8 @@ import os
 import time
 import uuid
 from contextlib import contextmanager
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Generator
 
 import psycopg
@@ -400,6 +402,104 @@ def _result_to_json(result: Any) -> str:
             output["metadata"] = result.metadata
         return json.dumps(output, indent=2, default=str)
     return json.dumps(result, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Coverage-bias discipline (PRD prd_full_text_applications_v2 — always-on)
+# ---------------------------------------------------------------------------
+#
+# Every MCP response that surfaces full-text-derived signals (entity hits
+# from staging.extractions, read_paper body chunks, search_within_paper
+# matches) carries a top-level ``coverage_note`` string. The note tells the
+# agent what fraction of the corpus has full-text coverage and points to the
+# canonical analysis doc so cross-corpus comparisons are interpreted with
+# the right caveat.
+#
+# Default policy is always-on per the PRD's Open Question default decision.
+
+#: Repo-relative path to the coverage-bias report produced by M1.
+_COVERAGE_BIAS_PATH: Path = Path(__file__).resolve().parents[2] / "results" / "full_text_coverage_bias.json"
+
+#: Documentation path included verbatim in every coverage_note (so the link
+#: survives even when the JSON file is unreadable).
+_COVERAGE_DOC_PATH: str = "docs/full_text_coverage_analysis.md"
+
+
+def _coverage_note_path() -> Path:
+    """Return the path the coverage-bias JSON is loaded from.
+
+    Indirected so tests can patch this single function instead of reaching
+    into module globals.
+    """
+    return _COVERAGE_BIAS_PATH
+
+
+@lru_cache(maxsize=1)
+def _coverage_note() -> str:
+    """Return the cached coverage-note string for the current process.
+
+    Reads ``results/full_text_coverage_bias.json`` once and formats the
+    note. If the file is missing or malformed the note still mentions the
+    docs path so the agent can navigate to the explanation.
+    """
+    path = _coverage_note_path()
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        # Prefer the precomputed pct field; fall back to ratio when
+        # absent so older report versions still work.
+        pct: float | None = None
+        if isinstance(data.get("fulltext_pct"), (int, float)):
+            pct = float(data["fulltext_pct"])
+        else:
+            ft_total = data.get("fulltext_total")
+            corpus_total = data.get("corpus_total")
+            if (
+                isinstance(ft_total, (int, float))
+                and isinstance(corpus_total, (int, float))
+                and corpus_total > 0
+            ):
+                pct = (float(ft_total) / float(corpus_total)) * 100.0
+        if pct is None:
+            raise ValueError("coverage report missing fulltext_pct/fulltext_total")
+        return (
+            f"Coverage note: full-text coverage is {pct:.1f}% of the corpus "
+            f"— see {_COVERAGE_DOC_PATH} for safe/unsafe query patterns."
+        )
+    except (OSError, ValueError, json.JSONDecodeError, KeyError) as err:
+        logger.warning(
+            "coverage_note: could not load %s (%s); using fallback note",
+            path,
+            err,
+        )
+        return (
+            "Coverage note: full-text coverage stats unavailable — "
+            f"see {_COVERAGE_DOC_PATH} for safe/unsafe query patterns."
+        )
+
+
+def _reset_coverage_note_cache() -> None:
+    """Drop the cached coverage_note string. Test-only helper."""
+    _coverage_note.cache_clear()
+
+
+def _inject_coverage_note(result_json: str) -> str:
+    """Insert ``coverage_note`` at the top level of an existing JSON response.
+
+    The MCP layer serialises results with ``json.dumps(..., indent=2)`` so
+    we round-trip through ``json.loads`` to preserve the existing shape and
+    sort order. If the response is not a JSON object (e.g. a JSON array or
+    a primitive — which our handlers do not currently emit), the original
+    string is returned unchanged so we never corrupt the protocol.
+    """
+    try:
+        parsed = json.loads(result_json)
+    except (json.JSONDecodeError, TypeError):
+        return result_json
+    if not isinstance(parsed, dict):
+        return result_json
+    parsed["coverage_note"] = _coverage_note()
+    return json.dumps(parsed, indent=2, default=str)
 
 
 def _parse_filters(filters: dict[str, Any] | None = None) -> search.SearchFilters:
@@ -1250,8 +1350,24 @@ def create_server(_run_self_test: bool = True):
                         },
                         "entity_type": {
                             "type": "string",
-                            "enum": ["methods", "datasets", "instruments", "materials"],
-                            "description": "Entity type (required for action=search)",
+                            "enum": [
+                                "methods",
+                                "datasets",
+                                "instruments",
+                                "materials",
+                                "negative_result",
+                                "quant_claim",
+                            ],
+                            "description": (
+                                "Entity type (required for action=search). "
+                                "'methods'/'datasets'/'instruments'/'materials' "
+                                "search the in-line containment payload. "
+                                "'negative_result' returns null-finding spans "
+                                "(M3) with evidence_span. 'quant_claim' returns "
+                                "extracted numeric claims (M4) with payload "
+                                "{value, uncertainty, unit}; pass entity_name "
+                                "to filter to one canonical quantity (e.g. 'H0')."
+                            ),
                         },
                         "query": {
                             "type": "string",
@@ -2149,13 +2265,18 @@ def _handle_get_paper(conn: psycopg.Connection, args: dict[str, Any]) -> str:
 
 
 def _handle_read_paper(conn: psycopg.Connection, args: dict[str, Any]) -> str:
-    """Read or search within a paper's full text."""
+    """Read or search within a paper's full text.
+
+    Both branches (read_paper_section and search_within_paper) read from
+    the full-text body, so the response is annotated with the coverage
+    note per the PRD's coverage-bias discipline rule.
+    """
     bibcode = args["bibcode"]
     search_query = args.get("search_query")
 
     if search_query:
         result = search.search_within_paper(conn, bibcode, search_query)
-        return _result_to_json(result)
+        return _inject_coverage_note(_result_to_json(result))
 
     result = search.read_paper_section(
         conn,
@@ -2165,7 +2286,7 @@ def _handle_read_paper(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         limit=args.get("limit", 5000),
         role=args.get("role"),
     )
-    return _result_to_json(result)
+    return _inject_coverage_note(_result_to_json(result))
 
 
 def _handle_citation_graph(conn: psycopg.Connection, args: dict[str, Any]) -> str:
@@ -2226,12 +2347,31 @@ _TIER_MIN_TO_ALLOWED: dict[int, list[str]] = {
 }
 
 
+#: Entity types whose rows live in ``staging.extractions`` keyed on
+#: ``extraction_type`` (the row IS the entity, not a containment payload).
+#: For these the entity tool surfaces the raw extraction payload — the
+#: shape is documented in scix.negative_results / scix.claim_extractor.
+_EXTRACTION_TYPE_ENTITIES: frozenset[str] = frozenset(
+    {"negative_result", "quant_claim"}
+)
+
+
 def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Unified entity search and resolution."""
     action = args.get("action", "search")
-    query = args.get("query", "")
+    # Accept both ``query`` (current contract) and ``entity_name`` (used by
+    # full-text-extraction callers, mirrors the deprecated entity_search
+    # field name) so the same handler serves both call shapes.
+    query = args.get("query") or args.get("entity_name") or ""
+    entity_type = args.get("entity_type")
 
-    if not query or not query.strip():
+    # Only the containment-style entity types require a non-empty query.
+    # Extraction-row entity types (negative_result, quant_claim) accept an
+    # empty query and treat ``entity_name`` as an optional filter.
+    is_extraction_row = (
+        action == "search" and entity_type in _EXTRACTION_TYPE_ENTITIES
+    )
+    if not is_extraction_row and (not query or not query.strip()):
         return json.dumps({"error": "query must be a non-empty string"})
 
     if action == "resolve":
@@ -2241,7 +2381,7 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             discipline=args.get("discipline"),
             fuzzy=args.get("fuzzy", False),
         )
-        return json.dumps(
+        result_json = json.dumps(
             {
                 "query": query.strip(),
                 "candidates": [
@@ -2261,16 +2401,28 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             indent=2,
             default=str,
         )
+        return _inject_coverage_note(result_json)
 
     if action == "search":
-        entity_type = args.get("entity_type")
+        # ---- Extraction-row entity types (M3 negative_result, M4 quant_claim) ----
+        if entity_type in _EXTRACTION_TYPE_ENTITIES:
+            return _inject_coverage_note(
+                _handle_entity_extraction_search(
+                    conn,
+                    extraction_type=entity_type,
+                    name_filter=query.strip() if query else None,
+                    limit=min(args.get("limit", 20), 200),
+                )
+            )
+
         _VALID_ENTITY_TYPES = {"methods", "datasets", "instruments", "materials"}
         if not entity_type or entity_type not in _VALID_ENTITY_TYPES:
             return json.dumps(
                 {
                     "error": (
                         f"Invalid entity_type '{entity_type}'. "
-                        f"Must be one of: {sorted(_VALID_ENTITY_TYPES)}"
+                        f"Must be one of: "
+                        f"{sorted(_VALID_ENTITY_TYPES | _EXTRACTION_TYPE_ENTITIES)}"
                     )
                 }
             )
@@ -2334,9 +2486,136 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             for row in rows
         ]
         papers = _annotate_working_set(papers)
-        return json.dumps({"papers": papers, "total": len(papers)}, indent=2, default=str)
+        return _inject_coverage_note(
+            json.dumps(
+                {"papers": papers, "total": len(papers)},
+                indent=2,
+                default=str,
+            )
+        )
 
     return json.dumps({"error": f"Invalid action: {action}. Use 'search' or 'resolve'."})
+
+
+def _handle_entity_extraction_search(
+    conn: psycopg.Connection,
+    *,
+    extraction_type: str,
+    name_filter: str | None,
+    limit: int,
+) -> str:
+    """Surface rows from ``staging.extractions`` for an extraction-row entity.
+
+    Currently supports:
+
+    * ``negative_result`` (M3) — rows have payload
+      ``{spans: [{evidence_span, ...}], n_spans, tier_counts, ...}``.
+      The handler flattens spans up so each returned row carries an
+      ``evidence_span`` field (the first span on a row), preserving the
+      full payload for callers that need every span.
+
+    * ``quant_claim`` (M4) — rows have payload ``{claims: [...]}`` where
+      each claim has ``{quantity, value, uncertainty, unit, ...}``. When
+      ``name_filter`` is provided, claims are filtered to that canonical
+      ``quantity`` value.
+
+    The DB read is a simple ``WHERE extraction_type = %s`` scan; the
+    extractions table has an index on ``(bibcode, extraction_type,
+    extraction_version)`` per migration 017.
+    """
+    sql = """
+        SELECT e.bibcode, e.extraction_type, e.extraction_version, e.payload,
+               p.title
+        FROM extractions e
+        JOIN papers p ON p.bibcode = e.bibcode
+        WHERE e.extraction_type = %s
+        LIMIT %s
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (extraction_type, limit))
+        rows = cur.fetchall()
+
+    papers: list[dict[str, Any]] = []
+    for row in rows:
+        bibcode, ext_type, ext_version, payload, title = row
+        record: dict[str, Any] = {
+            "bibcode": bibcode,
+            "extraction_type": ext_type,
+            "extraction_version": ext_version,
+            "title": title,
+            "payload": payload,
+        }
+
+        if extraction_type == "negative_result":
+            spans = []
+            if isinstance(payload, dict):
+                raw_spans = payload.get("spans")
+                if isinstance(raw_spans, list):
+                    spans = raw_spans
+            if name_filter:
+                # AC: free-text query over evidence_span / match_text.
+                needle = name_filter.lower()
+                spans = [
+                    s
+                    for s in spans
+                    if isinstance(s, dict)
+                    and (
+                        needle in str(s.get("evidence_span", "")).lower()
+                        or needle in str(s.get("match_text", "")).lower()
+                    )
+                ]
+                if not spans:
+                    # No spans matched the name filter — drop this row.
+                    continue
+            # Surface the first span's evidence_span at the top level so
+            # tests / callers don't have to dig into payload.spans[0].
+            first = spans[0] if spans else None
+            if isinstance(first, dict):
+                record["evidence_span"] = first.get("evidence_span", "")
+                record["confidence_tier"] = first.get("confidence_tier")
+                record["confidence_label"] = first.get("confidence_label")
+                record["section"] = first.get("section")
+            else:
+                record["evidence_span"] = ""
+            record["spans"] = spans
+
+        elif extraction_type == "quant_claim":
+            claims = []
+            if isinstance(payload, dict):
+                raw_claims = payload.get("claims")
+                if isinstance(raw_claims, list):
+                    claims = raw_claims
+            if name_filter:
+                needle = name_filter.strip()
+                claims = [
+                    c
+                    for c in claims
+                    if isinstance(c, dict)
+                    and str(c.get("quantity", "")) == needle
+                ]
+                if not claims:
+                    continue
+            # Promote the first claim's {value, uncertainty, unit} to the
+            # top level so the response shape matches the PRD acceptance
+            # contract; full claim list stays under ``claims``.
+            first = claims[0] if claims else None
+            if isinstance(first, dict):
+                record["payload"] = {
+                    "value": first.get("value"),
+                    "uncertainty": first.get("uncertainty"),
+                    "unit": first.get("unit"),
+                    "quantity": first.get("quantity"),
+                }
+            record["claims"] = claims
+
+        papers.append(record)
+
+    papers = _annotate_working_set(papers)
+    return json.dumps(
+        {"papers": papers, "total": len(papers)},
+        indent=2,
+        default=str,
+    )
 
 
 def _handle_graph_context(conn: psycopg.Connection, args: dict[str, Any]) -> str:

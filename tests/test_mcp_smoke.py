@@ -1,12 +1,15 @@
-"""Smoke tests for all 16 consolidated MCP tools.
+"""Smoke tests for all 15 consolidated MCP tools.
 
 These tests catch total breakage of any tool on every deploy. They:
 
 1. Verify ``startup_self_test`` succeeds against a freshly-created server
-   (16 tools, valid schemas) — 13 baseline + 2 PRD MH-4 tools
-   (claim_blame, find_replications) + 1 section_retrieval tool from the
+   (15 tools, valid schemas) — 12 from the 2026-04-25 consolidation pass
+   (search, concept_search, get_paper, read_paper, citation_traverse,
+   citation_similarity, entity, entity_context, graph_context, find_gaps,
+   temporal_evolution, facet_counts) + 2 PRD MH-4 tools (claim_blame,
+   find_replications) + 1 section_retrieval tool from the
    section-embeddings-mcp-consolidation PRD.
-2. Call each of the 16 consolidated tools via ``_dispatch_tool`` with a
+2. Call each of the 15 consolidated tools via ``_dispatch_tool`` with a
    minimal golden-path input and assert the returned JSON is a valid
    non-error response (no exception raised, no top-level ``error`` key).
 
@@ -88,11 +91,12 @@ def mock_conn() -> MagicMock:
 class TestStartupSelfTest:
     """Validates the server's self-test catches missing/broken tools."""
 
-    def test_expected_tools_has_16_entries(self) -> None:
-        # PRD MH-4 grew the baseline of 13 by 2 (claim_blame, find_replications).
-        # PRD section-embeddings-mcp-consolidation added section_retrieval.
-        assert len(EXPECTED_TOOLS) == 16
-        assert len(set(EXPECTED_TOOLS)) == 16  # no duplicates
+    def test_expected_tools_has_15_entries(self) -> None:
+        # 2026-04-25 consolidation: citation_graph + citation_chain merged
+        # into citation_traverse (-1), find_similar_by_examples retired
+        # (was opt-in, now hard-removed). Final = 15.
+        assert len(EXPECTED_TOOLS) == 15
+        assert len(set(EXPECTED_TOOLS)) == 15  # no duplicates
 
     def test_self_test_passes_on_fresh_server(self) -> None:
         """A freshly created server must pass the self-test."""
@@ -105,7 +109,7 @@ class TestStartupSelfTest:
             status = startup_self_test()
 
         assert status["ok"] is True
-        assert status["tool_count"] == 16
+        assert status["tool_count"] == 15
         assert status["errors"] == []
         assert sorted(EXPECTED_TOOLS) == status["tool_names"]
 
@@ -116,7 +120,7 @@ class TestStartupSelfTest:
         except ImportError:
             pytest.skip("mcp SDK not installed")
 
-        # Build a fake server where the list_tools handler returns 15 tools
+        # Build a fake server where the list_tools handler returns 14 tools
         # (one short of EXPECTED_TOOLS).
         fake_server = MagicMock()
         bad_tools = [
@@ -125,7 +129,7 @@ class TestStartupSelfTest:
                 description="x",
                 inputSchema={"type": "object", "properties": {}},
             )
-            for i in range(15)
+            for i in range(14)
         ]
 
         async def bad_handler(_req: Any) -> Any:
@@ -143,7 +147,7 @@ class TestStartupSelfTest:
         except ImportError:
             pytest.skip("mcp SDK not installed")
 
-        # 16 tools but one expected name replaced with a bogus one.
+        # 15 tools but one expected name replaced with a bogus one.
         swapped = list(EXPECTED_TOOLS)
         swapped[0] = "not_a_real_tool"
         bad_tools = [
@@ -171,7 +175,7 @@ class TestStartupSelfTest:
 
 
 class TestToolSmoke:
-    """Golden-path smoke test for each of the 16 consolidated tools."""
+    """Golden-path smoke test for each of the 15 consolidated tools."""
 
     @patch("scix.mcp_server._log_query")
     @patch(
@@ -288,19 +292,46 @@ class TestToolSmoke:
 
     @patch("scix.mcp_server._log_query")
     @patch("scix.search.get_citations")
-    def test_citation_graph(
+    def test_citation_traverse(
         self,
         mock_cit: MagicMock,
         _mock_log: MagicMock,
         mock_conn: MagicMock,
     ) -> None:
+        """citation_traverse default mode='graph' routes to search.get_citations."""
         mock_cit.return_value = _empty_result()
         out = _dispatch_tool(
             mock_conn,
-            "citation_graph",
-            {"bibcode": "2024ApJ...962L..15J", "direction": "forward"},
+            "citation_traverse",
+            {
+                "mode": "graph",
+                "bibcode": "2024ApJ...962L..15J",
+                "direction": "forward",
+            },
         )
-        _assert_non_error(out, "citation_graph")
+        _assert_non_error(out, "citation_traverse")
+
+    @patch("scix.mcp_server._log_query")
+    @patch("scix.search.citation_chain")
+    def test_citation_traverse_chain_mode(
+        self,
+        mock_cc: MagicMock,
+        _mock_log: MagicMock,
+        mock_conn: MagicMock,
+    ) -> None:
+        """citation_traverse mode='chain' routes to search.citation_chain."""
+        mock_cc.return_value = _empty_result()
+        out = _dispatch_tool(
+            mock_conn,
+            "citation_traverse",
+            {
+                "mode": "chain",
+                "source_bibcode": "2024ApJ...962L..15J",
+                "target_bibcode": "2023ApJ...900L...1A",
+                "max_depth": 3,
+            },
+        )
+        _assert_non_error(out, "citation_traverse[chain]")
 
     @patch("scix.mcp_server._log_query")
     @patch("scix.search.co_citation_analysis")
@@ -317,26 +348,6 @@ class TestToolSmoke:
             {"bibcode": "2024ApJ...962L..15J", "method": "co_citation"},
         )
         _assert_non_error(out, "citation_similarity")
-
-    @patch("scix.mcp_server._log_query")
-    @patch("scix.search.citation_chain")
-    def test_citation_chain(
-        self,
-        mock_cc: MagicMock,
-        _mock_log: MagicMock,
-        mock_conn: MagicMock,
-    ) -> None:
-        mock_cc.return_value = _empty_result()
-        out = _dispatch_tool(
-            mock_conn,
-            "citation_chain",
-            {
-                "source_bibcode": "2024ApJ...962L..15J",
-                "target_bibcode": "2023ApJ...900L...1A",
-                "max_depth": 3,
-            },
-        )
-        _assert_non_error(out, "citation_chain")
 
     @patch("scix.mcp_server._log_query")
     def test_entity(

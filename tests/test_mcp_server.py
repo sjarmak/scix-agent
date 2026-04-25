@@ -160,9 +160,11 @@ class TestListTools:
                             "concept_search",
                             "get_paper",
                             "read_paper",
-                            "citation_graph",
+                            "section_retrieval",
+                            # 2026-04-25 consolidation: citation_graph +
+                            # citation_chain merged into citation_traverse.
+                            "citation_traverse",
                             "citation_similarity",
-                            "citation_chain",
                             "entity",
                             "entity_context",
                             "graph_context",
@@ -535,14 +537,18 @@ class TestDeprecatedAliases:
 
     @patch("scix.search.get_citations")
     def test_get_citations_alias(self, mock_cit: MagicMock) -> None:
-        """AC18: old 'get_citations' returns deprecated:true."""
+        """AC18: old 'get_citations' returns deprecated:true.
+
+        Post-2026-04-25 consolidation: the alias now points at
+        ``citation_traverse`` (which absorbed citation_graph + citation_chain).
+        """
         from scix.search import SearchResult
 
         mock_cit.return_value = SearchResult(papers=[], total=0, timing_ms={"query_ms": 1.0})
         conn = MagicMock()
         result = json.loads(_dispatch_tool(conn, "get_citations", {"bibcode": "X", "limit": 5}))
         assert result["deprecated"] is True
-        assert result["use_instead"] == "citation_graph"
+        assert result["use_instead"] == "citation_traverse"
 
     def test_all_deprecated_aliases_log_original(self) -> None:
         """AC19: verify all deprecated aliases exist and map correctly."""

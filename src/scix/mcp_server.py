@@ -4,9 +4,14 @@ Uses the `mcp` Python SDK to register tools. Each tool is a thin wrapper
 around functions in search.py. Connection pooling via psycopg.pool for
 production-grade performance.
 
-Consolidation (v2):
-    28 original tools -> 13 agent-facing tools + deprecated aliases.
-    Old tool names still work via _DEPRECATED_ALIASES but return
+Consolidation (v3, 2026-04-25):
+    Original 28 -> 13 -> 15 agent-facing tools + deprecated aliases.
+    The 2026-04-25 pass merged citation_graph + citation_chain into
+    citation_traverse (mode enum), retired find_similar_by_examples
+    (qdrant backend out of active use), and ratified the additions of
+    claim_blame, find_replications, and section_retrieval that landed
+    after the original audit was written.
+    Old tool names still work via ``_DEPRECATED_ALIASES`` but return
     ``deprecated: true`` and ``use_instead`` metadata.
 
 Usage:
@@ -140,6 +145,9 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "concept_search": float(os.environ.get("SCIX_TIMEOUT_CONCEPT", "15")),
     "get_paper": float(os.environ.get("SCIX_TIMEOUT_PAPER", "5")),
     "read_paper": float(os.environ.get("SCIX_TIMEOUT_READ_PAPER", "10")),
+    "citation_traverse": float(os.environ.get("SCIX_TIMEOUT_TRAVERSE", "20")),
+    # Legacy aliases retained so deprecated tool calls still get a sensible
+    # statement_timeout before being routed through citation_traverse.
     "citation_graph": float(os.environ.get("SCIX_TIMEOUT_CITATIONS", "10")),
     "citation_similarity": float(os.environ.get("SCIX_TIMEOUT_COCITATION", "15")),
     "citation_chain": float(os.environ.get("SCIX_TIMEOUT_CHAIN", "20")),
@@ -617,8 +625,12 @@ def _auto_track_bibcodes(result_json: str) -> None:
 _DEPRECATED_ALIASES: dict[str, str] = {
     "semantic_search": "search",
     "keyword_search": "search",
-    "get_citations": "citation_graph",
-    "get_references": "citation_graph",
+    # Citation tools merged into citation_traverse (2026-04-25).
+    "citation_graph": "citation_traverse",
+    "citation_chain": "citation_traverse",
+    "get_citations": "citation_traverse",
+    "get_references": "citation_traverse",
+    "get_citation_context": "citation_traverse",
     "co_citation_analysis": "citation_similarity",
     "bibliographic_coupling": "citation_similarity",
     "entity_search": "entity",
@@ -637,7 +649,6 @@ _DEPRECATED_ALIASES: dict[str, str] = {
     "get_working_set": "find_gaps",
     "get_session_summary": "find_gaps",
     "clear_working_set": "find_gaps",
-    "get_citation_context": "citation_graph",
     "read_paper_section": "read_paper",
     "search_within_paper": "read_paper",
 }
@@ -901,9 +912,9 @@ EXPECTED_TOOLS: tuple[str, ...] = (
     "concept_search",
     "get_paper",
     "read_paper",
-    "citation_graph",
+    # citation_graph + citation_chain merged into citation_traverse (2026-04-25)
+    "citation_traverse",
     "citation_similarity",
-    "citation_chain",
     "entity",
     "entity_context",
     "graph_context",
@@ -917,13 +928,15 @@ EXPECTED_TOOLS: tuple[str, ...] = (
     "section_retrieval",
 )
 
-# Tools that appear only when an optional backend is wired up.
-_OPTIONAL_TOOLS: tuple[str, ...] = ("find_similar_by_examples",)
+# Tools that appear only when an optional backend is wired up. Empty after
+# the 2026-04-25 retirement of find_similar_by_examples (Qdrant backend not in
+# active use). Retained as a placeholder for future opt-in tools.
+_OPTIONAL_TOOLS: tuple[str, ...] = ()
 
 
 def _expected_tool_set() -> set[str]:
     tools = set(EXPECTED_TOOLS)
-    if _qdrant_enabled():
+    if _OPTIONAL_TOOLS and _qdrant_enabled():
         tools.update(_OPTIONAL_TOOLS)
     return tools
 
@@ -1130,7 +1143,7 @@ def _smoke_call_new_tools() -> list[str]:
 
 
 def create_server(_run_self_test: bool = True):
-    """Create and configure the MCP server with 15 consolidated tools.
+    """Create and configure the MCP server with the 15 consolidated tools.
 
     Eagerly pre-loads the INDUS model so semantic_search is fast from
     the first call.
@@ -1355,35 +1368,78 @@ def create_server(_run_self_test: bool = True):
                     "required": ["bibcode"],
                 },
             ),
-            # --- M3: citation_graph (merges get_citations + get_references) ---
+            # --- citation_traverse (merges citation_graph + citation_chain, 2026-04-25) ---
             Tool(
-                name="citation_graph",
+                name="citation_traverse",
                 description=(
-                    "Walk the citation graph around a paper. direction=forward returns "
-                    "papers that cite it (impact); backward returns papers it cites "
-                    "(foundations); both returns each. Optionally include surrounding "
-                    "citation context sentences. Use citation_similarity instead when you "
-                    "want papers that are related via shared citation patterns rather than "
-                    "direct citation links. Use citation_chain to trace a path between two papers."
+                    "Traverse the citation graph. mode='graph' walks the neighborhood of a "
+                    "single paper (citing or cited papers); mode='chain' traces the shortest "
+                    "citation path between a source and a target paper. mode='graph' "
+                    "(default) requires bibcode and supports direction (forward=citing, "
+                    "backward=references, both=all) and include_context. mode='chain' "
+                    "requires source_bibcode and target_bibcode and accepts max_depth. "
+                    "Use citation_similarity instead when you want papers related via shared "
+                    "citation patterns rather than direct citation links."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "bibcode": {"type": "string", "description": "ADS bibcode"},
+                        "mode": {
+                            "type": "string",
+                            "enum": ["graph", "chain"],
+                            "default": "graph",
+                            "description": (
+                                "graph: walk neighbors of a single bibcode. "
+                                "chain: trace shortest path between source and target."
+                            ),
+                        },
+                        "bibcode": {
+                            "type": "string",
+                            "description": "ADS bibcode (required when mode='graph')",
+                        },
                         "direction": {
                             "type": "string",
                             "enum": ["forward", "backward", "both"],
                             "default": "forward",
-                            "description": "forward=citing papers, backward=references, both=all",
+                            "description": (
+                                "forward=citing papers, backward=references, both=all "
+                                "(mode='graph' only)"
+                            ),
                         },
                         "include_context": {
                             "type": "boolean",
                             "default": False,
-                            "description": "Include citation context text (slower)",
+                            "description": (
+                                "Include citation context text (mode='graph' only, slower)"
+                            ),
                         },
-                        "limit": {"type": "integer", "default": 20},
+                        "source_bibcode": {
+                            "type": "string",
+                            "description": (
+                                "Starting paper of the chain "
+                                "(required when mode='chain')"
+                            ),
+                        },
+                        "target_bibcode": {
+                            "type": "string",
+                            "description": (
+                                "Destination paper of the chain "
+                                "(required when mode='chain')"
+                            ),
+                        },
+                        "max_depth": {
+                            "type": "integer",
+                            "default": 5,
+                            "description": (
+                                "Maximum number of hops 1..5 (mode='chain' only)"
+                            ),
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "default": 20,
+                            "description": "Max neighbors to return (mode='graph' only)",
+                        },
                     },
-                    "required": ["bibcode"],
                 },
             ),
             # --- M3: citation_similarity (merges co_citation + coupling) ---
@@ -1415,37 +1471,6 @@ def create_server(_run_self_test: bool = True):
                         "limit": {"type": "integer", "default": 20},
                     },
                     "required": ["bibcode"],
-                },
-            ),
-            # --- citation_chain (unchanged) ---
-            Tool(
-                name="citation_chain",
-                description=(
-                    "Trace the shortest chain of citations from one paper to another. "
-                    "Returns an ordered path of intermediate papers, or an empty path if "
-                    "none exists within max_depth hops. Useful for explaining how an idea "
-                    "propagated between two specific works. Use citation_graph instead when "
-                    "you want the full neighborhood of citing or cited papers rather than a "
-                    "single path between two endpoints."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "source_bibcode": {
-                            "type": "string",
-                            "description": "Starting paper (the one that cites)",
-                        },
-                        "target_bibcode": {
-                            "type": "string",
-                            "description": "Destination paper (the one being cited)",
-                        },
-                        "max_depth": {
-                            "type": "integer",
-                            "default": 5,
-                            "description": "Maximum number of hops (1-5)",
-                        },
-                    },
-                    "required": ["source_bibcode", "target_bibcode"],
                 },
             ),
             # --- M4: entity (merges entity_search + resolve_entity) ---
@@ -1832,54 +1857,10 @@ def create_server(_run_self_test: bool = True):
             ),
         ]
 
-        # Optional Qdrant-backed discovery tool — only registered when
-        # QDRANT_URL is set. Lets the agent say "more like these papers, less
-        # like those" with optional payload filtering. Not a replacement for
-        # Postgres-backed search; an additive capability.
-        if _qdrant_enabled():
-            tool_list.append(Tool(
-                name="find_similar_by_examples",
-                description=(
-                    "Return papers most similar to a set of positive example "
-                    "bibcodes and least similar to negative examples, using "
-                    "Qdrant's discovery API over INDUS embeddings. Supports "
-                    "optional payload filters on year, doctype, arxiv_class, "
-                    "and coarse citation community. Best for \"more like "
-                    "these, less like those\" exploration — distinct from "
-                    "`search` (query text) and `citation_similarity` "
-                    "(co-citation / bibliographic coupling)."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "positive_bibcodes": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "minItems": 1,
-                            "description": "Papers the result should resemble.",
-                        },
-                        "negative_bibcodes": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "default": [],
-                            "description": "Papers the result should avoid.",
-                        },
-                        "limit": {"type": "integer", "default": 10},
-                        "year_min": {"type": "integer"},
-                        "year_max": {"type": "integer"},
-                        "doctype": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                        "community_semantic": {"type": "integer"},
-                        "arxiv_class": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                    },
-                    "required": ["positive_bibcodes"],
-                },
-            ))
+        # find_similar_by_examples retired 2026-04-25 — Qdrant backend
+        # (gated by QDRANT_URL) is not in active use. The dispatch layer
+        # raises a structured "tool_removed" error if any caller still
+        # invokes the name.
         return tool_list
 
     @server.call_tool()
@@ -2004,13 +1985,23 @@ def _transform_deprecated_args(
         new_args["mode"] = "keyword"
         return "search", new_args
 
+    if old_name == "citation_graph":
+        new_args["mode"] = "graph"
+        return "citation_traverse", new_args
+
+    if old_name == "citation_chain":
+        new_args["mode"] = "chain"
+        return "citation_traverse", new_args
+
     if old_name == "get_citations":
+        new_args["mode"] = "graph"
         new_args["direction"] = "forward"
-        return "citation_graph", new_args
+        return "citation_traverse", new_args
 
     if old_name == "get_references":
+        new_args["mode"] = "graph"
         new_args["direction"] = "backward"
-        return "citation_graph", new_args
+        return "citation_traverse", new_args
 
     if old_name == "co_citation_analysis":
         new_args["method"] = "co_citation"
@@ -2061,7 +2052,10 @@ def _transform_deprecated_args(
         return "read_paper", new_args
 
     if old_name == "get_citation_context":
-        # Keep as direct handler — args have source_bibcode/target_bibcode
+        # Keep as direct handler — args have source_bibcode/target_bibcode.
+        # Routed to the legacy get_citation_context handler via the dispatch
+        # layer; the deprecation envelope still surfaces use_instead =
+        # citation_traverse so agents migrate.
         return "get_citation_context", new_args
 
     # Session tools that are deprecated — handle directly in dispatch
@@ -2096,11 +2090,21 @@ def _wrap_deprecated(result_json: str, original_name: str, use_instead: str) -> 
 
 
 def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, Any]) -> str:
-    """Dispatch to the 15 consolidated tool handlers plus legacy session/health handlers."""
+    """Dispatch to the 15 consolidated tool handlers plus legacy/health handlers."""
 
-    # --- optional: find_similar_by_examples (Qdrant-backed) ---
+    # --- find_similar_by_examples retired 2026-04-25 ---
     if name == "find_similar_by_examples":
-        return _handle_find_similar_by_examples(args)
+        return json.dumps({
+            "error": "tool_removed",
+            "removed_in": "2026-04-25",
+            "message": (
+                "find_similar_by_examples was retired in 2026-04-25 because the "
+                "Qdrant backend is not in active use. There is no replacement; "
+                "use search with semantic mode and entity filters, or "
+                "citation_similarity with method='coupling', for the closest "
+                "behaviour."
+            ),
+        })
 
     # --- M1: Unified search ---
     if name == "search":
@@ -2125,15 +2129,18 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
     if name == "read_paper":
         return _handle_read_paper(conn, args)
 
-    # --- M3: citation_graph ---
+    # --- citation_traverse (merges citation_graph + citation_chain) ---
+    if name == "citation_traverse":
+        return _handle_citation_traverse(conn, args)
+
+    # --- legacy direct dispatch for callers that bypass _DEPRECATED_ALIASES.
+    # Most callers route via the alias layer (which rewrites the name to
+    # citation_traverse before dispatch arrives here), but a few in-process
+    # call sites — and the dispatched legacy handler in
+    # _transform_deprecated_args for get_citation_context — still arrive
+    # with the legacy names. We forward them here so behaviour is preserved.
     if name == "citation_graph":
         return _handle_citation_graph(conn, args)
-
-    # --- M3: citation_similarity ---
-    if name == "citation_similarity":
-        return _handle_citation_similarity(conn, args)
-
-    # --- citation_chain ---
     if name == "citation_chain":
         max_depth = max(1, min(args.get("max_depth", 5), 5))
         result = search.citation_chain(
@@ -2143,6 +2150,10 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
             max_depth=max_depth,
         )
         return _result_to_json(result)
+
+    # --- M3: citation_similarity ---
+    if name == "citation_similarity":
+        return _handle_citation_similarity(conn, args)
 
     # --- M4: entity ---
     if name == "entity":
@@ -2443,6 +2454,52 @@ def _handle_read_paper(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         role=args.get("role"),
     )
     return _inject_coverage_note(_result_to_json(result))
+
+
+def _handle_citation_traverse(conn: psycopg.Connection, args: dict[str, Any]) -> str:
+    """Unified citation graph traversal.
+
+    Dispatches by mode:
+        * mode='graph' (default) — neighborhood walk, requires bibcode and
+          accepts direction (forward/backward/both), include_context, limit.
+          Forwards to the underlying _handle_citation_graph implementation.
+        * mode='chain' — shortest-path search, requires source_bibcode and
+          target_bibcode and accepts max_depth (clamped to 1..5). Forwards
+          to scix.search.citation_chain.
+
+    Returns a structured JSON ``error`` payload for invalid mode or
+    missing required fields rather than raising — keeps the MCP boundary
+    contract consistent with the rest of the dispatch layer.
+    """
+    mode = args.get("mode", "graph")
+
+    if mode == "graph":
+        if "bibcode" not in args or not args.get("bibcode"):
+            return json.dumps({"error": "bibcode is required when mode='graph'"})
+        return _handle_citation_graph(conn, args)
+
+    if mode == "chain":
+        source = args.get("source_bibcode")
+        target = args.get("target_bibcode")
+        if not source or not target:
+            return json.dumps({
+                "error": (
+                    "source_bibcode and target_bibcode are required "
+                    "when mode='chain'"
+                )
+            })
+        max_depth = max(1, min(args.get("max_depth", 5), 5))
+        result = search.citation_chain(
+            conn,
+            source,
+            target,
+            max_depth=max_depth,
+        )
+        return _result_to_json(result)
+
+    return json.dumps({
+        "error": f"Invalid mode: {mode!r}. Use 'graph' or 'chain'.",
+    })
 
 
 def _handle_citation_graph(conn: psycopg.Connection, args: dict[str, Any]) -> str:

@@ -214,3 +214,72 @@ This audit is documentation-only. To realize the new state:
 
 These steps are not part of the tool-audit work unit; they belong to the
 follow-on consolidation unit.
+
+## Audit follow-up (2026-04-25)
+
+The original audit above was written against an older base of 13
+agent-facing tools. Between when the audit landed and the consolidation
+work unit ran, the integration branch
+`prd-build/section-embeddings-mcp-consolidation` had grown the active
+tool set to 17 entries via three additions and one feature-flag-gated
+optional tool. This appendix records the follow-up decisions that
+shipped with the consolidation unit.
+
+### Tools the original audit missed
+
+| Tool | Source | Verdict (2026-04-25) | Reason |
+|---|---|---|---|
+| `claim_blame` | PRD MH-4 — Deep Search v1 | KEEP | Provenance-specific (chronologically earliest origin walk over citation contexts). No semantic overlap with another tool; merging would force a polymorphic output shape. |
+| `find_replications` | PRD MH-4 — Deep Search v1 | KEEP | Replication / refutation relation inference over forward citations. Disjoint mental model from `citation_traverse(mode="graph", direction="forward")` — agents picking the right tool benefit from the explicit semantic. |
+| `find_similar_by_examples` | qdrant_tools probe (gated by `_qdrant_enabled()`) | RETIRE | The Qdrant backend is currently DOWN per the project's `mcp_deployment_state` record (no NAS-Qdrant migration has landed yet). The tool was opt-in only and not in active use; retiring it removes a "phantom" surface that confused agents reading `EXPECTED_TOOLS` against `_OPTIONAL_TOOLS`. |
+| `section_retrieval` | PRD section-embeddings-mcp-consolidation (sibling unit) | KEEP | Section-grain hybrid retrieval (HNSW over halfvec + BM25 over `papers_fulltext.sections_tsv`, RRF-fused). Distinct from `search` (paper-level) and `read_paper` (single-paper body access). |
+
+### Final active tool roster (15)
+
+1. search
+2. concept_search
+3. get_paper
+4. read_paper
+5. section_retrieval
+6. **citation_traverse** (merges citation_graph + citation_chain, `mode` enum)
+7. citation_similarity
+8. entity
+9. entity_context
+10. graph_context
+11. find_gaps
+12. temporal_evolution
+13. facet_counts
+14. claim_blame
+15. find_replications
+
+`find_similar_by_examples` is hard-removed: not registered in `list_tools()`, not in `_DEPRECATED_ALIASES`, dispatch returns
+``{"error": "tool_removed", "removed_in": "2026-04-25"}``. The
+private `_handle_find_similar_by_examples` function and the
+`scix.qdrant_tools` module are retained on the off chance the NAS-Qdrant
+migration revives the surface; nothing in the active path references them.
+
+### Strategy used for the citation merge
+
+**Shim**, not remove. `citation_graph` and `citation_chain` are added to
+`_DEPRECATED_ALIASES` and routed through `_transform_deprecated_args`
+which injects `mode="graph"` or `mode="chain"` before forwarding to
+`citation_traverse`. Existing callers (including the
+`deep_search_investigator` persona allowlist) continue to work and
+receive a `deprecated: true` envelope so agents migrate organically.
+Pre-existing aliases that targeted `citation_graph` (`get_citations`,
+`get_references`, `get_citation_context`) were remapped to
+`citation_traverse` with the appropriate `mode` injection to avoid
+double-hop deprecation.
+
+### Acceptance verification
+
+```
+$ awk '/async def list_tools/,/@server.call_tool/' src/scix/mcp_server.py \
+    | grep -oE 'name="[a-z_]+"' | sort -u | wc -l
+15
+```
+
+The acceptance criterion of <=15 active registrations is met exactly.
+Headroom for future additions before the next audit is 0; the next
+single-tool addition pushes the surface to 16 and should be paired with
+either another consolidation or a re-justification of the cap.

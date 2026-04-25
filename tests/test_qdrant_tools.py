@@ -1,20 +1,23 @@
 """Unit tests for scix.qdrant_tools feature-flagging and MCP integration.
 
-These tests do NOT require a running Qdrant instance. They validate:
-  1. is_enabled() correctly reads the QDRANT_URL env var.
-  2. bibcode_to_point_id is deterministic and within the int64 range Qdrant accepts.
-  3. The MCP server registers/omits the find_similar_by_examples tool
-     based on the feature flag, and the self-test passes in both modes.
-  4. The dispatch handler returns a structured error when Qdrant is disabled.
+The find_similar_by_examples MCP tool was retired on 2026-04-25 (Qdrant
+backend not in active use). This test suite was rewritten on the same
+date to validate the retirement contract:
 
-An integration test that hits a live Qdrant server is provided separately
-(see ``test_qdrant_tools_integration.py``, skipped unless QDRANT_URL is set).
+  1. is_enabled() correctly reads the QDRANT_URL env var (the helper is
+     still used by other code paths).
+  2. bibcode_to_point_id is deterministic and within the int64 range Qdrant
+     accepts (kept in case the tool returns; fits the eventual NAS-Qdrant
+     migration).
+  3. The MCP server does NOT register find_similar_by_examples regardless
+     of QDRANT_URL, and the self-test reports exactly 15 tools either way.
+  4. The dispatch path for the retired name returns a clear
+     "tool_removed" error.
 """
 from __future__ import annotations
 
 import json
 import os
-from unittest import mock
 
 import pytest
 
@@ -63,36 +66,43 @@ class TestBibcodeToPointId:
 
 
 class TestExpectedToolSet:
-    # PRD MH-4 grew the baseline from 13 to 15 (claim_blame + find_replications).
-    def test_base_15_when_disabled(self, no_qdrant):
+    """Post-2026-04-25: the tool set is exactly 15 regardless of Qdrant state."""
+
+    def test_15_tools_when_qdrant_disabled(self, no_qdrant):
         assert mcp_server._expected_tool_set() == set(mcp_server.EXPECTED_TOOLS)
         assert len(mcp_server._expected_tool_set()) == 15
+        assert "find_similar_by_examples" not in mcp_server._expected_tool_set()
 
-    def test_16_when_enabled(self, fake_qdrant):
+    def test_15_tools_when_qdrant_enabled(self, fake_qdrant):
+        # The retired tool is gone from the active surface even when the
+        # Qdrant feature flag is on; the gating is now hardcoded to no-op.
         tools = mcp_server._expected_tool_set()
-        assert "find_similar_by_examples" in tools
-        assert len(tools) == 16
+        assert "find_similar_by_examples" not in tools
+        assert len(tools) == 15
 
 
-class TestHandlerDisabled:
-    def test_returns_structured_error_without_backend(self, no_qdrant):
-        out = mcp_server._handle_find_similar_by_examples(
-            {"positive_bibcodes": ["2019A&A...622A...2P"]}
+class TestRetiredToolDispatch:
+    """The retired tool name must return a structured tool_removed error."""
+
+    def test_dispatch_returns_tool_removed(self, no_qdrant):
+        from scix.mcp_server import _dispatch_consolidated
+
+        # Use _dispatch_consolidated directly — _dispatch_tool runs the
+        # alias layer, but find_similar_by_examples is NOT in
+        # _DEPRECATED_ALIASES (it was hard-removed, not renamed).
+        out = _dispatch_consolidated(
+            None,  # conn unused for the retired-tool branch
+            "find_similar_by_examples",
+            {"positive_bibcodes": ["2019A&A...622A...2P"]},
         )
         payload = json.loads(out)
-        assert payload["error"] == "qdrant_not_configured"
-
-    def test_rejects_empty_positives(self, fake_qdrant):
-        out = mcp_server._handle_find_similar_by_examples(
-            {"positive_bibcodes": []}
-        )
-        payload = json.loads(out)
-        assert "error" in payload
-        assert "positive_bibcodes" in payload["error"]
+        assert payload["error"] == "tool_removed"
+        assert payload["removed_in"] == "2026-04-25"
+        assert "find_similar_by_examples" in payload["message"]
 
 
 class TestMCPSelfTest:
-    """The server self-test must pass in both enabled and disabled modes."""
+    """The server self-test must pass at exactly 15 tools regardless of QDRANT_URL."""
 
     def test_self_test_passes_without_qdrant(self, no_qdrant):
         status = mcp_server.startup_self_test()
@@ -103,36 +113,5 @@ class TestMCPSelfTest:
     def test_self_test_passes_with_qdrant(self, fake_qdrant):
         status = mcp_server.startup_self_test()
         assert status["ok"] is True
-        assert status["tool_count"] == 16
-        assert "find_similar_by_examples" in status["tool_names"]
-
-
-class TestHandlerWithMockedClient:
-    """Exercise the happy path via a mocked Qdrant client."""
-
-    def test_dispatch_returns_structured_results(self, fake_qdrant):
-        fake_hits = [
-            qdrant_tools.SimilarPaper(
-                bibcode="2020ApJ...900..001X",
-                title="Test paper",
-                year=2020,
-                first_author="Doe, J.",
-                score=0.91,
-                arxiv_class=["astro-ph.EP"],
-                community_semantic=14,
-                doctype="article",
-            ),
-        ]
-        with mock.patch.object(
-            qdrant_tools, "find_similar_by_examples", return_value=fake_hits
-        ):
-            out = mcp_server._handle_find_similar_by_examples({
-                "positive_bibcodes": ["2019A&A...622A...2P"],
-                "limit": 3,
-            })
-        payload = json.loads(out)
-        assert payload["backend"] == "qdrant"
-        assert payload["collection"] == qdrant_tools.COLLECTION
-        assert len(payload["results"]) == 1
-        assert payload["results"][0]["bibcode"] == "2020ApJ...900..001X"
-        assert payload["results"][0]["score"] == pytest.approx(0.91)
+        assert status["tool_count"] == 15
+        assert "find_similar_by_examples" not in status["tool_names"]

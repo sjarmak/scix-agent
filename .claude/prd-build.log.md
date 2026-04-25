@@ -1,5 +1,19 @@
 # PRD Build Log
 
+## 2026-04-25 (scix-deep-search-v1)
+
+- **Start**: PRD `docs/prd/scix_deep_search_v1.md` → integration branch `prd-build/scix-deep-search-v1` (created from main @ 8618478e)
+- **Decomposition complete** — 9 units across 4 layers (Layer 0: 5, Layer 1: 2, Layer 2: 1, Layer 3: 1). MH-0/1/2/3/4/5/6/7 + flagship/red-team coverage.
+- **Layer 0 implement dispatch** — 5 agents launched in parallel (mh0-latency-probe, research-scope-type, intent-backfill-pipeline, v-claim-edges-migration, correction-events-ingest).
+- **research-scope-type** — implement SUCCESS (b215005), review PASS (22/22 tests). Landed onto main (also tracked on prd-build/scix-deep-search-v1).
+- **mh0-latency-probe** — implement SUCCESS (5fb856d), review PASS (11/11 tests). Landed.
+- **v-claim-edges-migration** — implement SUCCESS (d3da316), review FAIL r1 (daily_sync.sh missing --allow-prod), fix r2 SUCCESS+PASS (166ed33). Landed.
+- **intent-backfill-pipeline** — implement SUCCESS (c3bbcc0), review PASS (13/13 tests). Landed.
+- **correction-events-ingest** — implement SUCCESS (dca7564), review PASS (20/20 tests, gold-200 coverage 100%). Landed.
+- **Layer 0 complete (5/5)** → Layer 1 dispatch (claim-blame-and-replications + deep-search-persona-harness in parallel).
+- **deep-search-persona-harness** — implement SUCCESS (ebddc19), review PASS (28/28 tests). Landed.
+- **Note**: unrelated upstream commit `da85d08 feat(concepts): multi-vocabulary concept_search router (dbl.7)` landed on main mid-session, touching src/scix/mcp_server.py — claim-blame-and-replications agent will likely conflict on landing.
+
 ## 2026-04-18 (community-detection-v2)
 
 - **Start**: PRD `docs/prd/prd_community_detection_v2.md` → integration branch `prd-build/community-detection-v2` (created from main @ f5437179)

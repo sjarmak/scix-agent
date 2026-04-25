@@ -1,10 +1,11 @@
 """Unit tests for the consolidated MCP server (no database or MCP SDK required).
 
 Covers:
-- 13 consolidated tools dispatch correctly
+- 15 consolidated tools dispatch correctly (13 baseline + claim_blame +
+  find_replications per PRD MH-4)
 - Deprecated aliases return deprecated:true + use_instead
 - Implicit session tracking (focused papers)
-- list_tools() returns exactly 13 tools
+- list_tools() returns exactly 15 tools
 """
 
 from __future__ import annotations
@@ -131,12 +132,13 @@ class TestResultToJson:
 
 
 # ---------------------------------------------------------------------------
-# AC1: list_tools() returns exactly 13 tools
+# AC1: list_tools() returns exactly 15 tools (13 baseline + 2 from PRD MH-4)
 # ---------------------------------------------------------------------------
 
 
 class TestListTools:
-    def test_list_tools_returns_exactly_13(self) -> None:
+    def test_list_tools_returns_exactly_15(self) -> None:
+        # PRD MH-4: baseline 13 grew by 2 (claim_blame, find_replications).
         try:
             import asyncio
 
@@ -167,10 +169,12 @@ class TestListTools:
                             "find_gaps",
                             "temporal_evolution",
                             "facet_counts",
+                            "claim_blame",
+                            "find_replications",
                         ]
                     )
                     assert tool_names == expected, f"Got: {tool_names}"
-                    assert len(tools) == 13
+                    assert len(tools) == 15
                 finally:
                     loop.close()
         except (ImportError, AttributeError):

@@ -1,10 +1,11 @@
-"""Smoke tests for all 13 consolidated MCP tools.
+"""Smoke tests for all 15 consolidated MCP tools.
 
 These tests catch total breakage of any tool on every deploy. They:
 
 1. Verify ``startup_self_test`` succeeds against a freshly-created server
-   (13 tools, valid schemas).
-2. Call each of the 13 consolidated tools via ``_dispatch_tool`` with a
+   (15 tools, valid schemas) — 13 baseline + 2 PRD MH-4 tools
+   (claim_blame, find_replications).
+2. Call each of the 15 consolidated tools via ``_dispatch_tool`` with a
    minimal golden-path input and assert the returned JSON is a valid
    non-error response (no exception raised, no top-level ``error`` key).
 
@@ -86,9 +87,10 @@ def mock_conn() -> MagicMock:
 class TestStartupSelfTest:
     """Validates the server's self-test catches missing/broken tools."""
 
-    def test_expected_tools_has_13_entries(self) -> None:
-        assert len(EXPECTED_TOOLS) == 13
-        assert len(set(EXPECTED_TOOLS)) == 13  # no duplicates
+    def test_expected_tools_has_15_entries(self) -> None:
+        # PRD MH-4 grew the baseline of 13 by 2 (claim_blame, find_replications).
+        assert len(EXPECTED_TOOLS) == 15
+        assert len(set(EXPECTED_TOOLS)) == 15  # no duplicates
 
     def test_self_test_passes_on_fresh_server(self) -> None:
         """A freshly created server must pass the self-test."""
@@ -101,7 +103,7 @@ class TestStartupSelfTest:
             status = startup_self_test()
 
         assert status["ok"] is True
-        assert status["tool_count"] == 13
+        assert status["tool_count"] == 15
         assert status["errors"] == []
         assert sorted(EXPECTED_TOOLS) == status["tool_names"]
 
@@ -112,7 +114,8 @@ class TestStartupSelfTest:
         except ImportError:
             pytest.skip("mcp SDK not installed")
 
-        # Build a fake server where the list_tools handler returns 12 tools.
+        # Build a fake server where the list_tools handler returns 14 tools
+        # (one short of EXPECTED_TOOLS).
         fake_server = MagicMock()
         bad_tools = [
             Tool(
@@ -120,7 +123,7 @@ class TestStartupSelfTest:
                 description="x",
                 inputSchema={"type": "object", "properties": {}},
             )
-            for i in range(12)
+            for i in range(14)
         ]
 
         async def bad_handler(_req: Any) -> Any:
@@ -138,7 +141,7 @@ class TestStartupSelfTest:
         except ImportError:
             pytest.skip("mcp SDK not installed")
 
-        # 13 tools but one expected name replaced with a bogus one.
+        # 15 tools but one expected name replaced with a bogus one.
         swapped = list(EXPECTED_TOOLS)
         swapped[0] = "not_a_real_tool"
         bad_tools = [
@@ -166,7 +169,7 @@ class TestStartupSelfTest:
 
 
 class TestToolSmoke:
-    """Golden-path smoke test for each of the 13 consolidated tools."""
+    """Golden-path smoke test for each of the 15 consolidated tools."""
 
     @patch("scix.mcp_server._log_query")
     @patch(
@@ -419,6 +422,42 @@ class TestToolSmoke:
         mock_fc.return_value = _empty_result()
         out = _dispatch_tool(mock_conn, "facet_counts", {"field": "year"})
         _assert_non_error(out, "facet_counts")
+
+    @patch("scix.mcp_server._log_query")
+    def test_claim_blame(
+        self,
+        _mock_log: MagicMock,
+        mock_conn: MagicMock,
+    ) -> None:
+        """PRD MH-4: claim_blame dispatch returns a structured result."""
+        # mock_conn's cursor.fetchall already returns [], so the seed query
+        # comes back empty and the tool returns the empty-origin shape.
+        out = _dispatch_tool(
+            mock_conn,
+            "claim_blame",
+            {"claim_text": "local H0 measurement is 73 km/s/Mpc"},
+        )
+        data = _assert_non_error(out, "claim_blame")
+        assert "origin" in data
+        assert "lineage" in data
+        assert "confidence" in data
+        assert "retraction_warnings" in data
+
+    @patch("scix.mcp_server._log_query")
+    def test_find_replications(
+        self,
+        _mock_log: MagicMock,
+        mock_conn: MagicMock,
+    ) -> None:
+        """PRD MH-4: find_replications dispatch returns citations envelope."""
+        out = _dispatch_tool(
+            mock_conn,
+            "find_replications",
+            {"target_bibcode": "2011ApJ...730..119R"},
+        )
+        data = _assert_non_error(out, "find_replications")
+        assert "citations" in data
+        assert "total" in data
 
     @patch("scix.mcp_server._log_query")
     @patch("scix.search.facet_counts")

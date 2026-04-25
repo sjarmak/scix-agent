@@ -63,14 +63,15 @@ class TestBibcodeToPointId:
 
 
 class TestExpectedToolSet:
-    def test_base_13_when_disabled(self, no_qdrant):
+    # PRD MH-4 grew the baseline from 13 to 15 (claim_blame + find_replications).
+    def test_base_15_when_disabled(self, no_qdrant):
         assert mcp_server._expected_tool_set() == set(mcp_server.EXPECTED_TOOLS)
-        assert len(mcp_server._expected_tool_set()) == 13
+        assert len(mcp_server._expected_tool_set()) == 15
 
-    def test_14_when_enabled(self, fake_qdrant):
+    def test_16_when_enabled(self, fake_qdrant):
         tools = mcp_server._expected_tool_set()
         assert "find_similar_by_examples" in tools
-        assert len(tools) == 14
+        assert len(tools) == 16
 
 
 class TestHandlerDisabled:
@@ -96,13 +97,13 @@ class TestMCPSelfTest:
     def test_self_test_passes_without_qdrant(self, no_qdrant):
         status = mcp_server.startup_self_test()
         assert status["ok"] is True
-        assert status["tool_count"] == 13
+        assert status["tool_count"] == 15
         assert "find_similar_by_examples" not in status["tool_names"]
 
     def test_self_test_passes_with_qdrant(self, fake_qdrant):
         status = mcp_server.startup_self_test()
         assert status["ok"] is True
-        assert status["tool_count"] == 14
+        assert status["tool_count"] == 16
         assert "find_similar_by_examples" in status["tool_names"]
 
 

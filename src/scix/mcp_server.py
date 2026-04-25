@@ -1,4 +1,4 @@
-"""MCP server exposing 13 consolidated tools for agent navigation of the SciX corpus.
+"""MCP server exposing 15 consolidated tools for agent navigation of the SciX corpus.
 
 Uses the `mcp` Python SDK to register tools. Each tool is a thin wrapper
 around functions in search.py. Connection pooling via psycopg.pool for
@@ -635,6 +635,9 @@ EXPECTED_TOOLS: tuple[str, ...] = (
     "find_gaps",
     "temporal_evolution",
     "facet_counts",
+    # PRD MH-4 — Deep Search v1: provenance walk + replication enumeration
+    "claim_blame",
+    "find_replications",
 )
 
 # Tools that appear only when an optional backend is wired up.
@@ -649,7 +652,7 @@ def _expected_tool_set() -> set[str]:
 
 
 def startup_self_test(server: Any = None) -> dict[str, Any]:
-    """Validate that list_tools() returns exactly 13 tools with valid schemas.
+    """Validate that list_tools() returns the EXPECTED_TOOLS set with valid schemas.
 
     Pure function — does NOT require a database connection. Inspects only
     the registered tool schemas. Runs during server initialization (see
@@ -773,6 +776,20 @@ def startup_self_test(server: Any = None) -> dict[str, Any]:
         )
         raise RuntimeError(f"startup_self_test failed: {errors}")
 
+    # PRD MH-4 acceptance criterion 7: invoke claim_blame and
+    # find_replications when SCIX_TEST_DSN is set so the self-test catches
+    # SQL/wiring breakage end-to-end. We use defensive try/except — empty
+    # results are acceptable (citation_contexts.intent may be all NULL until
+    # the SciCite backfill runs), but a raised exception fails the test.
+    if os.environ.get("SCIX_TEST_DSN"):
+        smoke_errors = _smoke_call_new_tools()
+        if smoke_errors:
+            status["smoke_errors"] = smoke_errors
+            logger.critical(
+                "startup_self_test FAILED smoke calls: %s", smoke_errors
+            )
+            raise RuntimeError(f"startup_self_test smoke calls failed: {smoke_errors}")
+
     logger.info(
         "startup_self_test OK: %d tools registered (%s)",
         tool_count,
@@ -781,13 +798,43 @@ def startup_self_test(server: Any = None) -> dict[str, Any]:
     return status
 
 
+def _smoke_call_new_tools() -> list[str]:
+    """Invoke claim_blame and find_replications against SCIX_TEST_DSN.
+
+    Returns a list of error strings (empty on success). Empty result sets
+    are NOT errors — only raised exceptions are. This matches PRD MH-4
+    acceptance criterion 7's "gracefully handle the case where
+    citation_contexts.intent is all NULL" requirement.
+    """
+    errors: list[str] = []
+    try:
+        from scix.claim_blame import claim_blame
+        from scix.find_replications import find_replications
+    except ImportError as exc:
+        return [f"import: {exc}"]
+
+    try:
+        with _get_conn() as conn:
+            try:
+                claim_blame("startup self-test claim", conn=conn)
+            except Exception as exc:  # noqa: BLE001 — log + report
+                errors.append(f"claim_blame: {exc}")
+            try:
+                find_replications("0000NoSuchBibcode000", conn=conn)
+            except Exception as exc:  # noqa: BLE001 — log + report
+                errors.append(f"find_replications: {exc}")
+    except Exception as exc:  # noqa: BLE001 — pool acquire failure
+        errors.append(f"pool: {exc}")
+    return errors
+
+
 # ---------------------------------------------------------------------------
 # MCP server creation
 # ---------------------------------------------------------------------------
 
 
 def create_server(_run_self_test: bool = True):
-    """Create and configure the MCP server with 13 consolidated tools.
+    """Create and configure the MCP server with 15 consolidated tools.
 
     Eagerly pre-loads the INDUS model so semantic_search is fast from
     the first call.
@@ -1311,6 +1358,100 @@ def create_server(_run_self_test: bool = True):
                     "required": ["field"],
                 },
             ),
+            # --- PRD MH-4: claim_blame ---
+            Tool(
+                name="claim_blame",
+                description=(
+                    "Trace a claim back to its chronologically earliest non-retracted "
+                    "origin paper by walking reverse references over all citation "
+                    "contexts. Returns the origin bibcode, a Hop chain that surfaces "
+                    "intent and intent_weight at every step, a confidence score in "
+                    "[0,1], and a list of retraction warnings for any paper in the "
+                    "lineage with a retraction event. Ranking is "
+                    "(chronological_priority, intent_weight, semantic_match) with "
+                    "weights {result_comparison: 1.0, method: 0.6, background: 0.3}. "
+                    "Use citation_chain instead when you already know both endpoints "
+                    "and just want a path; use find_replications to enumerate forward "
+                    "citations to a paper."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "claim_text": {
+                            "type": "string",
+                            "description": (
+                                "Natural-language claim to trace, e.g. "
+                                "'local H0 measurement is 73 km/s/Mpc'."
+                            ),
+                        },
+                        "scope": {
+                            "type": "object",
+                            "description": (
+                                "Optional ResearchScope filters (year_window, "
+                                "community_ids, methodology_class, instruments, "
+                                "exclude_authors, exclude_funders, min_venue_tier, "
+                                "leiden_resolution). All keys optional."
+                            ),
+                        },
+                        "candidate_limit": {
+                            "type": "integer",
+                            "default": 20,
+                            "description": "Max claim-asserting candidates to seed.",
+                        },
+                        "lineage_limit": {
+                            "type": "integer",
+                            "default": 10,
+                            "description": "Max hops to walk per candidate.",
+                        },
+                    },
+                    "required": ["claim_text"],
+                },
+            ),
+            # --- PRD MH-4: find_replications ---
+            Tool(
+                name="find_replications",
+                description=(
+                    "Return forward citations to a target paper, ranked by intent_weight, "
+                    "with each citation annotated with citation intent, an inferred "
+                    "replication relation (replicates / refutes / qualifies / partial / "
+                    "unknown), and a hedge_present flag. Relation and hedge are derived "
+                    "from a documented heuristic substitute for NegBERT (see module "
+                    "docstring); NegBERT is the future drop-in. Use citation_graph with "
+                    "direction='forward' instead when you want raw forward citations "
+                    "without relation inference; use claim_blame when you want the "
+                    "earliest origin of a claim rather than its replications."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "target_bibcode": {
+                            "type": "string",
+                            "description": "ADS bibcode whose forward citations to enumerate.",
+                        },
+                        "relation": {
+                            "type": "string",
+                            "enum": ["replicates", "refutes", "qualifies", "partial"],
+                            "description": (
+                                "Optional filter on relation_inferred. Omit to "
+                                "return all relations including unknown."
+                            ),
+                        },
+                        "scope": {
+                            "type": "object",
+                            "description": (
+                                "Optional ResearchScope filters; year_window applies to "
+                                "the citing paper's year."
+                            ),
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "default": 50,
+                            "description": "Max citations to return.",
+                        },
+                    },
+                    "required": ["target_bibcode"],
+                },
+            ),
         ]
 
         # Optional Qdrant-backed discovery tool — only registered when
@@ -1577,7 +1718,7 @@ def _wrap_deprecated(result_json: str, original_name: str, use_instead: str) -> 
 
 
 def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, Any]) -> str:
-    """Dispatch to the 13 consolidated tool handlers plus legacy session/health handlers."""
+    """Dispatch to the 15 consolidated tool handlers plus legacy session/health handlers."""
 
     # --- optional: find_similar_by_examples (Qdrant-backed) ---
     if name == "find_similar_by_examples":
@@ -1672,6 +1813,14 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
         limit = args.get("limit", 50)
         result = search.facet_counts(conn, args["field"], filters=filters, limit=limit)
         return _result_to_json(result)
+
+    # --- PRD MH-4: claim_blame ---
+    if name == "claim_blame":
+        return _handle_claim_blame(conn, args)
+
+    # --- PRD MH-4: find_replications ---
+    if name == "find_replications":
+        return _handle_find_replications(conn, args)
 
     # --- Legacy handlers for deprecated session tools ---
     if name == "add_to_working_set":
@@ -2297,6 +2446,67 @@ def _handle_health_check(conn: psycopg.Connection) -> str:
     except Exception:
         status["db"] = "error"
     return json.dumps(status, indent=2)
+
+
+def _handle_claim_blame(conn: psycopg.Connection, args: dict[str, Any]) -> str:
+    """Dispatch handler for the claim_blame MCP tool (PRD MH-4)."""
+    from scix.claim_blame import claim_blame
+    from scix.research_scope import scope_from_dict
+
+    claim_text = args.get("claim_text")
+    if not isinstance(claim_text, str) or not claim_text.strip():
+        return json.dumps({"error": "claim_text must be a non-empty string"})
+
+    scope_arg = args.get("scope")
+    try:
+        scope = scope_from_dict(scope_arg) if scope_arg else None
+    except (TypeError, ValueError) as exc:
+        return json.dumps({"error": f"invalid scope: {exc}"})
+
+    candidate_limit = int(args.get("candidate_limit", 20))
+    lineage_limit = int(args.get("lineage_limit", 10))
+
+    result = claim_blame(
+        claim_text,
+        scope=scope,
+        conn=conn,
+        candidate_limit=candidate_limit,
+        lineage_limit=lineage_limit,
+    )
+    return json.dumps(result, indent=2, default=str)
+
+
+def _handle_find_replications(conn: psycopg.Connection, args: dict[str, Any]) -> str:
+    """Dispatch handler for the find_replications MCP tool (PRD MH-4)."""
+    from scix.find_replications import VALID_RELATIONS, find_replications
+    from scix.research_scope import scope_from_dict
+
+    target_bibcode = args.get("target_bibcode")
+    if not isinstance(target_bibcode, str) or not target_bibcode.strip():
+        return json.dumps({"error": "target_bibcode must be a non-empty string"})
+
+    relation = args.get("relation")
+    if relation is not None and relation not in VALID_RELATIONS:
+        return json.dumps(
+            {"error": f"relation must be one of {sorted(VALID_RELATIONS)} or null"}
+        )
+
+    scope_arg = args.get("scope")
+    try:
+        scope = scope_from_dict(scope_arg) if scope_arg else None
+    except (TypeError, ValueError) as exc:
+        return json.dumps({"error": f"invalid scope: {exc}"})
+
+    limit = int(args.get("limit", 50))
+
+    result = find_replications(
+        target_bibcode,
+        relation=relation,
+        scope=scope,
+        conn=conn,
+        limit=limit,
+    )
+    return json.dumps({"citations": result, "total": len(result)}, indent=2, default=str)
 
 
 def _handle_entity_profile(conn: psycopg.Connection, args: dict[str, Any]) -> str:

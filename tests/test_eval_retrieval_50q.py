@@ -1,342 +1,288 @@
-"""Tests for the 50-query retrieval evaluation metrics."""
+"""Tests for the 50-query retrieval evaluation driver.
+
+Covers:
+    - nDCG@10 against known toy rankings
+    - MRR@10 against known toy rankings
+    - Recall@k against known toy rankings
+    - aggregate_metrics excludes None scores rather than averaging them
+    - --dry-run produces a fixed-shape JSON output (AC3)
+
+These tests are pure-Python: no DB connection, no model load, no torch
+import. They exercise the metric primitives directly and the CLI via
+``main(["--dry-run", ...])``.
+"""
 
 from __future__ import annotations
 
+import json
 import math
 import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+# Make ``scripts/`` importable so we can pull the driver as a module.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_SCRIPTS = _REPO_ROOT / "scripts"
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
 
-from eval_retrieval_50q import (
-    QueryEval,
-    aggregate_results,
-    dcg_at_k,
-    mrr,
-    ndcg_at_k,
-    paired_difference_test,
-    precision_at_k,
-    recall_at_k,
-)
-
-# ---------------------------------------------------------------------------
-# DCG / nDCG
-# ---------------------------------------------------------------------------
-
-
-class TestDCG:
-    def test_perfect_ranking(self) -> None:
-        # All relevant at top
-        assert dcg_at_k([1, 1, 1], 3) == pytest.approx(
-            1 / math.log2(2) + 1 / math.log2(3) + 1 / math.log2(4)
-        )
-
-    def test_no_relevant(self) -> None:
-        assert dcg_at_k([0, 0, 0], 3) == 0.0
-
-    def test_single_relevant_at_top(self) -> None:
-        assert dcg_at_k([1, 0, 0], 3) == pytest.approx(1 / math.log2(2))
-
-    def test_k_truncation(self) -> None:
-        # Only considers first k elements
-        assert dcg_at_k([1, 0, 1, 1, 1], 2) == pytest.approx(1 / math.log2(2))
-
-
-class TestNDCG:
-    def test_perfect_ndcg(self) -> None:
-        retrieved = ["a", "b", "c"]
-        relevant = {"a", "b", "c"}
-        assert ndcg_at_k(retrieved, relevant, 3) == pytest.approx(1.0)
-
-    def test_zero_ndcg(self) -> None:
-        retrieved = ["x", "y", "z"]
-        relevant = {"a", "b", "c"}
-        assert ndcg_at_k(retrieved, relevant, 3) == 0.0
-
-    def test_partial_ndcg(self) -> None:
-        retrieved = ["a", "x", "b"]
-        relevant = {"a", "b"}
-        val = ndcg_at_k(retrieved, relevant, 3)
-        assert 0.0 < val < 1.0
-
-    def test_empty_relevant(self) -> None:
-        assert ndcg_at_k(["a", "b"], set(), 2) == 0.0
-
-    def test_relevant_after_k(self) -> None:
-        # Relevant doc at position 3, but k=2
-        retrieved = ["x", "y", "a"]
-        relevant = {"a"}
-        assert ndcg_at_k(retrieved, relevant, 2) == 0.0
+import eval_retrieval_50q as drv  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# Recall / Precision / MRR
+# nDCG@10
 # ---------------------------------------------------------------------------
 
 
-class TestRecall:
-    def test_perfect_recall(self) -> None:
-        assert recall_at_k(["a", "b", "c"], {"a", "b"}, 3) == 1.0
+class TestNDCGAt10:
+    def test_perfect_single_gold_at_top(self) -> None:
+        assert drv.ndcg_at_10(["A", "B", "C"], ["A"]) == pytest.approx(1.0)
 
-    def test_partial_recall(self) -> None:
-        assert recall_at_k(["a", "x", "y"], {"a", "b"}, 3) == 0.5
+    def test_single_gold_at_rank_2(self) -> None:
+        # gold=["A"], retrieved=["B","A","C"] -> dcg=1/log2(3); idcg=1/log2(2)=1
+        assert drv.ndcg_at_10(["B", "A", "C"], ["A"]) == pytest.approx(1.0 / math.log2(3))
 
-    def test_zero_recall(self) -> None:
-        assert recall_at_k(["x", "y", "z"], {"a", "b"}, 3) == 0.0
+    def test_zero_when_no_overlap(self) -> None:
+        assert drv.ndcg_at_10(["X", "Y", "Z"], ["A"]) == 0.0
 
-    def test_empty_relevant(self) -> None:
-        assert recall_at_k(["a", "b"], set(), 2) == 0.0
+    def test_excluded_when_gold_empty(self) -> None:
+        # Per spec: empty gold -> exclude (None) rather than score zero.
+        assert drv.ndcg_at_10(["A", "B"], []) is None
+
+    def test_relevant_at_rank_11_is_zero(self) -> None:
+        retrieved = [f"X{i}" for i in range(10)] + ["A"]
+        assert drv.ndcg_at_10(retrieved, ["A"]) == 0.0
+
+    def test_two_gold_perfect_top_two(self) -> None:
+        # Both gold at top -> perfect.
+        assert drv.ndcg_at_10(["A", "B", "X"], ["A", "B"]) == pytest.approx(1.0)
+
+    def test_two_gold_swapped_with_distractor(self) -> None:
+        # gold={A,B}, retrieved=[A,X,B]
+        # dcg  = 1/log2(2) + 1/log2(4) = 1 + 0.5 = 1.5
+        # idcg = 1/log2(2) + 1/log2(3)
+        retrieved = ["A", "X", "B"]
+        gold = ["A", "B"]
+        expected = (1.0 + 0.5) / (1.0 + 1.0 / math.log2(3))
+        assert drv.ndcg_at_10(retrieved, gold) == pytest.approx(expected)
 
 
-class TestPrecision:
-    def test_perfect_precision(self) -> None:
-        assert precision_at_k(["a", "b"], {"a", "b", "c"}, 2) == 1.0
-
-    def test_half_precision(self) -> None:
-        assert precision_at_k(["a", "x"], {"a", "b"}, 2) == 0.5
-
-    def test_zero_k(self) -> None:
-        assert precision_at_k(["a"], {"a"}, 0) == 0.0
+# ---------------------------------------------------------------------------
+# MRR@10
+# ---------------------------------------------------------------------------
 
 
-class TestMRR:
+class TestMRRAt10:
     def test_first_position(self) -> None:
-        assert mrr(["a", "b", "c"], {"a"}) == 1.0
+        assert drv.mrr_at_10(["A", "B", "C"], ["A"]) == 1.0
 
     def test_second_position(self) -> None:
-        assert mrr(["x", "a", "c"], {"a"}) == 0.5
+        assert drv.mrr_at_10(["B", "A", "C"], ["A"]) == 0.5
 
-    def test_no_relevant(self) -> None:
-        assert mrr(["x", "y", "z"], {"a"}) == 0.0
+    def test_no_match(self) -> None:
+        assert drv.mrr_at_10(["B", "C", "D"], ["A"]) == 0.0
+
+    def test_excluded_when_gold_empty(self) -> None:
+        assert drv.mrr_at_10(["A", "B"], []) is None
+
+    def test_only_top_10_counted(self) -> None:
+        retrieved = [f"X{i}" for i in range(10)] + ["A"]
+        assert drv.mrr_at_10(retrieved, ["A"]) == 0.0
+
+    def test_first_relevant_wins_when_multi_gold(self) -> None:
+        # gold={A,B}, retrieved=[X,A,B] -> 1/2 from A.
+        assert drv.mrr_at_10(["X", "A", "B"], ["A", "B"]) == 0.5
 
 
 # ---------------------------------------------------------------------------
-# Aggregation
+# Recall@k
 # ---------------------------------------------------------------------------
 
 
-class TestAggregation:
-    def _make_eval(self, method: str, ndcg: float, seed: str = "test") -> QueryEval:
-        return QueryEval(
-            seed_bibcode=seed,
-            method=method,
-            ndcg_10=ndcg,
-            recall_10=0.5,
-            recall_20=0.6,
-            precision_10=0.3,
-            mrr_val=0.8,
-            relevant_count=10,
-            retrieved_count=20,
-            latency_ms=5.0,
-        )
+class TestRecallAtK:
+    def test_full_recall(self) -> None:
+        retrieved = ["A", "B"] + [f"X{i}" for i in range(48)]
+        assert drv.recall_at_k(retrieved, ["A", "B"], 50) == 1.0
 
-    def test_single_method(self) -> None:
-        evals = [
-            self._make_eval("specter2", 0.8, "s1"),
-            self._make_eval("specter2", 0.6, "s2"),
+    def test_half_recall(self) -> None:
+        retrieved = ["A"] + [f"X{i}" for i in range(49)]
+        assert drv.recall_at_k(retrieved, ["A", "B"], 50) == 0.5
+
+    def test_zero_recall(self) -> None:
+        assert drv.recall_at_k(["X", "Y", "Z"], ["A", "B"], 50) == 0.0
+
+    def test_excluded_when_gold_empty(self) -> None:
+        assert drv.recall_at_k(["A", "B"], [], 50) is None
+
+    def test_truncates_at_k(self) -> None:
+        retrieved = [f"X{i}" for i in range(50)] + ["A"]
+        assert drv.recall_at_k(retrieved, ["A"], 50) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Aggregator exclusion semantics
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateMetrics:
+    def test_excludes_none(self) -> None:
+        per_query = [
+            {"ndcg_at_10": 1.0, "mrr_at_10": 1.0, "recall_at_50": 1.0},
+            {"ndcg_at_10": None, "mrr_at_10": None, "recall_at_50": None},
+            {"ndcg_at_10": 0.0, "mrr_at_10": 0.0, "recall_at_50": 0.0},
         ]
-        summaries = aggregate_results(evals)
-        assert len(summaries) == 1
-        assert summaries[0].method == "specter2"
-        assert summaries[0].mean_ndcg_10 == pytest.approx(0.7)
-        assert summaries[0].n_queries == 2
+        agg = drv.aggregate_metrics(per_query)
+        assert agg["ndcg_at_10"] == pytest.approx(0.5)
+        assert agg["mrr_at_10"] == pytest.approx(0.5)
+        assert agg["recall_at_50"] == pytest.approx(0.5)
+        assert agg["n_queries"] == 3
+        assert agg["n_scored_ndcg"] == 2
+        assert agg["n_scored_mrr"] == 2
+        assert agg["n_scored_recall"] == 2
 
-    def test_multiple_methods(self) -> None:
-        evals = [
-            self._make_eval("specter2", 0.8),
-            self._make_eval("lexical", 0.4),
-        ]
-        summaries = aggregate_results(evals)
-        assert len(summaries) == 2
-
-
-# ---------------------------------------------------------------------------
-# Significance test
-# ---------------------------------------------------------------------------
-
-
-class TestSignificance:
-    def _make_eval(self, method: str, ndcg: float, seed: str) -> QueryEval:
-        return QueryEval(
-            seed_bibcode=seed,
-            method=method,
-            ndcg_10=ndcg,
-            recall_10=0.5,
-            recall_20=0.6,
-            precision_10=0.3,
-            mrr_val=0.8,
-            relevant_count=10,
-            retrieved_count=20,
-            latency_ms=5.0,
-        )
-
-    def test_insufficient_pairs(self) -> None:
-        evals = [
-            self._make_eval("a", 0.8, "s1"),
-            self._make_eval("b", 0.6, "s1"),
-        ]
-        result = paired_difference_test(evals, "a", "b")
-        assert result["n_pairs"] == 1
-        assert result["p_value"] is None
-
-    def test_positive_difference(self) -> None:
-        evals = []
-        for i in range(10):
-            evals.append(self._make_eval("a", 0.8, f"s{i}"))
-            evals.append(self._make_eval("b", 0.3, f"s{i}"))
-        result = paired_difference_test(evals, "a", "b")
-        assert result["n_pairs"] == 10
-        assert result["mean_diff"] > 0
+    def test_empty_yields_zero_not_nan(self) -> None:
+        agg = drv.aggregate_metrics([])
+        assert agg["ndcg_at_10"] == 0.0
+        assert agg["n_queries"] == 0
 
 
 # ---------------------------------------------------------------------------
-# Full-corpus mode helpers
+# RRF fusion
 # ---------------------------------------------------------------------------
 
 
-class TestFullCorpusMethods:
-    """Tests for the FULL_CORPUS_METHODS constant and method routing."""
+class TestRRFFuse:
+    def test_basic_intersection(self) -> None:
+        # Both rankings rank A first and B second; A should win deterministically.
+        fused = drv.rrf_fuse_bibcodes([["A", "B"], ["A", "B"]])
+        assert fused[:2] == ["A", "B"]
 
-    def test_full_corpus_methods_exist(self) -> None:
-        from eval_retrieval_50q import FULL_CORPUS_METHODS
-
-        assert "indus" in FULL_CORPUS_METHODS
-        assert "lexical" in FULL_CORPUS_METHODS
-        assert "hybrid_indus" in FULL_CORPUS_METHODS
-
-    def test_full_corpus_methods_excludes_pilot_only(self) -> None:
-        """Full-corpus mode should not include specter2/nomic (no full embeddings)."""
-        from eval_retrieval_50q import FULL_CORPUS_METHODS
-
-        assert "specter2" not in FULL_CORPUS_METHODS
-        assert "nomic" not in FULL_CORPUS_METHODS
-        assert "hybrid_specter2" not in FULL_CORPUS_METHODS
+    def test_disjoint_rankings(self) -> None:
+        # Each list has unique items at rank 1; fused should put both at the
+        # top (tied) with deterministic alphabetical tiebreak.
+        fused = drv.rrf_fuse_bibcodes([["A"], ["B"]])
+        assert set(fused[:2]) == {"A", "B"}
+        # Tiebreak by ascending bibcode -> A before B.
+        assert fused == ["A", "B"]
 
 
-class TestMakeLexicalQuery:
-    """Tests for _make_lexical_query robustness."""
-
-    def test_basic_extraction(self) -> None:
-        from eval_retrieval_50q import _make_lexical_query
-
-        seed = {"title": "Dark matter halos in galaxy clusters"}
-        query = _make_lexical_query(seed)
-        assert "dark" in query
-        assert "matter" in query
-        assert "halos" in query
-
-    def test_html_stripping(self) -> None:
-        from eval_retrieval_50q import _make_lexical_query
-
-        seed = {"title": "The <sub>13</sub>CO emission from molecular clouds"}
-        query = _make_lexical_query(seed)
-        # HTML tags should be stripped, not leaked into query
-        assert "<sub>" not in query
-        assert "emission" in query
-
-    def test_max_terms_limit(self) -> None:
-        from eval_retrieval_50q import _make_lexical_query
-
-        seed = {
-            "title": "Spectroscopic observations revealing chemical abundances "
-            "metallicity gradients stellar populations evolutionary sequences"
-        }
-        query = _make_lexical_query(seed, max_terms=4)
-        assert len(query.split()) <= 4
-
-    def test_empty_title(self) -> None:
-        from eval_retrieval_50q import _make_lexical_query
-
-        assert _make_lexical_query({"title": ""}) == ""
-        assert _make_lexical_query({}) == ""
+# ---------------------------------------------------------------------------
+# CLI dry-run schema (AC3)
+# ---------------------------------------------------------------------------
 
 
-class TestGenerateReport:
-    """Tests for report generation with full-corpus metadata."""
-
-    def test_report_contains_corpus_label(self) -> None:
-        from eval_retrieval_50q import EvalSummary, generate_report
-
-        summary = EvalSummary(
-            method="indus",
-            n_queries=50,
-            mean_ndcg_10=0.45,
-            mean_recall_10=0.30,
-            mean_recall_20=0.50,
-            mean_precision_10=0.38,
-            mean_mrr=0.72,
-            mean_latency_ms=120.0,
-            std_ndcg_10=0.15,
+class TestDryRunOutputSchema:
+    def test_dry_run_schema(self, tmp_path: Path) -> None:
+        out = tmp_path / "out.json"
+        rc = drv.main(
+            [
+                "--dry-run",
+                "--modes",
+                "baseline,section,fused",
+                "--queries",
+                str(_REPO_ROOT / "eval" / "retrieval_50q.jsonl"),
+                "--output",
+                str(out),
+            ]
         )
-        seeds = [
-            {
-                "bibcode": "2024TEST",
-                "title": "Test",
-                "n_neighbors": 15,
-                "year": 2024,
-            }
+        assert rc == 0
+        assert out.exists()
+        payload = json.loads(out.read_text())
+        # Top-level required keys
+        assert payload["dry_run"] is True
+        assert "modes" in payload
+        # Required modes present and in correct shape (AC3)
+        assert set(payload["modes"].keys()) == {"baseline", "section", "fused"}
+        for mode_name, block in payload["modes"].items():
+            assert "overall" in block, f"{mode_name} missing 'overall'"
+            assert "by_bucket" in block, f"{mode_name} missing 'by_bucket'"
+            for metric in ("ndcg_at_10", "mrr_at_10", "recall_at_50"):
+                assert metric in block["overall"], f"{mode_name}.overall missing {metric}"
+            # All four buckets present in by_bucket
+            for bucket in ("title_matchable", "concept", "method", "author_specific"):
+                assert bucket in block["by_bucket"], f"{mode_name} missing bucket {bucket}"
+                for metric in ("ndcg_at_10", "mrr_at_10", "recall_at_50"):
+                    assert metric in block["by_bucket"][bucket]
+
+    def test_dry_run_baseline_only(self, tmp_path: Path) -> None:
+        # AC5: --dry-run --modes baseline must exit 0 even with no data.
+        out = tmp_path / "out.json"
+        rc = drv.main(
+            [
+                "--dry-run",
+                "--modes",
+                "baseline",
+                "--output",
+                str(out),
+                "--queries",
+                str(_REPO_ROOT / "eval" / "retrieval_50q.jsonl"),
+            ]
+        )
+        assert rc == 0
+        payload = json.loads(out.read_text())
+        assert list(payload["modes"].keys()) == ["baseline"]
+
+
+# ---------------------------------------------------------------------------
+# load_queries
+# ---------------------------------------------------------------------------
+
+
+class TestLoadQueries:
+    def test_real_gold_set_loads(self) -> None:
+        path = _REPO_ROOT / "eval" / "retrieval_50q.jsonl"
+        if not path.exists():
+            pytest.skip(f"gold set {path} missing in this checkout")
+        queries = drv.load_queries(path)
+        assert len(queries) == 50
+        # Buckets only ever from the spec set.
+        valid_buckets = {"title_matchable", "concept", "method", "author_specific"}
+        assert {q.bucket for q in queries}.issubset(valid_buckets)
+
+    def test_missing_field_raises(self, tmp_path: Path) -> None:
+        bad = tmp_path / "bad.jsonl"
+        bad.write_text(
+            json.dumps({"query": "x", "bucket": "concept", "discipline": "earth"}) + "\n"
+        )
+        with pytest.raises(ValueError, match="gold_bibcodes"):
+            drv.load_queries(bad)
+
+    def test_skips_blank_and_comment_lines(self, tmp_path: Path) -> None:
+        f = tmp_path / "g.jsonl"
+        rows = [
+            "",
+            "# a comment",
+            json.dumps(
+                {
+                    "query": "q",
+                    "bucket": "concept",
+                    "discipline": "astrophysics",
+                    "gold_bibcodes": ["A"],
+                }
+            ),
         ]
-        report = generate_report(
-            [summary],
-            [],
-            seeds,
-            [],
-            corpus_label="32.4M full corpus",
-        )
-        assert "32.4M full corpus" in report
-
-    def test_report_default_corpus_label(self) -> None:
-        from eval_retrieval_50q import EvalSummary, generate_report
-
-        summary = EvalSummary(
-            method="indus",
-            n_queries=1,
-            mean_ndcg_10=0.45,
-            mean_recall_10=0.30,
-            mean_recall_20=0.50,
-            mean_precision_10=0.38,
-            mean_mrr=0.72,
-            mean_latency_ms=120.0,
-            std_ndcg_10=0.15,
-        )
-        seeds = [
-            {
-                "bibcode": "2024TEST",
-                "title": "Test",
-                "n_neighbors": 15,
-                "year": 2024,
-            }
-        ]
-        report = generate_report([summary], [], seeds, [])
-        assert "10K stratified sample" in report
+        f.write_text("\n".join(rows) + "\n")
+        queries = drv.load_queries(f)
+        assert len(queries) == 1
+        assert queries[0].gold_bibcodes == ("A",)
 
 
-class TestSignificancePairs:
-    """Tests for _significance_pairs method-pair filtering."""
+# ---------------------------------------------------------------------------
+# score_query end-to-end
+# ---------------------------------------------------------------------------
 
-    def test_full_corpus_pairs(self) -> None:
-        from eval_retrieval_50q import FULL_CORPUS_METHODS, _significance_pairs
 
-        pairs = _significance_pairs(FULL_CORPUS_METHODS)
-        # Should include hybrid_indus vs indus, hybrid_indus vs lexical,
-        # indus vs lexical
-        assert ("hybrid_indus", "indus") in pairs
-        assert ("hybrid_indus", "lexical") in pairs
-        assert ("indus", "lexical") in pairs
-        # Should NOT include specter2 pairs
-        assert all("specter2" not in p[0] and "specter2" not in p[1] for p in pairs)
+class TestScoreQuery:
+    def test_full_pipeline(self) -> None:
+        retrieved = ["A", "B", "C"] + [f"X{i}" for i in range(47)]
+        scores = drv.score_query(retrieved, ["A"], k=10)
+        assert scores["ndcg_at_10"] == pytest.approx(1.0)
+        assert scores["mrr_at_10"] == 1.0
+        assert scores["recall_at_50"] == 1.0
 
-    def test_pilot_methods_pairs(self) -> None:
-        from eval_retrieval_50q import METHODS, _significance_pairs
-
-        pairs = _significance_pairs(METHODS)
-        assert ("hybrid_indus", "indus") in pairs
-        assert ("hybrid_specter2", "specter2") in pairs
-
-    def test_single_method_no_pairs(self) -> None:
-        from eval_retrieval_50q import _significance_pairs
-
-        pairs = _significance_pairs(["indus"])
-        assert pairs == []
+    def test_empty_gold_yields_none_metrics(self) -> None:
+        scores = drv.score_query(["A", "B"], [], k=10)
+        assert scores["ndcg_at_10"] is None
+        assert scores["mrr_at_10"] is None
+        assert scores["recall_at_50"] is None

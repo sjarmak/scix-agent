@@ -116,7 +116,7 @@ fi
 # ─── Step 6: Refresh v_claim_edges materialized view (MH-2) ──────────────────
 # Concurrent refresh keeps reads online. Wrapped in $SCIX_BATCH per CLAUDE.md
 # memory-isolation rule (PATH fallback so cron works on hosts w/o the wrapper).
-${SCIX_BATCH:-} $PYTHON scripts/refresh_v_claim_edges.py
+${SCIX_BATCH:-} $PYTHON scripts/refresh_v_claim_edges.py --allow-prod
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
 

@@ -1,0 +1,100 @@
+{"text": "We find no significant detection of the predicted line at the 3-sigma level.", "label": true, "tier": "high", "note": "high: no significant"}
+{"text": "Our deep imaging campaign yields a null result for the proposed companion.", "label": true, "tier": "high", "note": "high: null result"}
+{"text": "The MUSE follow-up failed to detect the candidate emission feature.", "label": true, "tier": "high", "note": "high: failed to detect"}
+{"text": "We do not detect the H-alpha excess reported in the discovery paper.", "label": true, "tier": "high", "note": "high: do not detect"}
+{"text": "After stacking, we find no evidence for periodic modulation in the residuals.", "label": true, "tier": "high", "note": "high: no evidence"}
+{"text": "The 95 GHz observations report a non-detection of the molecular outflow.", "label": true, "tier": "high", "note": "high: non-detection"}
+{"text": "The proposed companion is not detected in our deepest exposure.", "label": true, "tier": "high", "note": "high: is not detected"}
+{"text": "We rule out the magnetar scenario for this transient.", "label": true, "tier": "high", "note": "high: rule out (ruled_out)"}
+{"text": "Models with f_NL > 5 are rejected at more than 4 sigma by our analysis.", "label": true, "tier": "high", "note": "high: rejected at N sigma"}
+{"text": "These models are excluded at the 5-sigma level by the new measurements.", "label": true, "tier": "high", "note": "high: excluded at N sigma"}
+{"text": "The original Wolf-Rayet identification has been refuted by spectroscopy.", "label": true, "tier": "high", "note": "high: refuted"}
+{"text": "The 2019 supernova classification paper has since been retracted.", "label": true, "tier": "high", "note": "high: retracted"}
+{"text": "We did not find any evidence of the reported 14-day periodicity.", "label": true, "tier": "high", "note": "high: did not find"}
+{"text": "We do not see any line emission from CO(2-1) in the integrated spectrum.", "label": true, "tier": "high", "note": "high: do not see"}
+{"text": "The authors report no detection of the candidate counterpart in the X-ray band.", "label": true, "tier": "high", "note": "high: no detection of"}
+{"text": "Our pipeline failed to detect the kilonova signature predicted by the merger model.", "label": true, "tier": "high", "note": "high: failed to detect"}
+{"text": "There is no statistically significant excess in the stacked profile.", "label": true, "tier": "high", "note": "high: no statistically significant"}
+{"text": "We find no significant correlation between the two flux densities.", "label": true, "tier": "high", "note": "high: no significant"}
+{"text": "ALMA cannot rule out the disk-wind scenario at the current sensitivity.", "label": true, "tier": "medium", "note": "medium: cannot rule out"}
+{"text": "The integrated power is consistent with no signal at the 2-sigma level.", "label": true, "tier": "medium", "note": "medium: consistent with no"}
+{"text": "These data are inconsistent with the predicted thermal-emission profile.", "label": true, "tier": "medium", "note": "medium: inconsistent with"}
+{"text": "We place an upper limit of 1.4e-3 on the relative abundance of HDO.", "label": true, "tier": "medium", "note": "medium: place an upper limit of"}
+{"text": "We derive a 3-sigma upper limit on the column density of CH3OH.", "label": true, "tier": "medium", "note": "medium: upper limit on"}
+{"text": "The data show no clear evidence for an absorption feature near 6175 angstrom.", "label": true, "tier": "medium", "note": "medium: no clear evidence"}
+{"text": "There is no clear signal in the residuals after subtracting the dust template.", "label": true, "tier": "medium", "note": "medium: no clear signal"}
+{"text": "We find no significant difference between the two cluster populations.", "label": true, "tier": "high", "note": "high: no (statistically) significant difference"}
+{"text": "Our results are not consistent with the canonical Salpeter IMF prediction.", "label": true, "tier": "medium", "note": "medium: not consistent with"}
+{"text": "We are unable to rule out a non-thermal origin for the soft excess.", "label": true, "tier": "medium", "note": "medium: unable to rule out"}
+{"text": "We provide a 95% upper limit of 0.07 mJy on the unresolved emission.", "label": true, "tier": "medium", "note": "medium: provide upper limit of"}
+{"text": "There is no correlation between cluster richness and central-galaxy color.", "label": true, "tier": "medium", "note": "medium: no correlation"}
+{"text": "The detection, if real, lies within the calibration uncertainty of the instrument.", "label": true, "tier": "low", "note": "low: detection if real"}
+{"text": "The signal, if real, is only marginally significant in the lowest-frequency channel.", "label": true, "tier": "low", "note": "low: if real + marginally significant"}
+{"text": "We report a tentative detection of the OH 1665 MHz maser.", "label": true, "tier": "low", "note": "low: tentative detection"}
+{"text": "The feature is marginally detected in two of the four epochs.", "label": true, "tier": "low", "note": "low: marginally detected"}
+{"text": "The candidate transient is tentatively identified as an AGN flare.", "label": true, "tier": "low", "note": "low: tentatively identified"}
+{"text": "We did not observe the expected radio counterpart within the localisation region.", "label": true, "tier": "high", "note": "high: did not observe"}
+{"text": "The authors place lower limits on the magnetic-field strength of the remnant.", "label": true, "tier": "medium", "note": "medium: place lower limits on"}
+{"text": "There is no significant evidence for a deviation from a power law.", "label": true, "tier": "high", "note": "high: no significant"}
+{"text": "We can not rule out a contribution from a second component.", "label": true, "tier": "medium", "note": "medium: can not rule out"}
+{"text": "Our search returns no detection of any pulsation signature in the light curve.", "label": true, "tier": "high", "note": "high: no detection"}
+{"text": "We report a 3-sigma detection of the molecular line at the predicted velocity.", "label": false, "note": "decoy: 'detection' but positive"}
+{"text": "The new data confirm a statistically significant excess at the cluster center.", "label": false, "note": "decoy: 'significant' but positive"}
+{"text": "We find clear evidence for a redshifted broad-line component.", "label": false, "note": "decoy: 'evidence' but positive"}
+{"text": "The CO(1-0) line is detected at high signal-to-noise in every pointing.", "label": false, "note": "decoy: 'detected' but positive"}
+{"text": "Our reduction pipeline detects faint diffuse emission across the full field of view.", "label": false, "note": "decoy: 'detect' but positive"}
+{"text": "The supernova was detected within 12 hours of the gravitational-wave trigger.", "label": false, "note": "decoy: 'detected' but positive"}
+{"text": "These constraints rule the cosmology in, not out, of the parameter space.", "label": false, "note": "decoy: 'rule' but not an exclusion phrase"}
+{"text": "The new instrument significantly improves our sensitivity to faint sources.", "label": false, "note": "decoy: 'significantly' but positive"}
+{"text": "We measure the line ratio to within 5% statistical uncertainty.", "label": false, "note": "neutral measurement"}
+{"text": "The cluster mass is consistent with the lensing measurement reported earlier.", "label": false, "note": "decoy: 'consistent with' but POSITIVE agreement"}
+{"text": "Our model is consistent with the observed velocity dispersion within errors.", "label": false, "note": "decoy: 'consistent with' but POSITIVE agreement"}
+{"text": "The data clearly favour the inflationary scenario over its competitors.", "label": false, "note": "positive evidence"}
+{"text": "We confirm the previously reported correlation between mass and metallicity.", "label": false, "note": "positive evidence"}
+{"text": "These results are in excellent agreement with theoretical predictions.", "label": false, "note": "positive evidence"}
+{"text": "The redshift derived from the spectrum agrees with the photometric estimate.", "label": false, "note": "positive evidence"}
+{"text": "We characterize the spectral energy distribution from radio to X-ray.", "label": false, "note": "neutral methodology"}
+{"text": "The Fermi-LAT collaboration reports a 5.2-sigma detection of the source.", "label": false, "note": "decoy: 'detection' but positive"}
+{"text": "We use the spectrum to constrain the temperature of the dust component.", "label": false, "note": "neutral methodology"}
+{"text": "Pre-flight calibration limits the systematic error to less than 1%.", "label": false, "note": "decoy: 'limits' but not 'upper/lower limit on'"}
+{"text": "Our model successfully reproduces the observed light curve in three bands.", "label": false, "note": "positive evidence"}
+{"text": "We resolve the central source into two components separated by 0.4 arcsec.", "label": false, "note": "positive evidence"}
+{"text": "The data exhibit a clear periodic signal at the orbital period.", "label": false, "note": "positive evidence"}
+{"text": "The Hubble constant inferred from the SH0ES sample is H0 = 73.0 +/- 1.0 km/s/Mpc.", "label": false, "note": "quantitative result, positive"}
+{"text": "We detect a broad emission line consistent with high-velocity outflowing gas.", "label": false, "note": "decoy: 'detect' + 'consistent with' but POSITIVE"}
+{"text": "We measure the orbital period to be 11.43 +/- 0.02 days.", "label": false, "note": "neutral measurement"}
+{"text": "The neutron-star kick velocity is constrained by the proper-motion baseline.", "label": false, "note": "neutral measurement"}
+{"text": "Spectropolarimetry reveals a polarization signature at the 0.7% level.", "label": false, "note": "positive evidence"}
+{"text": "The pulsar's spin-down rate is consistent with magnetic-dipole braking.", "label": false, "note": "decoy: 'consistent with' but POSITIVE agreement"}
+{"text": "We find that the high-mass end of the IMF is well described by a power law.", "label": false, "note": "positive evidence"}
+{"text": "The eclipse timing variations are best explained by a third body in the system.", "label": false, "note": "positive evidence"}
+{"text": "These data set the stage for follow-up multi-wavelength campaigns.", "label": false, "note": "neutral methodology"}
+{"text": "We have observed 124 fields covering 32 square degrees in total.", "label": false, "note": "neutral methodology"}
+{"text": "The systematic error budget is dominated by flat-fielding residuals.", "label": false, "note": "neutral methodology"}
+{"text": "Our cross-correlation analysis recovers the input signal at the expected amplitude.", "label": false, "note": "positive evidence"}
+{"text": "We find a strong correlation between bulge mass and black-hole mass.", "label": false, "note": "decoy: 'correlation' but POSITIVE"}
+{"text": "The Lyman-alpha forest measurements significantly tighten constraints on neutrino mass.", "label": false, "note": "decoy: 'significantly' but positive"}
+{"text": "The mass function follows a Schechter form across the surveyed redshift range.", "label": false, "note": "positive evidence"}
+{"text": "We obtain photometric redshifts for 1.2 million galaxies in the survey.", "label": false, "note": "neutral methodology"}
+{"text": "The first-order perturbation theory provides an adequate fit to the data.", "label": false, "note": "neutral / positive"}
+{"text": "Polarization vectors trace the magnetic field within the dust filament.", "label": false, "note": "positive evidence"}
+{"text": "We employ Markov Chain Monte Carlo to sample the posterior distribution.", "label": false, "note": "neutral methodology"}
+{"text": "The accretion-disk wind contributes a significant fraction of the X-ray flux.", "label": false, "note": "decoy: 'significant' but positive"}
+{"text": "The temperature gradient is well constrained by the multi-band photometry.", "label": false, "note": "positive evidence"}
+{"text": "We extend the catalog to fainter magnitudes using deeper LSST imaging.", "label": false, "note": "neutral methodology"}
+{"text": "Our independent analysis confirms the existence of the second planet.", "label": false, "note": "positive evidence"}
+{"text": "We use the radial-velocity method to measure the stellar mass directly.", "label": false, "note": "neutral methodology"}
+{"text": "The 10 GHz flux density is significantly higher than the prediction from the spectral index.", "label": false, "note": "decoy: 'significantly higher' but POSITIVE finding"}
+{"text": "These observations confirm the presence of warm molecular gas in the outflow.", "label": false, "note": "positive evidence"}
+{"text": "We see strong evidence for a thermal component in the soft X-ray spectrum.", "label": false, "note": "decoy: 'see strong evidence' but POSITIVE"}
+{"text": "The galaxy density profile is well fit by a generalized NFW model.", "label": false, "note": "positive evidence"}
+{"text": "We obtain a precise distance to the host galaxy via Cepheid calibration.", "label": false, "note": "positive evidence"}
+{"text": "The detected line ratios indicate a high-ionization narrow-line region.", "label": false, "note": "decoy: 'detected' but positive"}
+{"text": "Spectral fitting yields a column density of 1.2e22 cm^-2.", "label": false, "note": "neutral measurement"}
+{"text": "The lensing analysis recovers the input mass-sheet to within 5%.", "label": false, "note": "positive evidence"}
+{"text": "The pulse-profile decomposition reveals two distinct components.", "label": false, "note": "positive evidence"}
+{"text": "We compute the angular power spectrum of the temperature anisotropies.", "label": false, "note": "neutral methodology"}
+{"text": "The fitted dust temperature increases with galactic latitude.", "label": false, "note": "positive evidence"}
+{"text": "Our spectroscopic follow-up classifies the transient as a Type Ia supernova.", "label": false, "note": "positive evidence"}
+{"text": "We tabulate the recovered source positions in Table 4.", "label": false, "note": "neutral methodology"}
+{"text": "The new dust extinction map covers the full sky at 1-arcminute resolution.", "label": false, "note": "neutral methodology"}

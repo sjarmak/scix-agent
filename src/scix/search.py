@@ -876,17 +876,63 @@ def hybrid_search(
 # Cross-encoder reranker (lazy-loaded, batched inference)
 # ---------------------------------------------------------------------------
 
+# HuggingFace commit SHA pin for BAAI/bge-reranker-large.
+# Resolved against https://huggingface.co/BAAI/bge-reranker-large on 2026-04-25.
+# Pinning to a specific revision makes inference reproducible and prevents
+# silent upstream weight changes from altering rerank scores in production.
+BGE_RERANKER_LARGE_SHA: str = "55611d7bca2a7133960a6d3b71e083071bbfc312"
+
+# Local snapshot directory for bge-reranker-large weights. Tracked under
+# models/ which is excluded from version control by .gitignore. The
+# CrossEncoderReranker prefers this path when present so production runs
+# never have to hit the network for the ~1.3 GB checkpoint.
+BGE_RERANKER_LARGE_LOCAL_DIR: str = "models/bge-reranker-large"
+
+# Public registry of supported cross-encoder model names. Anything not
+# listed here is treated as an opaque sentence-transformers identifier and
+# loaded directly (no local-cache resolution, no SHA pin).
+_SUPPORTED_RERANKER_MODELS: tuple[str, ...] = (
+    "cross-encoder/ms-marco-MiniLM-L-12-v2",
+    "BAAI/bge-reranker-large",
+)
+
 
 class CrossEncoderReranker:
     """Re-rank papers using a cross-encoder model.
 
     Lazy-loads the model on first use to avoid import overhead.
     Batches all candidates in a single forward pass.
+
+    Two model paths are first-class:
+
+    * ``cross-encoder/ms-marco-MiniLM-L-12-v2`` (default, ~80 MB) — fast,
+      general-purpose MS-MARCO baseline. Loaded directly by name.
+    * ``BAAI/bge-reranker-large`` (~1.3 GB) — stronger reranker. Loaded
+      from a local snapshot under :data:`BGE_RERANKER_LARGE_LOCAL_DIR`
+      when that directory exists; otherwise falls back to the HF Hub
+      identifier pinned at :data:`BGE_RERANKER_LARGE_SHA`.
+
+    Any other ``model_name`` is passed through to ``CrossEncoder`` as-is.
     """
 
     def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-12-v2") -> None:
         self._model_name = model_name
         self._model: Any = None
+
+    def _resolve_model_source(self) -> tuple[str, str | None]:
+        """Return ``(model_path_or_name, revision)`` for ``CrossEncoder``.
+
+        For ``BAAI/bge-reranker-large`` we prefer a local snapshot under
+        :data:`BGE_RERANKER_LARGE_LOCAL_DIR` when present (no network),
+        and otherwise fall back to the HF Hub identifier pinned at
+        :data:`BGE_RERANKER_LARGE_SHA`. All other names are returned
+        verbatim with no revision pin.
+        """
+        if self._model_name == "BAAI/bge-reranker-large":
+            if os.path.isdir(BGE_RERANKER_LARGE_LOCAL_DIR):
+                return BGE_RERANKER_LARGE_LOCAL_DIR, None
+            return self._model_name, BGE_RERANKER_LARGE_SHA
+        return self._model_name, None
 
     def _load(self) -> None:
         if self._model is not None:
@@ -894,7 +940,11 @@ class CrossEncoderReranker:
         try:
             from sentence_transformers import CrossEncoder
 
-            self._model = CrossEncoder(self._model_name)
+            source, revision = self._resolve_model_source()
+            if revision is not None:
+                self._model = CrossEncoder(source, revision=revision)
+            else:
+                self._model = CrossEncoder(source)
         except ImportError:
             raise ImportError(
                 "sentence-transformers is required for cross-encoder reranking. "
@@ -908,6 +958,10 @@ class CrossEncoderReranker:
         top_n: int | None = None,
     ) -> list[dict[str, Any]]:
         """Re-rank papers by cross-encoder score. Returns sorted list."""
+        # Short-circuit empty input — no need to load weights or score.
+        if not papers:
+            return []
+
         self._load()
 
         pairs: list[tuple[str, str]] = []

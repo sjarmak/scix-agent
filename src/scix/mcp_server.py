@@ -862,27 +862,48 @@ def create_server(_run_self_test: bool = True):
                     "required": ["query"],
                 },
             ),
-            # --- concept_search (unchanged) ---
+            # --- concept_search (multi-vocabulary router, dbl.7) ---
             Tool(
                 name="concept_search",
                 description=(
-                    "Retrieve papers tagged with a formal Unified Astronomy Thesaurus (UAT) "
-                    "concept. Accepts the concept label (e.g., 'Galaxies') or URI and can "
-                    "expand to descendant concepts in the hierarchy. Returns papers ranked "
-                    "by relevance within the concept. Use search instead when the query is "
-                    "free-form natural language rather than a curated taxonomy term."
+                    "Look up concepts across controlled vocabularies and return ranked "
+                    "candidates tagged with their source vocabulary. Searched by default: "
+                    "UAT (astronomy), OpenAlex Topics, ACM CCS (computing), MSC "
+                    "(mathematics), PhySH (physics), GCMD (earth science). Pass "
+                    "vocabulary=['acm_ccs'] (or a single string) to restrict search. "
+                    "Accepts a concept label (case-insensitive), an alternate label, or "
+                    "a URI (concept_id or external_uri). Returns concept hits in "
+                    "metadata.concepts; for UAT hits, also returns papers tagged with "
+                    "the best concept (and its descendants by default). Use search "
+                    "instead when the query is free-form natural language rather than a "
+                    "curated taxonomy term."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "UAT concept label or URI",
+                            "description": "Concept label, alternate label, or URI",
+                        },
+                        "vocabulary": {
+                            "description": (
+                                "Restrict search to one or more vocabularies. Allowed: "
+                                "'uat', 'openalex', 'acm_ccs', 'msc', 'physh', 'gcmd'. "
+                                "Omit to search all."
+                            ),
+                            "anyOf": [
+                                {"type": "string"},
+                                {"type": "array", "items": {"type": "string"}},
+                                {"type": "null"},
+                            ],
                         },
                         "include_subtopics": {
                             "type": "boolean",
                             "default": True,
-                            "description": "Include papers from descendant concepts",
+                            "description": (
+                                "When the best hit is a UAT concept, include papers "
+                                "tagged with descendants in the hierarchy."
+                            ),
                         },
                         "limit": {"type": "integer", "default": 20},
                     },
@@ -1566,11 +1587,12 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
     if name == "search":
         return _handle_search(conn, args)
 
-    # --- concept_search ---
+    # --- concept_search (multi-vocabulary router, dbl.7) ---
     if name == "concept_search":
         result = search.concept_search(
             conn,
             args["query"],
+            vocabulary=args.get("vocabulary"),
             include_subtopics=args.get("include_subtopics", True),
             limit=args.get("limit", 20),
         )

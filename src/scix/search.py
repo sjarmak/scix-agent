@@ -1934,62 +1934,196 @@ def explore_community(
 #: hierarchies. UAT is typically <=6 levels deep, so this covers full expansion.
 CONCEPT_DESCENDANT_MAX_DEPTH = 6
 
+#: Vocabularies the router knows about. ``uat`` is virtual — it lives in the
+#: legacy ``uat_concepts`` / ``uat_relationships`` tables. Everything else
+#: lives in the unified ``concepts`` table (migration 056).
+CONCEPT_VOCABULARIES: tuple[str, ...] = (
+    "uat",
+    "openalex",
+    "acm_ccs",
+    "msc",
+    "physh",
+    "gcmd",
+)
 
-def concept_search(
+
+def _normalize_vocabulary_arg(
+    vocabulary: str | list[str] | tuple[str, ...] | None,
+) -> tuple[str, ...]:
+    """Normalize the ``vocabulary`` parameter to a deduplicated tuple.
+
+    ``None`` → all known vocabularies. A single string is wrapped. A list is
+    deduplicated while preserving caller-supplied order. Unknown vocabulary
+    names are rejected with ``ValueError`` so typos surface immediately
+    instead of silently returning empty results.
+    """
+    if vocabulary is None:
+        return CONCEPT_VOCABULARIES
+    if isinstance(vocabulary, str):
+        names = (vocabulary,)
+    else:
+        names = tuple(vocabulary)
+    if not names:
+        return CONCEPT_VOCABULARIES
+    seen: dict[str, None] = {}
+    for v in names:
+        if v not in CONCEPT_VOCABULARIES:
+            raise ValueError(f"unknown vocabulary {v!r}; allowed: {sorted(CONCEPT_VOCABULARIES)}")
+        seen.setdefault(v, None)
+    return tuple(seen)
+
+
+def _lookup_concepts_unified(
     conn: psycopg.Connection,
     query: str,
+    vocabularies: tuple[str, ...],
     *,
-    include_descendants: bool = True,
-    include_subtopics: bool | None = None,
-    limit: int = 20,
-) -> SearchResult:
-    """Search for papers by UAT concept, optionally including descendants.
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Find concept candidates across the requested vocabularies.
 
-    When ``include_descendants=True`` (default), the query concept is expanded
-    to its full descendant set via a recursive CTE against ``uat_relationships``
-    bounded at depth ``CONCEPT_DESCENDANT_MAX_DEPTH`` (6). Papers tagged with
-    the root concept or any descendant are returned.
+    Query is matched against ``preferred_label`` (exact / prefix / substring,
+    case-insensitive) and ``alternate_labels`` (exact, case-insensitive).
+    URI-shaped queries (starting with ``http``) match ``concept_id`` directly
+    on UAT and either ``concept_id`` or ``external_uri`` on the unified
+    ``concepts`` table.
 
-    When ``include_descendants=False``, only papers tagged with the exact
-    root concept are returned (no expansion).
-
-    ``include_subtopics`` is a legacy alias for ``include_descendants``. When
-    provided (non-None), it overrides ``include_descendants`` for backward
-    compatibility.
-
-    Accepts a concept label (looked up case-insensitively) or concept_id URI.
+    Returns a list of hit dicts with ``vocabulary``, ``concept_id``,
+    ``preferred_label``, ``alternate_labels``, ``definition``,
+    ``external_uri``, and ``score`` ∈ {1.0, 0.7, 0.5, 0.3}, ordered by score
+    desc then (vocabulary, concept_id) for deterministic tiebreak.
     """
-    # Backward-compat: legacy ``include_subtopics`` wins when explicitly set.
-    if include_subtopics is not None:
-        include_descendants = include_subtopics
+    is_uri = query.startswith("http")
+    q = query.strip()
+    if not q:
+        return []
 
-    t0 = time.perf_counter()
+    hits: list[dict[str, Any]] = []
 
-    # Resolve concept_id from label or URI
-    with conn.cursor() as cur:
-        if query.startswith("http"):
-            cur.execute("SELECT concept_id FROM uat_concepts WHERE concept_id = %s", (query,))
+    if "uat" in vocabularies:
+        if is_uri:
+            sql_uat = """
+                SELECT concept_id, preferred_label, alternate_labels, definition,
+                       1.0::float AS score
+                FROM uat_concepts
+                WHERE concept_id = %(q)s
+            """
         else:
-            cur.execute(
-                "SELECT concept_id FROM uat_concepts WHERE lower(preferred_label) = lower(%s)",
-                (query,),
-            )
-        row = cur.fetchone()
+            sql_uat = """
+                SELECT concept_id, preferred_label, alternate_labels, definition,
+                       CASE
+                         WHEN lower(preferred_label) = lower(%(q)s) THEN 1.0
+                         WHEN EXISTS (
+                           SELECT 1 FROM unnest(alternate_labels) a
+                           WHERE lower(a) = lower(%(q)s)
+                         ) THEN 0.7
+                         WHEN lower(preferred_label) LIKE lower(%(q)s) || '%%' THEN 0.5
+                         ELSE 0.3
+                       END::float AS score
+                FROM uat_concepts
+                WHERE lower(preferred_label) = lower(%(q)s)
+                   OR lower(preferred_label) LIKE '%%' || lower(%(q)s) || '%%'
+                   OR EXISTS (
+                       SELECT 1 FROM unnest(alternate_labels) a
+                       WHERE lower(a) = lower(%(q)s)
+                   )
+            """
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql_uat, {"q": q})
+            for row in cur.fetchall():
+                hits.append(
+                    {
+                        "vocabulary": "uat",
+                        "concept_id": row["concept_id"],
+                        "preferred_label": row["preferred_label"],
+                        "alternate_labels": list(row["alternate_labels"] or []),
+                        "definition": row["definition"],
+                        "external_uri": (
+                            row["concept_id"] if row["concept_id"].startswith("http") else None
+                        ),
+                        "score": float(row["score"]),
+                    }
+                )
 
-    if row is None:
-        return SearchResult(
-            papers=[],
-            total=0,
-            timing_ms={"query_ms": _elapsed_ms(t0)},
-            metadata={"concept_found": False, "query": query},
+    other_vocabs = tuple(v for v in vocabularies if v != "uat")
+    if other_vocabs:
+        if is_uri:
+            sql_other = """
+                SELECT vocabulary, concept_id, preferred_label, alternate_labels,
+                       definition, external_uri,
+                       1.0::float AS score
+                FROM concepts
+                WHERE vocabulary = ANY(%(vocabs)s)
+                  AND (concept_id = %(q)s OR external_uri = %(q)s)
+            """
+        else:
+            sql_other = """
+                SELECT vocabulary, concept_id, preferred_label, alternate_labels,
+                       definition, external_uri,
+                       CASE
+                         WHEN lower(preferred_label) = lower(%(q)s) THEN 1.0
+                         WHEN EXISTS (
+                           SELECT 1 FROM unnest(alternate_labels) a
+                           WHERE lower(a) = lower(%(q)s)
+                         ) THEN 0.7
+                         WHEN lower(preferred_label) LIKE lower(%(q)s) || '%%' THEN 0.5
+                         ELSE 0.3
+                       END::float AS score
+                FROM concepts
+                WHERE vocabulary = ANY(%(vocabs)s)
+                  AND (
+                    lower(preferred_label) = lower(%(q)s)
+                    OR lower(preferred_label) LIKE '%%' || lower(%(q)s) || '%%'
+                    OR EXISTS (
+                        SELECT 1 FROM unnest(alternate_labels) a
+                        WHERE lower(a) = lower(%(q)s)
+                    )
+                  )
+            """
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql_other, {"q": q, "vocabs": list(other_vocabs)})
+            for row in cur.fetchall():
+                hits.append(
+                    {
+                        "vocabulary": row["vocabulary"],
+                        "concept_id": row["concept_id"],
+                        "preferred_label": row["preferred_label"],
+                        "alternate_labels": list(row["alternate_labels"] or []),
+                        "definition": row["definition"],
+                        "external_uri": row["external_uri"],
+                        "score": float(row["score"]),
+                    }
+                )
+
+    # Tiebreak: at equal score, prefer UAT (sort key 0 vs 1) so that legacy
+    # callers querying a label that exists in both UAT and a new vocabulary
+    # (e.g. "Galaxies" -> UAT + PhySH at 1.0) still get UAT-driven paper
+    # retrieval. UAT is currently the only vocabulary with paper mappings.
+    hits.sort(
+        key=lambda h: (
+            -h["score"],
+            0 if h["vocabulary"] == "uat" else 1,
+            h["vocabulary"],
+            h["concept_id"],
         )
+    )
+    return hits[:limit]
 
-    concept_id = row[0]
 
+def _fetch_uat_papers(
+    conn: psycopg.Connection,
+    concept_id: str,
+    *,
+    include_descendants: bool,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Return papers tagged with a UAT concept (optionally with descendants).
+
+    Recursive CTE bounded at ``CONCEPT_DESCENDANT_MAX_DEPTH`` for the
+    expansion path; depth cap lives on the recursive step so that a
+    descendant at depth N is produced iff N <= max_depth.
+    """
     if include_descendants:
-        # Recursive CTE bounded at CONCEPT_DESCENDANT_MAX_DEPTH (6). The
-        # depth-cap guard lives on the recursive step so that a descendant at
-        # depth N can still be produced iff N <= max_depth.
         sql = f"""
             WITH RECURSIVE descendants AS (
                 SELECT child_id AS concept_id, 1 AS depth
@@ -2032,26 +2166,104 @@ def concept_search(
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
+    return [PaperStub.from_row(row).to_dict() for row in rows]
 
-    query_ms = _elapsed_ms(t0)
-    papers = [PaperStub.from_row(row).to_dict() for row in rows]
 
-    # Get concept label
-    with conn.cursor() as cur:
-        cur.execute("SELECT preferred_label FROM uat_concepts WHERE concept_id = %s", (concept_id,))
-        label_row = cur.fetchone()
+def concept_search(
+    conn: psycopg.Connection,
+    query: str,
+    *,
+    vocabulary: str | list[str] | tuple[str, ...] | None = None,
+    include_descendants: bool = True,
+    include_subtopics: bool | None = None,
+    limit: int = 20,
+) -> SearchResult:
+    """Search for concepts across one or more controlled vocabularies.
+
+    Searches the listed vocabularies (default: all of
+    :data:`CONCEPT_VOCABULARIES`) for concepts whose preferred label, alternate
+    labels, or URI match ``query`` and returns ranked candidates tagged with
+    their source vocabulary in ``metadata['concepts']``.
+
+    For UAT — the only vocabulary with paper mappings today — the function
+    additionally returns papers tagged with the best-matching UAT concept (or
+    its descendants when ``include_descendants=True``) in ``papers``. This
+    preserves backwards compatibility with callers that read ``papers``
+    directly. Other vocabularies have no paper-side mappings yet, so
+    ``papers`` is empty when the best hit is non-UAT.
+
+    Parameters
+    ----------
+    vocabulary
+        Restrict search to a single vocabulary or a list of vocabularies.
+        ``None`` (default) searches all of :data:`CONCEPT_VOCABULARIES`.
+    include_descendants
+        When the best hit is a UAT concept, expand to descendants via the
+        ``uat_relationships`` recursive CTE bounded at
+        :data:`CONCEPT_DESCENDANT_MAX_DEPTH`.
+    include_subtopics
+        Legacy alias for ``include_descendants``. When provided (non-None),
+        overrides ``include_descendants`` for backward compatibility.
+    limit
+        Maximum number of papers AND maximum number of concept hits to
+        return. Concept hits are ranked by score; ties broken by
+        ``(vocabulary, concept_id)``.
+
+    Returns
+    -------
+    SearchResult
+        ``papers`` is populated only when the best hit is a UAT concept that
+        has paper mappings (or descendants do). ``metadata['concepts']`` is
+        the full ranked list of concept candidates with vocabulary tags.
+        ``metadata['concept_found']`` is True iff at least one concept
+        matched. Legacy keys ``concept_id``, ``concept_label``,
+        ``include_descendants``, and ``include_subtopics`` are populated
+        from the best hit for backwards compatibility.
+    """
+    if include_subtopics is not None:
+        include_descendants = include_subtopics
+
+    t0 = time.perf_counter()
+    vocabs = _normalize_vocabulary_arg(vocabulary)
+    hits = _lookup_concepts_unified(conn, query, vocabs, limit=limit)
+
+    if not hits:
+        return SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"query_ms": _elapsed_ms(t0)},
+            metadata={
+                "concept_found": False,
+                "query": query,
+                "vocabularies_searched": list(vocabs),
+                "concepts": [],
+            },
+        )
+
+    best = hits[0]
+    papers: list[dict[str, Any]] = []
+    if best["vocabulary"] == "uat":
+        papers = _fetch_uat_papers(
+            conn,
+            best["concept_id"],
+            include_descendants=include_descendants,
+            limit=limit,
+        )
 
     return SearchResult(
         papers=papers,
         total=len(papers),
-        timing_ms={"query_ms": query_ms},
+        timing_ms={"query_ms": _elapsed_ms(t0)},
         metadata={
             "concept_found": True,
-            "concept_id": concept_id,
-            "concept_label": label_row[0] if label_row else None,
+            "query": query,
+            "vocabularies_searched": list(vocabs),
+            "concepts": hits,
+            "concept_id": best["concept_id"],
+            "concept_label": best["preferred_label"],
+            "concept_vocabulary": best["vocabulary"],
             "include_descendants": include_descendants,
-            # Keep legacy key for backward compatibility with consumers that
-            # still read ``include_subtopics`` from the metadata envelope.
+            # Legacy alias kept for callers that read it from metadata.
             "include_subtopics": include_descendants,
         },
     )

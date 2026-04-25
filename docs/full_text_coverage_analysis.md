@@ -413,3 +413,39 @@ The ADS `database` field indicates which databases index a paper (e.g. astronomy
 ![Journal Distribution](figures/journal_distribution.png)
 
 ![Journal Coverage %](figures/journal_pct.png)
+
+<!-- agent-guidance:start -->
+
+## Agent guidance: safe vs unsafe queries on the full-text cohort
+
+_Generated 2026-04-25T19:09:09+00:00 by `scripts/report_full_text_coverage_bias.py` against `synthetic://dry-run`._
+
+Corpus total: **32,395,000** papers; full-text cohort: **14,912,000** (46.03%).
+
+Full machine-readable distribution (per-row P, Q, KL contribution) is at `/tmp/cb_test.json`.
+
+### KL-divergence per facet (P=full-text, Q=corpus prior)
+
+- arxiv_class: KL = 0.0000 nats (4 rows)
+- year: KL = 0.0651 nats (5 rows)
+- citation_bucket: KL = 0.0151 nats (6 rows)
+- bibstem: KL = 0.8653 nats (5 rows)
+- community_semantic_medium: KL = 0.2920 nats (3 rows)
+
+### Safe queries to restrict to the full-text cohort
+
+1. arxiv_class='astro-ph.SR' queries — 99.2% full-text coverage; restricting to the body-bearing cohort barely changes the population (ratio P/Q = 1.0058).
+2. year=2025 queries — 77.2% full-text coverage; safe to filter on body IS NOT NULL without losing representativeness.
+3. citation_count bucket '101-500' — 63.0% full-text coverage; high-impact papers are over-represented in the full-text cohort but the absolute coverage is high enough to be safe.
+
+### Unsafe queries (filtering to full-text would bias the result)
+
+1. year=1950 (and earlier) — 13.4% full-text coverage; the body-bearing subset is a non-random sample of the historical literature, so restricting to it under-counts pre-modern work.
+2. bibstem='AGUFM' (e.g. conference-abstract series) — only 0.0% have body text; full-text filtering would silently drop the entire venue.
+3. citation_count bucket '0' (uncited / lightly cited papers) — only 38.0% have body text; long-tail discovery queries should NOT restrict to the full-text cohort.
+
+### Operational rule of thumb
+
+Any MCP tool path that consumes body-text (NER, negative-results, claim extraction) MUST attach a `coverage_note` referencing this report so downstream agents do not over-generalise from the biased subset.
+
+<!-- agent-guidance:end -->

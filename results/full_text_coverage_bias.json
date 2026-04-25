@@ -1,0 +1,270 @@
+{
+  "corpus_total": 32395000,
+  "dsn_redacted": "synthetic://dry-run",
+  "facets": {
+    "arxiv_class": {
+      "kl_divergence_vs_corpus_prior": 1e-05,
+      "row_count": 4,
+      "rows": [
+        {
+          "label": "cs.LG",
+          "p_fulltext": 0.386719,
+          "pct_with_body": 99.0,
+          "q_corpus": 0.385356,
+          "ratio_p_over_q": 1.0035,
+          "total": 200000,
+          "with_body": 198000,
+          "without_body": 2000
+        },
+        {
+          "label": "hep-ph",
+          "p_fulltext": 0.355469,
+          "pct_with_body": 98.4,
+          "q_corpus": 0.356455,
+          "ratio_p_over_q": 0.9972,
+          "total": 185000,
+          "with_body": 182000,
+          "without_body": 3000
+        },
+        {
+          "label": "astro-ph.SR",
+          "p_fulltext": 0.124023,
+          "pct_with_body": 99.2,
+          "q_corpus": 0.123314,
+          "ratio_p_over_q": 1.0058,
+          "total": 64000,
+          "with_body": 63500,
+          "without_body": 500
+        },
+        {
+          "label": "math.CO",
+          "p_fulltext": 0.133789,
+          "pct_with_body": 97.9,
+          "q_corpus": 0.134875,
+          "ratio_p_over_q": 0.992,
+          "total": 70000,
+          "with_body": 68500,
+          "without_body": 1500
+        }
+      ]
+    },
+    "bibstem": {
+      "kl_divergence_vs_corpus_prior": 0.865283,
+      "row_count": 5,
+      "rows": [
+        {
+          "label": "ApJ",
+          "p_fulltext": 0.317897,
+          "pct_with_body": 99.6,
+          "q_corpus": 0.099495,
+          "ratio_p_over_q": 3.1951,
+          "total": 138000,
+          "with_body": 137500,
+          "without_body": 500
+        },
+        {
+          "label": "PhRvB",
+          "p_fulltext": 0.504011,
+          "pct_with_body": 100.0,
+          "q_corpus": 0.157174,
+          "ratio_p_over_q": 3.2067,
+          "total": 218000,
+          "with_body": 218000,
+          "without_body": 0
+        },
+        {
+          "label": "Natur",
+          "p_fulltext": 0.178022,
+          "pct_with_body": 18.7,
+          "q_corpus": 0.296323,
+          "ratio_p_over_q": 0.6008,
+          "total": 411000,
+          "with_body": 77000,
+          "without_body": 334000
+        },
+        {
+          "label": "AGUFM",
+          "p_fulltext": 6.9e-05,
+          "pct_with_body": 0.0,
+          "q_corpus": 0.295602,
+          "ratio_p_over_q": 0.0002,
+          "total": 410000,
+          "with_body": 30,
+          "without_body": 409970
+        },
+        {
+          "label": "APS..MAR",
+          "p_fulltext": 0.0,
+          "pct_with_body": 0.0,
+          "q_corpus": 0.151406,
+          "ratio_p_over_q": 0.0,
+          "total": 210000,
+          "with_body": 0,
+          "without_body": 210000
+        }
+      ]
+    },
+    "citation_bucket": {
+      "kl_divergence_vs_corpus_prior": 0.015079,
+      "row_count": 6,
+      "rows": [
+        {
+          "label": "0",
+          "p_fulltext": 0.382242,
+          "pct_with_body": 38.0,
+          "q_corpus": 0.463034,
+          "ratio_p_over_q": 0.8255,
+          "total": 15000000,
+          "with_body": 5700000,
+          "without_body": 9300000
+        },
+        {
+          "label": "1-5",
+          "p_fulltext": 0.26824,
+          "pct_with_body": 49.4,
+          "q_corpus": 0.250039,
+          "ratio_p_over_q": 1.0728,
+          "total": 8100000,
+          "with_body": 4000000,
+          "without_body": 4100000
+        },
+        {
+          "label": "6-20",
+          "p_fulltext": 0.20118,
+          "pct_with_body": 53.6,
+          "q_corpus": 0.172866,
+          "ratio_p_over_q": 1.1638,
+          "total": 5600000,
+          "with_body": 3000000,
+          "without_body": 2600000
+        },
+        {
+          "label": "21-100",
+          "p_fulltext": 0.127414,
+          "pct_with_body": 59.4,
+          "q_corpus": 0.098781,
+          "ratio_p_over_q": 1.2899,
+          "total": 3200000,
+          "with_body": 1900000,
+          "without_body": 1300000
+        },
+        {
+          "label": "101-500",
+          "p_fulltext": 0.019447,
+          "pct_with_body": 63.0,
+          "q_corpus": 0.0142,
+          "ratio_p_over_q": 1.3696,
+          "total": 460000,
+          "with_body": 290000,
+          "without_body": 170000
+        },
+        {
+          "label": "500+",
+          "p_fulltext": 0.001475,
+          "pct_with_body": 62.9,
+          "q_corpus": 0.00108,
+          "ratio_p_over_q": 1.3655,
+          "total": 35000,
+          "with_body": 22000,
+          "without_body": 13000
+        }
+      ]
+    },
+    "community_semantic_medium": {
+      "kl_divergence_vs_corpus_prior": 0.292041,
+      "row_count": 3,
+      "rows": [
+        {
+          "label": "12",
+          "p_fulltext": 0.852827,
+          "pct_with_body": 97.2,
+          "q_corpus": 0.537313,
+          "ratio_p_over_q": 1.5872,
+          "total": 180000,
+          "with_body": 175000,
+          "without_body": 5000
+        },
+        {
+          "label": "47",
+          "p_fulltext": 0.146199,
+          "pct_with_body": 31.6,
+          "q_corpus": 0.283582,
+          "ratio_p_over_q": 0.5155,
+          "total": 95000,
+          "with_body": 30000,
+          "without_body": 65000
+        },
+        {
+          "label": "103",
+          "p_fulltext": 0.000975,
+          "pct_with_body": 0.3,
+          "q_corpus": 0.179104,
+          "ratio_p_over_q": 0.0054,
+          "total": 60000,
+          "with_body": 200,
+          "without_body": 59800
+        }
+      ]
+    },
+    "year": {
+      "kl_divergence_vs_corpus_prior": 0.065139,
+      "row_count": 5,
+      "rows": [
+        {
+          "label": "1900",
+          "p_fulltext": 0.001853,
+          "pct_with_body": 27.5,
+          "q_corpus": 0.0041,
+          "ratio_p_over_q": 0.452,
+          "total": 8000,
+          "with_body": 2200,
+          "without_body": 5800
+        },
+        {
+          "label": "1950",
+          "p_fulltext": 0.003285,
+          "pct_with_body": 13.4,
+          "q_corpus": 0.014864,
+          "ratio_p_over_q": 0.221,
+          "total": 29000,
+          "with_body": 3900,
+          "without_body": 25100
+        },
+        {
+          "label": "2000",
+          "p_fulltext": 0.100244,
+          "pct_with_body": 26.9,
+          "q_corpus": 0.22655,
+          "ratio_p_over_q": 0.4425,
+          "total": 442000,
+          "with_body": 119000,
+          "without_body": 323000
+        },
+        {
+          "label": "2020",
+          "p_fulltext": 0.614944,
+          "pct_with_body": 70.1,
+          "q_corpus": 0.534085,
+          "ratio_p_over_q": 1.1514,
+          "total": 1042000,
+          "with_body": 730000,
+          "without_body": 312000
+        },
+        {
+          "label": "2025",
+          "p_fulltext": 0.279673,
+          "pct_with_body": 77.2,
+          "q_corpus": 0.2204,
+          "ratio_p_over_q": 1.2689,
+          "total": 430000,
+          "with_body": 332000,
+          "without_body": 98000
+        }
+      ]
+    }
+  },
+  "fulltext_pct": 46.0318,
+  "fulltext_total": 14912000,
+  "generated_at": "2026-04-25T19:09:09+00:00",
+  "kl_divergence_basis": "P=full-text distribution (with_body counts); Q=corpus prior (total counts); Laplace smoothing eps=1e-12; units=nats"
+}

@@ -1,10 +1,10 @@
 {
   "status": "done",
-  "prd_path": "docs/prd/prd_cross_encoder_reranker_local.md",
+  "prd_path": "docs/prd/prd_kg_visualization.md",
   "max_passes": 3,
-  "max_parallel": 5,
+  "max_parallel": 2,
   "current_pass": 1,
-  "integration_branch": "prd-build/cross-encoder-reranker-local",
-  "started_at": "2026-04-25T16:42:00Z",
-  "finished_at": "2026-04-25T17:32:00Z"
+  "integration_branch": "prd-build/kg-visualization",
+  "started_at": "2026-04-25T18:54:23Z",
+  "finished_at": "2026-04-25T19:01:00Z"
 }

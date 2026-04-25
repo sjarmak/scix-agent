@@ -1,10 +1,10 @@
 {
   "status": "done",
-  "prd_path": "docs/prd/scix_deep_search_v1.md",
+  "prd_path": "docs/prd/prd_cross_encoder_reranker_local.md",
   "max_passes": 3,
   "max_parallel": 5,
   "current_pass": 1,
-  "integration_branch": "prd-build/scix-deep-search-v1",
-  "started_at": "2026-04-25T00:00:00Z",
-  "finished_at": "2026-04-25T14:30:00Z"
+  "integration_branch": "prd-build/cross-encoder-reranker-local",
+  "started_at": "2026-04-25T16:42:00Z",
+  "finished_at": "2026-04-25T17:32:00Z"
 }

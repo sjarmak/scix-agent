@@ -20,6 +20,28 @@
 - **flagship-and-red-team-tests** — implement SUCCESS (9dd920a), review PASS (4 flagship tests + 50/50 red-team cases scored). Landed.
 - **Layer 3 complete (1/1)**. Final test suite: 168 unit + 4 integration = 172 passed, 9 skipped (DB-gated on SCIX_TEST_DSN). Build DONE.
 
+## 2026-04-25 (cross-encoder-reranker-local)
+
+- **Start**: PRD `docs/prd/prd_cross_encoder_reranker_local.md` → integration branch `prd-build/cross-encoder-reranker-local` (running concurrently with vjf option 2 worktree on entity backfill — independent surfaces).
+- 16:42 — Decomposition complete: 5 units across 4 layers.
+  - Layer 0: bge-reranker-option (M2, small)
+  - Layer 1: rerank-ab-eval (M1, medium), cpu-rerank-bench (N1, small) — depend on M2
+  - Layer 2: mcp-rerank-default (M3, medium) — depends on M1
+  - Layer 3: rerank-rollout-canary (M4+S1, small) — depends on M3; M4 and S1 fused because both touch deploy/README.md.
+- **bge-reranker-option** — implement SUCCESS (8339ee2 on main, FF-merged from worktree by harness), review PASS (8/8 tests offline, scope clean — search.py + tests/test_rerank.py only).
+- **Layer 0 complete (1/1)** → Layer 1 dispatch (rerank-ab-eval + cpu-rerank-bench in parallel).
+- Side-channel: vjf agent (entity backfill) landed independently as 8d53d5d on main; unrelated dbl.3 GLiNER (ff097ef) also landed mid-session — neither overlaps the reranker scope.
+- **rerank-ab-eval** — implement SUCCESS on worktree branch (25b4253), cherry-picked to main as 06a6cc3, review PASS (all 6 ACs + methodology). **Winner: hybrid_indus (no rerank).** MiniLM Δ=-0.0453 (p=0.042), bge_large Δ=-0.0556 (p=0.026); neither passes Bonferroni 0.025. **M4 gate FAILS.**
+- **cpu-rerank-bench** — first agent abandoned (wrote script ~12KB, never ran/committed, ended on a "wait for monitor" line). Re-dispatched fresh, second agent SUCCESS on worktree (9f4b5b7), cherry-picked to main as a595088, review PASS. MiniLM CPU p95 988.5 ms (NOT suitable per 400 ms threshold); bge-large CPU p95 6466.2 ms (definitively unviable).
+- **Layer 1 complete (2/2)** → Layer 2 dispatch (mcp-rerank-default with default_value='off' per M4-FAIL).
+- Side-channel: 4b54054 (ops MH-1 + MH-3 substrate rollout) landed on main between cherry-picks; non-overlapping.
+- **mcp-rerank-default** — implement SUCCESS (1ea69b7 on main, 15/15 new tests + 80/80 adjacent MCP tests green), review PASS (all 7 ACs). Wired SCIX_RERANK_DEFAULT_MODEL with default='off'; use_rerank=True param; lazy singleton (no model construction when off); top_k<=20 guard with PRD comment; tools/list description carries the M4-FAIL rationale.
+- **Layer 2 complete (1/1)** → Layer 3 dispatch (rerank-rollout-canary).
+- **rerank-rollout-canary** — implement SUCCESS (bf02490 on main), review PASS (all 6 ACs; canary exits 0; 20-pair fixture committed; deploy/README.md has 'Rerank rollout' + 'Daily canaries' sections).
+- **Layer 3 complete (1/1)**. Verification: `pytest tests/test_rerank.py tests/test_mcp_search.py -q` = 23/23 passed; adjacent MCP test files 80/80 still green (verified during M3 review). Build DONE.
+- Final landed sequence on main (5 commits): 8339ee2 (bge-reranker-option), 06a6cc3 (rerank-ab-eval), a595088 (cpu-rerank-bench), 1ea69b7 (mcp-rerank-default), bf02490 (rerank-rollout-canary). Integration branch `prd-build/cross-encoder-reranker-local` FF'd to bf02490.
+- **Net result**: M1 ablation showed both rerankers REGRESS quality — SCIX_RERANK_DEFAULT_MODEL ships as 'off'. Forward-compatible wiring + canary in place for when a domain-tuned reranker lands.
+
 ## 2026-04-18 (community-detection-v2)
 
 - **Start**: PRD `docs/prd/prd_community_detection_v2.md` → integration branch `prd-build/community-detection-v2` (created from main @ f5437179)

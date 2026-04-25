@@ -49,6 +49,13 @@ ner_eval = [
     "transformers>=4.36",
     "torch>=2.1",
 ]
+ner_pass = [
+    # GLiNER zero-shot NER for the dbl.3 backfill pass.
+    # Pulled in transformers 5.x and torch 2.10+ when first installed.
+    "gliner>=0.2.26",
+    "transformers>=5.0",
+    "torch>=2.10",
+]
 viz = [
     "fastapi>=0.110",
     "uvicorn>=0.29",

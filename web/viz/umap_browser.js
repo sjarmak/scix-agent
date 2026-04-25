@@ -25,6 +25,17 @@
   // sync" comments. We fall back to neutral grey if shared.js isn't loaded.
   const FALLBACK_COLOR = [160, 160, 160]
 
+  // Ego-proximity palette — used when an "ego overlay" is active. The hue
+  // ramp goes warm (citation neighbour) → cool (2-hop) → grey (outside the
+  // neighbourhood) so the eye can read distance at a glance even when the
+  // surrounding community palette is busy.
+  const EGO_COLORS = {
+    CENTER: [255, 199, 44], // bright gold — the pinned paper itself
+    DIRECT: [240, 124, 60], // warm orange — direct refs / cites (1 hop)
+    SECOND: [82, 132, 199], // cool blue — 2-hop neighbours
+    OUTSIDE: [225, 225, 225], // light grey — out-of-neighbourhood
+  }
+
   function _colorForCommunity(cid) {
     var scx = (typeof window !== 'undefined' && window.scixViz) || null
     if (scx && typeof scx.colorForCommunity === 'function') {
@@ -168,6 +179,112 @@
     tooltipEl.style.display = 'none'
   }
 
+  // Compute a {bibcode -> distance} map from a /viz/api/ego/ payload.
+  // Distance 1 = direct refs and direct cites; distance 2 = second-hop
+  // neighbours. The center bibcode is handled by the caller (its hop
+  // distance of zero is always implicit).
+  function _distancesFromEgoPayload(payload) {
+    const distances = Object.create(null)
+    function _set(node, dist) {
+      if (!node || !node.bibcode) return
+      const bib = String(node.bibcode)
+      // Don't downgrade an existing shorter distance if the same bibcode
+      // shows up at two hop counts (defensive — the API shouldn't return
+      // the center inside refs/cites, but second_hop_sample can overlap
+      // with direct neighbours in rare graph topologies).
+      if (distances[bib] != null && distances[bib] <= dist) return
+      distances[bib] = dist
+    }
+    if (payload && Array.isArray(payload.direct_refs)) {
+      payload.direct_refs.forEach(function (n) { _set(n, 1) })
+    }
+    if (payload && Array.isArray(payload.direct_cites)) {
+      payload.direct_cites.forEach(function (n) { _set(n, 1) })
+    }
+    if (payload && Array.isArray(payload.second_hop_sample)) {
+      payload.second_hop_sample.forEach(function (n) { _set(n, 2) })
+    }
+    return distances
+  }
+
+  // Render or hide the small distance-key legend that appears beneath the
+  // Selected-paper panel while an ego overlay is active.
+  function _renderEgoLegend(payload) {
+    const panel = document.getElementById('umap-panel')
+    if (!panel) return
+    const existing = panel.querySelector('#ego-distance-legend')
+    if (!payload) {
+      if (existing) existing.remove()
+      return
+    }
+    const counts = {
+      center: 1,
+      direct:
+        ((payload.counts && payload.counts.direct_refs) || 0) +
+        ((payload.counts && payload.counts.direct_cites) || 0),
+      second: (payload.counts && payload.counts.second_hop) || 0,
+    }
+    const html =
+      '<div id="ego-distance-legend" style="margin-top:10px;font-size:11px;color:#444">' +
+      '<div style="font-weight:600;margin-bottom:4px">Citation distance</div>' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
+      '<span><span class="chip" style="background:rgb(' +
+      EGO_COLORS.CENTER.join(',') + ')"></span> pinned paper</span>' +
+      '<span><span class="chip" style="background:rgb(' +
+      EGO_COLORS.DIRECT.join(',') + ')"></span> 1 hop (' + counts.direct + ')</span>' +
+      '<span><span class="chip" style="background:rgb(' +
+      EGO_COLORS.SECOND.join(',') + ')"></span> 2 hops (' + counts.second + ')</span>' +
+      '<span><span class="chip" style="background:rgb(' +
+      EGO_COLORS.OUTSIDE.join(',') + ')"></span> outside</span>' +
+      '</div></div>'
+    if (existing) {
+      existing.outerHTML = html
+    } else {
+      panel.insertAdjacentHTML('beforeend', html)
+    }
+  }
+
+  // Fetch the ego network for ``bibcode`` and ask the live UMAP instance to
+  // recolor by hop distance. Surfaces failures inline on the side panel so
+  // the user knows when the prod DB hasn't seen the paper.
+  function _activateEgoOverlay(bibcode) {
+    const inst = (typeof window !== 'undefined' && window.umapInstance) || null
+    if (!inst || typeof inst.setEgoOverlay !== 'function') return
+    const status = document.getElementById('ego-overlay-status')
+    if (status) status.textContent = 'loading…'
+    const url = '/viz/api/ego/' + encodeURIComponent(bibcode)
+    fetch(url, { cache: 'no-store' })
+      .then(function (resp) {
+        if (!resp.ok) {
+          throw new Error('HTTP ' + resp.status)
+        }
+        return resp.json()
+      })
+      .then(function (payload) {
+        const distances = _distancesFromEgoPayload(payload)
+        inst.setEgoOverlay({
+          center: String(bibcode),
+          distances: distances,
+          counts: payload && payload.counts,
+        })
+        if (status) status.textContent = ''
+      })
+      .catch(function (err) {
+        if (status) {
+          status.textContent =
+            'Could not load neighborhood (' + (err.message || String(err)) + ')'
+        }
+      })
+  }
+
+  function _resetEgoOverlay() {
+    const inst = (typeof window !== 'undefined' && window.umapInstance) || null
+    if (!inst || typeof inst.clearEgoOverlay !== 'function') return
+    inst.clearEgoOverlay()
+    const status = document.getElementById('ego-overlay-status')
+    if (status) status.textContent = ''
+  }
+
   function _updatePanel(bibcode, title, communityId) {
     const panel = document.getElementById('umap-panel')
     if (!panel) return
@@ -187,6 +304,15 @@
       '<div style="margin-top:6px">' +
       String(safeTitle).replace(/[<>]/g, '') +
       '</div>' +
+      '<div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">' +
+      '<button type="button" id="ego-overlay-btn" class="ego-overlay-btn">' +
+      'Show neighborhood' +
+      '</button>' +
+      '<button type="button" id="ego-reset-btn" class="ego-overlay-btn">' +
+      'Reset colors' +
+      '</button>' +
+      '</div>' +
+      '<div id="ego-overlay-status" style="margin-top:6px;font-size:11px;color:#777;min-height:14px"></div>' +
       '<div style="margin-top:10px">' +
       '<a href="' +
       egoHref +
@@ -194,6 +320,17 @@
       'Open citation ego network →' +
       '</a>' +
       '</div>'
+
+    const showBtn = panel.querySelector('#ego-overlay-btn')
+    if (showBtn) {
+      showBtn.addEventListener('click', function () {
+        _activateEgoOverlay(bibcode)
+      })
+    }
+    const resetBtn = panel.querySelector('#ego-reset-btn')
+    if (resetBtn) {
+      resetBtn.addEventListener('click', _resetEgoOverlay)
+    }
   }
 
   // How many top communities to show by name in the legend. The remainder
@@ -370,8 +507,28 @@
       communityCounts.set(cid, (communityCounts.get(cid) || 0) + 1)
     }
 
-    // Mutable ref so legend clicks can update the scatter layer's color fn.
+    // Mutable refs so legend clicks (community-isolation) and the
+    // Show-neighborhood / Reset-colors buttons (ego overlay) can each
+    // update the scatter layer's color fn without stomping on the other.
     const activeCommunity = { value: null }
+    const egoOverlay = { value: null } // null | { center, distances, counts? }
+
+    function _colorForPoint(d) {
+      // Ego overlay takes priority — it's the explicit, scoped action.
+      if (egoOverlay.value) {
+        const bib = String(d.bibcode || '')
+        if (bib === egoOverlay.value.center) return EGO_COLORS.CENTER
+        const dist =
+          egoOverlay.value.distances && egoOverlay.value.distances[bib]
+        if (dist === 1) return EGO_COLORS.DIRECT
+        if (dist === 2) return EGO_COLORS.SECOND
+        return EGO_COLORS.OUTSIDE
+      }
+      const base = _colorForCommunity(d.community_id)
+      if (activeCommunity.value == null) return base
+      if (Number(d.community_id) === Number(activeCommunity.value)) return base
+      return [210, 210, 210] // dim non-selected community
+    }
 
     const scatter = new deck.ScatterplotLayer({
       id: 'umap-scatter',
@@ -382,14 +539,9 @@
         return [Number(d.x) || 0, Number(d.y) || 0]
       },
       getRadius: 2,
-      getFillColor: function (d) {
-        const base = _colorForCommunity(d.community_id)
-        if (activeCommunity.value == null) return base
-        if (Number(d.community_id) === Number(activeCommunity.value)) return base
-        return [210, 210, 210] // dim non-selected
-      },
+      getFillColor: _colorForPoint,
       updateTriggers: {
-        getFillColor: [activeCommunity],
+        getFillColor: [activeCommunity, egoOverlay],
       },
       opacity: 0.7,
     })
@@ -521,18 +673,23 @@
       },
     })
 
-    _populateLegend(communityCounts, activeCommunity, function (newPick) {
-      const nextScatter = scatter.clone({
+    // Helper that produces a fresh scatter layer reflecting the current
+    // (activeCommunity, egoOverlay) state. Used by the legend onPick and
+    // by setEgoOverlay/clearEgoOverlay below — single source of truth for
+    // the scatter recolor path.
+    function _scatterWithCurrentColors() {
+      return scatter.clone({
         updateTriggers: {
-          getFillColor: [{ value: newPick }],
+          getFillColor: [
+            { ac: activeCommunity.value, eo: egoOverlay.value },
+          ],
         },
-        getFillColor: function (d) {
-          const base = _colorForCommunity(d.community_id)
-          if (newPick == null) return base
-          if (Number(d.community_id) === Number(newPick)) return base
-          return [215, 215, 215]
-        },
+        getFillColor: _colorForPoint,
       })
+    }
+
+    _populateLegend(communityCounts, activeCommunity, function (newPick) {
+      const nextScatter = _scatterWithCurrentColors()
       // When isolating one community, show only its label.
       const nextLabels = labelLayer
         ? labelLayer.clone({
@@ -568,15 +725,7 @@
         function (c) { allCentroids.push(c) },
       )
       _populateLegend(communityCounts, activeCommunity, function (newPick) {
-        const nextScatter = scatter.clone({
-          updateTriggers: { getFillColor: [{ value: newPick }] },
-          getFillColor: function (d) {
-            const base = _colorForCommunity(d.community_id)
-            if (newPick == null) return base
-            if (Number(d.community_id) === Number(newPick)) return base
-            return [215, 215, 215]
-          },
-        })
+        const nextScatter = _scatterWithCurrentColors()
         const base = _rebuildLabelsForZoom() || labelLayer
         const nextLabels = base
           ? base.clone({
@@ -599,6 +748,27 @@
         instance.setProps({ layers: otherLayers.concat([labelLayer]) })
       }
     })
+
+    // Public ego-overlay surface — drives recoloring from the side panel
+    // buttons added by _updatePanel. Mutates the shared egoOverlay ref then
+    // swaps the scatter layer for one with refreshed updateTriggers so
+    // deck.gl actually re-runs getFillColor across the whole point cloud.
+    function _swapScatter(nextScatter) {
+      const otherLayers = (instance.props.layers || []).filter(function (l) {
+        return l && l.id !== 'umap-scatter'
+      })
+      instance.setProps({ layers: [nextScatter].concat(otherLayers) })
+    }
+    instance.setEgoOverlay = function (payload) {
+      egoOverlay.value = payload || null
+      _swapScatter(_scatterWithCurrentColors())
+      _renderEgoLegend(payload || null)
+    }
+    instance.clearEgoOverlay = function () {
+      egoOverlay.value = null
+      _swapScatter(_scatterWithCurrentColors())
+      _renderEgoLegend(null)
+    }
 
     return instance
   }

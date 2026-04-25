@@ -225,6 +225,70 @@ def test_paper_api_returns_200_for_known_bibcode() -> None:
         app.dependency_overrides.pop(get_fetcher, None)
 
 
+# ---------------------------------------------------------------------------
+# Ego-proximity overlay (tkc.3) — static checks on the JS surface and the
+# side-panel template. These don't exercise deck.gl, but they catch the
+# kinds of "we forgot to ship the button" regressions that would only be
+# caught by a manual smoke otherwise.
+# ---------------------------------------------------------------------------
+
+
+def test_umap_js_exposes_ego_overlay_methods() -> None:
+    """The deck.gl instance returned from renderUMAP must publish the ego API."""
+    js_text = _UMAP_JS.read_text(encoding="utf-8")
+    assert "instance.setEgoOverlay" in js_text, (
+        "umap_browser.js must expose setEgoOverlay on the deck instance "
+        "so the side-panel button can drive recoloring."
+    )
+    assert "instance.clearEgoOverlay" in js_text, (
+        "umap_browser.js must expose clearEgoOverlay on the deck instance."
+    )
+
+
+def test_umap_js_has_ego_palette_constants() -> None:
+    """The four-tier ego palette (CENTER/DIRECT/SECOND/OUTSIDE) must exist."""
+    js_text = _UMAP_JS.read_text(encoding="utf-8")
+    for key in ("CENTER", "DIRECT", "SECOND", "OUTSIDE"):
+        assert f"EGO_COLORS.{key}" in js_text or f"{key}:" in js_text, (
+            f"umap_browser.js missing ego palette tier {key}"
+        )
+
+
+def test_panel_template_has_neighborhood_buttons() -> None:
+    """The Selected-paper panel must render Show neighborhood + Reset colors."""
+    js_text = _UMAP_JS.read_text(encoding="utf-8")
+    assert "Show neighborhood" in js_text, (
+        "Selected-paper panel must render a 'Show neighborhood' button."
+    )
+    assert "Reset colors" in js_text, (
+        "Selected-paper panel must render a 'Reset colors' button."
+    )
+    assert "id=\"ego-overlay-btn\"" in js_text and "id=\"ego-reset-btn\"" in js_text, (
+        "panel buttons must carry stable ids for the click handlers"
+    )
+
+
+def test_distances_helper_handles_payload_shape() -> None:
+    """_distancesFromEgoPayload must classify direct neighbours as 1 hop and
+    second-hop sample entries as 2 hops without downgrading shorter paths.
+
+    We can't run the JS in pytest, but we can assert on the source: the
+    helper iterates the three documented arrays from /viz/api/ego, sets
+    hop = 1 for refs/cites and hop = 2 for second_hop_sample, and refuses
+    to overwrite a shorter distance with a longer one.
+    """
+    js_text = _UMAP_JS.read_text(encoding="utf-8")
+    assert "_distancesFromEgoPayload" in js_text
+    assert "direct_refs" in js_text and "direct_cites" in js_text
+    assert "second_hop_sample" in js_text
+    # Guard against downgrading: the helper checks an existing shorter
+    # distance before writing a longer one.
+    assert "distances[bib] <= dist" in js_text, (
+        "_distancesFromEgoPayload must not overwrite a 1-hop distance "
+        "with 2 if a bibcode appears in both arrays."
+    )
+
+
 def test_paper_api_rejects_malformed_bibcode() -> None:
     """Path-pattern validation rejects obviously illegal inputs (422 or 404).
 

@@ -64,6 +64,28 @@ cmd_setup() {
         fi
     done
 
+    # Stage PRD into worktree. PRDs are gitignored in this repo (docs/prd/ in
+    # .gitignore), so they don't propagate to fresh worktree checkouts. The
+    # build worker runs `cd <worktree> && /prd-build <prd-path>` — without
+    # this stage step, it sees a missing file. Copy (not symlink) so the
+    # build sees a stable snapshot even if the primary copy is edited mid-run.
+    # Skip when the user passed an absolute path (already accessible from anywhere).
+    if [[ "$prd" != /* ]]; then
+        local prd_src prd_dst
+        if [[ -f "$PRIMARY_REPO/$prd" ]]; then
+            prd_src="$PRIMARY_REPO/$prd"
+        else
+            prd_src="$(realpath "$prd")"
+        fi
+        prd_dst="$wt/$prd"
+
+        mkdir -p "$(dirname "$prd_dst")"
+        if [[ ! -f "$prd_dst" ]] || ! cmp -s "$prd_src" "$prd_dst"; then
+            cp "$prd_src" "$prd_dst"
+            echo "INFO: staged PRD into worktree: $prd_dst" >&2
+        fi
+    fi
+
     printf '%s\t%s\t%s\n' "$slug" "$wt" "$branch"
 }
 

@@ -916,14 +916,15 @@ def create_server(_run_self_test: bool = True):
                     "Look up concepts across controlled vocabularies and return ranked "
                     "candidates tagged with their source vocabulary. Searched by default: "
                     "UAT (astronomy), OpenAlex Topics, ACM CCS (computing), MSC "
-                    "(mathematics), PhySH (physics), GCMD (earth science). Pass "
-                    "vocabulary=['acm_ccs'] (or a single string) to restrict search. "
-                    "Accepts a concept label (case-insensitive), an alternate label, or "
-                    "a URI (concept_id or external_uri). Returns concept hits in "
-                    "metadata.concepts; for UAT hits, also returns papers tagged with "
-                    "the best concept (and its descendants by default). Use search "
-                    "instead when the query is free-form natural language rather than a "
-                    "curated taxonomy term."
+                    "(mathematics), PhySH (physics), GCMD (earth science), MeSH "
+                    "(biomedical), NCBI Taxonomy (organisms), ChEBI (chemistry), Gene "
+                    "Ontology (biology). Pass vocabulary=['mesh'] (or a single string) "
+                    "to restrict search. Accepts a concept label (case-insensitive), an "
+                    "alternate label, or a URI (concept_id or external_uri). Returns "
+                    "concept hits in metadata.concepts; for UAT hits, also returns "
+                    "papers tagged with the best concept (and its descendants by "
+                    "default). Use search instead when the query is free-form natural "
+                    "language rather than a curated taxonomy term."
                 ),
                 inputSchema={
                     "type": "object",
@@ -935,7 +936,8 @@ def create_server(_run_self_test: bool = True):
                         "vocabulary": {
                             "description": (
                                 "Restrict search to one or more vocabularies. Allowed: "
-                                "'uat', 'openalex', 'acm_ccs', 'msc', 'physh', 'gcmd'. "
+                                "'uat', 'openalex', 'acm_ccs', 'msc', 'physh', 'gcmd', "
+                                "'mesh', 'ncbi_tax', 'chebi', 'gene_ontology'. "
                                 "Omit to search all."
                             ),
                             "anyOf": [

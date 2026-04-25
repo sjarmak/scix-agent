@@ -1939,11 +1939,17 @@ CONCEPT_DESCENDANT_MAX_DEPTH = 6
 #: lives in the unified ``concepts`` table (migration 056).
 CONCEPT_VOCABULARIES: tuple[str, ...] = (
     "uat",
+    # dbl.1 — small open vocabularies
     "openalex",
     "acm_ccs",
     "msc",
     "physh",
     "gcmd",
+    # dbl.2 — biomed vocabularies
+    "mesh",
+    "ncbi_tax",
+    "chebi",
+    "gene_ontology",
 )
 
 

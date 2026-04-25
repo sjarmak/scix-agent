@@ -25,7 +25,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from scix.concept_loaders import acm_ccs, gcmd, msc, openalex, physh
+from scix.concept_loaders import (
+    acm_ccs,
+    chebi,
+    gcmd,
+    gene_ontology,
+    mesh,
+    msc,
+    ncbi_taxonomy,
+    openalex,
+    physh,
+)
 from scix.db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -36,6 +46,11 @@ LOADERS = {
     "msc": msc,
     "physh": physh,
     "gcmd": gcmd,
+    # dbl.2 — biomed vocabularies
+    "mesh": mesh,
+    "ncbi_tax": ncbi_taxonomy,
+    "chebi": chebi,
+    "gene_ontology": gene_ontology,
 }
 
 

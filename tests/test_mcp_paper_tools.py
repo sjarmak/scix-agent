@@ -268,6 +268,7 @@ class TestDispatchPaperTools:
             section="introduction",
             char_offset=100,
             limit=3000,
+            role=None,
         )
 
     @patch("scix.search.read_paper_section")
@@ -285,6 +286,7 @@ class TestDispatchPaperTools:
             section="full",
             char_offset=0,
             limit=5000,
+            role=None,
         )
 
     @patch("scix.search.search_within_paper")

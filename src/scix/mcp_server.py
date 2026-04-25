@@ -1102,6 +1102,22 @@ def create_server(_run_self_test: bool = True):
                                 "'results', 'discussion', 'conclusions'"
                             ),
                         },
+                        "role": {
+                            "type": "string",
+                            "enum": [
+                                "background",
+                                "method",
+                                "result",
+                                "conclusion",
+                                "other",
+                            ],
+                            "description": (
+                                "Optional canonical role. When provided, selects "
+                                "the first parsed section whose name maps to this "
+                                "role (e.g. 'method' picks Methods/Observations/"
+                                "Data). Takes precedence over 'section'."
+                            ),
+                        },
                         "search_query": {
                             "type": "string",
                             "description": "If provided, search within the paper body instead of reading",
@@ -2147,6 +2163,7 @@ def _handle_read_paper(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         section=args.get("section", "full"),
         char_offset=args.get("char_offset", 0),
         limit=args.get("limit", 5000),
+        role=args.get("role"),
     )
     return _result_to_json(result)
 

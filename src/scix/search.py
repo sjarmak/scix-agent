@@ -2617,6 +2617,7 @@ def read_paper_section(
     section: str = "full",
     char_offset: int = 0,
     limit: int = 5000,
+    role: str | None = None,
 ) -> SearchResult:
     """Read a section of a paper's full-text body with pagination.
 
@@ -2632,6 +2633,12 @@ def read_paper_section(
         Character offset for pagination within the section text.
     limit : int
         Maximum characters to return (default 5000).
+    role : str, optional
+        If provided, select the first parsed section whose name maps to
+        this canonical role (one of ``background``, ``method``, ``result``,
+        ``conclusion``, ``other``). Takes precedence over ``section`` when
+        a matching section is found. Falls back to ``section`` selection
+        when no parsed section matches the requested role.
 
     Returns
     -------
@@ -2640,6 +2647,7 @@ def read_paper_section(
         has_body, char_offset, total_chars, and bibcode.
     """
     from scix.section_parser import parse_sections
+    from scix.section_role import classify_section_role
 
     t0 = time.perf_counter()
 
@@ -2689,7 +2697,32 @@ def read_paper_section(
     sections = parse_sections(body)
     section_lower = section.lower()
 
-    if section_lower == "full":
+    # Role-based selection takes precedence when supplied — pick the first
+    # parsed section whose name maps to the requested role.
+    role_matched: tuple[str, int, int, str] | None = None
+    if role is not None:
+        role_lower = role.lower()
+        for s in sections:
+            if classify_section_role(s[0]) == role_lower:
+                role_matched = s
+                break
+        if role_matched is None:
+            available = [s[0] for s in sections]
+            return SearchResult(
+                papers=[],
+                total=0,
+                timing_ms={"query_ms": query_ms},
+                metadata={
+                    "error": f"No section with role '{role}' found",
+                    "available_sections": available,
+                    "has_body": True,
+                },
+            )
+
+    if role_matched is not None:
+        section_name = role_matched[0]
+        text = role_matched[3]
+    elif section_lower == "full":
         text = body
         section_name = "full"
     else:

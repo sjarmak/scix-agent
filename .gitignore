@@ -20,6 +20,9 @@ data/eval/*
 !data/eval/entity_value_props/
 !data/eval/entity_value_props/*.yaml
 !data/eval/entity_value_props/*.md
+# Test eval fixtures (small, hand-authored, track with code).
+!tests/eval/
+!tests/eval/*.jsonl
 
 # Logs
 *.log

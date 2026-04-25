@@ -75,7 +75,8 @@ from scix.db import (  # noqa: E402
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL_PATH = os.environ.get(
-    "SCIX_INTENT_MODEL_PATH", "allenai/scibert_scivocab_uncased"
+    "SCIX_INTENT_MODEL_PATH",
+    str(Path(__file__).resolve().parent.parent / "models" / "citation_intent" / "final"),
 )
 DEFAULT_BATCH_SIZE = 256
 INGEST_LOG_FILENAME = "intent_backfill:citation_contexts"

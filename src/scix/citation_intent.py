@@ -144,6 +144,7 @@ class SciBertClassifier:
             model=self.model_path,
             device=self.device,
             truncation=True,
+            max_length=512,
         )
         _pipeline_cache[self.model_path] = pipe
         return pipe

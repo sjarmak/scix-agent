@@ -29,13 +29,23 @@
 -- either paper is outside the corpus are dropped. This is consistent with
 -- the rest of the Deep Search retrieval stack which only ranks within-corpus
 -- evidence.
+--
+-- citation_contexts contains ~0.11% exact-duplicate rows (898 of 823k as of
+-- 2026-04-25, almost entirely from re-ingest leftovers — same source, target,
+-- char_offset, context_text). The natural key (source_bibcode,
+-- target_bibcode, char_offset) is therefore not unique in the source table.
+-- We dedupe at view-construction time with DISTINCT ON so the unique index
+-- below can be enforced without a destructive cleanup of citation_contexts.
+-- ORDER BY prefers a non-NULL intent (post-MH-1 backfill) so the survivor row
+-- carries classifier output if any duplicate has it; ctid is the final
+-- deterministic tiebreaker.
 
 BEGIN;
 
 DROP MATERIALIZED VIEW IF EXISTS v_claim_edges CASCADE;
 
 CREATE MATERIALIZED VIEW v_claim_edges AS
-SELECT
+SELECT DISTINCT ON (cc.source_bibcode, cc.target_bibcode, cc.char_offset)
     cc.source_bibcode,
     cc.target_bibcode,
     substring(cc.context_text FROM 1 FOR 1000) AS context_snippet,
@@ -49,7 +59,13 @@ JOIN citation_edges ce
     ON ce.source_bibcode = cc.source_bibcode
    AND ce.target_bibcode = cc.target_bibcode
 JOIN papers sp ON sp.bibcode = cc.source_bibcode
-JOIN papers tp ON tp.bibcode = cc.target_bibcode;
+JOIN papers tp ON tp.bibcode = cc.target_bibcode
+ORDER BY
+    cc.source_bibcode,
+    cc.target_bibcode,
+    cc.char_offset,
+    cc.intent NULLS LAST,
+    cc.ctid;
 
 -- Unique index required by REFRESH MATERIALIZED VIEW CONCURRENTLY.
 -- (source_bibcode, target_bibcode, char_offset) is the natural key: one row

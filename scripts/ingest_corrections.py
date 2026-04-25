@@ -194,7 +194,7 @@ def apply_events(
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT bibcode, correction_events, retracted_at "
-                "FROM papers WHERE %s = ANY(doi)",
+                "FROM papers WHERE doi @> ARRAY[%s]::text[]",
                 (doi,),
             )
             rows = cur.fetchall()

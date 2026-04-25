@@ -2138,8 +2138,16 @@ def get_entity_context(
 
     properties_sql = "SELECT properties FROM entities WHERE id = %s"
 
+    # Surface both out-edges (queried entity is SUBJECT) and in-edges
+    # (queried entity is OBJECT). Without the in-edge half, hub
+    # entities like JWST appear bare even though edges like NIRSpec
+    # part_of JWST exist (scix_experiments-1fi). The `direction` column
+    # tells consumers which way the predicate points; in both directions
+    # `object_*` always refers to the OTHER end of the edge from the
+    # queried entity's perspective.
     relationships_sql = """
-        SELECT er.predicate,
+        SELECT 'out' AS direction,
+               er.predicate,
                er.object_entity_id AS object_id,
                er.confidence,
                er.source AS relationship_source,
@@ -2149,7 +2157,19 @@ def get_entity_context(
         FROM entity_relationships er
         LEFT JOIN entities obj ON obj.id = er.object_entity_id
         WHERE er.subject_entity_id = %s
-        ORDER BY er.predicate, obj.canonical_name
+        UNION ALL
+        SELECT 'in' AS direction,
+               er.predicate,
+               er.subject_entity_id AS object_id,
+               er.confidence,
+               er.source AS relationship_source,
+               subj.canonical_name AS object_name,
+               subj.entity_type AS object_entity_type,
+               subj.properties AS object_properties
+        FROM entity_relationships er
+        LEFT JOIN entities subj ON subj.id = er.subject_entity_id
+        WHERE er.object_entity_id = %s
+        ORDER BY direction, predicate, object_name
     """
 
     with conn.cursor(row_factory=dict_row) as cur:
@@ -2193,13 +2213,14 @@ def get_entity_context(
                 props_row["properties"] if props_row and props_row["properties"] is not None else {}
             )
 
-        cur.execute(relationships_sql, (entity_id,))
+        cur.execute(relationships_sql, (entity_id, entity_id))
         rel_rows = cur.fetchall()
 
     query_ms = _elapsed_ms(t0)
 
     result["relationships"] = [
         {
+            "direction": rel["direction"],
             "predicate": rel["predicate"],
             "object_id": rel["object_id"],
             "object_name": rel["object_name"],

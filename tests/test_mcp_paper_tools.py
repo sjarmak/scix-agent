@@ -533,6 +533,7 @@ class TestGetEntityContext:
         properties_row = {"properties": {"launch_year": 2016}}
         relationship_rows = [
             {
+                "direction": "out",
                 "predicate": "observes",
                 "object_id": 99,
                 "confidence": 0.95,
@@ -602,6 +603,100 @@ class TestGetEntityContext:
         assert result.papers == []
         assert "error" in result.metadata
         assert "999999" in result.metadata["error"]
+
+    def test_hub_entity_surfaces_in_edges(self) -> None:
+        """Hub entity (mostly OBJECT of edges) returns in-edges with direction='in'.
+
+        Surfaces the bug filed as scix_experiments-1fi: JWST(1588866) had
+        five `part_of` in-edges from NIRSpec/NIRCam/MIRI/NIRISS/FGS but
+        ``entity_context`` returned ``relationships: []`` because the
+        original SQL only queried ``WHERE subject_entity_id = %s``.
+        """
+        matview_row = {
+            "entity_id": 1588866,
+            "canonical_name": "James Webb Space Telescope",
+            "entity_type": "mission",
+            "discipline": "astrophysics",
+            "source": "curated_flagship_v1",
+            "identifiers": [],
+            "aliases": [],
+            "citing_paper_count": 5159,
+        }
+        # Two in-edges (NIRSpec, NIRCam → part_of → JWST). The other end
+        # (the SUBJECT in the DB row) is exposed under object_* fields
+        # so consumers always read "the OTHER entity" from object_*.
+        relationship_rows = [
+            {
+                "direction": "in",
+                "predicate": "part_of",
+                "object_id": 1679247,
+                "confidence": 1.0,
+                "relationship_source": "flagship_seed",
+                "object_name": "NIRSpec",
+                "object_entity_type": "instrument",
+                "object_properties": {},
+            },
+            {
+                "direction": "in",
+                "predicate": "part_of",
+                "object_id": 1679248,
+                "confidence": 1.0,
+                "relationship_source": "flagship_seed",
+                "object_name": "NIRCam",
+                "object_entity_type": "instrument",
+                "object_properties": {},
+            },
+        ]
+        conn = self._make_conn(
+            matview_row=matview_row,
+            properties_row={"properties": {}},
+            relationship_rows=relationship_rows,
+        )
+
+        result = get_entity_context(conn, 1588866)
+
+        assert result.total == 1
+        entity = result.papers[0]
+        assert len(entity["relationships"]) == 2
+        names = sorted(r["object_name"] for r in entity["relationships"])
+        assert names == ["NIRCam", "NIRSpec"]
+        assert all(r["direction"] == "in" for r in entity["relationships"])
+        assert all(r["predicate"] == "part_of" for r in entity["relationships"])
+
+    def test_relationships_query_unions_in_and_out_edges(self) -> None:
+        """The relationships SQL must search both subject_entity_id and object_entity_id."""
+        conn = self._make_conn(matview_row=None, fallback_row=None)
+
+        get_entity_context(conn, 42)
+
+        # The third execute call is the relationships query (after matview-miss + fallback miss
+        # exit early, only the two early calls fire — so verify on a hit path).
+        # Use an entity that exists in the matview to reach the relationships query.
+        matview_row = {
+            "entity_id": 42,
+            "canonical_name": "X",
+            "entity_type": "mission",
+            "discipline": "x",
+            "source": "x",
+            "identifiers": [],
+            "aliases": [],
+            "citing_paper_count": 0,
+        }
+        conn2 = self._make_conn(
+            matview_row=matview_row,
+            properties_row={"properties": {}},
+            relationship_rows=[],
+        )
+        get_entity_context(conn2, 42)
+
+        executed_sqls = [c.args[0] for c in conn2.cursor.return_value.execute.call_args_list]
+        rel_sql = next(s for s in executed_sqls if "entity_relationships" in s)
+        assert "subject_entity_id = %s" in rel_sql
+        assert "object_entity_id = %s" in rel_sql
+        assert "UNION ALL" in rel_sql
+        # Direction column distinguishes which side the queried entity sits on.
+        assert "'out'" in rel_sql
+        assert "'in'" in rel_sql
 
     def test_query_uses_matview(self) -> None:
         """First query targets agent_entity_context matview."""

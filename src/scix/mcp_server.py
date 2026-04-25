@@ -817,10 +817,15 @@ def create_server(_run_self_test: bool = True):
             Tool(
                 name="search",
                 description=(
-                    "Search the scientific literature corpus for papers matching a "
-                    "natural-language query. Returns ranked papers with titles, abstracts, "
-                    "authors, years, and citation counts. Defaults to hybrid mode, the best "
-                    "general-purpose search. Use concept_search instead when the query is a "
+                    "Search the scientific literature corpus (32M papers: NASA ADS "
+                    "astro/planetary/earth/helio/biophysics + the arxiv mirror across "
+                    "cs.*, stat.*, physics.*, etc.) for papers matching a natural-language "
+                    "query. Returns ranked papers with titles, abstracts, authors, years, "
+                    "and citation counts. Defaults to hybrid mode, the best general-purpose "
+                    "search. For broad multi-keyword queries, pass filters.arxiv_class "
+                    "(e.g. 'cs.SE') or a filters.year_min — unscoped queries run a full-text "
+                    "scan over all 32M papers and may hit the statement timeout. "
+                    "Use concept_search instead when the query is a "
                     "formal astronomy taxonomy term (e.g., 'Exoplanets'). Use entity with "
                     "action='search' when looking up a named method, dataset, or instrument. "
                     "Optional filters.entity_types / filters.entity_ids restrict results to "
@@ -1182,15 +1187,16 @@ def create_server(_run_self_test: bool = True):
                 name="find_gaps",
                 description=(
                     "Surface papers in communities you have not yet explored that still "
-                    "cite papers you already inspected via get_paper. Helps catch adjacent "
-                    "literature you might be missing during a research session. Reads from "
-                    "implicit session state tracked across get_paper calls. Use "
-                    "citation_graph instead when you want direct citations of a single "
-                    "paper rather than cross-community gap detection. "
-                    "The 'signal' parameter picks which community partition to traverse: "
-                    "'semantic' (default, INDUS k-means, full 32M-paper coverage) or "
-                    "'citation' (Leiden over the citation giant component; currently "
-                    "offline — Phase B has not completed, so this path returns empty)."
+                    "cite papers you already inspected via get_paper. Requires a non-empty "
+                    "working set — call get_paper on one or more papers first, otherwise "
+                    "this returns nothing. Helps catch adjacent literature you might be "
+                    "missing during a research session. Reads from implicit session state "
+                    "tracked across get_paper calls. Use citation_graph instead when you "
+                    "want direct citations of a single paper rather than cross-community "
+                    "gap detection. The 'signal' parameter picks which community partition "
+                    "to traverse: 'semantic' (default, INDUS k-means, full 32M-paper "
+                    "coverage) or 'citation' (currently offline — Leiden Phase B has not "
+                    "completed, so this path returns empty)."
                 ),
                 inputSchema={
                     "type": "object",

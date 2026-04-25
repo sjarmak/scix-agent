@@ -15,6 +15,10 @@
 - **Note**: unrelated upstream commit `da85d08 feat(concepts): multi-vocabulary concept_search router (dbl.7)` landed on main mid-session, touching src/scix/mcp_server.py — claim-blame-and-replications agent rebased internally and landed cleanly.
 - **claim-blame-and-replications** — implement SUCCESS (c25de6b), review PASS (32/32 tests, EXPECTED_TOOLS=15). Landed.
 - **Layer 1 complete (2/2)** → Layer 2 dispatch (citation-grounded-gate).
+- **citation-grounded-gate** — implement SUCCESS (a31534f), review PASS (37/37 tests, adversarial false-clean = 0/10). Landed.
+- **Layer 2 complete (1/1)** → Layer 3 dispatch (flagship-and-red-team-tests).
+- **flagship-and-red-team-tests** — implement SUCCESS (9dd920a), review PASS (4 flagship tests + 50/50 red-team cases scored). Landed.
+- **Layer 3 complete (1/1)**. Final test suite: 168 unit + 4 integration = 172 passed, 9 skipped (DB-gated on SCIX_TEST_DSN). Build DONE.
 
 ## 2026-04-18 (community-detection-v2)
 

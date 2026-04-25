@@ -398,6 +398,32 @@
             'subscribeTraceStream is not defined — agent_trace.js failed to load.'
           return
         }
+
+        // Preload persistent trace history so a uvicorn restart (or a fresh
+        // tab) doesn't stare at an empty panel. Historical events populate
+        // the panel without the flash animation or UMAP line-flash — those
+        // visuals belong to live events only.
+        try {
+          const histResp = await fetch('/viz/api/trace/history?limit=200', {
+            cache: 'no-store',
+          })
+          if (histResp.ok) {
+            const histBody = await histResp.json()
+            const histEvents = (histBody && histBody.events) || []
+            for (let i = 0; i < histEvents.length; i += 1) {
+              appendTraceLine(histEvents[i])
+            }
+            // appendTraceLine adds the .flash class; strip it from the
+            // preloaded lines so history doesn't animate on first paint.
+            const preloaded = panel.querySelectorAll('.trace-line.flash')
+            preloaded.forEach(function (el) {
+              el.classList.remove('flash')
+            })
+          }
+        } catch (err) {
+          console.warn('trace history preload failed', err)
+        }
+
         window.traceStream = window.subscribeTraceStream(
           '/viz/api/trace/stream',
           handleEvent,

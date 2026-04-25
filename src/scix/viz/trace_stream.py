@@ -28,12 +28,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import threading
 import time
 import uuid
+from collections import deque
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field
-from typing import Any, AsyncIterator
+from pathlib import Path
+from typing import Any, AsyncIterator, Deque
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -43,6 +46,17 @@ logger = logging.getLogger(__name__)
 # Bounded per-subscriber queue size. 256 events is enough to absorb bursts
 # without growing memory unbounded when a subscriber is slow.
 _QUEUE_MAXSIZE: int = 256
+
+# Disk-backed ring buffer: keep at most ``_HISTORY_CAP`` events live in
+# memory; rewrite the on-disk jsonl whenever it exceeds ``_ROTATE_AT`` lines
+# so the file never grows unboundedly between restarts.
+_HISTORY_CAP: int = 500
+_ROTATE_AT: int = 1000
+
+_history: Deque["TraceEvent"] = deque(maxlen=_HISTORY_CAP)
+_history_lock: threading.Lock = threading.Lock()
+_history_file: Path | None = None
+_history_lines_on_disk: int = 0
 
 
 @dataclass(frozen=True)
@@ -99,6 +113,112 @@ def _deliver(queue: asyncio.Queue[TraceEvent], event: TraceEvent) -> None:
         )
 
 
+def _default_history_path() -> Path:
+    env = os.environ.get("SCIX_VIZ_TRACE_HISTORY")
+    if env:
+        return Path(env)
+    # __file__ -> <repo>/src/scix/viz/trace_stream.py
+    #   parents[0]=viz, [1]=scix, [2]=src, [3]=repo_root
+    return Path(__file__).resolve().parents[3] / "data" / "viz" / "trace_history.jsonl"
+
+
+def _event_from_dict(d: dict[str, Any]) -> TraceEvent:
+    bibcodes = d.get("bibcodes") or []
+    if not isinstance(bibcodes, (list, tuple)):
+        bibcodes = []
+    params = d.get("params") or {}
+    if not isinstance(params, dict):
+        params = {}
+    summary = d.get("result_summary")
+    return TraceEvent(
+        tool_name=str(d.get("tool_name", "unknown")),
+        latency_ms=float(d.get("latency_ms", 0.0)),
+        ts=float(d.get("ts", time.time())),
+        event_id=str(d.get("event_id") or uuid.uuid4().hex),
+        params=params,
+        result_summary=summary if isinstance(summary, str) else None,
+        bibcodes=tuple(str(b) for b in bibcodes),
+    )
+
+
+def init_history(path: Path | None = None) -> None:
+    """Install the on-disk ring buffer file and pre-load the in-memory deque.
+
+    Idempotent: call again with a different ``path`` to re-point the buffer
+    (used by tests). Reads up to the last ``_HISTORY_CAP`` events from the
+    file on disk so a uvicorn restart leaves the panel pre-populated.
+    """
+    global _history_file, _history_lines_on_disk
+    target = path or _default_history_path()
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        logger.exception("trace history: cannot create directory %s", target.parent)
+        return
+    with _history_lock:
+        _history.clear()
+        line_count = 0
+        if target.exists():
+            try:
+                with target.open("r", encoding="utf-8") as f:
+                    lines = f.readlines()
+            except Exception:
+                logger.exception("trace history: failed to read %s", target)
+                lines = []
+            line_count = len(lines)
+            for line in lines[-_HISTORY_CAP:]:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    _history.append(_event_from_dict(json.loads(line)))
+                except Exception:
+                    logger.debug("trace history: skipping corrupt line", exc_info=True)
+        _history_file = target
+        _history_lines_on_disk = line_count
+
+
+def _rotate_history_file_locked() -> None:
+    """Rewrite the on-disk file from the in-memory deque. Caller holds lock."""
+    if _history_file is None:
+        return
+    try:
+        tmp = _history_file.with_suffix(_history_file.suffix + ".tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            for event in _history:
+                f.write(json.dumps(asdict(event), default=str) + "\n")
+        tmp.replace(_history_file)
+    except Exception:
+        logger.exception("trace history: rotation failed")
+
+
+def _persist(event: TraceEvent) -> None:
+    """Append ``event`` to the in-memory deque and the on-disk jsonl ring."""
+    global _history_lines_on_disk
+    with _history_lock:
+        _history.append(event)
+        if _history_file is None:
+            return
+        try:
+            with _history_file.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(asdict(event), default=str) + "\n")
+            _history_lines_on_disk += 1
+            if _history_lines_on_disk > _ROTATE_AT:
+                _rotate_history_file_locked()
+                _history_lines_on_disk = len(_history)
+        except Exception:
+            logger.exception("trace history: persist failed")
+
+
+def snapshot_history(limit: int = _HISTORY_CAP) -> list[TraceEvent]:
+    """Return up to ``limit`` most recent events from the in-memory deque."""
+    limit = max(0, min(int(limit), _HISTORY_CAP))
+    with _history_lock:
+        if limit == 0:
+            return []
+        return list(_history)[-limit:]
+
+
 def publish(event: TraceEvent) -> None:
     """Fire-and-forget broadcast to all active subscribers.
 
@@ -106,6 +226,13 @@ def publish(event: TraceEvent) -> None:
     raises — failures are logged and swallowed so trace publication can
     never break the caller's hot path.
     """
+
+    # Persist first so events survive across restarts even when no
+    # subscriber is currently attached.
+    try:
+        _persist(event)
+    except Exception:  # pragma: no cover — defensive, publish must not raise
+        logger.exception("trace_stream persist raised unexpectedly")
 
     # Snapshot the list under the lock so a concurrent register / unregister
     # cannot be observed mid-mutation. The snapshot (a shallow copy) is
@@ -164,6 +291,19 @@ async def stream_events() -> StreamingResponse:
             yield f"data: {payload}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@router.get("/history")
+def history(limit: int = _HISTORY_CAP) -> dict[str, Any]:
+    """Return the tail of the persistent trace ring buffer.
+
+    Served straight from the in-memory deque — no disk read on the hot
+    path. A freshly started uvicorn worker has the deque pre-populated by
+    :func:`init_history` so the frontend can render prior events before
+    subscribing to ``/stream``.
+    """
+    events = snapshot_history(limit)
+    return {"events": [asdict(e) for e in events]}
 
 
 @router.post("/publish")

@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from scix import mcp_server
 from scix.viz.api import router as viz_api_router
+from scix.viz.trace_stream import init_history as init_trace_history
 from scix.viz.trace_stream import router as trace_stream_router
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # start. _init_model_impl already swallows ImportError/Exception, so a
     # missing torch/GPU degrades to lexical-only without blocking startup.
     mcp_server._init_model_impl()
+    # Install the on-disk trace ring buffer and replay recent events into
+    # the in-memory deque so agent_trace.html can preload on first paint.
+    init_trace_history()
     yield
 
 

@@ -243,3 +243,152 @@ def test_sse_endpoint_serves_event_stream() -> None:
             break
         time.sleep(0.02)
     assert trace_stream._subscribers == []
+
+
+# ---------------------------------------------------------------------------
+# Persistent ring-buffer tests (init_history / _persist / /history route).
+#
+# Each test installs a fresh history file in a tmp dir via ``init_history``,
+# then manually clears the module-level deque in a ``finally`` block so
+# leftover state doesn't leak into unrelated tests.
+# ---------------------------------------------------------------------------
+
+
+import pytest  # noqa: E402  — kept with ring-buffer tests
+from fastapi import FastAPI  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+
+@pytest.fixture
+def history_path(tmp_path):
+    """Install an isolated trace history file; reset state after each test."""
+    path = tmp_path / "trace_history.jsonl"
+    trace_stream.init_history(path)
+    try:
+        yield path
+    finally:
+        # Leave subsequent tests with no persistence (module-level state).
+        with trace_stream._history_lock:
+            trace_stream._history.clear()
+            trace_stream._history_file = None
+            trace_stream._history_lines_on_disk = 0
+
+
+def test_init_history_loads_existing_file(tmp_path) -> None:
+    """A pre-existing jsonl is replayed into the in-memory deque on init."""
+    path = tmp_path / "trace_history.jsonl"
+    seed_events = [
+        {
+            "tool_name": f"tool_{i}",
+            "latency_ms": float(i),
+            "ts": 1700000000.0 + i,
+            "event_id": f"ev{i:04d}",
+            "params": {"q": "x"},
+            "result_summary": None,
+            "bibcodes": ["2024A", "2024B"],
+        }
+        for i in range(3)
+    ]
+    with path.open("w") as f:
+        for ev in seed_events:
+            f.write(json.dumps(ev) + "\n")
+
+    trace_stream.init_history(path)
+    try:
+        loaded = trace_stream.snapshot_history()
+        assert [e.tool_name for e in loaded] == ["tool_0", "tool_1", "tool_2"]
+        assert loaded[0].bibcodes == ("2024A", "2024B")
+    finally:
+        with trace_stream._history_lock:
+            trace_stream._history.clear()
+            trace_stream._history_file = None
+            trace_stream._history_lines_on_disk = 0
+
+
+def test_init_history_skips_corrupt_lines(tmp_path) -> None:
+    """Malformed lines are logged and skipped, not raised."""
+    path = tmp_path / "trace_history.jsonl"
+    with path.open("w") as f:
+        f.write('{"tool_name": "ok", "latency_ms": 1.0}\n')
+        f.write("not json at all\n")
+        f.write("\n")  # blank line also tolerated
+        f.write('{"tool_name": "second", "latency_ms": 2.0}\n')
+
+    trace_stream.init_history(path)
+    try:
+        loaded = trace_stream.snapshot_history()
+        assert [e.tool_name for e in loaded] == ["ok", "second"]
+    finally:
+        with trace_stream._history_lock:
+            trace_stream._history.clear()
+            trace_stream._history_file = None
+            trace_stream._history_lines_on_disk = 0
+
+
+def test_publish_persists_to_file(history_path) -> None:
+    """publish() writes one jsonl line per event and populates the deque."""
+    for i in range(5):
+        publish(_make_event(f"persist_{i}"))
+
+    assert history_path.exists()
+    with history_path.open() as f:
+        lines = [ln for ln in f.read().splitlines() if ln]
+    assert len(lines) == 5
+    parsed = [json.loads(ln) for ln in lines]
+    assert [p["tool_name"] for p in parsed] == [f"persist_{i}" for i in range(5)]
+
+    snapshot = trace_stream.snapshot_history()
+    assert [e.tool_name for e in snapshot] == [f"persist_{i}" for i in range(5)]
+
+
+def test_rotation_trims_file_to_cap(history_path) -> None:
+    """Once the file exceeds _ROTATE_AT lines, rotation keeps only the deque."""
+    total = trace_stream._ROTATE_AT + 50  # 1050 publishes → at least one rotation
+    for i in range(total):
+        publish(_make_event(f"r{i}"))
+
+    with history_path.open() as f:
+        lines = [ln for ln in f.read().splitlines() if ln]
+
+    # After rotation, file is rewritten from the in-memory deque (≤ cap).
+    # Post-rotation writes may add up to _ROTATE_AT more lines, but never
+    # more than the final counter allows.
+    assert len(lines) <= trace_stream._ROTATE_AT
+    assert len(lines) >= trace_stream._HISTORY_CAP
+
+    # The deque is the authoritative recent window — it tracks the last
+    # _HISTORY_CAP events published, regardless of rotation.
+    snapshot = trace_stream.snapshot_history()
+    expected_tail = [f"r{i}" for i in range(total - trace_stream._HISTORY_CAP, total)]
+    assert [e.tool_name for e in snapshot] == expected_tail
+
+
+def test_history_endpoint_returns_events(history_path) -> None:
+    """GET /viz/api/trace/history serves the in-memory deque."""
+    for i in range(7):
+        publish(_make_event(f"hist_{i}"))
+
+    app = FastAPI()
+    app.include_router(trace_stream.router)
+    client = TestClient(app)
+
+    resp = client.get("/viz/api/trace/history")
+    assert resp.status_code == 200
+    body = resp.json()
+    tools = [ev["tool_name"] for ev in body["events"]]
+    assert tools == [f"hist_{i}" for i in range(7)]
+
+
+def test_history_endpoint_respects_limit(history_path) -> None:
+    """?limit=N returns at most N most recent events."""
+    for i in range(20):
+        publish(_make_event(f"lim_{i}"))
+
+    app = FastAPI()
+    app.include_router(trace_stream.router)
+    client = TestClient(app)
+
+    resp = client.get("/viz/api/trace/history?limit=5")
+    assert resp.status_code == 200
+    tools = [ev["tool_name"] for ev in resp.json()["events"]]
+    assert tools == [f"lim_{i}" for i in range(15, 20)]

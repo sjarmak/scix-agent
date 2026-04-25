@@ -10,10 +10,12 @@ Operator: Stephanie (via Claude Code session). Per PRD `docs/prd/scix_deep_searc
 | 2 | Apply migrations 056/057/058 (test → prod) | **PASS (with 057 fix)** | v_claim_edges = 821,867 rows after dedupe of 898 duplicates |
 | 3 | MH-1 intent backfill on 823K corpus | **PASS (after fine-tuning SciCite locally)** | 823K rows, 0 NULL, all 3 classes ≥5%; macro-F1 0.864 on SciCite test |
 | 4 | Correction events live ingest | **PASS** | 2,534 papers with retraction events (acceptance: >1000) |
-| 5 | Persona harness smoke test | **SKIPPED** | Persona harness non-viable until MH-0 pivot |
+| 5 | Persona harness smoke test | **DEFERRED to v2** | Tools-only pivot decided (PRD Amendment A11); persona harness not part of v1 |
+
+**Pivot decision (2026-04-25):** tools-only — `claim_blame` and `find_replications` ship as direct MCP tools; the persona harness is deferred to v2. Recorded in `docs/prd/scix_deep_search_v1.md` Amendment A11.
 
 Bead state at end of session:
-- `scix_experiments-m3d` (P1, **open**) — MH-0 pivot decision
+- `scix_experiments-m3d` (was P1, **closed**) — MH-0 pivot decision: tools-only
 - `scix_experiments-8dn` (was P1, **closed**) — MH-1 model gap; resolved by local SciCite fine-tune
 - `scix_experiments-wfb` (P2, **open**) — Journal errata RSS feeds 403/404; corrections-pipeline data-coverage gap (no errata/EoC events ingested)
 
@@ -148,9 +150,11 @@ Result:
 
 All 2,534 events are `type=retraction`. Source breakdown was Retraction Watch + OpenAlex; Crossref `update-to` ran but contributed nothing for this DOI list. Journal RSS phase failed 9 of 15 feeds (`ApJ`/`ApJL`/`ApJS`/`AJ`/`A&A`/`MNRAS`/`PASP`/`JGR`/`ARA&A` — IOP changed URL pattern late 2025, others added Cloudflare/bot-detection). Filed bead `scix_experiments-wfb` (P2): without errata feeds, only retractions surface — the BICEP2-style flagship still works (it depends on retraction handling), but errata coverage is incomplete for v1+.
 
-## Step 5 — Persona harness smoke test: **SKIPPED**
+## Step 5 — Persona harness smoke test: **DEFERRED to v2**
 
-The persona harness is non-viable at current dispatcher overhead per Step 1; bead `scix_experiments-m3d` open.
+Per PRD Amendment A11 (tools-only pivot, decided 2026-04-25): the persona harness is not part of v1. `claim_blame` and `find_replications` ship as direct MCP tools (already wired in `src/scix/mcp_server.py:1455+`, `EXPECTED_TOOLS=15`). Any MCP-aware client (Claude Code, Claude Desktop, Cursor) acts as the deep-search persona by calling the tools directly. No SciX-side orchestration loop in v1.
+
+Persona harness code (`.claude/agents/deep_search_investigator.md`, `scripts/scix_deep_search.py`, `src/scix/citation_grounded.py`, MH-8 fixtures) stays on `main` for v2 to pick up — either by building the persistent dispatcher prototype or by accepting a longer per-question wall-clock.
 
 ---
 
@@ -168,5 +172,6 @@ The persona harness is non-viable at current dispatcher overhead per Step 1; bea
 
 | Bead | Pri | Description |
 |---|---|---|
-| `scix_experiments-m3d` | P1 | Decide MH-0 pivot: persistent dispatcher vs. tools-only; update PRD; open follow-up PRD if tools-only |
 | `scix_experiments-wfb` | P2 | Replace dead journal errata RSS feeds; surface erratum / correction / EoC events alongside retractions |
+
+`scix_experiments-m3d` was closed by the tools-only pivot decision (PRD Amendment A11).

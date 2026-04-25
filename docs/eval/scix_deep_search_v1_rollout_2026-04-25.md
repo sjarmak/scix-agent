@@ -168,10 +168,21 @@ Persona harness code (`.claude/agents/deep_search_investigator.md`, `scripts/sci
 - ✅ `find_replications` smoke test passes against the populated substrate
 - ❌ MH-7 persona harness pending pivot decision
 
+## Substrate-completeness audit (post-pivot)
+
+Verified end-to-end with the canonical PRD MH-3 fixture (BICEP2 PRL `2014PhRvL.112x1101B`) and surfaced two structural gaps:
+
+1. **`citation_contexts` covers only 30,316 of 14.9M body-having papers (~0.2%).** As a consequence, `v_claim_edges` carries 821k rows over a 299M-edge citation graph (~0.27% coverage). `find_replications('2014PhRvL.112x1101B')` returns 0 results despite 1,620 forward citations existing in `citation_edges`. The PRD assumed full coverage; the in-text-context extract pipeline (`scripts/extract_citation_contexts.py`) was only ever run on a small subset. Tracked: `scix_experiments-79n` (P1). Includes benchmark numbers — full backfill is ~25h single-process at 70 papers/sec.
+2. **BICEP2 supersession is not in any of the four correction-event sources.** The PRD MH-3 acceptance specifically named BICEP2 as a fixture, but the supersession (BICEP2/Planck joint dust analysis, Ade+ 2015) was published as a *separate paper*, not as a formal Crossref `update-to` correction. Retraction Watch and OpenAlex `is_retracted` only flag formal retractions. Tracked: `scix_experiments-96p` (P2).
+
+**Pipeline idempotency fix** shipped in this session: `src/scix/citation_context.py:284` `SELECT` now has `NOT EXISTS` skip-already-processed filter (previously every run re-processed the same papers, accumulating duplicates — that's the source of the 898 duplicates migration 057 had to dedupe). Plan verified to use the existing `idx_citctx_source_target` index. Future re-runs are safe and only touch new papers.
+
 ## Open follow-ups
 
 | Bead | Pri | Description |
 |---|---|---|
-| `scix_experiments-wfb` | P2 | Replace dead journal errata RSS feeds; surface erratum / correction / EoC events alongside retractions |
+| `scix_experiments-79n` | P1 | Backfill `citation_contexts` on the remaining ~6.2M body-having papers; re-run intent backfill + `v_claim_edges` refresh after |
+| `scix_experiments-96p` | P2 | Detect BICEP2-style supersession (separate paper, not formal correction) — curated list short term, mining-from-contexts long term |
+| `scix_experiments-wfb` | P2 | Replace dead journal errata RSS feeds (9 of 15 returning 403/404); surface erratum / correction / EoC events alongside retractions |
 
-`scix_experiments-m3d` was closed by the tools-only pivot decision (PRD Amendment A11).
+`scix_experiments-m3d` was closed by the tools-only pivot decision (PRD Amendment A11). `scix_experiments-8dn` was closed by the local SciCite fine-tune.

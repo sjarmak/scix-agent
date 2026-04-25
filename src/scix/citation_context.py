@@ -282,11 +282,15 @@ def process_paper(
 # ---------------------------------------------------------------------------
 
 _SELECT_PAPERS = """
-    SELECT bibcode, body, raw
-    FROM papers
-    WHERE body IS NOT NULL
-      AND raw IS NOT NULL
-      AND raw::jsonb ? 'reference'
+    SELECT p.bibcode, p.body, p.raw
+    FROM papers p
+    WHERE p.body IS NOT NULL
+      AND p.raw IS NOT NULL
+      AND p.raw::jsonb ? 'reference'
+      AND NOT EXISTS (
+          SELECT 1 FROM citation_contexts cc
+          WHERE cc.source_bibcode = p.bibcode
+      )
 """
 
 _CITCTX_STAGING_DDL = (

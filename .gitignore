@@ -97,3 +97,6 @@ CLAUDE.local.md
 
 # Qdrant pilot container volume (local docker mount)
 .qdrant_storage/
+
+# prd-build orchestration artifacts
+.prd-build/

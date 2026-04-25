@@ -1,0 +1,106 @@
+# SciX MCP demo stack (workshop stop-gap).
+#
+# Runs a self-contained Postgres+pgvector, the scix MCP server, and a
+# Cloudflare named tunnel — all in one compose project on a small VPS.
+# No inbound ports exposed on the host: cloudflared dials out to CF;
+# clients hit the public hostname.
+#
+# Required env (see .env.example):
+#   MCP_AUTH_TOKEN    — bearer token workshop attendees use
+#   POSTGRES_PASSWORD — random, internal to compose only
+#   CF_TUNNEL_TOKEN   — Cloudflare named-tunnel token
+#   HF_CACHE_DIR      — host path with INDUS + nomic snapshots
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: scix-demo-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: scix
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: scix
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # No published ports — reachable only via the compose network.
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scix -d scix"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - mcp
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=1536MB
+      - -c
+      - work_mem=32MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - max_parallel_workers_per_gather=2
+
+  scix-mcp:
+    image: scix-mcp:latest
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+    container_name: scix-demo-mcp
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?set MCP_AUTH_TOKEN in .env}
+      MCP_PORT: "8000"
+      MCP_HOST: "0.0.0.0"
+      SCIX_DSN: "postgresql://scix:${POSTGRES_PASSWORD}@postgres:5432/scix"
+      SCIX_EMBED_DEVICE: cpu
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ${HF_CACHE_DIR:?set HF_CACHE_DIR in .env}:/home/scix/.cache/huggingface:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 3g
+    expose:
+      - "8000"
+    networks:
+      - mcp
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: scix-demo-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN:?set CF_TUNNEL_TOKEN in .env}
+    depends_on:
+      scix-mcp:
+        condition: service_healthy
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    networks:
+      - mcp
+
+volumes:
+  pgdata:
+
+networks:
+  mcp:
+    driver: bridge

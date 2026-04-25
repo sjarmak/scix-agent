@@ -590,17 +590,31 @@ class SpecificEntityBackend:
         return None
 
     def _entity_papers(self, entity_id: int, top_k: int) -> list[RetrievalDoc]:
-        """Return ``top_k`` papers linked to the entity, ranked by pagerank."""
+        """Return ``top_k`` papers linked to the entity, ranked by pagerank.
+
+        ``document_entities`` may carry multiple rows per (bibcode, entity_id)
+        when distinct link_types fire — e.g. an existing tier-2
+        ``abstract_match`` row plus a part_of-inheritance ``inherited`` row
+        from ``scripts/backfill_part_of_inheritance.py``. The DISTINCT ON
+        keeps each bibcode at most once so the judge doesn't see duplicates.
+        """
         conn = self._get_conn()
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT p.bibcode, p.title, COALESCE(p.abstract, '')
-                FROM document_entities de
-                JOIN papers p ON p.bibcode = de.bibcode
-                LEFT JOIN paper_metrics pm ON pm.bibcode = p.bibcode
-                WHERE de.entity_id = %s
-                ORDER BY pm.pagerank DESC NULLS LAST
+                SELECT bibcode, title, abstract FROM (
+                    SELECT DISTINCT ON (p.bibcode)
+                           p.bibcode,
+                           p.title,
+                           COALESCE(p.abstract, '') AS abstract,
+                           pm.pagerank
+                      FROM document_entities de
+                      JOIN papers p ON p.bibcode = de.bibcode
+                      LEFT JOIN paper_metrics pm ON pm.bibcode = p.bibcode
+                     WHERE de.entity_id = %s
+                  ORDER BY p.bibcode
+                ) s
+                ORDER BY pagerank DESC NULLS LAST
                 LIMIT %s
                 """,
                 (entity_id, top_k),

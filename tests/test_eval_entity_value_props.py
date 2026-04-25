@@ -709,7 +709,7 @@ def test_specific_backend_resolves_via_union_of_canonical_and_alias() -> None:
         handlers=[
             ("WITH candidates", [(42, 100)]),  # union hit -> entity_id=42
             (
-                "FROM document_entities de\n                JOIN papers p",
+                "FROM document_entities de\n                      JOIN papers p",
                 [
                     ("2024X....42...1A", "Paper 42", "abstract 42"),
                     ("2024X....42...2B", "Paper 43", ""),
@@ -724,7 +724,7 @@ def test_specific_backend_resolves_via_union_of_canonical_and_alias() -> None:
     assert len(docs) == 2
     assert docs[0].bibcode == "2024X....42...1A"
     papers_call = [
-        c for c in cursor.executed if "FROM document_entities de\n                JOIN papers p" in c[0]
+        c for c in cursor.executed if "FROM document_entities de\n                      JOIN papers p" in c[0]
     ][0]
     assert papers_call[1][0] == 42  # entity_id
     assert papers_call[1][1] == 2  # top_k
@@ -736,7 +736,7 @@ def test_specific_backend_returns_papers_filtered_by_entity_id() -> None:
         handlers=[
             ("WITH candidates", [(1588866, 5000)]),  # union hit, JWST-like
             (
-                "FROM document_entities de\n                JOIN papers p",
+                "FROM document_entities de\n                      JOIN papers p",
                 [
                     ("2023JWST.001", "Paper A", "abs A"),
                     ("2023JWST.002", "Paper B", "abs B"),
@@ -750,7 +750,7 @@ def test_specific_backend_returns_papers_filtered_by_entity_id() -> None:
     docs = backend.retrieve(_specific_query_gold("James Webb Space Telescope"), top_k=3)
     assert [d.bibcode for d in docs] == ["2023JWST.001", "2023JWST.002", "2023JWST.003"]
     papers_sql = [
-        c for c in cursor.executed if "FROM document_entities de\n                JOIN papers p" in c[0]
+        c for c in cursor.executed if "FROM document_entities de\n                      JOIN papers p" in c[0]
     ][0][0]
     assert "pagerank DESC NULLS LAST" in papers_sql
     assert "de.entity_id = %s" in papers_sql
@@ -762,7 +762,7 @@ def test_specific_backend_resolver_applies_entity_type_hint() -> None:
     cursor = _FakeCursor(
         handlers=[
             ("WITH candidates", [(1588887, 13006)]),  # typed hit
-            ("FROM document_entities de\n                JOIN papers p", [("2024A.1", "ALMA paper", "")]),
+            ("FROM document_entities de\n                      JOIN papers p", [("2024A.1", "ALMA paper", "")]),
         ]
     )
     backend = eevp.SpecificEntityBackend(inner=inner, dsn="dbname=scix_test")

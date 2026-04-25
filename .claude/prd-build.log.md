@@ -42,6 +42,23 @@
 - Final landed sequence on main (5 commits): 8339ee2 (bge-reranker-option), 06a6cc3 (rerank-ab-eval), a595088 (cpu-rerank-bench), 1ea69b7 (mcp-rerank-default), bf02490 (rerank-rollout-canary). Integration branch `prd-build/cross-encoder-reranker-local` FF'd to bf02490.
 - **Net result**: M1 ablation showed both rerankers REGRESS quality — SCIX_RERANK_DEFAULT_MODEL ships as 'off'. Forward-compatible wiring + canary in place for when a domain-tuned reranker lands.
 
+## 2026-04-25 (full-text-apps-v2)
+
+- **Start**: PRD `docs/prd/prd_full_text_applications_v2.md` → integration branch `prd-build/full-text-apps-v2` (FF'd to main HEAD c020d7c on completion). Decomposition produced by background orchestrator agent (which then blocked on the no-Agent-tool harness limit); execution dispatched from the primary session with max_parallel=5.
+- **Layer 0 (5 units, parallel)**:
+  - coverage-bias-report (M1): SUCCESS 130f4c6, review PASS — 20 tests, KL-div per facet, agent guidance section, JSON schema stable.
+  - negative-results-extractor (M3): SUCCESS 3198bdd, review PASS — 26 tests, P=1.000 R=0.600 on 100-span gold (recall exactly at threshold, precision has 30pt headroom).
+  - quant-claim-extractor (M4): SUCCESS 0b80202, review PASS — 34 tests, recall 100% on H0/Omega_m/sigma_8 (50-snippet gold), all 4 uncertainty forms.
+  - section-role-classifier (S2): SUCCESS 62d8740, review FAIL r1 (broke test_mcp_paper_tools.py role=None kwarg), fix r2 SUCCESS f6ba52e (test assertions only).
+  - rerank-section-search (M5): SUCCESS 469cc08, review PASS (NEGATIVE result — baseline ts_rank already perfect at 1.0 on synthetic fixture; MiniLM rerank Δ=-0.0185 < +0.05 threshold; documented + tagged "(negative result)").
+- **Layer 1 (3 units, parallel)**:
+  - mcp-extraction-wiring: SUCCESS f35182e, review PASS — 28 tests + 112 adjacent MCP tests green; entity tool now serves negative_result + quant_claim; coverage_note injected into entity/read_paper/search_within_paper.
+  - body-ner-pilot (M2): SUCCESS c020d7c, review PASS — 19 tests, migration 060 (idempotent ADD COLUMN IF NOT EXISTS for section_name + char_offset), runbook with scix-batch wrapping. Side-channel mixup: 31b2cb0 has the same commit subject but is an unrelated 9-line citation_context.py cap (bundled by a session-side pre-commit hook).
+  - body-contrastive-pilot (S1): SUCCESS 0f9358b, review PASS — 12 tests, smoke test 6.7s on CPU (loss decreases asserted), runbook + scaffold for GPU-window-deferred 100K pilot.
+- **Layer 1 complete (3/3)**. Verification: `pytest tests/test_report_full_text_coverage_bias.py tests/test_negative_results.py tests/test_claim_extractor.py tests/test_section_role.py tests/test_search_within_paper_rerank.py tests/test_mcp_extraction_wiring.py tests/test_run_ner_bodies.py tests/test_train_body_abstract_contrastive.py -q` = 151 passed, 2 skipped. Build DONE.
+- Final landed sequence on main (8 commits + 1 fix-round): 130f4c6, 3198bdd, 0b80202, 62d8740 (+f6ba52e fix), 469cc08, f35182e, c020d7c, 0f9358b. Integration branch `prd-build/full-text-apps-v2` FF'd to c020d7c.
+- **Net result**: 7 PASS + 1 negative result (M5 — section-level rerank doesn't help on synthetic fixture, mirrors prior reranker-local M4 finding). All deliverables shipped: coverage-bias report, negative-results detector, quant-claim extractor, section-role classifier, MCP entity surface for new types + coverage_note, GLiNER body pipeline + migration 060 + runbook, contrastive training script + smoke test + runbook. M2 + S1 full pilots GPU-window-deferred per the operational pattern.
+
 ## 2026-04-18 (community-detection-v2)
 
 - **Start**: PRD `docs/prd/prd_community_detection_v2.md` → integration branch `prd-build/community-detection-v2` (created from main @ f5437179)

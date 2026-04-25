@@ -1,0 +1,38 @@
+{
+  "status": "ok",
+  "message-type": "work",
+  "message-version": "1.0.0",
+  "message": {
+    "DOI": "10.1103/physrevlett.112.241101",
+    "title": ["BICEP2 detection of gravitational-wave B-modes"],
+    "issued": {"date-parts": [[2014, 6, 19]]},
+    "relation": {
+      "update-to": [
+        {
+          "id": "10.1103/physrevlett.114.101301",
+          "id-type": "doi",
+          "asserted-by": "subject",
+          "update_type": "correction",
+          "date": "2014-09-19"
+        }
+      ],
+      "is-corrected-by": [
+        {
+          "id": "10.1103/physrevlett.114.101302",
+          "id-type": "doi",
+          "asserted-by": "subject",
+          "date-parts": {"date-parts": [[2015, 3, 9]]},
+          "date": {"date-parts": [[2015, 3, 9]]}
+        }
+      ],
+      "is-retracted-by": [
+        {
+          "id": "10.1103/physrevlett.115.241101",
+          "id-type": "doi",
+          "update_type": "retraction",
+          "date": "2015-12-01"
+        }
+      ]
+    }
+  }
+}

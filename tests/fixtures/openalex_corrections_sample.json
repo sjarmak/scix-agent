@@ -1,0 +1,51 @@
+{
+  "meta": {
+    "count": 5,
+    "db_response_time_ms": 12,
+    "page": 1,
+    "per_page": 200,
+    "next_cursor": null
+  },
+  "results": [
+    {
+      "id": "https://openalex.org/W2034891234",
+      "doi": "https://doi.org/10.1126/science.1234567",
+      "title": "An ill-fated cosmology paper",
+      "is_retracted": true,
+      "retracted_date": "2018-06-12",
+      "publication_date": "2017-03-21",
+      "updated_date": "2018-06-12T09:00:00"
+    },
+    {
+      "id": "https://openalex.org/W2034891235",
+      "doi": "10.1093/mnras/stx1234",
+      "title": "Erroneous variable-star catalog",
+      "is_retracted": true,
+      "publication_date": "2019-08-01",
+      "updated_date": "2020-02-14T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W2034891236",
+      "doi": "https://doi.org/10.1051/0004-6361/202142001",
+      "title": "Withdrawn — calibration mismatch",
+      "is_retracted": true,
+      "retracted_date": "2022-01-09",
+      "publication_date": "2021-09-15",
+      "updated_date": "2022-01-09T12:00:00"
+    },
+    {
+      "id": "https://openalex.org/W2034891237",
+      "doi": "https://doi.org/10.3847/1538-4357/abcd1234",
+      "title": "Not a retraction (control row)",
+      "is_retracted": false,
+      "publication_date": "2023-04-04"
+    },
+    {
+      "id": "https://openalex.org/W2034891238",
+      "doi": null,
+      "title": "Missing DOI (should be skipped)",
+      "is_retracted": true,
+      "publication_date": "2020-01-01"
+    }
+  ]
+}

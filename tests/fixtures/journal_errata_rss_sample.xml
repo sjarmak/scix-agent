@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:prism="http://prismstandard.org/namespaces/basic/2.0/">
+  <channel>
+    <title>The Astrophysical Journal — Recent</title>
+    <link>https://iopscience.iop.org/journal/0004-637X</link>
+    <description>Recent ApJ articles</description>
+
+    <item>
+      <title>Erratum: Stellar populations in NGC 1234 (2023, ApJ 950, 100)</title>
+      <link>https://iopscience.iop.org/article/10.3847/1538-4357/abcd0001</link>
+      <guid>10.3847/1538-4357/abcd0001</guid>
+      <pubDate>Mon, 14 Aug 2023 00:00:00 +0000</pubDate>
+      <dc:identifier>doi:10.3847/1538-4357/abcd0001</dc:identifier>
+    </item>
+
+    <item>
+      <title>Correction to: Bayesian inference for type Ia supernovae</title>
+      <link>https://iopscience.iop.org/article/10.3847/1538-4357/abcd0002</link>
+      <guid>10.3847/1538-4357/abcd0002</guid>
+      <pubDate>Wed, 02 Nov 2022 00:00:00 +0000</pubDate>
+    </item>
+
+    <item>
+      <title>Retraction Notice: Spurious detection of TeV emission</title>
+      <link>https://iopscience.iop.org/article/10.3847/1538-4357/abcd0003</link>
+      <guid>10.3847/1538-4357/abcd0003</guid>
+      <pubDate>Fri, 15 Jul 2022 00:00:00 +0000</pubDate>
+    </item>
+
+    <item>
+      <title>Expression of Concern: Anomalous CMB residuals in Planck-LFI</title>
+      <link>https://iopscience.iop.org/article/10.3847/1538-4357/abcd0004</link>
+      <guid>10.3847/1538-4357/abcd0004</guid>
+      <pubDate>Tue, 21 Mar 2023 00:00:00 +0000</pubDate>
+    </item>
+
+    <item>
+      <title>Recalibration of the Cepheid distance scale</title>
+      <link>https://iopscience.iop.org/article/10.3847/1538-4357/abcd0005</link>
+      <guid>10.3847/1538-4357/abcd0005</guid>
+      <pubDate>Thu, 05 Oct 2023 00:00:00 +0000</pubDate>
+    </item>
+
+    <item>
+      <title>A new model for galactic dynamos</title>
+      <link>https://iopscience.iop.org/article/10.3847/1538-4357/abcd0006</link>
+      <guid>10.3847/1538-4357/abcd0006</guid>
+      <pubDate>Mon, 18 Sep 2023 00:00:00 +0000</pubDate>
+    </item>
+
+    <item>
+      <title>Corrigendum: Mass function of dark matter halos</title>
+      <link>https://iopscience.iop.org/article/10.3847/1538-4357/abcd0007</link>
+      <guid>10.3847/1538-4357/abcd0007</guid>
+      <pubDate>Sat, 06 Jan 2024 00:00:00 +0000</pubDate>
+    </item>
+
+  </channel>
+</rss>

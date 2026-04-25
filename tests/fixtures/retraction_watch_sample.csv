@@ -1,0 +1,8 @@
+RecordID,OriginalPaperDOI,RetractionDOI,RetractionDate,Reason
+1001,10.1103/PhysRevLett.112.241101,10.1103/PhysRevLett.114.101301,2015-03-30,Retraction (replaced by Planck dust analysis)
+1002,10.1038/nature12373,10.1038/nature13456,2014-07-15,Data fabrication
+1003,10.1086/183954,10.1086/184101,1985-12-01,Author request
+1004,10.1051/0004-6361/201424563,10.1051/0004-6361/201525001,2015-08-12,Calibration error
+1005,10.1088/0004-637X/799/1/77,10.1088/0004-637X/802/1/77,2015-04-10,Retraction notice
+1006,,,,,Skipped row missing DOI
+1007,10.1038/s41586-019-1666-5,10.1038/s41586-020-2000-0,2020-01-22,Methodology flaw

@@ -80,10 +80,11 @@ class TestExpectedToolSet:
         assert "find_similar_by_examples" not in tools
 
     def test_active_set_when_qdrant_enabled(self, fake_qdrant):
-        # The retired tool is gone from the active surface even when the
-        # Qdrant feature flag is on; the gating is now hardcoded to no-op.
+        # When Qdrant is on, the active set is the base EXPECTED_TOOLS plus
+        # the optional Qdrant-gated tools (currently just chunk_search). The
+        # retired tool is gone from both groups.
         tools = mcp_server._expected_tool_set()
-        assert tools == set(mcp_server.EXPECTED_TOOLS)
+        assert tools == set(mcp_server.EXPECTED_TOOLS) | set(mcp_server._OPTIONAL_TOOLS)
         assert "find_similar_by_examples" not in tools
 
 
@@ -121,7 +122,9 @@ class TestMCPSelfTest:
     def test_self_test_passes_with_qdrant(self, fake_qdrant):
         status = mcp_server.startup_self_test()
         assert status["ok"] is True
-        assert status["tool_count"] == len(mcp_server.EXPECTED_TOOLS)
+        assert status["tool_count"] == len(mcp_server.EXPECTED_TOOLS) + len(
+            mcp_server._OPTIONAL_TOOLS
+        )
         assert "find_similar_by_examples" not in status["tool_names"]
 
 

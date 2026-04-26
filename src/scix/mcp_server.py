@@ -934,10 +934,10 @@ EXPECTED_TOOLS: tuple[str, ...] = (
     "find_claims",
 )
 
-# Tools that appear only when an optional backend is wired up. Empty after
-# the 2026-04-25 retirement of find_similar_by_examples (Qdrant backend not in
-# active use). Retained as a placeholder for future opt-in tools.
-_OPTIONAL_TOOLS: tuple[str, ...] = ()
+# Tools that appear only when an optional backend is wired up. The
+# ``chunk_search`` tool is registered iff ``_qdrant_enabled()`` (the
+# scix_chunks_v1 collection lives in Qdrant; PRD chunk-embeddings-build).
+_OPTIONAL_TOOLS: tuple[str, ...] = ("chunk_search",)
 
 
 def _expected_tool_set() -> set[str]:
@@ -1967,6 +1967,132 @@ def create_server(_run_self_test: bool = True):
         # (gated by QDRANT_URL) is not in active use. The dispatch layer
         # raises a structured "tool_removed" error if any caller still
         # invokes the name.
+
+        # --- PRD chunk-embeddings-build: chunk_search (optional, Qdrant) ---
+        # Gated on QDRANT_URL via _qdrant_enabled(); only registered when the
+        # scix_chunks_v1 collection is reachable. When QDRANT_URL is unset the
+        # tool is hidden so list_tools advertises only what the deployment can
+        # actually serve.
+        if _qdrant_enabled():
+            tool_list.append(
+                Tool(
+                    name="chunk_search",
+                    description=(
+                        "Chunk-grain semantic search over the scix_chunks_v1 "
+                        "Qdrant collection. Encodes the query with INDUS "
+                        "(768-dim, mean-pooled) and runs an ANN query against "
+                        "section-aware sliding-window chunks of paper bodies. "
+                        "Best for method/dataset queries and other narrow, "
+                        "passage-level questions where the relevant text is a "
+                        "few sentences inside a section. Use search "
+                        "(abstract-level) when broader paper-level relevance "
+                        "is enough; use section_retrieval when section-level "
+                        "(rather than chunk-level) granularity is preferred. "
+                        "Filters cover year window, arxiv_class, "
+                        "community_id_med (medium-resolution Leiden "
+                        "community), section_heading (canonical norm), and "
+                        "bibcode (restrict to specific papers)."
+                    ),
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": (
+                                    "Natural-language passage query. "
+                                    "Encoded with INDUS (mean pooling, "
+                                    "768-dim) before the ANN call."
+                                ),
+                            },
+                            "filters": {
+                                "type": "object",
+                                "description": (
+                                    "Optional payload filters; all keys "
+                                    "AND-combined. Omit any to disable."
+                                ),
+                                "properties": {
+                                    "year_min": {
+                                        "type": "integer",
+                                        "description": "Earliest paper year (inclusive).",
+                                    },
+                                    "year_max": {
+                                        "type": "integer",
+                                        "description": "Latest paper year (inclusive).",
+                                    },
+                                    "arxiv_class": {
+                                        "description": (
+                                            "arXiv class filter; accepts a "
+                                            "string or a list of strings "
+                                            "(e.g. 'astro-ph.EP' or "
+                                            "['astro-ph.EP', 'astro-ph.GA'])."
+                                        ),
+                                        "oneOf": [
+                                            {"type": "string"},
+                                            {
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                            },
+                                        ],
+                                    },
+                                    "community_id_med": {
+                                        "description": (
+                                            "Medium-resolution Leiden "
+                                            "community id; integer or list "
+                                            "of integers."
+                                        ),
+                                        "oneOf": [
+                                            {"type": "integer"},
+                                            {
+                                                "type": "array",
+                                                "items": {"type": "integer"},
+                                            },
+                                        ],
+                                    },
+                                    "section_heading": {
+                                        "description": (
+                                            "Canonical normalized section "
+                                            "heading(s) (e.g. 'methods', "
+                                            "'results'). Pass-through to the "
+                                            "section_heading_norm payload "
+                                            "filter."
+                                        ),
+                                        "oneOf": [
+                                            {"type": "string"},
+                                            {
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                            },
+                                        ],
+                                    },
+                                    "bibcode": {
+                                        "description": (
+                                            "Restrict to specific paper "
+                                            "bibcode(s); string or list."
+                                        ),
+                                        "oneOf": [
+                                            {"type": "string"},
+                                            {
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                            },
+                                        ],
+                                    },
+                                },
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "default": 20,
+                                "description": (
+                                    "Max chunk hits to return; clamped to "
+                                    "[1, 100]."
+                                ),
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                )
+            )
+
         return tool_list
 
     @server.call_tool()
@@ -2328,6 +2454,10 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
     # --- PRD nanopub-claim-extraction: find_claims ---
     if name == "find_claims":
         return _handle_find_claims(conn, args)
+
+    # --- PRD chunk-embeddings-build: chunk_search (Qdrant-gated) ---
+    if name == "chunk_search":
+        return _handle_chunk_search(conn, args)
 
     # --- Legacy handlers for deprecated session tools ---
     if name == "add_to_working_set":
@@ -3117,6 +3247,226 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         indent=2,
         default=str,
     )
+
+
+# ---------------------------------------------------------------------------
+# chunk_search handler (PRD chunk-embeddings-build)
+# ---------------------------------------------------------------------------
+
+# Lazy module-level cache for the INDUS embedder used by chunk_search. Loaded
+# on first dispatch so server startup stays fast and Qdrant-disabled
+# deployments never pay the model load cost.
+_indus_embedder: tuple[Any, Any] | None = None
+
+
+def _get_indus_embedder() -> tuple[Any, Any]:
+    """Return a cached (model, tokenizer) pair for the INDUS encoder.
+
+    Reuses :func:`scix.embed.load_model`, which has its own
+    :data:`scix.embed._model_cache`, so even repeated process restarts only
+    pay the disk read cost. CPU-only by default; chunk_search is interactive
+    and the per-query cost is dominated by the Qdrant round-trip, not the
+    encoder.
+    """
+    global _indus_embedder
+    if _indus_embedder is None:
+        # Re-import locally so tests that monkeypatch ``scix.embed.load_model``
+        # see the patched function rather than the binding captured at import.
+        from scix import embed as _embed
+
+        _indus_embedder = _embed.load_model("indus", device="cpu")
+    return _indus_embedder
+
+
+def _normalize_str_list(value: Any) -> list[str] | None:
+    """Coerce a str-or-list filter value into a list[str] (or None)."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        s = value.strip()
+        return [s] if s else None
+    if isinstance(value, (list, tuple)):
+        out = [str(v).strip() for v in value if str(v).strip()]
+        return out or None
+    raise ValueError(f"expected string or list of strings, got {type(value).__name__}")
+
+
+def _normalize_int_list(value: Any) -> list[int] | None:
+    """Coerce an int-or-list filter value into a list[int] (or None)."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        # bool is a subclass of int but not meaningful as a community id.
+        raise ValueError("expected integer or list of integers, got bool")
+    if isinstance(value, int):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        out: list[int] = []
+        for v in value:
+            if isinstance(v, bool):
+                raise ValueError("community_id_med list contains a bool")
+            try:
+                out.append(int(v))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"could not coerce {v!r} to int") from exc
+        return out or None
+    raise ValueError(f"expected integer or list of integers, got {type(value).__name__}")
+
+
+def _handle_chunk_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
+    """Dispatch handler for the ``chunk_search`` MCP tool.
+
+    Returns a JSON string with shape::
+
+        {
+            "matches": [
+                {
+                    "bibcode": str,
+                    "chunk_id": int,
+                    "section_heading": str | null,
+                    "score": float,
+                    "snippet": str | null,
+                },
+                ...
+            ],
+            "total": int,
+            "filter_summary": {...},
+        }
+
+    If Qdrant is not configured (``QDRANT_URL`` unset or qdrant-client not
+    installed), returns ``{"error": "qdrant_disabled", ...}`` so callers can
+    detect the gate without an exception.
+    """
+    if not _qdrant_enabled():
+        return json.dumps(
+            {
+                "error": "qdrant_disabled",
+                "message": (
+                    "chunk_search requires the Qdrant backend "
+                    "(set QDRANT_URL and install qdrant-client)."
+                ),
+            },
+            indent=2,
+        )
+
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return json.dumps({"error": "query must be a non-empty string"}, indent=2)
+    query = query.strip()
+
+    # --- limit clamp ---
+    raw_limit = args.get("limit", 20)
+    try:
+        limit = int(raw_limit) if raw_limit is not None else 20
+    except (TypeError, ValueError):
+        return json.dumps(
+            {"error": f"limit must be an integer, got {raw_limit!r}"},
+            indent=2,
+        )
+    if limit < 1:
+        limit = 1
+    elif limit > 100:
+        limit = 100
+
+    # --- filter parsing ---
+    filters_raw = args.get("filters") or {}
+    if not isinstance(filters_raw, dict):
+        return json.dumps(
+            {"error": f"filters must be an object, got {type(filters_raw).__name__}"},
+            indent=2,
+        )
+
+    try:
+        year_min = filters_raw.get("year_min")
+        year_max = filters_raw.get("year_max")
+        if year_min is not None:
+            year_min = int(year_min)
+        if year_max is not None:
+            year_max = int(year_max)
+        arxiv_class = _normalize_str_list(filters_raw.get("arxiv_class"))
+        community_id_med = _normalize_int_list(filters_raw.get("community_id_med"))
+        section_heading = _normalize_str_list(filters_raw.get("section_heading"))
+        bibcode = _normalize_str_list(filters_raw.get("bibcode"))
+    except (TypeError, ValueError) as exc:
+        return json.dumps({"error": f"invalid filters: {exc}"}, indent=2)
+
+    # --- encode query via INDUS (mean pooling, 768-dim) ---
+    try:
+        # Re-import lazily so tests that monkeypatch ``scix.embed.embed_batch``
+        # after import time see the patched function.
+        from scix import embed as _embed
+
+        model, tokenizer = _get_indus_embedder()
+        vectors = _embed.embed_batch(
+            model, tokenizer, [query], batch_size=1, pooling="mean"
+        )
+    except Exception as exc:  # noqa: BLE001 — boundary
+        logger.exception("chunk_search: INDUS encode failed")
+        return json.dumps({"error": f"encode_failed: {exc}"}, indent=2)
+    if not vectors:
+        return json.dumps({"error": "encode_failed: no vector returned"}, indent=2)
+    vector = vectors[0]
+
+    # --- ANN call + snippet hydration ---
+    try:
+        hits = _qdrant_tools.chunk_search_by_text(
+            vector,
+            year_min=year_min,
+            year_max=year_max,
+            arxiv_class=arxiv_class,
+            community_id_med=community_id_med,
+            section_heading_norm=section_heading,
+            bibcode=bibcode,
+            limit=limit,
+        )
+    except Exception as exc:  # noqa: BLE001 — boundary
+        logger.exception("chunk_search: Qdrant query failed")
+        return json.dumps({"error": f"qdrant_failed: {exc}"}, indent=2)
+
+    try:
+        hits = _qdrant_tools.fetch_chunk_snippets(conn, hits)
+    except Exception as exc:  # noqa: BLE001 — boundary
+        logger.exception("chunk_search: snippet fetch failed; returning hits without snippets")
+        # Non-fatal — keep hits with snippet=None rather than dropping the call.
+        # We still surface the failure as a warning field so the caller can
+        # decide whether to retry.
+        snippet_warning: str | None = f"snippet_fetch_failed: {exc}"
+    else:
+        snippet_warning = None
+
+    matches = [
+        {
+            "bibcode": h.bibcode,
+            "chunk_id": h.chunk_id,
+            "section_heading": h.section_heading or h.section_heading_norm,
+            "score": h.score,
+            "snippet": h.snippet,
+        }
+        for h in hits
+    ]
+
+    filter_summary: dict[str, Any] = {"limit": limit}
+    if year_min is not None:
+        filter_summary["year_min"] = year_min
+    if year_max is not None:
+        filter_summary["year_max"] = year_max
+    if arxiv_class is not None:
+        filter_summary["arxiv_class"] = arxiv_class
+    if community_id_med is not None:
+        filter_summary["community_id_med"] = community_id_med
+    if section_heading is not None:
+        filter_summary["section_heading"] = section_heading
+    if bibcode is not None:
+        filter_summary["bibcode"] = bibcode
+
+    payload: dict[str, Any] = {
+        "matches": matches,
+        "total": len(matches),
+        "filter_summary": filter_summary,
+    }
+    if snippet_warning is not None:
+        payload["warning"] = snippet_warning
+    return json.dumps(payload, indent=2, default=str)
 
 
 def _handle_find_similar_by_examples(args: dict[str, Any]) -> str:

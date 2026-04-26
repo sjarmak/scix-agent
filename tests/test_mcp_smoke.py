@@ -612,6 +612,210 @@ class TestToolSmoke:
 
 
 # ---------------------------------------------------------------------------
+# PRD chunk-embeddings-build: chunk_search MCP tool (Qdrant-gated)
+# ---------------------------------------------------------------------------
+
+
+def _list_registered_tool_names() -> list[str]:
+    """Build a fresh server and return its currently advertised tool names.
+
+    Mirrors what an MCP client sees on tools/list. Avoids importing
+    ``startup_self_test`` to keep the gating tests independent from the
+    self-test logic.
+    """
+    import asyncio
+
+    from mcp.types import ListToolsRequest
+
+    from scix.mcp_server import create_server
+
+    with patch("scix.mcp_server._init_model_impl"):
+        server = create_server(_run_self_test=False)
+    handler = server.request_handlers[ListToolsRequest]
+    result = asyncio.run(handler(ListToolsRequest(method="tools/list")))
+    tools = result.root.tools if hasattr(result, "root") else result.tools
+    return [t.name for t in tools]
+
+
+def test_chunk_search_tool_listed_when_qdrant_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """chunk_search appears in list_tools when QDRANT_URL is set."""
+    try:
+        import mcp.types  # noqa: F401
+    except ImportError:
+        pytest.skip("mcp SDK not installed")
+
+    monkeypatch.setenv("QDRANT_URL", "http://localhost:6333")
+    # Force qdrant_tools.is_enabled() to return True even if the qdrant_client
+    # package isn't installed in the test environment (it short-circuits on
+    # QdrantClient is None otherwise).
+    import scix.mcp_server as mcp_server_module
+
+    if mcp_server_module._qdrant_tools is not None:
+        monkeypatch.setattr(
+            mcp_server_module._qdrant_tools, "is_enabled", lambda: True
+        )
+    else:
+        monkeypatch.setattr(mcp_server_module, "_qdrant_enabled", lambda: True)
+
+    names = _list_registered_tool_names()
+    assert "chunk_search" in names
+
+
+def test_chunk_search_tool_hidden_when_qdrant_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """chunk_search is NOT advertised when QDRANT_URL is unset."""
+    try:
+        import mcp.types  # noqa: F401
+    except ImportError:
+        pytest.skip("mcp SDK not installed")
+
+    monkeypatch.delenv("QDRANT_URL", raising=False)
+    # Belt-and-suspenders: force the gate to report disabled even if a real
+    # qdrant_tools.is_enabled() implementation reads other env vars in future.
+    import scix.mcp_server as mcp_server_module
+
+    if mcp_server_module._qdrant_tools is not None:
+        monkeypatch.setattr(
+            mcp_server_module._qdrant_tools, "is_enabled", lambda: False
+        )
+    else:
+        monkeypatch.setattr(mcp_server_module, "_qdrant_enabled", lambda: False)
+
+    names = _list_registered_tool_names()
+    assert "chunk_search" not in names
+
+
+def test_chunk_search_dispatch_returns_qdrant_disabled_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """call_tool('chunk_search', ...) returns {'error': 'qdrant_disabled'} when QDRANT_URL unset."""
+    monkeypatch.delenv("QDRANT_URL", raising=False)
+    import scix.mcp_server as mcp_server_module
+
+    monkeypatch.setattr(mcp_server_module, "_qdrant_enabled", lambda: False)
+
+    # call_tool acquires a pooled connection; stub _get_conn so we don't need
+    # a live Postgres for the gate-only path.
+    from contextlib import contextmanager
+
+    fake_conn = MagicMock()
+
+    @contextmanager
+    def _fake_get_conn():
+        yield fake_conn
+
+    monkeypatch.setattr(mcp_server_module, "_get_conn", _fake_get_conn)
+    monkeypatch.setattr(mcp_server_module, "_log_query", lambda *a, **k: None)
+    monkeypatch.setattr(mcp_server_module, "_set_timeout", lambda *a, **k: None)
+
+    out = mcp_server_module.call_tool("chunk_search", {"query": "mcmc"})
+    data = json.loads(out)
+    assert data.get("error") == "qdrant_disabled"
+
+
+def test_chunk_search_dispatch_happy_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """call_tool('chunk_search', ...) returns matches[] when Qdrant + INDUS are stubbed."""
+    monkeypatch.setenv("QDRANT_URL", "http://localhost:6333")
+    import scix.mcp_server as mcp_server_module
+
+    monkeypatch.setattr(mcp_server_module, "_qdrant_enabled", lambda: True)
+
+    # Stub the INDUS embedder so we never touch the real model.
+    monkeypatch.setattr(
+        "scix.embed.load_model", lambda *a, **k: (MagicMock(), MagicMock())
+    )
+    monkeypatch.setattr(
+        "scix.embed.embed_batch", lambda *a, **k: [[0.0] * 768]
+    )
+    # Reset the cached embedder so the patched load_model is used.
+    monkeypatch.setattr(mcp_server_module, "_indus_embedder", None)
+
+    # Stub the Qdrant chunk-search + snippet helpers.
+    from scix.qdrant_tools import ChunkHit
+
+    sample_hit = ChunkHit(
+        bibcode="2024ApJ...999X..01Z",
+        chunk_id=42,
+        section_idx=2,
+        section_heading_norm="methods",
+        section_heading="Methods",
+        score=0.87,
+        snippet=None,
+        char_offset=120,
+        n_tokens=180,
+    )
+
+    def _fake_chunk_search(vector, **kwargs):
+        # Surface the parsed filters back so we can assert on them.
+        _fake_chunk_search.last_call = {"vector": vector, **kwargs}
+        return [sample_hit]
+
+    def _fake_fetch_snippets(conn, hits, **kwargs):
+        import dataclasses
+
+        return [dataclasses.replace(h, snippet="abc methods MCMC ...") for h in hits]
+
+    assert mcp_server_module._qdrant_tools is not None
+    monkeypatch.setattr(
+        mcp_server_module._qdrant_tools,
+        "chunk_search_by_text",
+        _fake_chunk_search,
+    )
+    monkeypatch.setattr(
+        mcp_server_module._qdrant_tools,
+        "fetch_chunk_snippets",
+        _fake_fetch_snippets,
+    )
+
+    # Stub _get_conn so we don't need a live Postgres pool.
+    from contextlib import contextmanager
+
+    fake_conn = MagicMock()
+
+    @contextmanager
+    def _fake_get_conn():
+        yield fake_conn
+
+    monkeypatch.setattr(mcp_server_module, "_get_conn", _fake_get_conn)
+    monkeypatch.setattr(mcp_server_module, "_log_query", lambda *a, **k: None)
+    monkeypatch.setattr(mcp_server_module, "_set_timeout", lambda *a, **k: None)
+
+    out = mcp_server_module.call_tool(
+        "chunk_search",
+        {
+            "query": "mcmc cosmological parameters",
+            "filters": {"section_heading": ["methods"]},
+            "limit": 5,
+        },
+    )
+    data = json.loads(out)
+    assert "error" not in data, f"unexpected error: {data}"
+    assert data["total"] == 1
+    assert isinstance(data["matches"], list) and len(data["matches"]) == 1
+    match = data["matches"][0]
+    for key in ("bibcode", "chunk_id", "section_heading", "score", "snippet"):
+        assert key in match, f"match missing key {key}: {match}"
+    assert match["bibcode"] == "2024ApJ...999X..01Z"
+    assert match["chunk_id"] == 42
+    assert match["snippet"] == "abc methods MCMC ..."
+
+    # filter_summary captures the applied filters + the limit.
+    fs = data["filter_summary"]
+    assert fs["limit"] == 5
+    assert fs["section_heading"] == ["methods"]
+
+    # And the parsed filter actually reached qdrant_tools.chunk_search_by_text.
+    last = _fake_chunk_search.last_call
+    assert last["section_heading_norm"] == ["methods"]
+    assert last["limit"] == 5
+
+
+# ---------------------------------------------------------------------------
 # Meta: ensure every expected tool has a smoke test
 # ---------------------------------------------------------------------------
 

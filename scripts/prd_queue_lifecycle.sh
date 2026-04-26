@@ -95,6 +95,24 @@ cmd_teardown() {
     wt="$(worktree_path "$slug")"
     branch="$(branch_name "$slug")"
 
+    # Sanity check: primary repo must be on main with a clean index. The /prd-build
+    # worker is supposed to leave the primary alone, but in practice a sub-agent has
+    # been observed to detach HEAD or stage conflicts there (e.g. from `git checkout
+    # <sha>` run with bad cwd). Bail out here rather than failing mid-merge.
+    local primary_ref
+    primary_ref="$(git -C "$PRIMARY_REPO" symbolic-ref --short -q HEAD || echo "DETACHED")"
+    if [[ "$primary_ref" != "main" ]]; then
+        echo "ERROR: primary repo HEAD is '$primary_ref', expected 'main'." >&2
+        echo "       A /prd-build sub-agent likely checked out something in the primary repo." >&2
+        echo "       Recover with:  git -C $PRIMARY_REPO switch main  (resolve any conflicts first)" >&2
+        return 4
+    fi
+    if [[ -n "$(git -C "$PRIMARY_REPO" diff --name-only --diff-filter=U 2>/dev/null)" ]]; then
+        echo "ERROR: primary repo has unmerged paths in index — cannot teardown." >&2
+        git -C "$PRIMARY_REPO" diff --name-only --diff-filter=U >&2
+        return 4
+    fi
+
     # FF integration branch into main IF it has commits not on main
     if git -C "$PRIMARY_REPO" rev-parse --verify "$branch" >/dev/null 2>&1; then
         local branch_sha main_sha

@@ -2,6 +2,8 @@
 *.jsonl
 *.jsonl.gz
 *.jsonl.xz
+# ...except small, hand-curated gold-standard evals checked in with code.
+!eval/claim_extraction_gold_standard.jsonl
 ads_metadata_by_year_picard/
 ads_metadata_by_year_full/
 data/*

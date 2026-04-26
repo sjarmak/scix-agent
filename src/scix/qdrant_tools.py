@@ -12,7 +12,9 @@ those" — with optional payload filtering.
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
+import json
 import os
 import struct
 from dataclasses import dataclass
@@ -28,6 +30,7 @@ except ImportError:  # pragma: no cover
 
 COLLECTION = "scix_papers_v1"
 VECTOR_NAME = "indus"
+CHUNKS_COLLECTION = "scix_chunks_v1"
 
 
 def is_enabled() -> bool:
@@ -236,3 +239,205 @@ def collection_info() -> dict[str, Any]:
         "collection": COLLECTION,
         "vector_name": VECTOR_NAME,
     }
+
+
+# ---------------------------------------------------------------------------
+# Chunk-level helpers (scix_chunks_v1) — used by the chunk_search MCP tool.
+# Kept distinct from the paper-level helpers above because the payload schema
+# and filter keys differ (community_id_med list, section_heading_norm list,
+# bibcode list).  The chunks collection is single-vector, so query_points calls
+# do NOT pass `using=VECTOR_NAME`.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ChunkHit:
+    """A single hit from the scix_chunks_v1 collection.
+
+    ``snippet`` is left as ``None`` by :func:`chunk_search_by_text`; populate
+    it via :func:`fetch_chunk_snippets`, which joins on
+    ``papers_fulltext.sections``.
+
+    ``section_heading`` may also be ``None`` because the chunks-collection
+    payload schema (per the chunk-embeddings PRD) only indexes
+    ``section_heading_norm``; clients can derive a display heading from the
+    norm if needed, or fetch the raw heading via the same
+    ``papers_fulltext.sections`` join used for snippets.
+    """
+
+    bibcode: str
+    chunk_id: int
+    section_idx: int
+    section_heading_norm: str | None
+    section_heading: str | None
+    score: float
+    snippet: str | None
+    char_offset: int | None
+    n_tokens: int | None
+
+
+def _chunks_filter_from_kwargs(
+    year_min: int | None = None,
+    year_max: int | None = None,
+    arxiv_class: list[str] | None = None,
+    community_id_med: list[int] | None = None,
+    section_heading_norm: list[str] | None = None,
+    bibcode: list[str] | None = None,
+):
+    """Compose a qdrant Filter for the chunks collection.
+
+    All filters are AND-combined under ``must=[...]``.  List filters use
+    ``MatchAny``; the year window composes into a single ``Range`` condition.
+    Returns ``None`` (not an empty Filter) when no filters are supplied so the
+    caller can pass it straight through to ``query_points``.
+    """
+    must: list[Any] = []
+    if year_min is not None or year_max is not None:
+        must.append(qm.FieldCondition(
+            key="year",
+            range=qm.Range(
+                gte=year_min if year_min is not None else None,
+                lte=year_max if year_max is not None else None,
+            ),
+        ))
+    if arxiv_class:
+        must.append(qm.FieldCondition(
+            key="arxiv_class",
+            match=qm.MatchAny(any=list(arxiv_class)),
+        ))
+    if community_id_med:
+        must.append(qm.FieldCondition(
+            key="community_id_med",
+            match=qm.MatchAny(any=[int(c) for c in community_id_med]),
+        ))
+    if section_heading_norm:
+        must.append(qm.FieldCondition(
+            key="section_heading_norm",
+            match=qm.MatchAny(any=list(section_heading_norm)),
+        ))
+    if bibcode:
+        must.append(qm.FieldCondition(
+            key="bibcode",
+            match=qm.MatchAny(any=list(bibcode)),
+        ))
+    return qm.Filter(must=must) if must else None
+
+
+def _chunk_row(point) -> ChunkHit:
+    """Build a ChunkHit from a qdrant ScoredPoint-like object.
+
+    ``snippet`` is always ``None`` here — it is populated separately by
+    :func:`fetch_chunk_snippets` so the network round-trip to Postgres is
+    decoupled from the ANN call.
+    """
+    p = point.payload or {}
+    chunk_id_raw = p.get("chunk_id")
+    if chunk_id_raw is None:
+        chunk_id_raw = getattr(point, "id", 0)
+    section_idx_raw = p.get("section_idx", 0)
+    char_offset_raw = p.get("char_offset")
+    n_tokens_raw = p.get("n_tokens")
+    return ChunkHit(
+        bibcode=p.get("bibcode", ""),
+        chunk_id=int(chunk_id_raw) if chunk_id_raw is not None else 0,
+        section_idx=int(section_idx_raw) if section_idx_raw is not None else 0,
+        section_heading_norm=p.get("section_heading_norm"),
+        section_heading=p.get("section_heading"),
+        score=float(point.score) if getattr(point, "score", None) is not None else 0.0,
+        snippet=None,
+        char_offset=int(char_offset_raw) if char_offset_raw is not None else None,
+        n_tokens=int(n_tokens_raw) if n_tokens_raw is not None else None,
+    )
+
+
+def chunk_search_by_text(
+    vector: list[float],
+    *,
+    year_min: int | None = None,
+    year_max: int | None = None,
+    arxiv_class: list[str] | None = None,
+    community_id_med: list[int] | None = None,
+    section_heading_norm: list[str] | None = None,
+    bibcode: list[str] | None = None,
+    limit: int = 20,
+    timeout: float = 10.0,
+) -> list[ChunkHit]:
+    """Run an ANN query against ``scix_chunks_v1`` with payload filters.
+
+    Returns hits with ``snippet=None``; call :func:`fetch_chunk_snippets` to
+    populate snippet text from ``papers_fulltext.sections``.
+    """
+    client = _client(timeout=timeout)
+    flt = _chunks_filter_from_kwargs(
+        year_min=year_min,
+        year_max=year_max,
+        arxiv_class=arxiv_class,
+        community_id_med=community_id_med,
+        section_heading_norm=section_heading_norm,
+        bibcode=bibcode,
+    )
+    resp = client.query_points(
+        collection_name=CHUNKS_COLLECTION,
+        query=vector,
+        query_filter=flt,
+        limit=limit,
+        with_payload=True,
+    )
+    return [_chunk_row(h) for h in resp.points]
+
+
+def fetch_chunk_snippets(
+    conn,
+    hits: list[ChunkHit],
+    *,
+    max_snippet_chars: int = 1500,
+) -> list[ChunkHit]:
+    """Return a NEW list of ChunkHit with ``snippet`` populated from Postgres.
+
+    Issues a single batched ``SELECT bibcode, sections FROM papers_fulltext
+    WHERE bibcode = ANY(%s)`` and indexes into each chunk's ``section_idx`` to
+    pull ``sections[section_idx]['text']``.  Truncates each snippet to
+    ``max_snippet_chars`` and appends ``"..."`` when truncated.
+
+    Hits whose bibcode is missing from ``papers_fulltext`` or whose
+    ``section_idx`` is out of range keep ``snippet=None`` and are preserved in
+    the output (never dropped).  ChunkHit is frozen, so this returns brand-new
+    instances via :func:`dataclasses.replace`.
+    """
+    if not hits:
+        return []
+    bibcodes = sorted({h.bibcode for h in hits if h.bibcode})
+    sections_by_bibcode: dict[str, list[Any]] = {}
+    if bibcodes:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT bibcode, sections FROM papers_fulltext WHERE bibcode = ANY(%s)",
+                (bibcodes,),
+            )
+            for bibcode, sections in cur.fetchall():
+                if isinstance(sections, (str, bytes)):
+                    try:
+                        sections = json.loads(sections)
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        sections = []
+                if isinstance(sections, list):
+                    sections_by_bibcode[bibcode] = sections
+
+    out: list[ChunkHit] = []
+    for hit in hits:
+        sections = sections_by_bibcode.get(hit.bibcode)
+        snippet: str | None = None
+        if sections is not None and 0 <= hit.section_idx < len(sections):
+            section = sections[hit.section_idx]
+            text: str | None = None
+            if isinstance(section, dict):
+                raw = section.get("text")
+                if isinstance(raw, str):
+                    text = raw
+            if text is not None:
+                if len(text) > max_snippet_chars:
+                    snippet = text[:max_snippet_chars] + "..."
+                else:
+                    snippet = text
+        out.append(dataclasses.replace(hit, snippet=snippet))
+    return out

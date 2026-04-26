@@ -67,35 +67,48 @@ UNFILTERED_PRECISION: dict[tuple[str, Era], float] = {
 
 
 #: Precision after the INDUS classifier filter (agreement=true). Numbers
-#: from `dbl3_ner_classifier_filtered_eval.md`. Pre-1990 numbers are
-#: estimates from a partial sample (n=14 kept); revise once full
-#: classifier coverage closes — until then we use the partial estimate
-#: but mark it explicitly via ``CLASSIFIER_FILTERED_N``.
+#: from `dbl3_ner_classifier_filtered_eval.md` (2026-04-26 — FULL
+#: coverage on both eras after the classifier post-pass completed). The
+#: original partial-coverage pre-1990 numbers (n=14) overstated several
+#: buckets dramatically (mission 100%→47%, organism 100%→62%); these
+#: are the corrected values.
 CLASSIFIER_FILTERED_PRECISION: dict[tuple[str, Era], float] = {
-    # ───────── pre-1990 (small sample, partial coverage) ─────────
-    ("location", "pre_1990"): 0.88,
-    ("organism", "pre_1990"): 1.00,
-    ("mission", "pre_1990"): 1.00,
-    ("chemical", "pre_1990"): 0.67,
-    # ───────── modern ─────────
-    ("instrument", "modern"): 1.00,  # 4/4
-    ("method", "modern"): 0.86,
-    ("location", "modern"): 0.86,
-    ("mission", "modern"): 0.83,
-    ("software", "modern"): 0.71,
-    ("organism", "modern"): 0.50,
-    ("chemical", "modern"): 0.46,
-    ("dataset", "modern"): 0.40,
-    ("gene", "modern"): 0.18,
+    # ───────── pre-1990 (FULL coverage; n=93 kept of 207) ─────────
+    ("chemical", "pre_1990"): 0.76,  # 13/17 — passes
+    ("location", "pre_1990"): 0.86,  # 12/14 — passes
+    ("instrument", "pre_1990"): 0.67,  # 4/6
+    ("method", "pre_1990"): 0.64,  # 7/11
+    ("organism", "pre_1990"): 0.62,  # 10/16
+    ("mission", "pre_1990"): 0.47,  # 7/15
+    ("gene", "pre_1990"): 0.33,  # 2/6
+    ("software", "pre_1990"): 0.20,  # 1/5
+    ("dataset", "pre_1990"): 0.00,  # 0/3 — broken
+    # ───────── modern (n=77 kept of 207) ─────────
+    ("instrument", "modern"): 1.00,  # 4/4 — passes
+    ("method", "modern"): 0.86,  # 12/14 — passes
+    ("location", "modern"): 0.86,  # 6/7 — passes
+    ("mission", "modern"): 0.83,  # 10/12 — passes
+    ("software", "modern"): 0.71,  # 5/7 — close
+    ("organism", "modern"): 0.50,  # 2/4
+    ("chemical", "modern"): 0.46,  # 6/13
+    ("dataset", "modern"): 0.40,  # 2/5
+    ("gene", "modern"): 0.18,  # 2/11 — broken
 }
 
 #: Sample size each filtered-precision number is based on. Buckets with
 #: very small n (< 5) should be treated as estimates only.
 CLASSIFIER_FILTERED_N: dict[tuple[str, Era], int] = {
-    ("location", "pre_1990"): 8,
-    ("organism", "pre_1990"): 2,
-    ("mission", "pre_1990"): 1,
-    ("chemical", "pre_1990"): 3,
+    # pre-1990 (full coverage)
+    ("chemical", "pre_1990"): 17,
+    ("location", "pre_1990"): 14,
+    ("instrument", "pre_1990"): 6,
+    ("method", "pre_1990"): 11,
+    ("organism", "pre_1990"): 16,
+    ("mission", "pre_1990"): 15,
+    ("gene", "pre_1990"): 6,
+    ("software", "pre_1990"): 5,
+    ("dataset", "pre_1990"): 3,
+    # modern
     ("instrument", "modern"): 4,
     ("method", "modern"): 14,
     ("location", "modern"): 7,

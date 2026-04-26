@@ -36,11 +36,15 @@ def render(summary: dict[str, Any], scored: list[dict[str, Any]], queries: list[
     out: list[str] = []
     out.append("# Tool-Surface Eval — V0 (current 18) vs V1 (consolidated 8) vs V2 (terse v1)")
     out.append("")
+    runs_per_q = (
+        summary["variants"][variants[0]]["n_runs"]
+        // max(summary["variants"][variants[0]]["n_queries"], 1)
+    )
     out.append(
         "Compares agent tool-selection across three MCP surface variants. Each "
         "variant returns identical canned data so we measure *selection* "
         "independently from retrieval quality. Agent: claude `-p` (Sonnet via OAuth subagent), "
-        "5 runs per (variant, query) at default temperature."
+        f"{runs_per_q} runs per (variant, query) at default temperature."
     )
     out.append("")
 

@@ -132,13 +132,16 @@ class TestResultToJson:
 
 
 # ---------------------------------------------------------------------------
-# AC1: list_tools() returns exactly 15 tools (13 baseline + 2 from PRD MH-4)
+# AC1: list_tools() returns exactly 17 tools (13 baseline + 2 PRD MH-4 +
+# section_retrieval + 2 paper_claims retrieval tools)
 # ---------------------------------------------------------------------------
 
 
 class TestListTools:
     def test_list_tools_returns_exactly_15(self) -> None:
         # PRD MH-4: baseline 13 grew by 2 (claim_blame, find_replications).
+        # PRD section-embeddings-mcp-consolidation: + section_retrieval.
+        # PRD nanopub-claim-extraction: + read_paper_claims, find_claims.
         try:
             import asyncio
 
@@ -173,10 +176,13 @@ class TestListTools:
                             "facet_counts",
                             "claim_blame",
                             "find_replications",
+                            # PRD nanopub-claim-extraction
+                            "read_paper_claims",
+                            "find_claims",
                         ]
                     )
                     assert tool_names == expected, f"Got: {tool_names}"
-                    assert len(tools) == 15
+                    assert len(tools) == 17
                 finally:
                     loop.close()
         except (ImportError, AttributeError):

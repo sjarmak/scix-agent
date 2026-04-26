@@ -161,6 +161,9 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "semantic_search": float(os.environ.get("SCIX_TIMEOUT_SEMANTIC", "30")),
     "keyword_search": float(os.environ.get("SCIX_TIMEOUT_KEYWORD", "10")),
     "health_check": float(os.environ.get("SCIX_TIMEOUT_HEALTH", "3")),
+    # PRD nanopub-claim-extraction — paper_claims retrieval tools (mig 062).
+    "read_paper_claims": float(os.environ.get("SCIX_TIMEOUT_READ_PAPER_CLAIMS", "5")),
+    "find_claims": float(os.environ.get("SCIX_TIMEOUT_FIND_CLAIMS", "8")),
 }
 
 
@@ -926,6 +929,9 @@ EXPECTED_TOOLS: tuple[str, ...] = (
     "find_replications",
     # PRD section-embeddings-mcp-consolidation — section-grain hybrid retrieval
     "section_retrieval",
+    # PRD nanopub-claim-extraction — paper_claims retrieval (migration 062)
+    "read_paper_claims",
+    "find_claims",
 )
 
 # Tools that appear only when an optional backend is wired up. Empty after
@@ -1855,6 +1861,106 @@ def create_server(_run_self_test: bool = True):
                     "required": ["query"],
                 },
             ),
+            # --- PRD nanopub-claim-extraction: read_paper_claims ---
+            Tool(
+                name="read_paper_claims",
+                description=(
+                    "Return claims extracted from a single paper, ordered by "
+                    "their position in the source text "
+                    "(section_index, paragraph_index, char_span_start). Each "
+                    "claim carries its provenance contract (bibcode + section/"
+                    "paragraph/char span), the verbatim claim_text, a "
+                    "claim_type tag (factual / methodological / comparative / "
+                    "speculative / cited_from_other), an optional "
+                    "subject-predicate-object decomposition, and an optional "
+                    "extractor confidence. Use find_claims instead when you "
+                    "want to search across all papers by claim text."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "bibcode": {
+                            "type": "string",
+                            "description": "ADS bibcode of the paper.",
+                        },
+                        "claim_type": {
+                            "type": "string",
+                            "enum": [
+                                "factual",
+                                "methodological",
+                                "comparative",
+                                "speculative",
+                                "cited_from_other",
+                            ],
+                            "description": (
+                                "Optional filter on claim_type. Omit to "
+                                "return all types."
+                            ),
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "default": 50,
+                            "description": "Max claims to return (1..500).",
+                        },
+                    },
+                    "required": ["bibcode"],
+                },
+            ),
+            # --- PRD nanopub-claim-extraction: find_claims ---
+            Tool(
+                name="find_claims",
+                description=(
+                    "Search across all extracted paper_claims by natural-"
+                    "language query, ranked by ts_rank against the GIN "
+                    "to_tsvector('english', claim_text) index. The query is "
+                    "treated as a phrase via plainto_tsquery (no operators "
+                    "required). Optional entity_id filters to claims linked "
+                    "to that entity as either subject or object. Optional "
+                    "claim_type narrows by category. Use read_paper_claims "
+                    "instead when you already know the bibcode and want all "
+                    "claims from one paper."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": (
+                                "Natural-language query over claim text. "
+                                "Treated as a phrase by plainto_tsquery."
+                            ),
+                        },
+                        "claim_type": {
+                            "type": "string",
+                            "enum": [
+                                "factual",
+                                "methodological",
+                                "comparative",
+                                "speculative",
+                                "cited_from_other",
+                            ],
+                            "description": (
+                                "Optional filter on claim_type. Omit to "
+                                "return all types."
+                            ),
+                        },
+                        "entity_id": {
+                            "type": "integer",
+                            "description": (
+                                "Optional entity id; restricts results to "
+                                "claims where linked_entity_subject_id OR "
+                                "linked_entity_object_id matches."
+                            ),
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "default": 25,
+                            "description": "Max claims to return (1..500).",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            ),
         ]
 
         # find_similar_by_examples retired 2026-04-25 — Qdrant backend
@@ -2214,6 +2320,14 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
     # --- PRD section-embeddings-mcp-consolidation: section_retrieval ---
     if name == "section_retrieval":
         return _handle_section_retrieval(conn, args)
+
+    # --- PRD nanopub-claim-extraction: read_paper_claims ---
+    if name == "read_paper_claims":
+        return _handle_read_paper_claims(conn, args)
+
+    # --- PRD nanopub-claim-extraction: find_claims ---
+    if name == "find_claims":
+        return _handle_find_claims(conn, args)
 
     # --- Legacy handlers for deprecated session tools ---
     if name == "add_to_working_set":
@@ -3469,6 +3583,106 @@ def _handle_section_retrieval(conn: psycopg.Connection, args: dict[str, Any]) ->
         )
     return json.dumps(
         {"results": results, "total": len(results)},
+        indent=2,
+        default=str,
+    )
+
+
+# ---------------------------------------------------------------------------
+# paper_claims retrieval handlers (PRD nanopub-claim-extraction)
+# ---------------------------------------------------------------------------
+
+
+def _handle_read_paper_claims(
+    conn: psycopg.Connection, args: dict[str, Any]
+) -> str:
+    """Dispatch handler for the ``read_paper_claims`` MCP tool.
+
+    Thin wrapper over :func:`scix.claims.retrieval.read_paper_claims` that
+    surfaces structured-error JSON for invalid inputs (matches the
+    convention used by other handlers in this module).
+    """
+    from scix.claims.retrieval import read_paper_claims
+
+    bibcode = args.get("bibcode")
+    if not isinstance(bibcode, str) or not bibcode.strip():
+        return json.dumps({"error": "bibcode must be a non-empty string"})
+
+    claim_type = args.get("claim_type")
+    if claim_type is not None and not isinstance(claim_type, str):
+        return json.dumps({"error": "claim_type must be a string or omitted"})
+
+    limit = args.get("limit", 50)
+
+    try:
+        rows = read_paper_claims(
+            conn,
+            bibcode=bibcode,
+            claim_type=claim_type,
+            limit=limit,
+        )
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
+
+    return json.dumps(
+        {
+            "bibcode": bibcode,
+            "claim_type": claim_type,
+            "claims": rows,
+            "total": len(rows),
+        },
+        indent=2,
+        default=str,
+    )
+
+
+def _handle_find_claims(
+    conn: psycopg.Connection, args: dict[str, Any]
+) -> str:
+    """Dispatch handler for the ``find_claims`` MCP tool.
+
+    Thin wrapper over :func:`scix.claims.retrieval.find_claims`. Coerces
+    optional ``entity_id`` to int and surfaces structured-error JSON for
+    invalid inputs.
+    """
+    from scix.claims.retrieval import find_claims
+
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return json.dumps({"error": "query must be a non-empty string"})
+
+    claim_type = args.get("claim_type")
+    if claim_type is not None and not isinstance(claim_type, str):
+        return json.dumps({"error": "claim_type must be a string or omitted"})
+
+    entity_id = args.get("entity_id")
+    if entity_id is not None:
+        try:
+            entity_id = int(entity_id)
+        except (TypeError, ValueError):
+            return json.dumps({"error": "entity_id must be an integer or omitted"})
+
+    limit = args.get("limit", 25)
+
+    try:
+        rows = find_claims(
+            conn,
+            query=query,
+            claim_type=claim_type,
+            entity_id=entity_id,
+            limit=limit,
+        )
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
+
+    return json.dumps(
+        {
+            "query": query,
+            "claim_type": claim_type,
+            "entity_id": entity_id,
+            "claims": rows,
+            "total": len(rows),
+        },
         indent=2,
         default=str,
     )

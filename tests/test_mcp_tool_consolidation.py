@@ -338,14 +338,17 @@ class TestFindSimilarByExamplesRetired:
 
 
 # ---------------------------------------------------------------------------
-# AC6: list_tools count is exactly 15 and contains the expected names
+# AC6: list_tools count is exactly 17 and contains the expected names
 # ---------------------------------------------------------------------------
 
 
 class TestListToolsCount:
     def test_expected_tools_has_15_entries(self) -> None:
-        assert len(EXPECTED_TOOLS) == 15
-        assert len(set(EXPECTED_TOOLS)) == 15  # no duplicates
+        # Subsequent PRDs grew the list past the original 15: section_retrieval
+        # (section-embeddings-mcp-consolidation) + 2 paper_claims retrieval
+        # tools (nanopub-claim-extraction). Final = 17.
+        assert len(EXPECTED_TOOLS) == 17
+        assert len(set(EXPECTED_TOOLS)) == 17  # no duplicates
 
     def test_expected_tools_contains_citation_traverse(self) -> None:
         assert "citation_traverse" in EXPECTED_TOOLS
@@ -362,7 +365,7 @@ class TestListToolsCount:
         assert "find_similar_by_examples" not in EXPECTED_TOOLS
 
     def test_list_tools_returns_15_via_self_test(self) -> None:
-        """Round-trip through startup_self_test: registers exactly 15 tools."""
+        """Round-trip through startup_self_test: registers exactly 17 tools."""
         try:
             import mcp.types  # noqa: F401
         except ImportError:
@@ -373,8 +376,11 @@ class TestListToolsCount:
         with patch("scix.mcp_server._init_model_impl"):
             status = startup_self_test()
         assert status["ok"] is True
-        assert status["tool_count"] == 15
+        assert status["tool_count"] == 17
         assert "citation_traverse" in status["tool_names"]
         assert "citation_graph" not in status["tool_names"]
         assert "citation_chain" not in status["tool_names"]
         assert "find_similar_by_examples" not in status["tool_names"]
+        # PRD nanopub-claim-extraction registrations are present.
+        assert "read_paper_claims" in status["tool_names"]
+        assert "find_claims" in status["tool_names"]

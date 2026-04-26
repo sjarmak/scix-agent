@@ -1,16 +1,14 @@
-"""Nanopub-inspired claim extraction pipeline.
+"""SciX nanopub-inspired claims package.
 
-Public API:
+The ``paper_claims`` table is created by ``migrations/062_paper_claims.sql``.
 
-- :class:`ClaimDict` — TypedDict-like shape returned by an LLMClient and persisted
-  into ``paper_claims``.
-- :class:`LLMClient` — Protocol; pluggable extractor.
-- :class:`ClaudeCliLLMClient` — default LLMClient that shells out to ``claude -p``
-  via subprocess (Claude Code OAuth subagent path; no paid-API SDK).
-- :class:`StubLLMClient` — test helper returning canned responses.
-- :func:`extract_claims_for_paper` — the pipeline entry point.
-- :func:`classify_section_role` — heading -> role classifier.
-- :func:`split_paragraphs` — section text -> [(paragraph_index, paragraph_text, offset)].
+Submodules:
+
+* :mod:`scix.claims.extract` — extraction pipeline (LLMClient + writer).
+* :mod:`scix.claims.retrieval` — query helpers exposed to the MCP server.
+
+Re-exports the public API of both submodules so callers can do
+``from scix.claims import extract_claims_for_paper, find_claims``.
 """
 
 from __future__ import annotations
@@ -24,6 +22,7 @@ from .extract import (
     extract_claims_for_paper,
     split_paragraphs,
 )
+from .retrieval import find_claims, read_paper_claims
 
 __all__ = [
     "ClaimDict",
@@ -32,5 +31,7 @@ __all__ = [
     "StubLLMClient",
     "classify_section_role",
     "extract_claims_for_paper",
+    "find_claims",
+    "read_paper_claims",
     "split_paragraphs",
 ]

@@ -150,11 +150,15 @@
       })
       _labelsState = 'loaded'
     }
-    // Prefer the shared resolution-aware helper so that switching between
-    // coarse/medium/fine via the nav toggle pulls the matching label bundle.
+    // sankey.json is built at medium resolution (~187 community IDs) by
+    // build_temporal_sankey_data.py. The coarse label bundle only covers
+    // IDs 0–19, so loading by user-selected resolution leaves ~167/187
+    // nodes labeled "c<id>" at coarse. Pin the Sankey labels to medium so
+    // every band has a meaningful term-derived label regardless of the
+    // nav-bar toggle.
     var scx = (typeof window !== 'undefined' && window.scixViz) || null
     if (scx && typeof scx.resolutionFiles === 'function' && typeof scx.fetchFirstAvailable === 'function') {
-      var cfg = scx.resolutionFiles()
+      var cfg = scx.resolutionFiles('medium')
       return scx
         .fetchFirstAvailable(cfg.labels)
         .then(_apply)
@@ -162,7 +166,7 @@
           _labelsState = 'failed'
         })
     }
-    return fetch('/viz/community_labels.json', { cache: 'no-store' })
+    return fetch('/viz/community_labels_medium.json', { cache: 'no-store' })
       .then(function (resp) {
         return resp.ok ? resp.json() : null
       })
@@ -313,8 +317,11 @@
         return _colorScale(d.community_id != null ? d.community_id : 'na')
       })
 
-    // Only label nodes tall enough that the text won't collide with neighbours.
-    const LABEL_MIN_HEIGHT = 12
+    // Label any node whose band is at least LABEL_MIN_HEIGHT tall; smaller
+    // bands fall back to hover-only. Font size scales down for thin bands so
+    // we surface labels for the long tail of communities, while tall bands
+    // still get a full-size 14px label.
+    const LABEL_MIN_HEIGHT = 7
     // Identify the leftmost and rightmost column x positions so their labels
     // can be placed *outside* the plot area (in the margins). Middle columns
     // still get an inside label, but with a white stroke halo so the text
@@ -357,6 +364,11 @@
       .attr('stroke-width', 3)
       .attr('stroke-linejoin', 'round')
       .attr('paint-order', 'stroke')
+      .attr('font-size', function (d) {
+        const bandH = (d.y1 || 0) - (d.y0 || 0)
+        // Floor at 10px for thin bands, cap at 14px for tall bands.
+        return Math.max(10, Math.min(14, Math.round(bandH - 2))) + 'px'
+      })
       .text(_formatNodeLabel)
 
     // Decade axis along the bottom so viewers know what the columns mean.

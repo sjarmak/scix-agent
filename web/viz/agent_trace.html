@@ -102,6 +102,13 @@
         align-items: baseline;
         gap: 6px;
         flex-wrap: wrap;
+        cursor: pointer;
+      }
+      .trace-line:hover {
+        background: #f7f9fc;
+      }
+      .trace-line.expanded {
+        background: #f4f7fb;
       }
       .trace-line.flash {
         animation: traceFlash 700ms ease-out;
@@ -123,6 +130,18 @@
         font-size: 11px;
         text-transform: lowercase;
       }
+      .trace-line .caret {
+        color: #aaa;
+        font-size: 10px;
+        margin-right: 1px;
+        display: inline-block;
+        width: 9px;
+        transition: transform 100ms ease-out;
+      }
+      .trace-line.expanded .caret {
+        transform: rotate(90deg);
+        color: #555;
+      }
       .trace-line .bibs {
         color: #555;
         font-size: 11px;
@@ -130,6 +149,47 @@
       .trace-line .latency {
         color: #888;
         font-size: 11px;
+      }
+      .trace-detail {
+        flex-basis: 100%;
+        margin: 4px 0 6px 14px;
+        padding: 6px 8px;
+        background: #fff;
+        border: 1px solid #e4e8ee;
+        border-radius: 4px;
+        font-size: 11px;
+        line-height: 1.5;
+        color: #333;
+        font-family: inherit;
+      }
+      .trace-detail .row {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 3px;
+      }
+      .trace-detail .k {
+        color: #888;
+        flex: 0 0 56px;
+      }
+      .trace-detail .v {
+        flex: 1;
+        word-break: break-word;
+      }
+      .trace-detail .v code {
+        font-size: 11px;
+      }
+      .trace-detail .err {
+        color: #b00020;
+      }
+      .trace-detail ul {
+        margin: 2px 0 0;
+        padding-left: 16px;
+      }
+      .trace-detail li {
+        margin-bottom: 2px;
+      }
+      .trace-detail .bib-title {
+        color: #555;
       }
       #trace-status {
         margin-top: 8px;
@@ -297,6 +357,77 @@
             if (countEl) countEl.textContent = '0 events'
           })
         }
+        // Per-bibcode title cache so a chatty trace panel doesn't fire
+        // hundreds of /viz/api/paper/ calls on the same bibcode.
+        const _titleCache = new Map()
+        function _fetchTitle(bib, onResolved) {
+          if (_titleCache.has(bib)) {
+            onResolved(_titleCache.get(bib))
+            return
+          }
+          _titleCache.set(bib, '')
+          fetch('/viz/api/paper/' + encodeURIComponent(bib), { cache: 'no-store' })
+            .then(function (r) { return r.ok ? r.json() : null })
+            .then(function (b) {
+              const t = (b && b.title) ? String(b.title) : ''
+              _titleCache.set(bib, t)
+              onResolved(t)
+            })
+            .catch(function () { onResolved('') })
+        }
+
+        function _escape(s) {
+          return String(s == null ? '' : s).replace(/[<>&]/g, function (c) {
+            return c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&amp;'
+          })
+        }
+
+        function _renderDetail(event) {
+          const detail = document.createElement('div')
+          detail.className = 'trace-detail'
+          const params = (event && event.params) || {}
+          const paramKeys = Object.keys(params)
+          const bibs = Array.isArray(event.bibcodes) ? event.bibcodes : []
+
+          let html = ''
+          if (paramKeys.length) {
+            html += '<div class="row"><span class="k">params</span><span class="v"><code>'
+            html += _escape(JSON.stringify(params))
+            html += '</code></span></div>'
+          }
+          if (event.result_summary) {
+            html +=
+              '<div class="row"><span class="k">result</span>' +
+              '<span class="v err">' + _escape(event.result_summary) + '</span></div>'
+          }
+          if (bibs.length) {
+            html += '<div class="row"><span class="k">bibcodes</span><span class="v"><ul>'
+            for (let i = 0; i < bibs.length; i += 1) {
+              const bib = String(bibs[i])
+              html +=
+                '<li data-bib="' + _escape(bib) + '"><code>' + _escape(bib) +
+                '</code> <span class="bib-title" data-pending="1">…</span></li>'
+            }
+            html += '</ul></span></div>'
+          } else if (!paramKeys.length && !event.result_summary) {
+            html += '<div class="row" style="color:#888">(no payload — tool returned no bibcodes)</div>'
+          }
+          detail.innerHTML = html
+
+          // Lazy-fill titles for each bibcode without blocking the open
+          // animation. _fetchTitle dedups across rows.
+          detail.querySelectorAll('li[data-bib]').forEach(function (li) {
+            const bib = li.getAttribute('data-bib')
+            const slot = li.querySelector('.bib-title')
+            _fetchTitle(bib, function (title) {
+              if (!slot) return
+              slot.removeAttribute('data-pending')
+              slot.textContent = title ? '— ' + title : ''
+            })
+          })
+          return detail
+        }
+
         function appendTraceLine(event) {
           const empty = panel.querySelector('.empty')
           if (empty) empty.remove()
@@ -310,22 +441,33 @@
           const latency = event && event.latency_ms != null ? Number(event.latency_ms) : null
           const color = TOOL_COLORS[tool] || '#555'
           line.innerHTML =
-            '<span class="ts">' +
-            iso +
-            '</span>' +
-            '<span class="tool-chip" style="background:' +
-            color +
-            '">' +
+            '<span class="caret">▸</span>' +
+            '<span class="ts">' + iso + '</span>' +
+            '<span class="tool-chip" style="background:' + color + '">' +
             String(tool).replace(/[<>&]/g, '') +
             '</span>' +
             '<span class="bibs">' +
-            bibcount +
-            ' bibcode' +
-            (bibcount === 1 ? '' : 's') +
+            bibcount + ' bibcode' + (bibcount === 1 ? '' : 's') +
             '</span>' +
             (latency != null
               ? '<span class="latency">' + latency.toFixed(1) + ' ms</span>'
               : '')
+
+          // Click toggles a details block: full params, bibcodes (with
+          // lazily-fetched titles), and result_summary on errors.
+          let detail = null
+          line.addEventListener('click', function () {
+            if (detail) {
+              detail.remove()
+              detail = null
+              line.classList.remove('expanded')
+            } else {
+              detail = _renderDetail(event)
+              line.appendChild(detail)
+              line.classList.add('expanded')
+            }
+          })
+
           panel.appendChild(line)
           // Cap the panel so very chatty sessions don't blow memory.
           while (panel.children.length > 400) panel.removeChild(panel.firstChild)

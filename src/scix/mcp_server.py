@@ -300,6 +300,24 @@ def _extract_result_count(result_json: str) -> int:
     return 0
 
 
+def _detect_unscoped_broad_block(result_json: str | None) -> bool:
+    """Return True when ``result_json`` carries the unscoped-broad-block marker.
+
+    The ``search`` tool's unscoped-broad-query guard emits a structured
+    response with ``{"unscoped_broad_blocked": true, "error":
+    "unscoped_broad_query", ...}``. ``_log_query`` lifts this marker into
+    ``query_log.error_msg`` so operators can track block rate via a single
+    SELECT — see bead ``scix_experiments-uerc``.
+    """
+    if not result_json:
+        return False
+    try:
+        data = json.loads(result_json)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return isinstance(data, dict) and data.get("unscoped_broad_blocked") is True
+
+
 def _log_query(
     conn: psycopg.Connection,
     tool_name: str,
@@ -315,11 +333,18 @@ def _log_query(
     """Write a row to query_log with both legacy and migration-031 columns.
 
     Best-effort: failures are logged, not raised.
+
+    Lifts the ``unscoped_broad_blocked`` marker from ``result_json`` into
+    ``error_msg`` (when no real error_msg is set) so operators can track
+    the unscoped-broad-query block rate without a JSONB scan over result
+    payloads — see bead ``scix_experiments-uerc``.
     """
     try:
         params_json = json.dumps(params, default=str)
         query_text = _extract_query_text(params)
         result_count = _extract_result_count(result_json) if result_json else 0
+        if error_msg is None and _detect_unscoped_broad_block(result_json):
+            error_msg = _UNSCOPED_BROAD_TAG
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -616,6 +641,121 @@ def _coerce_year(raw: Any, name: str) -> int | None:
     if not _MIN_YEAR <= year <= _MAX_YEAR:
         raise ValueError(f"{name} must be in [{_MIN_YEAR}, {_MAX_YEAR}], got {year}")
     return year
+
+
+# ---------------------------------------------------------------------------
+# Unscoped-broad-query guard for the `search` tool (bead scix_experiments-uerc)
+# ---------------------------------------------------------------------------
+#
+# The `search` tool's description warns that unscoped queries run a full-text
+# scan over all 32M papers and may hit the statement timeout. Agents that don't
+# read the description hit the timeout and get a generic DB error. This guard
+# intercepts unscoped + broad queries before they reach Postgres and returns
+# a structured error with actionable hints.
+#
+# Heuristic: a query is "broad" when it has >= 3 tokens OR length >= 30 chars.
+# A request is "scoped" when filters has at least one non-None, non-empty value
+# in {year_min, year_max, arxiv_class, doctype, first_author, entity_types,
+# entity_ids}. Empty lists count as no filter (matches SearchFilters
+# normalization in scix.search).
+
+_UNSCOPED_BROAD_MIN_TOKENS: int = 3
+_UNSCOPED_BROAD_MIN_CHARS: int = 30
+
+# Stable telemetry tag — surfaced in result_json AND lifted into query_log.error_msg
+# by _log_query so operators can track unscoped-broad block rate with a single
+# SELECT count(*) FROM query_log WHERE error_msg = 'unscoped_broad_query'.
+_UNSCOPED_BROAD_TAG: str = "unscoped_broad_query"
+
+
+def _filters_are_scoped(filters: dict[str, Any] | None) -> bool:
+    """Return True when ``filters`` constrains the candidate set.
+
+    A filter is "scoping" when at least one of these fields has a non-None,
+    non-empty value: year_min, year_max, arxiv_class, doctype, first_author,
+    entity_types, entity_ids. ``filters=None``, ``filters={}``, and
+    ``filters={'year_min': None, 'entity_ids': []}`` all count as unscoped.
+    """
+    if not filters:
+        return False
+    for field in (
+        "year_min",
+        "year_max",
+        "arxiv_class",
+        "doctype",
+        "first_author",
+        "entity_types",
+        "entity_ids",
+    ):
+        value = filters.get(field)
+        if value is None:
+            continue
+        # Empty list/string normalizes to "no filter".
+        if isinstance(value, (list, str)) and len(value) == 0:
+            continue
+        # Non-positive year bounds don't constrain anything in practice.
+        if field in ("year_min", "year_max") and isinstance(value, int) and value <= 0:
+            continue
+        return True
+    return False
+
+
+def _is_unscoped_broad_query(
+    query: str,
+    filters: dict[str, Any] | None,
+    *,
+    bypass: bool = False,
+) -> bool:
+    """Return True when the query should be blocked by the unscoped-broad guard.
+
+    The guard only fires when ALL of the following hold:
+      * ``bypass`` is False (escape hatch for tests / power users).
+      * The request has no scoping filters (see ``_filters_are_scoped``).
+      * The query is broad: >= 3 tokens OR length >= 30 chars (after strip).
+
+    Empty / whitespace-only queries are not blocked here — the schema
+    enforces presence of ``query`` and the existing search code handles
+    blank input.
+    """
+    if bypass:
+        return False
+    if _filters_are_scoped(filters):
+        return False
+    stripped = (query or "").strip()
+    if not stripped:
+        return False
+    token_count = len(stripped.split())
+    if token_count >= _UNSCOPED_BROAD_MIN_TOKENS:
+        return True
+    if len(stripped) >= _UNSCOPED_BROAD_MIN_CHARS:
+        return True
+    return False
+
+
+def _unscoped_broad_response(query: str) -> str:
+    """Build the structured unscoped-broad-query error payload.
+
+    The response carries the stable ``unscoped_broad_blocked: true`` flag so
+    ``_log_query`` can lift it into ``query_log.error_msg`` for telemetry.
+    """
+    payload = {
+        "error": _UNSCOPED_BROAD_TAG,
+        "hint": (
+            "Unscoped broad queries scan all 32M papers and frequently hit the "
+            "statement timeout. Add filters.arxiv_class (e.g. 'astro-ph') or "
+            "filters.year_min to scope the search."
+        ),
+        "query": query,
+        "suggestions": {
+            "filters.year_min": 2020,
+        },
+        "bypass": (
+            "Pass bypass_unscoped_guard=true to run the unscoped query anyway "
+            "(may hit statement timeout)."
+        ),
+        "unscoped_broad_blocked": True,
+    }
+    return json.dumps(payload, indent=2, default=str)
 
 
 # ---------------------------------------------------------------------------
@@ -1224,6 +1364,10 @@ def create_server(_run_self_test: bool = True):
                     "search. For broad multi-keyword queries, pass filters.arxiv_class "
                     "(e.g. 'cs.SE') or a filters.year_min — unscoped queries run a full-text "
                     "scan over all 32M papers and may hit the statement timeout. "
+                    "Unscoped + broad queries (no filters AND >=3 tokens or >=30 chars) are "
+                    "blocked up-front with a structured {error: 'unscoped_broad_query', hint, "
+                    "suggestions, ...} response — read the hint and retry with filters, or "
+                    "pass bypass_unscoped_guard=true to run the unscoped query anyway. "
                     "Use concept_search instead when the query is a "
                     "formal astronomy taxonomy term (e.g., 'Exoplanets'). Use entity with "
                     "action='search' when looking up a named method, dataset, or instrument. "
@@ -1270,6 +1414,20 @@ def create_server(_run_self_test: bool = True):
                                 "operator can flip on a future domain-tuned reranker without "
                                 "code changes. Setting use_rerank=false bypasses reranking "
                                 "even when a model is configured."
+                            ),
+                        },
+                        "bypass_unscoped_guard": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": (
+                                "If true, skip the unscoped-broad-query guard and run the "
+                                "search even when no filters are set and the query is broad "
+                                "(>=3 tokens or >=30 chars). The default is false: such "
+                                "queries are blocked up-front with a structured "
+                                "{error: 'unscoped_broad_query', ...} response so the agent "
+                                "can retry with scoping filters instead of waiting for the "
+                                "statement timeout. Use only when you genuinely need an "
+                                "unscoped scan (tests, power-user exploration)."
                             ),
                         },
                     },
@@ -1598,8 +1756,8 @@ def create_server(_run_self_test: bool = True):
                     "method='co_citation' returns papers often cited together with the seed "
                     "(peer works in the same discussion). method='coupling' returns papers "
                     "that share many references with the seed (papers built on similar "
-                    "foundations). Use citation_graph instead when you want direct citing "
-                    "or cited papers rather than structurally similar ones."
+                    "foundations). Use citation_traverse(mode='graph') instead when you "
+                    "want direct citing or cited papers rather than structurally similar ones."
                 ),
                 inputSchema={
                     "type": "object",
@@ -1622,25 +1780,39 @@ def create_server(_run_self_test: bool = True):
                 },
             ),
             # --- M4: entity (merges entity_search + resolve_entity) ---
+            #
+            # NOTE (scix_experiments-mh14, 2026-04-27): the entity tool
+            # advertises three distinct workflows behind the ``action`` enum.
+            # ``negative_result`` and ``quant_claim`` used to be smuggled in
+            # under ``entity_type`` for action='search', but those are
+            # claim/finding extractions, not entities — they share no
+            # parameter shape with real entity types. They were removed from
+            # the schema; surfacing them is tracked under the follow-up bead
+            # for a dedicated claim_search tool. See
+            # ``docs/mcp_tool_audit_2026-04.md`` for the rationale.
             Tool(
                 name="entity",
                 description=(
                     "Look up named scientific entities across 13 vocabularies "
                     "(method, dataset, instrument, material, gene, software, "
                     "mission, organism, target, observable, chemical, "
-                    "location, taxon — ~9M entities total). "
-                    "action='resolve' maps a free-text mention to canonical "
-                    "entity records (use this for cross-discipline lookup: "
-                    "'p53', 'transformer', 'JWST'). "
-                    "action='papers' returns papers tagged with an entity "
-                    "via document_entities (57M paper-entity links across "
-                    "16M papers); pass entity_id (from resolve) or query "
-                    "(auto-resolves first candidate). "
-                    "action='search' is a narrower path that searches the "
-                    "older extractions table for 4 specific types "
+                    "location, taxon — ~9M entities total). The tool exposes "
+                    "three distinct actions; pick by what you have on input "
+                    "and what you want back. "
+                    "action='resolve' (text→entity_id): you have a free-text "
+                    "mention ('p53', 'transformer', 'JWST') and want canonical "
+                    "entity records to disambiguate it. "
+                    "action='papers' (entity_id→papers): you already have an "
+                    "entity_id (from a prior resolve, or document_entities "
+                    "joins) and want the papers tagged with it; pass "
+                    "entity_id directly, or query='<text>' to auto-resolve "
+                    "first. "
+                    "action='search' (legacy entity-extractions search): a "
+                    "narrower path that scans the older extractions table "
+                    "for one of four containment-payload entity types "
                     "(methods/datasets/instruments/materials). "
-                    "Use entity_context once you have an entity_id and "
-                    "need its full profile and relationships."
+                    "Use entity_context once you have an entity_id and need "
+                    "its full profile and relationships."
                 ),
                 inputSchema={
                     "type": "object",
@@ -1649,9 +1821,15 @@ def create_server(_run_self_test: bool = True):
                             "type": "string",
                             "enum": ["search", "resolve", "papers"],
                             "description": (
-                                "resolve=name→canonical entity (cross-discipline); "
-                                "papers=entity→papers tagged with it; "
-                                "search=narrow search of extractions table"
+                                "resolve: text mention -> canonical entity records "
+                                "(cross-discipline disambiguation). "
+                                "papers: entity_id (or auto-resolved query) -> "
+                                "papers tagged with that entity via "
+                                "document_entities. "
+                                "search: legacy narrow scan of the extractions "
+                                "table for one of the four containment-payload "
+                                "entity types (methods/datasets/instruments/"
+                                "materials)."
                             ),
                         },
                         "entity_id": {
@@ -1665,18 +1843,17 @@ def create_server(_run_self_test: bool = True):
                                 "datasets",
                                 "instruments",
                                 "materials",
-                                "negative_result",
-                                "quant_claim",
                             ],
                             "description": (
                                 "Entity type (required for action=search). "
-                                "'methods'/'datasets'/'instruments'/'materials' "
-                                "search the in-line containment payload. "
-                                "'negative_result' returns null-finding spans "
-                                "(M3) with evidence_span. 'quant_claim' returns "
-                                "extracted numeric claims (M4) with payload "
-                                "{value, uncertainty, unit}; pass entity_name "
-                                "to filter to one canonical quantity (e.g. 'H0')."
+                                "Searches the in-line containment payload on "
+                                "extractions rows. NOTE: 'negative_result' "
+                                "and 'quant_claim' were removed in 2026-04 "
+                                "(bead scix_experiments-mh14) — those are "
+                                "claim/finding extractions, not entities. A "
+                                "dedicated tool for surfacing them is tracked "
+                                "as a follow-up; see docs/mcp_tool_audit_2026"
+                                "-04.md."
                             ),
                         },
                         "query": {
@@ -1749,8 +1926,10 @@ def create_server(_run_self_test: bool = True):
                     "and `top_keywords` where available. Optionally also returns sibling "
                     "papers in the same community ranked by influence; the `signal` "
                     "parameter selects which community signal to explore for siblings. "
-                    "Use citation_graph instead when you want direct citing or cited "
-                    "papers rather than computed scores and community membership."
+                    "Default `resolution='medium'` matches `find_gaps` so back-to-back "
+                    "calls land on the same partition. "
+                    "Use citation_traverse(mode='graph') instead when you want direct "
+                    "citing or cited papers rather than computed scores and community membership."
                 ),
                 inputSchema={
                     "type": "object",
@@ -1767,8 +1946,11 @@ def create_server(_run_self_test: bool = True):
                         "resolution": {
                             "type": "string",
                             "enum": ["coarse", "medium", "fine"],
-                            "default": "coarse",
-                            "description": "Community resolution level",
+                            "default": "medium",
+                            "description": (
+                                "Community resolution level. Default 'medium' "
+                                "matches find_gaps for cross-tool consistency."
+                            ),
                         },
                         "signal": {
                             "type": "string",
@@ -1795,10 +1977,10 @@ def create_server(_run_self_test: bool = True):
                     "literature you might be missing during a research session. Two ways to "
                     "seed the working set: (a) call get_paper on one or more papers first "
                     "(implicit session state); (b) pass query='<topic>' to auto-seed via "
-                    "concept_search in a single call. Use citation_graph instead when you "
-                    "want direct citations of a single paper rather than cross-community "
-                    "gap detection. The 'signal' parameter picks which community partition "
-                    "to traverse: 'semantic' (default, INDUS k-means, full 32M-paper "
+                    "concept_search in a single call. Use citation_traverse(mode='graph') "
+                    "instead when you want direct citations of a single paper rather than "
+                    "cross-community gap detection. The 'signal' parameter picks which "
+                    "community partition to traverse: 'semantic' (default, INDUS k-means, full 32M-paper "
                     "coverage) or 'citation' (currently offline — Leiden Phase B has not "
                     "completed, so this path returns empty)."
                 ),
@@ -1988,10 +2170,10 @@ def create_server(_run_self_test: bool = True):
                     "replication relation (replicates / refutes / qualifies / partial / "
                     "unknown), and a hedge_present flag. Relation and hedge are derived "
                     "from a documented heuristic substitute for NegBERT (see module "
-                    "docstring); NegBERT is the future drop-in. Use citation_graph with "
-                    "direction='forward' instead when you want raw forward citations "
-                    "without relation inference; use claim_blame when you want the "
-                    "earliest origin of a claim rather than its replications."
+                    "docstring); NegBERT is the future drop-in. Use "
+                    "citation_traverse(mode='graph', direction='forward') instead when you "
+                    "want raw forward citations without relation inference; use claim_blame "
+                    "when you want the earliest origin of a claim rather than its replications."
                 ),
                 inputSchema={
                     "type": "object",
@@ -2896,10 +3078,22 @@ def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     ``{"disambiguation": [...]}`` JSON payload and skips the search. When
     ``disambiguate`` is false, the disambiguation check is bypassed entirely
     and the normal search path runs.
+
+    Unscoped + broad queries (no filters AND >=3 tokens or >=30 chars) are
+    blocked by an early guard that returns a structured ``unscoped_broad_query``
+    error rather than letting them fall into the 32M-paper full-text scan.
+    Pass ``bypass_unscoped_guard=true`` to skip the guard. See bead
+    ``scix_experiments-uerc``.
     """
     mode = args.get("mode", "hybrid")
     query = args["query"]
     disambiguate = args.get("disambiguate", True)
+    bypass_guard = bool(args.get("bypass_unscoped_guard", False))
+
+    # Unscoped-broad-query guard (bead uerc) — fires before disambiguation
+    # and before any DB / embedding work so blocked queries cost ~0ms.
+    if _is_unscoped_broad_query(query, args.get("filters"), bypass=bypass_guard):
+        return _unscoped_broad_response(query)
 
     if disambiguate:
         disamb_response = _maybe_disambiguate(conn, query)
@@ -3594,11 +3788,24 @@ _TIER_MIN_TO_ALLOWED: dict[int, list[str]] = {
 }
 
 
-#: Entity types whose rows live in ``staging.extractions`` keyed on
-#: ``extraction_type`` (the row IS the entity, not a containment payload).
-#: For these the entity tool surfaces the raw extraction payload — the
-#: shape is documented in scix.negative_results / scix.claim_extractor.
-_EXTRACTION_TYPE_ENTITIES: frozenset[str] = frozenset({"negative_result", "quant_claim"})
+#: Entity types that used to be smuggled into the entity tool under
+#: ``entity_type`` for action='search'. They are claim/finding extraction
+#: payload kinds (M3 negative_result, M4 quant_claim), not entities, and
+#: were removed from the entity tool's schema in 2026-04 under bead
+#: ``scix_experiments-mh14``. The handler rejects them with a structured
+#: error so a client that rediscovers the old contract gets a clear,
+#: actionable response instead of falling through to a different code path.
+#:
+#: A dedicated tool to surface these extractions is tracked under follow-up
+#: bead ``scix_experiments-c996``. ``_handle_entity_extraction_search``
+#: below is retained as the implementation that follow-up tool will reuse.
+_LEGACY_EXTRACTION_TYPES: frozenset[str] = frozenset({"negative_result", "quant_claim"})
+
+#: The four entity-containment types that the entity tool's
+#: ``action='search'`` path still supports. These map to
+#: ``staging.extractions`` rows whose ``payload`` is a JSONB object keyed by
+#: type name ({"methods": ["JWST", ...]}).
+_VALID_ENTITY_TYPES: frozenset[str] = frozenset({"methods", "datasets", "instruments", "materials"})
 
 
 def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
@@ -3610,13 +3817,29 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     query = args.get("query") or args.get("entity_name") or ""
     entity_type = args.get("entity_type")
 
-    # Only the containment-style entity types require a non-empty query.
-    # Extraction-row entity types (negative_result, quant_claim) accept an
-    # empty query and treat ``entity_name`` as an optional filter.
+    # mh14: reject the legacy extraction-row kinds at the front door so the
+    # error is the same regardless of action and the caller can recover in
+    # one turn. These used to be valid entity_type values but they're
+    # claim/finding extractions, not entities — a follow-up bead (c996)
+    # will surface them under a dedicated tool.
+    if entity_type in _LEGACY_EXTRACTION_TYPES:
+        return json.dumps(
+            {
+                "error": (
+                    f"entity_type='{entity_type}' is no longer accepted by the "
+                    f"entity tool — it is a claim/finding extraction, not an "
+                    f"entity. Valid entity_type values are: "
+                    f"{sorted(_VALID_ENTITY_TYPES)}. Surfacing "
+                    f"negative_result / quant_claim is tracked under bead "
+                    f"scix_experiments-c996; see "
+                    f"docs/mcp_tool_audit_2026-04.md for the rationale."
+                )
+            }
+        )
+
     # action='papers' accepts entity_id directly, no query needed when given.
-    is_extraction_row = action == "search" and entity_type in _EXTRACTION_TYPE_ENTITIES
     is_papers_with_id = action == "papers" and args.get("entity_id") is not None
-    if not is_extraction_row and not is_papers_with_id and (not query or not query.strip()):
+    if not is_papers_with_id and (not query or not query.strip()):
         return json.dumps({"error": "query must be a non-empty string"})
 
     if action == "resolve":
@@ -3656,25 +3879,15 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         return _inject_coverage_note(result_json)
 
     if action == "search":
-        # ---- Extraction-row entity types (M3 negative_result, M4 quant_claim) ----
-        if entity_type in _EXTRACTION_TYPE_ENTITIES:
-            return _inject_coverage_note(
-                _handle_entity_extraction_search(
-                    conn,
-                    extraction_type=entity_type,
-                    name_filter=query.strip() if query else None,
-                    limit=min(args.get("limit", 20), 200),
-                )
-            )
-
-        _VALID_ENTITY_TYPES = {"methods", "datasets", "instruments", "materials"}
+        # mh14: legacy extraction-row kinds (negative_result, quant_claim)
+        # are filtered out earlier by the front-door check; this branch
+        # only sees real containment-payload entity types.
         if not entity_type or entity_type not in _VALID_ENTITY_TYPES:
             return json.dumps(
                 {
                     "error": (
                         f"Invalid entity_type '{entity_type}'. "
-                        f"Must be one of: "
-                        f"{sorted(_VALID_ENTITY_TYPES | _EXTRACTION_TYPE_ENTITIES)}"
+                        f"Must be one of: {sorted(_VALID_ENTITY_TYPES)}"
                     )
                 }
             )
@@ -3865,7 +4078,16 @@ def _handle_entity_extraction_search(
     name_filter: str | None,
     limit: int,
 ) -> str:
-    """Surface rows from ``staging.extractions`` for an extraction-row entity.
+    """Surface rows from ``staging.extractions`` for a claim/finding-extraction kind.
+
+    .. note::
+
+       Unreachable from the ``entity`` MCP tool as of 2026-04 (bead
+       ``scix_experiments-mh14``). The entity tool's ``entity_type`` enum
+       no longer accepts ``negative_result`` / ``quant_claim`` because
+       those are claim/finding extractions, not entities. This helper is
+       retained as the implementation that the follow-up tool (bead
+       ``scix_experiments-c996``) will reuse when claim_search lands.
 
     Currently supports:
 
@@ -3996,7 +4218,9 @@ def _handle_graph_context(conn: psycopg.Connection, args: dict[str, Any]) -> str
     if not include_community:
         return _result_to_json(metrics_result)
 
-    resolution = args.get("resolution", "coarse")
+    # Default 'medium' matches the schema default and find_gaps so back-to-back
+    # agent calls land on the same community partition (bead unmm).
+    resolution = args.get("resolution", "medium")
     limit = args.get("limit", 20)
     signal = args.get("signal", "semantic")
     try:

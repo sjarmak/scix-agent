@@ -170,3 +170,257 @@ def test_graph_query_log_does_not_execute() -> None:
     assert result["logged"] is True
     assert "MATCH" in result["echo"]
     assert result["notes"] == "testing"
+
+
+# --------------------------------------------------------------------------
+# benchmark
+# --------------------------------------------------------------------------
+
+
+def test_benchmark_jsonl_roundtrip(tmp_path: Path) -> None:
+    from scix.graph_experiment.benchmark import Question, read_jsonl, write_jsonl
+
+    questions = [
+        Question(
+            id="t1_q1",
+            tier="one_hop_control",
+            prompt="cite this",
+            expected_hop_depth=1,
+            rubric="rubric body",
+            seed_bibcodes=("2024ApJ...1..1A",),
+            metadata={"source": "test"},
+        )
+    ]
+    path = tmp_path / "bench.jsonl"
+    n = write_jsonl(path, questions)
+    assert n == 1
+    loaded = read_jsonl(path)
+    assert loaded == questions
+
+
+def test_materialize_templates_skips_when_picker_returns_wrong_count() -> None:
+    from scix.graph_experiment.benchmark import (
+        BENCHMARK_TEMPLATES,
+        materialize_templates,
+    )
+
+    def picker(template):
+        # always return one bibcode regardless of template seed_count
+        return ("2024ApJ...x..1A",)
+
+    out = materialize_templates(BENCHMARK_TEMPLATES, picker)
+    # seed_count==0 templates always materialize. seed_count==1 templates
+    # also resolve. seed_count >= 2 templates are skipped because the
+    # picker returns only 1.
+    template_ids = {q.id for q in out}
+    one_or_zero = {
+        t.template_id for t in BENCHMARK_TEMPLATES if t.seed_count in (0, 1)
+    }
+    multi = {t.template_id for t in BENCHMARK_TEMPLATES if t.seed_count >= 2}
+    assert template_ids == one_or_zero
+    assert template_ids.isdisjoint(multi)
+
+
+# --------------------------------------------------------------------------
+# analysis
+# --------------------------------------------------------------------------
+
+
+def _write_trace(path: Path, events: list[dict]) -> None:
+    with path.open("w", encoding="utf-8") as fh:
+        for ev in events:
+            fh.write(json.dumps(ev) + "\n")
+
+
+def test_summarize_traces_aggregates_tool_calls_and_depth(tmp_path: Path) -> None:
+    from scix.graph_experiment.analysis import summarize_traces
+
+    path = tmp_path / "trace_a.jsonl"
+    _write_trace(
+        path,
+        [
+            {
+                "event_id": "1",
+                "session_id": "s1",
+                "tool_name": "shortest_path",
+                "args": {"source_bibcode": "X", "target_bibcode": "Y"},
+                "duration_ms": 10.0,
+                "ok": True,
+            },
+            {
+                "event_id": "2",
+                "session_id": "s1",
+                "tool_name": "multi_hop_neighbors",
+                "args": {"bibcode": "X", "depth": 3},
+                "duration_ms": 20.0,
+                "ok": True,
+            },
+            {
+                "event_id": "3",
+                "session_id": "s1",
+                "tool_name": "pattern_match",
+                "args": {"head_bibcode": "X", "edge_sequence": ["out", "in"]},
+                "duration_ms": 30.0,
+                "ok": False,
+                "error": "test",
+            },
+            {
+                "event_id": "4",
+                "session_id": "s1",
+                "tool_name": "graph_query_log",
+                "args": {"cypher_or_intent": "MATCH ..."},
+                "duration_ms": 1.0,
+                "ok": True,
+            },
+        ],
+    )
+
+    summary = summarize_traces([path])
+    assert summary.event_count == 4
+    assert summary.tool_call_counts["shortest_path"] == 1
+    assert summary.error_counts["pattern_match"] == 1
+    assert summary.max_depth == 3
+    assert summary.depth_distribution[3] == 1  # multi_hop_neighbors depth=3
+    assert summary.depth_distribution[2] == 1  # pattern_match len(edge_sequence)=2
+    assert summary.depth_distribution[1] == 1  # shortest_path => 1
+    assert summary.depth_distribution[0] == 1  # graph_query_log => 0
+    assert len(summary.freeform_queries) == 1
+
+
+def test_compare_summaries_reports_depth_shift(tmp_path: Path) -> None:
+    from scix.graph_experiment.analysis import compare_summaries, summarize_traces
+
+    control_path = tmp_path / "ctrl.jsonl"
+    treatment_path = tmp_path / "trt.jsonl"
+    _write_trace(
+        control_path,
+        [
+            {
+                "event_id": "c1",
+                "session_id": "ctrl",
+                "tool_name": "search",
+                "args": {"query": "x"},
+                "duration_ms": 5.0,
+                "ok": True,
+            }
+        ],
+    )
+    _write_trace(
+        treatment_path,
+        [
+            {
+                "event_id": "t1",
+                "session_id": "trt",
+                "tool_name": "multi_hop_neighbors",
+                "args": {"bibcode": "X", "depth": 4},
+                "duration_ms": 12.0,
+                "ok": True,
+            },
+            {
+                "event_id": "t2",
+                "session_id": "trt",
+                "tool_name": "graph_query_log",
+                "args": {"cypher_or_intent": "..."},
+                "duration_ms": 1.0,
+                "ok": True,
+            },
+        ],
+    )
+    cmp = compare_summaries(
+        summarize_traces([control_path]), summarize_traces([treatment_path])
+    )
+    assert cmp["depth_shift_max"] == 4
+    assert cmp["freeform_query_emergence"] == 1
+    assert "multi_hop_neighbors" in cmp["new_tool_usage"]
+
+
+# --------------------------------------------------------------------------
+# harness
+# --------------------------------------------------------------------------
+
+
+def test_harness_config_control_omits_experimental_server(tmp_path: Path) -> None:
+    from scix.graph_experiment.harness import HarnessConfig
+
+    cfg = HarnessConfig(
+        snapshot_path=tmp_path / "snap.pkl.gz",
+        trace_dir=tmp_path / "traces",
+        production_mcp_url="https://mcp.example.com/mcp/",
+        production_mcp_token="fake-token-123",
+    )
+    config = cfg.mcp_config_for("control", "sess-1")
+    servers = config["mcpServers"]
+    assert "scix" in servers
+    assert "scix-graph-experiment" not in servers
+    assert servers["scix"]["headers"]["Authorization"] == "Bearer fake-token-123"
+
+
+def test_harness_config_treatment_includes_experimental_server(tmp_path: Path) -> None:
+    from scix.graph_experiment.harness import HarnessConfig
+
+    cfg = HarnessConfig(
+        snapshot_path=tmp_path / "snap.pkl.gz",
+        trace_dir=tmp_path / "traces",
+    )
+    config = cfg.mcp_config_for("treatment", "sess-2")
+    servers = config["mcpServers"]
+    assert "scix-graph-experiment" in servers
+    exp = servers["scix-graph-experiment"]
+    assert exp["type"] == "stdio"
+    assert exp["env"]["SCIX_GRAPH_EXP_SESSION"] == "sess-2"
+    assert exp["env"]["SCIX_GRAPH_EXP_SNAPSHOT"] == str(cfg.snapshot_path)
+
+
+def test_parse_stream_json_extracts_answer_and_cost() -> None:
+    from scix.graph_experiment.harness import _parse_stream_json
+
+    stream = "\n".join(
+        [
+            json.dumps({"type": "system", "subtype": "init"}),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "Hello, "},
+                        ]
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "world."},
+                        ]
+                    },
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "total_cost_usd": 0.0125,
+                    "usage": {"input_tokens": 1000, "output_tokens": 200},
+                }
+            ),
+        ]
+    )
+    parsed = _parse_stream_json(stream)
+    assert parsed["final_answer"] == "Hello, \nworld."
+    assert parsed["cost_usd"] == 0.0125
+    assert parsed["total_tokens"] == 1200
+    assert parsed["error"] is None
+
+
+def test_parse_stream_json_handles_malformed_lines() -> None:
+    from scix.graph_experiment.harness import _parse_stream_json
+
+    stream = (
+        "not json\n"
+        + json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "ok"}]}})
+        + "\n"
+    )
+    parsed = _parse_stream_json(stream)
+    assert parsed["final_answer"] == "ok"

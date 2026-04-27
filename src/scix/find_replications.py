@@ -60,6 +60,7 @@ from typing import Any, Iterable, Literal
 
 import psycopg
 
+from scix.citation_contexts_coverage import compute_coverage, empty_coverage
 from scix.research_scope import ResearchScope, scope_to_sql_clauses
 
 logger = logging.getLogger(__name__)
@@ -180,7 +181,7 @@ def find_replications(
     *,
     conn: psycopg.Connection | None = None,
     limit: int = 50,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """Return forward citations to ``target_bibcode`` ranked by intent_weight.
 
     Args:
@@ -196,11 +197,18 @@ def find_replications(
         limit: Maximum citations to return.
 
     Returns:
-        List of :class:`Citation` dicts sorted by intent_weight DESC, year
-        ASC. Empty list when ``target_bibcode`` is unknown.
+        Dict with keys:
+
+        * ``citations``: list of :class:`Citation` dicts sorted by
+          intent_weight DESC, year ASC. Empty list when
+          ``target_bibcode`` is unknown or has no forward citations in
+          ``v_claim_edges``.
+        * ``coverage``: coverage block (see
+          :mod:`scix.citation_contexts_coverage`) so callers can
+          distinguish 'no events' from 'no coverage'.
     """
     if not isinstance(target_bibcode, str) or not target_bibcode.strip():
-        return []
+        return {"citations": [], "coverage": empty_coverage()}
     if relation is not None and relation not in VALID_RELATIONS:
         raise ValueError(
             f"relation must be one of {sorted(VALID_RELATIONS)} or None; "
@@ -211,10 +219,12 @@ def find_replications(
 
     if conn is not None:
         rows = _query_citations(conn, target_bibcode, effective_scope, limit)
+        coverage = compute_coverage(conn, [target_bibcode])
     else:
         pool = db_pool if db_pool is not None else _default_pool()
         with pool.connection() as acquired:
             rows = _query_citations(acquired, target_bibcode, effective_scope, limit)
+            coverage = compute_coverage(acquired, [target_bibcode])
 
     citations: list[Citation] = []
     for row in rows:
@@ -246,7 +256,10 @@ def find_replications(
         )
     )
 
-    return [asdict(c) for c in citations]
+    return {
+        "citations": [asdict(c) for c in citations],
+        "coverage": coverage,
+    }
 
 
 # ---------------------------------------------------------------------------

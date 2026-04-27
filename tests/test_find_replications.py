@@ -37,6 +37,7 @@ class _FakeCursor:
         self._rows = list(rows)
         self.last_sql: str | None = None
         self.last_params: list[Any] = []
+        self._is_coverage_probe = False
 
     def __enter__(self) -> _FakeCursor:
         return self
@@ -45,11 +46,22 @@ class _FakeCursor:
         return False
 
     def execute(self, sql: str, params: Any = None) -> None:
-        self.last_sql = sql
-        self.last_params = list(params) if params is not None else []
+        # Don't overwrite the last_sql/last_params from the real query with
+        # the follow-up coverage probe — tests assert on the original SQL.
+        self._is_coverage_probe = "count(distinct" in sql.lower()
+        if not self._is_coverage_probe:
+            self.last_sql = sql
+            self.last_params = list(params) if params is not None else []
 
     def fetchall(self) -> list[tuple[Any, ...]]:
+        if self._is_coverage_probe:
+            return [(0,)]
         return list(self._rows)
+
+    def fetchone(self) -> tuple[Any, ...] | None:
+        if self._is_coverage_probe:
+            return (0,)
+        return self._rows[0] if self._rows else None
 
 
 class _FakeConnection:
@@ -107,13 +119,14 @@ def test_forward_citations_ranked_by_intent_weight() -> None:
     pool = _FakePool(_FakeCursor(rows))
 
     out = find_replications("2010ORIGIN", db_pool=pool)
+    citations = out["citations"]
 
-    weights = [c["intent_weight"] for c in out]
+    weights = [c["intent_weight"] for c in citations]
     assert weights == sorted(weights, reverse=True)
     # Top hit must be the result_comparison row.
-    assert out[0]["citing_bibcode"] == "2021B"
+    assert citations[0]["citing_bibcode"] == "2021B"
     # background row sinks to bottom.
-    assert out[-1]["intent"] == "background"
+    assert citations[-1]["intent"] == "background"
 
 
 def test_intent_weight_uses_documented_map() -> None:
@@ -126,7 +139,7 @@ def test_intent_weight_uses_documented_map() -> None:
     pool = _FakePool(_FakeCursor(rows))
 
     out = find_replications("X", db_pool=pool)
-    by_bib = {c["citing_bibcode"]: c["intent_weight"] for c in out}
+    by_bib = {c["citing_bibcode"]: c["intent_weight"] for c in out["citations"]}
     assert by_bib["A"] == INTENT_WEIGHTS["background"]
     assert by_bib["B"] == INTENT_WEIGHTS["method"]
     assert by_bib["C"] == INTENT_WEIGHTS["result_comparison"]
@@ -152,7 +165,7 @@ def test_hedge_present_true_for_hedged_snippets(snippet: str) -> None:
     rows = [_row("CITER", 2020, "result_comparison", snippet)]
     pool = _FakePool(_FakeCursor(rows))
     out = find_replications("X", db_pool=pool)
-    assert out[0]["hedge_present"] is True
+    assert out["citations"][0]["hedge_present"] is True
 
 
 def test_hedge_present_false_for_clean_assertion() -> None:
@@ -166,7 +179,7 @@ def test_hedge_present_false_for_clean_assertion() -> None:
     ]
     pool = _FakePool(_FakeCursor(rows))
     out = find_replications("X", db_pool=pool)
-    assert out[0]["hedge_present"] is False
+    assert out["citations"][0]["hedge_present"] is False
 
 
 def test_detect_hedge_unit() -> None:
@@ -221,11 +234,11 @@ def test_relation_filter_narrows_results() -> None:
     ]
     pool = _FakePool(_FakeCursor(rows))
 
-    refutes_only = find_replications("X", relation="refutes", db_pool=pool)
+    refutes_only = find_replications("X", relation="refutes", db_pool=pool)["citations"]
     assert len(refutes_only) == 1
     assert refutes_only[0]["citing_bibcode"] == "F1"
 
-    replicates_only = find_replications("X", relation="replicates", db_pool=pool)
+    replicates_only = find_replications("X", relation="replicates", db_pool=pool)["citations"]
     assert {c["citing_bibcode"] for c in replicates_only} == {"R1", "R2"}
 
 
@@ -279,10 +292,10 @@ def test_research_scope_other_fields_thread_to_join() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_empty_target_returns_empty_list() -> None:
+def test_empty_target_returns_empty_citations() -> None:
     pool = _FakePool(_FakeCursor([]))
-    assert find_replications("", db_pool=pool) == []
-    assert find_replications("   ", db_pool=pool) == []
+    assert find_replications("", db_pool=pool)["citations"] == []
+    assert find_replications("   ", db_pool=pool)["citations"] == []
 
 
 def test_dispatch_with_explicit_conn_does_not_call_pool() -> None:
@@ -292,5 +305,6 @@ def test_dispatch_with_explicit_conn_does_not_call_pool() -> None:
     conn = _FakeConnection(cursor)
 
     out = find_replications("X", conn=conn)
-    assert len(out) == 1
-    assert out[0]["citing_bibcode"] == "CITER"
+    citations = out["citations"]
+    assert len(citations) == 1
+    assert citations[0]["citing_bibcode"] == "CITER"

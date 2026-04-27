@@ -63,7 +63,12 @@ class _FakeCursor:
 
     def execute(self, sql: str, params: Any = None) -> None:
         sql_lower = sql.lower()
-        if "v_claim_edges" in sql_lower and "source_bibcode = %s" in sql_lower:
+        if "count(distinct" in sql_lower and "v_claim_edges" in sql_lower:
+            # citation_contexts coverage probe — return zero coverage by
+            # default; tests focused on coverage live in
+            # tests/test_claim_coverage_block.py.
+            self._last_rows = [(0,)]
+        elif "v_claim_edges" in sql_lower and "source_bibcode = %s" in sql_lower:
             source_bib = params[0]
             self._last_rows = list(self._hop_rows_by_source.get(source_bib, []))
         elif "from papers" in sql_lower and "retraction" in sql_lower:
@@ -433,12 +438,15 @@ def test_empty_claim_returns_empty_origin() -> None:
     cursor = _FakeCursor()
     pool = _FakePool(cursor)
     out = claim_blame("   ", db_pool=pool, embed_query_fn=_no_embed)
-    assert out == {
-        "origin": "",
-        "lineage": [],
-        "confidence": 0.0,
-        "retraction_warnings": [],
-    }
+    # The coverage block is emitted unconditionally so the response shape
+    # stays uniform (bead scix_experiments-7avw); for empty claim text the
+    # block has zeroes because no DB probe ran.
+    assert out["origin"] == ""
+    assert out["lineage"] == []
+    assert out["confidence"] == 0.0
+    assert out["retraction_warnings"] == []
+    assert out["coverage"]["covered_seeds"] == 0
+    assert out["coverage"]["total_seeds"] == 0
 
 
 def test_no_candidates_returns_empty_origin() -> None:

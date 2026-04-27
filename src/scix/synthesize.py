@@ -14,10 +14,26 @@ signals plus a citation-count safety net:
      edges per bead 79n) so this signal lights up only a minority of
      papers.
 
-  2. Community-membership fall-through — when no intent coverage exists
-     for a paper, the modal community across the working set defines
-     "background" and out-of-modal-community papers go to
-     "open_questions" (the cross-community signal).
+  2. Weighted community fall-through (bead 37wj) — when no intent
+     coverage exists for a paper, classify its community by the
+     community's share of the working set:
+
+       * ``share >= _CORE_SHARE_THRESHOLD`` (0.15) -> 'core' tier ->
+         ``background``. Anchor topics for the working set.
+       * ``share >= _SUPPORTING_SHARE_THRESHOLD`` (0.05) -> 'supporting'
+         tier -> ``methods`` (or ``background`` overflow when ``methods``
+         is not in the requested section list). Adjacent or
+         methodological communities that aren't the dominant theme but
+         carry enough mass to be more than noise.
+       * ``share < _SUPPORTING_SHARE_THRESHOLD`` -> 'peripheral' tier ->
+         leave unattributed (so the paper is eligible for the Tier 3
+         citation-count fallback below). Peripheral noise should not
+         dilute the main outline.
+
+     Replaces the pre-37wj binary modal/non-modal rule, which dumped any
+     non-modal-community paper into ``open_questions`` regardless of how
+     much mass the second-largest community carried — the failure mode
+     surfaced by the cross-disciplinary granular-mech demo.
 
   3. Empty-section citation-count fallback (bead spj0) — when a section
      remains empty after tiers 1 and 2, fill it from the unattributed
@@ -33,7 +49,9 @@ the section's most-common community labels — no semantic generation.
 
 References
 ----------
-  * Bead scix_experiments-cfh9 (this implementation)
+  * Bead scix_experiments-cfh9 (initial three-tier implementation)
+  * Bead scix_experiments-spj0 (Tier 3 citation-count fallback)
+  * Bead scix_experiments-37wj (weighted Tier 2 share-tier classifier)
   * Bead 79n (citation_contexts.intent partial coverage)
   * docs/CLAUDE.md "ZFC" guidance
 """
@@ -70,6 +88,27 @@ INTENT_TO_SECTION: Mapping[str, str] = {
 # Maximum number of bibcodes we will accept in a single call. Mirrors
 # find_gaps' implicit cap (200) so behaviour is consistent across tools.
 _MAX_WORKING_SET_BIBCODES = 200
+
+# Weighted-share thresholds for the Tier 2 community classifier (bead 37wj).
+# A community's share of the working set is ``papers_in_community /
+# working_set_size``. These constants are tunable in one place; the rest of
+# the module derives the share-tier label from them.
+_CORE_SHARE_THRESHOLD: float = 0.15
+_SUPPORTING_SHARE_THRESHOLD: float = 0.05
+
+
+def _classify_share_tier(share: float) -> str:
+    """Classify a working-set community share into a share-tier label.
+
+    Pure arithmetic — no DB, no model. The thresholds live in the
+    module-level constants :data:`_CORE_SHARE_THRESHOLD` and
+    :data:`_SUPPORTING_SHARE_THRESHOLD` so they're trivial to retune.
+    """
+    if share >= _CORE_SHARE_THRESHOLD:
+        return "core"
+    if share >= _SUPPORTING_SHARE_THRESHOLD:
+        return "supporting"
+    return "peripheral"
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +232,11 @@ def synthesize_findings(
                 "intent_total_rows": int,
                 "community_id": int | None,
                 "community_share": float,    # fraction of working set in same community
-                "is_modal_community": bool,
+                # Bead 37wj: weighted Tier 2 share-tier classification.
+                # 'core' (share >= 0.15) | 'supporting' (>= 0.05) |
+                # 'peripheral' (< 0.05) | None when no community membership.
+                "share_tier": "core" | "supporting" | "peripheral" | None,
+                "is_modal_community": bool,  # observational; kept for backwards compat
                 "modal_community_id": int | None,
               },
               "alternative_sections": [section_name, ...],
@@ -404,6 +447,30 @@ def _modal_intent(hist: Counter[str]) -> str | None:
     )[0]
 
 
+def _section_for_share_tier(tier: str, section_set: set[str]) -> str | None:
+    """Map a share-tier label to a section name (or None for peripheral).
+
+    Explicit ladder per bead 37wj AC1:
+      * 'core'       -> 'background' (anchor topics).
+      * 'supporting' -> 'methods' if requested, else 'background' overflow,
+                        else None (no valid section absorbs it; falls into
+                        unattributed).
+      * 'peripheral' -> None (leave for Tier 3 fallback).
+
+    Pure arithmetic; no DB, no model.
+    """
+    if tier == "core":
+        return "background" if "background" in section_set else None
+    if tier == "supporting":
+        if "methods" in section_set:
+            return "methods"
+        if "background" in section_set:
+            return "background"
+        return None
+    # 'peripheral' (or any unknown label, defensively)
+    return None
+
+
 def _modal_community(
     bibcodes: Sequence[str], community_map: Mapping[str, dict[str, Any]]
 ) -> int | None:
@@ -497,15 +564,18 @@ def _assemble_sections(
                     signal_used[bibcode] = "intent_modal"
                     intent_assigned += 1
 
-        # Tier 2: community fall-through.
+        # Tier 2: weighted community fall-through (bead 37wj).
+        # Classify the paper's community by its share of the working set:
+        #   core      -> background
+        #   supporting -> methods (or background overflow)
+        #   peripheral -> leave unattributed (eligible for Tier 3)
         if target_section is None:
             comm = community_map.get(bibcode)
-            if comm is not None:
-                if modal_comm is not None and comm["community_id"] == modal_comm:
-                    fallback = "background"
-                else:
-                    fallback = "open_questions"
-                if fallback in section_set:
+            if comm is not None and total_bibcodes > 0:
+                share = community_size.get(comm["community_id"], 0) / total_bibcodes
+                tier = _classify_share_tier(share)
+                fallback = _section_for_share_tier(tier, section_set)
+                if fallback is not None:
                     target_section = fallback
                     signal_used[bibcode] = "community_fallthrough"
                     community_assigned += 1
@@ -552,7 +622,8 @@ def _assemble_sections(
                     chosen_section=name,
                     intent_hist=intent_hist,
                     community_map=community_map,
-                    modal_comm=modal_comm,
+                    community_size=community_size,
+                    total_bibcodes=total_bibcodes,
                     section_set=section_set,
                 ),
             )
@@ -672,8 +743,10 @@ def _build_signals(
 
     if community_id is not None and total_bibcodes > 0:
         share = community_size.get(community_id, 0) / total_bibcodes
+        share_tier: str | None = _classify_share_tier(share)
     else:
         share = 0.0
+        share_tier = None
 
     is_modal = community_id is not None and community_id == modal_comm
 
@@ -682,6 +755,9 @@ def _build_signals(
         "intent_total_rows": intent_total,
         "community_id": community_id,
         "community_share": share,
+        # Bead 37wj: weighted Tier 2 share-tier classification.
+        "share_tier": share_tier,
+        # Observational, retained for backwards-compat with pre-37wj clients.
         "is_modal_community": bool(is_modal),
         "modal_community_id": modal_comm,
     }
@@ -693,18 +769,22 @@ def _alternative_sections(
     chosen_section: str,
     intent_hist: Mapping[str, Counter[str]],
     community_map: Mapping[str, dict[str, Any]],
-    modal_comm: int | None,
+    community_size: Mapping[int, int],
+    total_bibcodes: int,
     section_set: set[str],
 ) -> list[str]:
     """Return sections (other than ``chosen_section``) the paper could have
     landed in given the available signals — sorted for determinism.
 
-    Sources of alternatives:
+    Sources of alternatives (post bead 37wj):
       * Every intent label with at least one row maps to its section
         (per :data:`INTENT_TO_SECTION`).
-      * If the paper is in the modal community, ``background`` is an
-        alternative. If it's in any other community, ``open_questions``
-        is an alternative.
+      * Community share-tier alternatives:
+        - ``core`` -> ``background`` (the canonical core routing).
+        - ``supporting`` -> both ``methods`` and ``background``
+          (the supporting -> methods/background overflow ladder).
+        - ``peripheral`` -> none (peripheral papers do not have a
+          community-driven section).
     """
     alts: set[str] = set()
     for intent_label in intent_hist.get(bibcode, Counter()):
@@ -713,13 +793,18 @@ def _alternative_sections(
             alts.add(mapped)
 
     comm_info = community_map.get(bibcode)
-    if comm_info is not None:
-        if modal_comm is not None and comm_info["community_id"] == modal_comm:
+    if comm_info is not None and total_bibcodes > 0:
+        share = community_size.get(comm_info["community_id"], 0) / total_bibcodes
+        tier = _classify_share_tier(share)
+        if tier == "core":
             if "background" in section_set:
                 alts.add("background")
-        else:
-            if "open_questions" in section_set:
-                alts.add("open_questions")
+        elif tier == "supporting":
+            if "methods" in section_set:
+                alts.add("methods")
+            if "background" in section_set:
+                alts.add("background")
+        # peripheral: no community-driven alternative
 
     alts.discard(chosen_section)
     return sorted(alts)

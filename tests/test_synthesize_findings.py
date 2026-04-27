@@ -22,6 +22,9 @@ from scix.synthesize import (
     INTENT_TO_SECTION,
     SectionBucket,
     SynthesisResult,
+    _CORE_SHARE_THRESHOLD,
+    _SUPPORTING_SHARE_THRESHOLD,
+    _classify_share_tier,
     synthesize_findings,
 )
 
@@ -157,38 +160,44 @@ class TestIntentAssignment:
 
 
 class TestCommunityFallThrough:
-    def test_paper_in_modal_community_lands_in_background(self) -> None:
-        """No intent coverage; community signal alone decides section."""
-        papers_rows = [
-            ("2024X", "Paper X", 2024, "abs X", 0),
-            ("2024Y", "Paper Y", 2024, "abs Y", 0),
-            ("2024Z", "Paper Z", 2024, "abs Z", 0),
-        ]
+    def test_paper_in_core_community_lands_in_background(self) -> None:
+        """No intent coverage; community signal alone decides section.
+
+        Post-37wj: a community is 'core' iff its share of the working set
+        is >= ``_CORE_SHARE_THRESHOLD`` (0.15). With X and Y in community
+        5 and Z alone in community 99, 18 / 20 papers are needed for the
+        share math to put Z below the supporting cut (0.05). Use 18 X/Y
+        papers + 1 Z so:
+
+        - community 5 has share 18/19 = 0.947 -> core -> background
+        - community 99 has share 1/19 = 0.053 -> supporting -> methods
+          (intent-free supporting routes to ``methods`` per AC1)
+        """
+        bibcodes = [f"2024X{i:02d}" for i in range(18)] + ["2024Z"]
+        papers_rows = [(b, f"Paper {b}", 2024, f"abs {b}", 0) for b in bibcodes]
         intent_rows: list[tuple] = []  # no intent coverage at all
-        # X and Y in community 5 (modal); Z in community 99 (outlier)
-        community_rows = [
-            ("2024X", 5, "Galaxies"),
-            ("2024Y", 5, "Galaxies"),
-            ("2024Z", 99, "Plasma"),
-        ]
+        # First 18 in modal community 5; Z alone in community 99.
+        community_rows = [(b, 5, "Galaxies") for b in bibcodes[:18]]
+        community_rows.append(("2024Z", 99, "Plasma"))
         conn = _mock_conn([papers_rows, intent_rows, community_rows])
 
         result = synthesize_findings(
             conn,
-            working_set_bibcodes=["2024X", "2024Y", "2024Z"],
+            working_set_bibcodes=bibcodes,
             sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=30,
         )
 
         background = next(s for s in result.sections if s.name == "background")
-        open_q = next(s for s in result.sections if s.name == "open_questions")
+        methods = next(s for s in result.sections if s.name == "methods")
 
         bg_bibcodes = {p["bibcode"] for p in background.cited_papers}
-        oq_bibcodes = {p["bibcode"] for p in open_q.cited_papers}
+        methods_bibcodes = {p["bibcode"] for p in methods.cited_papers}
 
-        # X and Y are in modal community -> background.
-        assert {"2024X", "2024Y"}.issubset(bg_bibcodes)
-        # Z is in a minority community -> open_questions (cross-community).
-        assert "2024Z" in oq_bibcodes
+        # Core community papers go to background.
+        assert set(bibcodes[:18]).issubset(bg_bibcodes)
+        # Supporting community paper (Z, share=0.053) routes to methods.
+        assert "2024Z" in methods_bibcodes
 
     def test_no_intent_no_community_falls_back_or_unattributed(self) -> None:
         """Pre-spj0 contract: orphan paper -> ``unattributed_bibcodes``.
@@ -957,3 +966,242 @@ class TestEmptySectionFallback:
             + c["fallback_pulled_bibcodes"]
             == c["assigned_bibcodes"]
         )
+
+
+# ---------------------------------------------------------------------------
+# Weighted core/supporting/peripheral classifier (bead scix_experiments-37wj)
+# ---------------------------------------------------------------------------
+
+
+class TestWeightedShareClassifier:
+    """AC1-4: Tier 2 (community fall-through) routes papers by their
+    community's share of the working set, not by binary modal/non-modal.
+
+    - share >= 0.15 -> 'core' -> background
+    - 0.05 <= share < 0.15 -> 'supporting' -> methods (or background overflow)
+    - share < 0.05 -> 'peripheral' -> unattributed (eligible for Tier 3)
+    """
+
+    def test_share_thresholds_are_module_constants(self) -> None:
+        """AC4: thresholds are constants in the module — easy to tune."""
+        assert _CORE_SHARE_THRESHOLD == 0.15
+        assert _SUPPORTING_SHARE_THRESHOLD == 0.05
+
+    def test_classify_share_tier_core_boundary(self) -> None:
+        """share >= 0.15 -> 'core'."""
+        assert _classify_share_tier(0.15) == "core"
+        assert _classify_share_tier(1.0) == "core"
+        assert _classify_share_tier(0.5) == "core"
+
+    def test_classify_share_tier_supporting_boundary(self) -> None:
+        """0.05 <= share < 0.15 -> 'supporting'."""
+        assert _classify_share_tier(0.05) == "supporting"
+        assert _classify_share_tier(0.14999) == "supporting"
+        assert _classify_share_tier(0.10) == "supporting"
+
+    def test_classify_share_tier_peripheral_boundary(self) -> None:
+        """share < 0.05 -> 'peripheral'."""
+        assert _classify_share_tier(0.04999) == "peripheral"
+        assert _classify_share_tier(0.0) == "peripheral"
+        assert _classify_share_tier(0.01) == "peripheral"
+
+    def test_supporting_community_routes_to_methods(self) -> None:
+        """AC1: a supporting community (share in [0.05, 0.15)) routes to
+        ``methods`` rather than ``open_questions``.
+
+        Fixture: 20 papers in community A (core, 19/20=0.95) + 1 paper in
+        community B (supporting, 1/20=0.05). Under the binary modal-only
+        rule the lone B paper went to ``open_questions``. Under the
+        weighted rule it lands in ``methods``.
+        """
+        bibcodes = [f"2024A{i:02d}" for i in range(19)] + ["2024B"]
+        papers_rows = [(b, f"T{b}", 2024, f"abs{b}", 0) for b in bibcodes]
+        intent_rows: list[tuple] = []
+        community_rows = [(b, 1, "Modal") for b in bibcodes[:19]]
+        community_rows.append(("2024B", 2, "Supporting"))
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=30,
+        )
+        bib_to_section = {p["bibcode"]: s.name for s in result.sections for p in s.cited_papers}
+        # Core community papers in background.
+        for b in bibcodes[:19]:
+            assert bib_to_section[b] == "background"
+        # Supporting community paper routes to methods.
+        assert bib_to_section["2024B"] == "methods"
+        # And carries community_fallthrough as signal_used (wire-stable per AC2).
+        methods = next(s for s in result.sections if s.name == "methods")
+        b_row = next(p for p in methods.cited_papers if p["bibcode"] == "2024B")
+        assert b_row["signal_used"] == "community_fallthrough"
+
+    def test_peripheral_community_lands_in_unattributed_then_tier3(self) -> None:
+        """A community below the supporting threshold (share < 0.05) is
+        peripheral. Its papers are NOT routed by Tier 2 — they fall into
+        the unattributed pool, which makes them eligible for Tier 3
+        citation-count fallback.
+
+        Fixture: 25 papers in community A (core, 25/26=0.96) + 1 paper in
+        community B (peripheral, 1/26=0.038). With no intent rows on the B
+        paper and an empty 'results' section, Tier 3 should fallback-pull
+        it from unattributed.
+        """
+        bibcodes = [f"2024A{i:02d}" for i in range(25)] + ["2024B"]
+        papers_rows = [
+            (b, f"T{b}", 2024, f"abs{b}", 100 if b == "2024B" else 0)
+            for b in bibcodes
+        ]
+        intent_rows: list[tuple] = []
+        community_rows = [(b, 1, "Modal") for b in bibcodes[:25]]
+        community_rows.append(("2024B", 2, "Peripheral"))
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=8,
+        )
+        # 2024B has highest citation_count (100) -> first to be Tier 3
+        # fallback-pulled into the first empty section ('methods' was empty
+        # since no intent; 'results' was empty; 'open_questions' was empty).
+        all_rows = {p["bibcode"]: p for s in result.sections for p in s.cited_papers}
+        assert "2024B" in all_rows
+        # Tier 3 (fallback) was used, not Tier 2 (community_fallthrough).
+        assert all_rows["2024B"]["signal_used"] == "citation_count_fallback"
+
+    def test_share_tier_in_signals_payload(self) -> None:
+        """AC2: each fall-through-assigned paper exposes ``share_tier`` in
+        its signals payload."""
+        bibcodes = [f"2024A{i:02d}" for i in range(19)] + ["2024B"]
+        papers_rows = [(b, f"T{b}", 2024, f"abs{b}", 0) for b in bibcodes]
+        intent_rows: list[tuple] = []
+        community_rows = [(b, 1, "Modal") for b in bibcodes[:19]]
+        community_rows.append(("2024B", 2, "Supporting"))
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=30,
+        )
+        all_rows = {p["bibcode"]: p for s in result.sections for p in s.cited_papers}
+        # Core community papers get share_tier='core'.
+        for b in bibcodes[:19]:
+            assert all_rows[b]["signals"]["share_tier"] == "core"
+        # Supporting community paper gets share_tier='supporting'.
+        assert all_rows["2024B"]["signals"]["share_tier"] == "supporting"
+
+    def test_share_tier_none_when_no_community(self) -> None:
+        """A paper with no community membership (no row in
+        ``community_map``) has ``share_tier`` set to ``None`` — not
+        omitted, so the schema is uniform across rows."""
+        papers_rows = [("2024U", "Orphan", 2024, "abs", 50)]
+        intent_rows: list[tuple] = []
+        community_rows: list[tuple] = []
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024U"],
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=8,
+        )
+        # Paper falls to Tier 3 fallback. Signals.share_tier should be None.
+        all_rows = {p["bibcode"]: p for s in result.sections for p in s.cited_papers}
+        assert all_rows["2024U"]["signals"]["share_tier"] is None
+
+    def test_weighted_classifier_differs_from_modal_only(self) -> None:
+        """AC3 verbatim: a working set with two ~equal-share communities
+        produces a different distribution than the current modal-only rule
+        (specifically: papers from the second-largest community get
+        bucketed into supporting tiers, not all dumped into open_questions).
+
+        Fixture: 12 papers — community A (7, share=7/12=0.583, core) and
+        community B (5, share=5/12=0.417, also core under weighted rule).
+        Wait — both are core under the weighted classifier with the
+        defaults, since 0.417 >= 0.15. To produce the AC3 contrast, scale
+        community B down to land in [0.05, 0.15). Use community A=12,
+        community B=2 (share=2/14=0.143, supporting). Under modal-only,
+        B would dump in open_questions; under weighted, B routes to
+        methods.
+        """
+        bibcodes = [f"2024A{i:02d}" for i in range(12)] + [
+            "2024B0",
+            "2024B1",
+        ]
+        papers_rows = [(b, f"T{b}", 2024, f"abs{b}", 0) for b in bibcodes]
+        intent_rows: list[tuple] = []
+        community_rows = [(b, 1, "Modal") for b in bibcodes[:12]]
+        community_rows.append(("2024B0", 2, "Supporting"))
+        community_rows.append(("2024B1", 2, "Supporting"))
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=30,
+        )
+        bib_to_section = {p["bibcode"]: s.name for s in result.sections for p in s.cited_papers}
+        # Old (modal-only) behavior would have routed both B papers to
+        # open_questions. New (weighted) routes them to methods.
+        assert bib_to_section["2024B0"] == "methods"
+        assert bib_to_section["2024B1"] == "methods"
+        # And explicitly: the open_questions section should NOT contain
+        # them (would only happen under the old rule).
+        oq = next(s for s in result.sections if s.name == "open_questions")
+        oq_bibs = {p["bibcode"] for p in oq.cited_papers}
+        assert "2024B0" not in oq_bibs
+        assert "2024B1" not in oq_bibs
+
+    def test_supporting_falls_back_to_background_when_methods_not_requested(
+        self,
+    ) -> None:
+        """When the requested ``sections`` list does not include
+        ``methods``, supporting community papers route to ``background``
+        (the "overflow" rung of the AC1 ladder)."""
+        bibcodes = [f"2024A{i:02d}" for i in range(19)] + ["2024B"]
+        papers_rows = [(b, f"T{b}", 2024, f"abs{b}", 0) for b in bibcodes]
+        intent_rows: list[tuple] = []
+        community_rows = [(b, 1, "Modal") for b in bibcodes[:19]]
+        community_rows.append(("2024B", 2, "Supporting"))
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        # Custom sections list — no 'methods'.
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=["background", "open_questions"],
+            max_papers_per_section=30,
+        )
+        bib_to_section = {p["bibcode"]: s.name for s in result.sections for p in s.cited_papers}
+        # Supporting paper overflows to background.
+        assert bib_to_section["2024B"] == "background"
+
+    def test_single_community_full_share_is_core(self) -> None:
+        """Backwards-compat: a working set entirely in a single community
+        (share=1.0) is 'core' and routes to background — same outcome as
+        the old modal=background rule."""
+        bibcodes = [f"2024A{i:02d}" for i in range(5)]
+        papers_rows = [(b, f"T{b}", 2024, f"abs{b}", 0) for b in bibcodes]
+        intent_rows: list[tuple] = []
+        community_rows = [(b, 1, "Solo") for b in bibcodes]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=30,
+        )
+        all_rows = {p["bibcode"]: p for s in result.sections for p in s.cited_papers}
+        for b in bibcodes:
+            assert all_rows[b]["signals"]["share_tier"] == "core"
+        bg = next(s for s in result.sections if s.name == "background")
+        bg_bibs = {p["bibcode"] for p in bg.cited_papers}
+        assert set(bibcodes).issubset(bg_bibs)

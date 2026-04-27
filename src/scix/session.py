@@ -15,6 +15,13 @@ logger = logging.getLogger(__name__)
 
 _WORKING_SET_SOFT_LIMIT = 1000
 
+#: Hard cap applied during bulk add (``add_bibcodes_to_working_set``). When a
+#: bulk-add operation pushes the working set above this threshold, oldest
+#: entries (FIFO) are dropped. The cap exists to keep multi-turn agent flows
+#: bounded — an unrestricted append over a long session would degrade
+#: downstream tools that scope queries to the working set.
+_WORKING_SET_HARD_CAP = 200
+
 
 @dataclass(frozen=True)
 class WorkingSetEntry:
@@ -92,6 +99,56 @@ class SessionState:
             )
 
         return entry
+
+    def add_bibcodes_to_working_set(
+        self,
+        bibcodes: list[str],
+        source_tool: str,
+        source_context: str = "",
+        relevance_hint: str = "",
+        tags: list[str] | None = None,
+        session_id: str = "_default",
+    ) -> int:
+        """Bulk-add bibcodes to the working set.
+
+        Dedupes against any bibcodes already present (insertion-order dict
+        semantics). After appending, applies a FIFO cap of
+        :data:`_WORKING_SET_HARD_CAP` — oldest entries are dropped so the
+        working set never exceeds the cap. Use this when a tool returns a
+        list of papers that should bootstrap subsequent multi-turn analysis.
+
+        Returns the number of bibcodes processed in this call (i.e. the
+        ``len(set(bibcodes))`` after intra-call dedupe).
+        """
+        if not bibcodes:
+            return 0
+
+        data = self._get(session_id)
+        # Dedupe within the call while preserving order.
+        unique: list[str] = []
+        seen_in_call: set[str] = set()
+        for bib in bibcodes:
+            if bib in seen_in_call:
+                continue
+            seen_in_call.add(bib)
+            unique.append(bib)
+
+        for bib in unique:
+            self.add_to_working_set(
+                bibcode=bib,
+                source_tool=source_tool,
+                source_context=source_context,
+                relevance_hint=relevance_hint,
+                tags=tags,
+                session_id=session_id,
+            )
+
+        # FIFO cap: drop oldest entries until back under the hard cap.
+        while len(data.working_set) > _WORKING_SET_HARD_CAP:
+            oldest_bibcode = next(iter(data.working_set))
+            del data.working_set[oldest_bibcode]
+
+        return len(unique)
 
     def get_working_set(self, session_id: str = "_default") -> list[WorkingSetEntry]:
         """Return the current working set as a list, ordered by insertion."""

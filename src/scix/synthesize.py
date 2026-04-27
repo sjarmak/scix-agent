@@ -201,6 +201,7 @@ def synthesize_findings(
                 "unattributed_bibcodes": 0,
                 "intent_assigned_bibcodes": 0,
                 "community_assigned_bibcodes": 0,
+                "override_assigned_bibcodes": 0,
             },
             metadata={
                 "message": (
@@ -442,6 +443,7 @@ def _assemble_sections(
     unattributed: list[str] = []
     intent_assigned = 0
     community_assigned = 0
+    override_assigned = 0
 
     modal_comm = _modal_community(bibcodes, community_map)
     section_set = set(sections)
@@ -462,6 +464,7 @@ def _assemble_sections(
         if override is not None:
             target_section = override
             signal_used[bibcode] = "override"
+            override_assigned += 1
 
         # Tier 1: intent histogram.
         if target_section is None:
@@ -537,6 +540,7 @@ def _assemble_sections(
         "unattributed_bibcodes": len(unattributed),
         "intent_assigned_bibcodes": intent_assigned,
         "community_assigned_bibcodes": community_assigned,
+        "override_assigned_bibcodes": override_assigned,
     }
 
     return SynthesisResult(

@@ -22,6 +22,19 @@ choreography, plus three small deltas in
 ingest_log integration, optional sharding flag) needed before a
 multi-day run can be left unattended.
 
+> **Reading note (added in wave-1 review).** Line numbers in this PRD
+> reference `src/scix/citation_context.py` as it existed at
+> `fcd450f` (pre-wave-1). Bead `scix_experiments-79n.2` (merged in
+> wave-1) added ~250 lines of author-year extraction at the top of
+> the file; line numbers below are no longer accurate. Use **function
+> names** for navigation (`extract_citation_contexts`,
+> `_enrich_with_sections`, `_SELECT_PAPERS`, etc.) — these are
+> stable. Additionally, the 79n.2 author-year extractor produces
+> rows from papers whose citation style does not use `[N]` markers,
+> so the **~267M row estimate is now conservative**. Pilot
+> measurement should run with both extractors enabled before the
+> full run is kicked off.
+
 ## Goal
 
 Run the existing citation-context extraction pipeline over the full

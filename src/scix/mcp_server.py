@@ -40,7 +40,7 @@ from scix.embed import _model_cache, clear_model_cache, embed_batch, load_model
 from scix.entity_resolver import EntityResolver
 from scix.jit.disambiguator import disambiguate_query
 from scix.search import CrossEncoderReranker
-from scix.session import SessionState, WorkingSetEntry
+from scix.session import SessionState
 from scix.synthesize import (
     DEFAULT_SECTIONS as _SYNTH_DEFAULT_SECTIONS,
     synthesize_findings as _synthesize_findings,
@@ -2142,6 +2142,7 @@ def create_server(_run_self_test: bool = True):
                         "section_overrides": {
                             "type": "object",
                             "additionalProperties": {"type": "string"},
+                            "maxProperties": 200,
                             "description": (
                                 "Optional {bibcode: section_name} mapping "
                                 "that pins specific papers to specific "

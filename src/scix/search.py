@@ -13,6 +13,7 @@ import os
 import re
 import time
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -3011,7 +3012,7 @@ def _read_section_from_papers_fulltext(
     limit: int,
     title: str,
     first_author: str | None,
-    classify_fn,
+    classify_fn: Callable[[str], str | None],
     elapsed_ms: float = 0.0,
 ) -> SearchResult | None:
     """Read a section from the structured papers_fulltext.sections JSONB.

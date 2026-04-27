@@ -16,7 +16,7 @@ from typing import Any
 
 import psycopg
 
-from scix.db import DEFAULT_DSN, get_connection
+from scix.db import get_connection
 from scix.section_parser import parse_sections
 
 logger = logging.getLogger(__name__)

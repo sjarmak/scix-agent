@@ -132,22 +132,24 @@ class TestResultToJson:
 
 
 # ---------------------------------------------------------------------------
-# AC1: list_tools() returns exactly 17 tools (13 baseline + 2 PRD MH-4 +
-# section_retrieval + 2 paper_claims retrieval tools)
+# AC1: list_tools() matches the deployment-aware expected tool set
+# (EXPECTED_TOOLS plus optional Qdrant tools, minus env-hidden tools).
 # ---------------------------------------------------------------------------
 
 
 class TestListTools:
-    def test_list_tools_returns_exactly_15(self) -> None:
-        # PRD MH-4: baseline 13 grew by 2 (claim_blame, find_replications).
-        # PRD section-embeddings-mcp-consolidation: + section_retrieval.
-        # PRD nanopub-claim-extraction: + read_paper_claims, find_claims.
+    def test_list_tools_matches_expected_set(self) -> None:
+        # The expected set is computed at runtime by _expected_tool_set() —
+        # it accounts for _OPTIONAL_TOOLS (chunk_search, gated by Qdrant)
+        # and _HIDDEN_TOOLS (env-hidden tools whose backing data isn't
+        # populated). Driving the assertion off that helper keeps this
+        # test self-syncing when tools are added or hidden.
         try:
             import asyncio
 
             from mcp.types import ListToolsRequest
 
-            from scix.mcp_server import create_server
+            from scix.mcp_server import _expected_tool_set, create_server
 
             with patch("scix.mcp_server._init_model_impl"):
                 server = create_server()
@@ -157,32 +159,9 @@ class TestListTools:
                     result = loop.run_until_complete(handler(ListToolsRequest(method="tools/list")))
                     tools = result.root.tools
                     tool_names = sorted([t.name for t in tools])
-                    expected = sorted(
-                        [
-                            "search",
-                            "concept_search",
-                            "get_paper",
-                            "read_paper",
-                            "section_retrieval",
-                            # 2026-04-25 consolidation: citation_graph +
-                            # citation_chain merged into citation_traverse.
-                            "citation_traverse",
-                            "citation_similarity",
-                            "entity",
-                            "entity_context",
-                            "graph_context",
-                            "find_gaps",
-                            "temporal_evolution",
-                            "facet_counts",
-                            "claim_blame",
-                            "find_replications",
-                            # PRD nanopub-claim-extraction
-                            "read_paper_claims",
-                            "find_claims",
-                        ]
-                    )
+                    expected = sorted(_expected_tool_set())
                     assert tool_names == expected, f"Got: {tool_names}"
-                    assert len(tools) == 17
+                    assert len(tools) == len(expected)
                 finally:
                     loop.close()
         except (ImportError, AttributeError):

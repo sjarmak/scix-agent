@@ -42,17 +42,31 @@ SAMPLE_ABSTRACT = "We study dark matter halos in galaxy clusters using HST obser
 def _mock_cursor_with_row(row, extra_rows=None):
     """Create a mock connection whose cursor returns rows in sequence.
 
-    The first ``fetchone()`` returns *row*. If *extra_rows* is provided,
-    subsequent ``fetchone()`` calls return those values in order. If
-    *extra_rows* is ``None``, subsequent calls return ``None`` (matches
-    the ADR-006 guard query returning no papers_fulltext row).
+    The first ``fetchone()`` returns *row* (the papers table lookup). If
+    *extra_rows* is provided, subsequent ``fetchone()`` calls return those
+    values in order. If *extra_rows* is ``None``, subsequent calls return
+    ``None`` indefinitely — matching the typical case where no
+    papers_fulltext row exists for the bibcode (which short-circuits both
+    the structured-section path and the ADR-006 guard query).
+
+    The "indefinitely" matters: the read_paper_section flow can issue
+    multiple secondary fetchones (papers_fulltext.sections lookup, then
+    papers_fulltext.source for the latex-provenance guard), and the count
+    has grown over time as new guards landed. Returning a generator that
+    keeps yielding None is more resilient than the older fixed
+    [row, None] sequence which exhausted on the third call.
     """
     mock_conn = MagicMock()
     mock_cursor = MagicMock()
     if extra_rows is not None:
+        # Caller is being explicit — give them exactly what they asked for.
         mock_cursor.fetchone.side_effect = [row] + extra_rows
     else:
-        mock_cursor.fetchone.side_effect = [row, None]
+        def _fetchone_sequence():
+            yield row
+            while True:
+                yield None
+        mock_cursor.fetchone.side_effect = _fetchone_sequence()
     mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
     mock_cursor.__exit__ = MagicMock(return_value=False)
     mock_conn.cursor.return_value = mock_cursor

@@ -243,24 +243,22 @@ def demo_search(payload: DemoSearchRequest) -> dict:
     if not query:
         raise HTTPException(status_code=400, detail="empty query")
 
-    # Real search dispatch — the MCP hook publishes one TraceEvent with the
-    # full result set (bibcodes drive the line-flash on UMAP). Hybrid mode
-    # lets the server-side preloaded INDUS model contribute a dense signal,
-    # but vector_search on the full ``pe.embedding`` (float32 768d) HNSW
-    # over the 32M-row prod corpus blows past the 30s statement_timeout. We
-    # therefore gate the hybrid switch on ``SCIX_USE_HALFVEC`` — the same
-    # flag ``scix.search`` uses to pick the halfvec column. Until migrations
-    # 053/054 are applied (bead d0a) and the flag is flipped on, the demo
-    # stays in keyword mode so it doesn't 500 on prod.
-    use_hybrid = os.environ.get("SCIX_USE_HALFVEC", "0") == "1"
-    mode = "hybrid" if use_hybrid else "keyword"
+    # Real search dispatch — the MCP hook publishes one TraceEvent with
+    # the full result set (bibcodes drive the line-flash on UMAP). Hybrid
+    # mode is on by default: the viz server preloads INDUS in lifespan(),
+    # the float32 HNSW index ``idx_embed_hnsw_indus`` returns vector hits
+    # in ~300ms with hnsw.ef_search=40 + iterative_scan='relaxed_order',
+    # and the dense lane recovers semantically-relevant papers that pure
+    # tsvector misses. The earlier ``SCIX_USE_HALFVEC`` gate was put in
+    # while halfvec migrations 053/054 were still pending; empirical
+    # latency made it unnecessary, so the demo just runs hybrid now.
     # disambiguate=False: this is an instrumentation/trace demo, not an
     # interactive search. The default (True) short-circuits to a
     # {"disambiguation": [...]} payload whenever the query contains an
     # entity mention, which the agent-trace UI then reports as 0 bibcodes.
     search_args = {
         "query": query,
-        "mode": mode,
+        "mode": "hybrid",
         "limit": payload.top_n,
         "disambiguate": False,
     }

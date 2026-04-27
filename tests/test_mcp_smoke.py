@@ -93,15 +93,16 @@ def mock_conn() -> MagicMock:
 class TestStartupSelfTest:
     """Validates the server's self-test catches missing/broken tools."""
 
-    def test_expected_tools_has_20_entries(self) -> None:
+    def test_expected_tools_has_21_entries(self) -> None:
         # 2026-04-25 consolidation: citation_graph + citation_chain merged
         # into citation_traverse (-1), find_similar_by_examples retired
         # (was opt-in, now hard-removed). Subsequent PRDs added
         # claim_blame, find_replications, section_retrieval, the two
         # paper_claims retrieval tools, and cited_by_intent. Bead cfh9
-        # added synthesize_findings. Final = 20.
-        assert len(EXPECTED_TOOLS) == 20
-        assert len(set(EXPECTED_TOOLS)) == 20  # no duplicates
+        # added synthesize_findings. Bead c996 (2026-04-27) added
+        # claim_search (default-hidden). Final = 21.
+        assert len(EXPECTED_TOOLS) == 21
+        assert len(set(EXPECTED_TOOLS)) == 21  # no duplicates
 
     def test_self_test_passes_on_fresh_server(self) -> None:
         """A freshly created server must pass the self-test.
@@ -566,6 +567,23 @@ class TestToolSmoke:
         )
         data = _assert_non_error(out, "find_claims")
         assert "claims" in data
+        assert "total" in data
+        assert data["total"] == 0
+
+    @patch("scix.mcp_server._log_query")
+    def test_claim_search(
+        self,
+        _mock_log: MagicMock,
+        mock_conn: MagicMock,
+    ) -> None:
+        """Bead c996: claim_search dispatch returns the papers envelope."""
+        out = _dispatch_tool(
+            mock_conn,
+            "claim_search",
+            {"action": "negative_result"},
+        )
+        data = _assert_non_error(out, "claim_search")
+        assert "papers" in data
         assert "total" in data
         assert data["total"] == 0
 

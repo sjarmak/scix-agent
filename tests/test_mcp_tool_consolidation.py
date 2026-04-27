@@ -454,18 +454,20 @@ class TestFindSimilarByExamplesRetired:
 
 
 # ---------------------------------------------------------------------------
-# AC6: list_tools count is exactly 20 and contains the expected names
+# AC6: list_tools count is exactly 21 and contains the expected names
 # ---------------------------------------------------------------------------
 
 
 class TestListToolsCount:
-    def test_expected_tools_has_20_entries(self) -> None:
+    def test_expected_tools_has_21_entries(self) -> None:
         # Subsequent PRDs grew the list past the original 15: section_retrieval
         # (section-embeddings-mcp-consolidation) + 2 paper_claims retrieval
         # tools (nanopub-claim-extraction) + cited_by_intent (structural
-        # citation lookup) + synthesize_findings (bead cfh9). Final = 20.
-        assert len(EXPECTED_TOOLS) == 20
-        assert len(set(EXPECTED_TOOLS)) == 20  # no duplicates
+        # citation lookup) + synthesize_findings (bead cfh9) + claim_search
+        # (bead c996, default-hidden until extractions table is populated).
+        # Final = 21.
+        assert len(EXPECTED_TOOLS) == 21
+        assert len(set(EXPECTED_TOOLS)) == 21  # no duplicates
 
     def test_expected_tools_contains_citation_traverse(self) -> None:
         assert "citation_traverse" in EXPECTED_TOOLS
@@ -481,15 +483,16 @@ class TestListToolsCount:
         # find_similar_by_examples is the retirement.
         assert "find_similar_by_examples" not in EXPECTED_TOOLS
 
-    def test_list_tools_returns_20_via_self_test(self) -> None:
-        """Round-trip through startup_self_test: registers exactly 20 tools.
+    def test_list_tools_returns_21_via_self_test(self) -> None:
+        """Round-trip through startup_self_test: registers exactly 21 tools.
 
-        EXPECTED_TOOLS has 20 entries, but list_tools() drops the
+        EXPECTED_TOOLS has 21 entries, but list_tools() drops the
         ``_HIDDEN_TOOLS`` set (default: section_retrieval, read_paper_claims,
-        find_claims — backing data not yet populated). The visible tool count
-        equals ``len(_expected_tool_set())``, which collapses to 17 with the
-        defaults above. Test against that derived expectation rather than a
-        hardcoded number so future hide/unhide changes don't churn this test.
+        find_claims, claim_search — backing data not yet populated). The
+        visible tool count equals ``len(_expected_tool_set())``, which
+        collapses to 17 with the defaults above. Test against that derived
+        expectation rather than a hardcoded number so future hide/unhide
+        changes don't churn this test.
         """
         try:
             import mcp.types  # noqa: F401

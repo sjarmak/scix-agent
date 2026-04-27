@@ -1,8 +1,11 @@
 """Upsert the top-N papers by PageRank into Qdrant with rich payload.
 
 Named vector: indus (768d, cosine).
-Payload fields indexed for filtering: year, doctype, community_id_coarse,
-community_id_medium, arxiv_class.
+Payload schema is canonicalized in docs/ADR/008_qdrant_payload_schema.md —
+seven indexed fields (year, doctype, arxiv_class, bibstem,
+community_semantic_coarse, community_semantic_medium, is_retracted) plus
+five non-indexed metadata fields (bibcode, title, first_author,
+citation_count, pagerank).
 
 Usage:
     python scripts/qdrant_upsert_pilot.py --limit 500000 --batch 1000
@@ -53,9 +56,10 @@ def ensure_collection(client: QdrantClient) -> None:
         hnsw_config=qm.HnswConfigDiff(m=16, ef_construct=128),
         optimizers_config=qm.OptimizersConfigDiff(default_segment_number=2),
     )
-    # We index the semantic-community signal (k-means on INDUS embeddings) and
-    # the taxonomic signal (arxiv_class). Citation-Leiden communities in
-    # paper_metrics are currently all -1/NULL — do not index them.
+    # Canonical payload index set per docs/ADR/008_qdrant_payload_schema.md.
+    # Citation-Leiden communities in paper_metrics are currently all -1/NULL
+    # (Phase B incomplete) — do not index them. is_retracted is derived from
+    # papers.retracted_at IS NOT NULL.
     for field, schema in [
         ("year", qm.PayloadSchemaType.INTEGER),
         ("doctype", qm.PayloadSchemaType.KEYWORD),
@@ -63,6 +67,7 @@ def ensure_collection(client: QdrantClient) -> None:
         ("community_semantic_medium", qm.PayloadSchemaType.INTEGER),
         ("arxiv_class", qm.PayloadSchemaType.KEYWORD),
         ("bibstem", qm.PayloadSchemaType.KEYWORD),
+        ("is_retracted", qm.PayloadSchemaType.BOOL),
     ]:
         client.create_payload_index(COLLECTION, field_name=field, field_schema=schema)
     print(f"created collection {COLLECTION} + payload indexes")
@@ -108,6 +113,7 @@ def stream_rows(conn, limit: int, batch: int) -> Iterator[list[dict]]:
                p.arxiv_class,
                p.bibstem,
                p.citation_count,
+               (p.retracted_at IS NOT NULL) AS is_retracted,
                t.pagerank,
                t.community_semantic_coarse,
                t.community_semantic_medium,
@@ -123,7 +129,7 @@ def stream_rows(conn, limit: int, batch: int) -> Iterator[list[dict]]:
         buf: list[dict] = []
         for row in cur:
             (bibcode, title, year, doctype, first_author, arxiv_class,
-             bibstem, citation_count, pagerank, sem_c, sem_m, vec_text) = row
+             bibstem, citation_count, is_retracted, pagerank, sem_c, sem_m, vec_text) = row
             # pgvector `::text` serializes as "[0.1,0.2,...]"
             vec = [float(x) for x in vec_text.strip("[]").split(",")]
             if len(vec) != VECTOR_DIM:
@@ -137,6 +143,7 @@ def stream_rows(conn, limit: int, batch: int) -> Iterator[list[dict]]:
                 "arxiv_class": list(arxiv_class) if arxiv_class else [],
                 "bibstem": list(bibstem) if bibstem else [],
                 "citation_count": int(citation_count) if citation_count is not None else 0,
+                "is_retracted": bool(is_retracted),
                 "pagerank": float(pagerank) if pagerank is not None else None,
                 "community_semantic_coarse": int(sem_c) if sem_c is not None else None,
                 "community_semantic_medium": int(sem_m) if sem_m is not None else None,

@@ -444,6 +444,231 @@ class TestGetPaper:
 
 
 # ---------------------------------------------------------------------------
+# bqva: precision_estimate + precision_band wiring on get_paper(include_entities)
+# ---------------------------------------------------------------------------
+
+
+class TestGetPaperPrecisionWiring:
+    """`_attach_precision_to_linked_entities` annotates linked_entities."""
+
+    @staticmethod
+    def _conn_with_doc_entity_rows(rows: list[tuple]) -> MagicMock:
+        """Build a MagicMock conn whose cursor.fetchall() returns ``rows``."""
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.__enter__ = lambda self: self
+        cur.__exit__ = MagicMock(return_value=False)
+        cur.fetchall.return_value = rows
+        conn.cursor.return_value = cur
+        return conn
+
+    @patch("scix.search.get_document_context")
+    def test_precision_metadata_attached_per_entity(self, mock_fn: MagicMock) -> None:
+        """Each linked entity gains precision_estimate + precision_band."""
+        from scix.search import SearchResult
+
+        mock_fn.return_value = SearchResult(
+            papers=[
+                {
+                    "bibcode": "2024X",
+                    "year": 2024,
+                    "linked_entities": [
+                        {
+                            "entity_id": 11,
+                            "name": "JWST",
+                            "type": "instrument",
+                            "link_type": "has_instrument",
+                            "confidence": 0.9,
+                        },
+                        {
+                            "entity_id": 22,
+                            "name": "ESO Archive",
+                            "type": "dataset",
+                            "link_type": "uses_dataset",
+                            "confidence": 0.8,
+                        },
+                    ],
+                }
+            ],
+            total=1,
+            timing_ms={"query_ms": 1.0},
+        )
+
+        conn = self._conn_with_doc_entity_rows(
+            [
+                # entity_id, source, evidence
+                (11, "gliner", {"agreement": True}),
+                (22, "canonical_exact", {}),
+            ]
+        )
+
+        result = json.loads(
+            _dispatch_tool(conn, "get_paper", {"bibcode": "2024X", "include_entities": True})
+        )
+        ents = result["papers"][0]["linked_entities"]
+        assert len(ents) == 2
+        for e in ents:
+            assert "precision_estimate" in e
+            assert "precision_band" in e
+            assert 0.0 <= e["precision_estimate"] <= 1.0
+            assert e["precision_band"] in {"high", "medium", "low", "noisy"}
+
+    @patch("scix.search.get_document_context")
+    def test_min_precision_filters_below_threshold(self, mock_fn: MagicMock) -> None:
+        """``min_precision`` drops entities with precision below the floor."""
+        from scix.search import SearchResult
+
+        # Two entities: one will land high (canonical_exact → LEXICAL_PRECISION_DEFAULT
+        # is 0.95), one low (gliner without agreement, an empirically
+        # noisier source).
+        mock_fn.return_value = SearchResult(
+            papers=[
+                {
+                    "bibcode": "2024X",
+                    "year": 2024,
+                    "linked_entities": [
+                        {"entity_id": 11, "name": "A", "type": "instrument"},
+                        {"entity_id": 22, "name": "B", "type": "method"},
+                    ],
+                }
+            ],
+            total=1,
+            timing_ms={"query_ms": 1.0},
+        )
+        conn = self._conn_with_doc_entity_rows(
+            [
+                (11, "canonical_exact", {}),
+                (22, "gliner", {}),
+            ]
+        )
+
+        result = json.loads(
+            _dispatch_tool(
+                conn,
+                "get_paper",
+                {
+                    "bibcode": "2024X",
+                    "include_entities": True,
+                    "min_precision": 0.9,
+                },
+            )
+        )
+        ents = result["papers"][0]["linked_entities"]
+        assert all(e["precision_estimate"] >= 0.9 for e in ents)
+        assert any(e["entity_id"] == 11 for e in ents)
+        assert all(e["entity_id"] != 22 for e in ents)
+
+    @patch("scix.search.get_document_context")
+    def test_lookup_failure_does_not_break_response(self, mock_fn: MagicMock) -> None:
+        """A DB failure during enrichment must not break get_paper."""
+        from scix.search import SearchResult
+
+        mock_fn.return_value = SearchResult(
+            papers=[
+                {
+                    "bibcode": "2024X",
+                    "year": 2024,
+                    "linked_entities": [
+                        {"entity_id": 11, "name": "JWST", "type": "instrument"},
+                    ],
+                }
+            ],
+            total=1,
+            timing_ms={"query_ms": 1.0},
+        )
+        # cursor() raises — simulates a DB hiccup during the enrichment.
+        conn = MagicMock()
+        conn.cursor.side_effect = RuntimeError("simulated db failure")
+
+        result = json.loads(
+            _dispatch_tool(conn, "get_paper", {"bibcode": "2024X", "include_entities": True})
+        )
+        # Paper still surfaced; entity present without precision metadata.
+        assert result["total"] == 1
+        ents = result["papers"][0]["linked_entities"]
+        assert len(ents) == 1
+        assert "precision_estimate" not in ents[0]
+
+    @patch("scix.search.get_document_context")
+    def test_empty_linked_entities_skips_db_lookup(self, mock_fn: MagicMock) -> None:
+        """No linked_entities → no enrichment query is issued."""
+        from scix.search import SearchResult
+
+        mock_fn.return_value = SearchResult(
+            papers=[{"bibcode": "2024X", "year": 2024, "linked_entities": []}],
+            total=1,
+            timing_ms={"query_ms": 1.0},
+        )
+        conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(conn, "get_paper", {"bibcode": "2024X", "include_entities": True})
+        )
+        assert result["total"] == 1
+        # No conn.cursor() call expected since there's nothing to enrich.
+        conn.cursor.assert_not_called()
+
+    @patch("scix.search.get_document_context")
+    def test_agreement_union_positive_across_multi_link_rows(self, mock_fn: MagicMock) -> None:
+        """When the same entity_id appears with multiple link rows, agreement
+        reduces positively (any True wins). The classifier-True case lifts
+        precision above the no-agreement-signal case."""
+        from scix.search import SearchResult
+
+        mock_fn.return_value = SearchResult(
+            papers=[
+                {
+                    "bibcode": "2024X",
+                    "year": 2024,
+                    "linked_entities": [
+                        {"entity_id": 11, "name": "JWST", "type": "instrument"},
+                    ],
+                }
+            ],
+            total=1,
+            timing_ms={"query_ms": 1.0},
+        )
+        # Two rows for entity_id=11: one with agreement=True, one with no
+        # agreement. Reduce should land True.
+        conn = self._conn_with_doc_entity_rows(
+            [
+                (11, "gliner", {"agreement": True}),
+                (11, "gliner", {}),
+            ]
+        )
+
+        result_with = json.loads(
+            _dispatch_tool(conn, "get_paper", {"bibcode": "2024X", "include_entities": True})
+        )
+        # And again with no agreement at all for the same entity.
+        mock_fn.return_value = SearchResult(
+            papers=[
+                {
+                    "bibcode": "2024X",
+                    "year": 2024,
+                    "linked_entities": [
+                        {"entity_id": 11, "name": "JWST", "type": "instrument"},
+                    ],
+                }
+            ],
+            total=1,
+            timing_ms={"query_ms": 1.0},
+        )
+        conn_no = self._conn_with_doc_entity_rows(
+            [
+                (11, "gliner", {}),
+                (11, "gliner", {}),
+            ]
+        )
+        result_without = json.loads(
+            _dispatch_tool(conn_no, "get_paper", {"bibcode": "2024X", "include_entities": True})
+        )
+
+        pe_with = result_with["papers"][0]["linked_entities"][0]["precision_estimate"]
+        pe_without = result_without["papers"][0]["linked_entities"][0]["precision_estimate"]
+        assert pe_with > pe_without
+
+
+# ---------------------------------------------------------------------------
 # AC14-15: find_gaps reads from implicit session state
 # ---------------------------------------------------------------------------
 

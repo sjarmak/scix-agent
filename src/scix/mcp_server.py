@@ -1323,7 +1323,9 @@ def create_server(_run_self_test: bool = True):
                     "Fetch full metadata for a single paper by its ADS bibcode: title, "
                     "abstract, authors, affiliations, year, keywords, and citation counts. "
                     "Optionally include linked entities (methods, datasets, instruments) "
-                    "detected in the paper. Use search or concept_search instead when you "
+                    "detected in the paper, each annotated with precision_estimate "
+                    "(0..1) and precision_band (high/medium/low/noisy) from the dbl.3 "
+                    "NER quality profile. Use search or concept_search instead when you "
                     "do not yet know the bibcode. Use read_paper to access the full body text."
                 ),
                 inputSchema={
@@ -1337,6 +1339,15 @@ def create_server(_run_self_test: bool = True):
                             "type": "boolean",
                             "default": False,
                             "description": "Include linked entities from document_context view",
+                        },
+                        "min_precision": {
+                            "type": "number",
+                            "description": (
+                                "Optional precision_estimate floor (0..1). Drops linked "
+                                "entities below the threshold; only applies when "
+                                "include_entities=true. Default surfaces all entities with "
+                                "precision metadata attached."
+                            ),
                         },
                     },
                     "required": ["bibcode"],
@@ -2768,6 +2779,122 @@ def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     return _result_to_json(result)
 
 
+def _attach_precision_to_linked_entities(
+    conn: psycopg.Connection,
+    paper: dict[str, Any],
+    *,
+    min_precision: float | None = None,
+) -> None:
+    """Annotate ``paper['linked_entities']`` with precision_estimate metadata.
+
+    Mutates the paper dict in place. Each linked entity gains
+    ``precision_estimate`` (rounded float) and ``precision_band`` derived
+    from ``scix.extract.ner_quality_profile.precision_estimate``.
+
+    The matview row carries entity_id, name, type, link_type, confidence —
+    but not source or evidence. We pull (source, evidence) per entity_id
+    from ``document_entities + entities`` for this bibcode so the profile
+    lookup has the full ``(entity_type, source, agreement, year)`` tuple.
+
+    When the same entity has multiple link rows for a bibcode, agreement
+    is reduced positively: True if any True, else False if any False, else
+    None — matches the union-positive semantics already used in entity tool.
+
+    When ``min_precision`` is set, drops linked entities whose final
+    estimate is below the threshold. Entities for which the profile lookup
+    failed (no precision_estimate attached) are kept regardless so
+    filtering never accidentally hides entire entities due to a profile
+    miss.
+    """
+    linked = paper.get("linked_entities")
+    if not linked or not isinstance(linked, list):
+        return
+    bibcode = paper.get("bibcode")
+    if not bibcode:
+        return
+
+    # Per-bibcode pull of source + agreement keyed by entity_id. Single
+    # query — same join the entity tool uses, just constrained to one
+    # paper.
+    sources: dict[int, str] = {}
+    agreements: dict[int, bool | None] = {}
+    sql = """
+        SELECT de.entity_id, e.source, de.evidence
+        FROM document_entities de
+        JOIN entities e ON e.id = de.entity_id
+        WHERE de.bibcode = %s
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (bibcode,))
+            rows = cur.fetchall()
+    except Exception:
+        # Best-effort: lookup failures must not break get_paper for callers
+        # that don't need precision metadata.
+        return
+
+    _MISSING = object()
+    agreements_raw: dict[int, Any] = {}
+    for entity_id, source, evidence in rows:
+        if entity_id is None:
+            continue
+        sources.setdefault(entity_id, source or "")
+        a: bool | None = None
+        if isinstance(evidence, dict):
+            a_raw = evidence.get("agreement")
+            if isinstance(a_raw, bool):
+                a = a_raw
+        prev = agreements_raw.get(entity_id, _MISSING)
+        if prev is _MISSING:
+            agreements_raw[entity_id] = a
+        elif prev is True or a is True:
+            agreements_raw[entity_id] = True
+        elif prev is False or a is False:
+            agreements_raw[entity_id] = False
+    for k, v in agreements_raw.items():
+        agreements[k] = v if isinstance(v, bool) else None
+
+    year = paper.get("year")
+    year_int = year if isinstance(year, int) else None
+
+    from scix.extract.ner_quality_profile import (
+        precision_band,
+        precision_estimate,
+    )
+
+    enriched: list[Any] = []
+    for ent in linked:
+        if not isinstance(ent, dict):
+            enriched.append(ent)
+            continue
+        eid = ent.get("entity_id")
+        etype = ent.get("type") or ""
+        src = sources.get(eid, "") if isinstance(eid, int) else ""
+        agr = agreements.get(eid) if isinstance(eid, int) else None
+        try:
+            pe = precision_estimate(
+                entity_type=etype,
+                source=src,
+                agreement=agr,
+                year=year_int,
+            )
+            ent["precision_estimate"] = round(pe, 2)
+            ent["precision_band"] = precision_band(pe)
+        except Exception:
+            # Quality profile is best-effort — never break the row on a
+            # lookup failure.
+            pass
+        if (
+            min_precision is not None
+            and isinstance(ent.get("precision_estimate"), (int, float))
+            and ent["precision_estimate"] < min_precision
+        ):
+            continue
+        enriched.append(ent)
+
+    paper["linked_entities"] = enriched
+
+
 def _handle_get_paper(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Get paper metadata, optionally with entities."""
     bibcode = args.get("bibcode", "")
@@ -2781,6 +2908,17 @@ def _handle_get_paper(conn: psycopg.Connection, args: dict[str, Any]) -> str:
 
     if include_entities:
         result = search.get_document_context(conn, bibcode)
+        min_prec_raw = args.get("min_precision")
+        min_precision: float | None
+        if isinstance(min_prec_raw, bool) or min_prec_raw is None:
+            min_precision = None
+        elif isinstance(min_prec_raw, (int, float)):
+            min_precision = float(min_prec_raw)
+        else:
+            min_precision = None
+        for paper in result.papers:
+            if isinstance(paper, dict):
+                _attach_precision_to_linked_entities(conn, paper, min_precision=min_precision)
         return _result_to_json(result)
 
     result = search.get_paper(conn, bibcode)

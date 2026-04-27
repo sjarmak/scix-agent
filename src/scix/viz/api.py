@@ -261,6 +261,12 @@ def demo_search(payload: DemoSearchRequest) -> dict:
         "mode": "hybrid",
         "limit": payload.top_n,
         "disambiguate": False,
+        # bypass_unscoped_guard: the search tool blocks unscoped queries of
+        # 3+ tokens by default. The agent-trace demo is an explicit showcase
+        # path where broad multi-word queries are exactly what we want to
+        # demonstrate; the guard is meant for autonomous agents wandering
+        # into expensive scans, not curated demo flows.
+        "bypass_unscoped_guard": True,
     }
     search_json = mcp_server.call_tool("search", search_args)
     search_payload = json.loads(search_json)
@@ -518,16 +524,16 @@ def demo_survey(payload: DemoSearchRequest) -> dict:
     t_start = time.monotonic()
     steps: list[dict] = []
 
-    # 1 — seed search. Use hybrid + disambiguate=False so the pipeline gets
-    # real bibcodes regardless of whether the query mentions known entities;
-    # otherwise the seed search short-circuits to a {disambiguation:[...]}
-    # payload and every downstream step (citation_similarity, concept_search,
-    # get_paper, graph_context) cascades to zero results.
+    # 1 — seed search. Hybrid + disambiguate=False so the pipeline gets
+    # real bibcodes regardless of whether the query mentions known entities.
+    # bypass_unscoped_guard=True because demo queries are usually 3+ tokens
+    # and the guard would otherwise block them.
     search_args = {
         "query": query,
         "mode": "hybrid",
         "limit": payload.top_n,
         "disambiguate": False,
+        "bypass_unscoped_guard": True,
     }
     search_res, ms = _call_mcp("search", search_args)
     seed_bibs = _bibcodes_of(search_res)
@@ -627,16 +633,16 @@ def demo_methods(payload: DemoSearchRequest) -> dict:
     t_start = time.monotonic()
     steps: list[dict] = []
 
-    # 1 — seed search. Use hybrid + disambiguate=False so the pipeline gets
-    # real bibcodes regardless of whether the query mentions known entities;
-    # otherwise the seed search short-circuits to a {disambiguation:[...]}
-    # payload and the coupling/graph_context/concept_search steps cascade
-    # to zero results.
+    # 1 — seed search. Hybrid + disambiguate=False so the pipeline gets
+    # real bibcodes regardless of whether the query mentions known entities.
+    # bypass_unscoped_guard=True because demo queries are usually 3+ tokens
+    # and the guard would otherwise block them.
     search_args = {
         "query": query,
         "mode": "hybrid",
         "limit": payload.top_n,
         "disambiguate": False,
+        "bypass_unscoped_guard": True,
     }
     search_res, ms = _call_mcp("search", search_args)
     seed_bibs = _bibcodes_of(search_res)

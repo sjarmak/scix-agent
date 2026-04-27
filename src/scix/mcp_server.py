@@ -1351,8 +1351,14 @@ def create_server(_run_self_test: bool = True):
                     "alternate label, or a URI (concept_id or external_uri). Returns "
                     "concept hits in metadata.concepts; for UAT hits, also returns "
                     "papers tagged with the best concept (and its descendants by "
-                    "default). Use search instead when the query is free-form natural "
-                    "language rather than a curated taxonomy term."
+                    "default). Free-text fallback: when no controlled-vocabulary "
+                    "concept resolves, the tool falls through to lexical (BM25) search "
+                    "on the corpus and returns those papers with "
+                    "metadata.fallback='lexical_search' and metadata.concept_found=false. "
+                    "Disable via fallback=false for strict vocabulary-only behavior. "
+                    "For best results on short, taxonomy-shaped queries (e.g. "
+                    "'Exoplanets', 'Black Holes'), use this tool. For free-form natural "
+                    "language, search is usually a better first call."
                 ),
                 inputSchema={
                     "type": "object",
@@ -1380,6 +1386,17 @@ def create_server(_run_self_test: bool = True):
                             "description": (
                                 "When the best hit is a UAT concept, include papers "
                                 "tagged with descendants in the hierarchy."
+                            ),
+                        },
+                        "fallback": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": (
+                                "When true (default), free-text queries that resolve "
+                                "to no vocabulary concept fall through to lexical "
+                                "(BM25) search and return those papers with "
+                                "metadata.fallback='lexical_search'. Set false for "
+                                "strict vocabulary-only behavior (legacy)."
                             ),
                         },
                         "limit": {"type": "integer", "default": 20},
@@ -2637,6 +2654,7 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
             vocabulary=args.get("vocabulary"),
             include_subtopics=args.get("include_subtopics", True),
             limit=args.get("limit", 20),
+            fallback=args.get("fallback", True),
         )
         return _result_to_json(result)
 

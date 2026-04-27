@@ -254,7 +254,16 @@ def demo_search(payload: DemoSearchRequest) -> dict:
     # stays in keyword mode so it doesn't 500 on prod.
     use_hybrid = os.environ.get("SCIX_USE_HALFVEC", "0") == "1"
     mode = "hybrid" if use_hybrid else "keyword"
-    search_args = {"query": query, "mode": mode, "limit": payload.top_n}
+    # disambiguate=False: this is an instrumentation/trace demo, not an
+    # interactive search. The default (True) short-circuits to a
+    # {"disambiguation": [...]} payload whenever the query contains an
+    # entity mention, which the agent-trace UI then reports as 0 bibcodes.
+    search_args = {
+        "query": query,
+        "mode": mode,
+        "limit": payload.top_n,
+        "disambiguate": False,
+    }
     search_json = mcp_server.call_tool("search", search_args)
     search_payload = json.loads(search_json)
 

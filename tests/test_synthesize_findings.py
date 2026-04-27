@@ -109,7 +109,7 @@ class TestIntentAssignment:
         citation_contexts.intent goes to 'methods' (modal intent wins)."""
         # Query 1: papers metadata. (bibcode, title, year, abstract)
         papers_rows = [
-            ("2024A", "Method paper", 2024, "An abstract about methods."),
+            ("2024A", "Method paper", 2024, "An abstract about methods.", 0),
         ]
         # Query 2: intent histogram per target_bibcode.
         # Columns: (target_bibcode, intent, n_rows)
@@ -138,7 +138,7 @@ class TestIntentAssignment:
             assert all(p["bibcode"] != "2024A" for p in s.cited_papers)
 
     def test_result_comparison_intent_maps_to_results_section(self) -> None:
-        papers_rows = [("2024B", "Replication paper", 2024, "abs")]
+        papers_rows = [("2024B", "Replication paper", 2024, "abs", 0)]
         intent_rows = [("2024B", "result_comparison", 5)]
         community_rows = [("2024B", 1, "Stellar")]
         conn = _mock_conn([papers_rows, intent_rows, community_rows])
@@ -160,9 +160,9 @@ class TestCommunityFallThrough:
     def test_paper_in_modal_community_lands_in_background(self) -> None:
         """No intent coverage; community signal alone decides section."""
         papers_rows = [
-            ("2024X", "Paper X", 2024, "abs X"),
-            ("2024Y", "Paper Y", 2024, "abs Y"),
-            ("2024Z", "Paper Z", 2024, "abs Z"),
+            ("2024X", "Paper X", 2024, "abs X", 0),
+            ("2024Y", "Paper Y", 2024, "abs Y", 0),
+            ("2024Z", "Paper Z", 2024, "abs Z", 0),
         ]
         intent_rows: list[tuple] = []  # no intent coverage at all
         # X and Y in community 5 (modal); Z in community 99 (outlier)
@@ -190,18 +190,51 @@ class TestCommunityFallThrough:
         # Z is in a minority community -> open_questions (cross-community).
         assert "2024Z" in oq_bibcodes
 
-    def test_no_intent_no_community_lands_in_unattributed(self) -> None:
-        papers_rows = [("2024U", "Orphan paper", 2024, "abs")]
+    def test_no_intent_no_community_falls_back_or_unattributed(self) -> None:
+        """Pre-spj0 contract: orphan paper -> ``unattributed_bibcodes``.
+
+        Post-spj0 contract: orphan paper is eligible for the citation-count
+        fallback (Tier 3) when at least one section is empty after Tiers
+        1-2. With a non-zero ``max_papers_per_section`` (default 8 -> cap 4)
+        the paper lands in the first empty section. With a tiny cap (1)
+        the fallback is disabled (``1 // 2 == 0``) and the paper remains
+        in unattributed.
+        """
+        papers_rows = [("2024U", "Orphan paper", 2024, "abs", 0)]
         intent_rows: list[tuple] = []
         community_rows: list[tuple] = []  # no metrics row at all
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        # cap == 0 path: no fallback, paper unattributed.
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024U"],
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=1,  # 1 // 2 == 0, fallback disabled
+        )
+        assert "2024U" in result.unattributed_bibcodes
+        assert all(not s.cited_papers for s in result.sections)
+
+    def test_no_intent_no_community_with_default_cap_pulls_via_fallback(
+        self,
+    ) -> None:
+        """Companion to the test above: at the default cap, the orphan
+        paper is fallback-pulled and marked ``citation_count_fallback``."""
+        papers_rows = [("2024U", "Orphan paper", 2024, "abs", 0)]
+        intent_rows: list[tuple] = []
+        community_rows: list[tuple] = []
         conn = _mock_conn([papers_rows, intent_rows, community_rows])
 
         result = synthesize_findings(
             conn,
             working_set_bibcodes=["2024U"],
             sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=8,
         )
-        assert "2024U" in result.unattributed_bibcodes
+        # Paper now lives in the first empty section (background).
+        assert "2024U" not in result.unattributed_bibcodes
+        all_rows = {p["bibcode"]: p for s in result.sections for p in s.cited_papers}
+        assert all_rows["2024U"]["signal_used"] == "citation_count_fallback"
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +246,7 @@ class TestDeterministicStructure:
     def test_returns_all_requested_sections_even_when_empty(self) -> None:
         """The 4 default sections always appear in the output, in canonical
         order, even when some have zero cited papers."""
-        papers_rows = [("2024A", "P", 2024, "a")]
+        papers_rows = [("2024A", "P", 2024, "a", 0)]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "L1")]
         conn = _mock_conn([papers_rows, intent_rows, community_rows])
@@ -233,7 +266,7 @@ class TestDeterministicStructure:
 
     def test_max_papers_per_section_is_respected(self) -> None:
         # 10 papers all assigned to background via modal community.
-        papers_rows = [(f"2024P{i}", f"P{i}", 2024, f"a{i}") for i in range(10)]
+        papers_rows = [(f"2024P{i}", f"P{i}", 2024, f"a{i}", 0) for i in range(10)]
         intent_rows: list[tuple] = []
         community_rows = [(f"2024P{i}", 1, "Common") for i in range(10)]
         conn = _mock_conn([papers_rows, intent_rows, community_rows])
@@ -249,8 +282,8 @@ class TestDeterministicStructure:
 
     def test_coverage_note_reports_section_signal_count(self) -> None:
         papers_rows = [
-            ("2024A", "A", 2024, "abs"),
-            ("2024B", "B", 2024, "abs"),
+            ("2024A", "A", 2024, "abs", 0),
+            ("2024B", "B", 2024, "abs", 0),
         ]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [
@@ -279,7 +312,7 @@ class TestDeterministicStructure:
 
 class TestMCPDispatch:
     def test_dispatch_with_working_set_arg(self) -> None:
-        papers_rows = [("2024A", "T", 2024, "abs")]
+        papers_rows = [("2024A", "T", 2024, "abs", 0)]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "Lbl")]
         conn = _mock_conn([papers_rows, intent_rows, community_rows])
@@ -305,7 +338,7 @@ class TestMCPDispatch:
         # get_paper / lit_review calls).
         _session_state.track_focused("2024A")
 
-        papers_rows = [("2024A", "T", 2024, "abs")]
+        papers_rows = [("2024A", "T", 2024, "abs", 0)]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "Lbl")]
         conn = _mock_conn([papers_rows, intent_rows, community_rows])
@@ -334,7 +367,7 @@ class TestAcceptanceCoverage:
         """AC5: a 30-paper working set is split into the 4 default sections
         with >50% coverage (i.e. <50% land in unattributed)."""
         bibcodes = [f"2024P{i:02d}" for i in range(30)]
-        papers_rows = [(b, f"Title {b}", 2024, f"abs {b}") for b in bibcodes]
+        papers_rows = [(b, f"Title {b}", 2024, f"abs {b}", 0) for b in bibcodes]
         # 5 papers carry intent coverage spanning all 3 intents.
         intent_rows = [
             ("2024P00", "method", 3),
@@ -378,7 +411,7 @@ class TestPerPaperSignals:
     section assignment, so an agent can re-bucket papers it disagrees with."""
 
     def test_signal_used_intent_modal_when_modal_intent_decides(self) -> None:
-        papers_rows = [("2024A", "Method paper", 2024, "abs")]
+        papers_rows = [("2024A", "Method paper", 2024, "abs", 0)]
         intent_rows = [
             ("2024A", "method", 2),
             ("2024A", "background", 1),
@@ -398,8 +431,8 @@ class TestPerPaperSignals:
 
     def test_signal_used_community_fallthrough_when_no_intent_coverage(self) -> None:
         papers_rows = [
-            ("2024X", "X", 2024, "abs"),
-            ("2024Y", "Y", 2024, "abs"),
+            ("2024X", "X", 2024, "abs", 0),
+            ("2024Y", "Y", 2024, "abs", 0),
         ]
         intent_rows: list[tuple] = []
         community_rows = [
@@ -421,9 +454,9 @@ class TestPerPaperSignals:
         """AC1 schema: signals.{intent_counts, intent_total_rows, community_id,
         community_share, is_modal_community, modal_community_id}."""
         papers_rows = [
-            ("2024A", "A", 2024, "abs"),
-            ("2024B", "B", 2024, "abs"),
-            ("2024C", "C", 2024, "abs"),
+            ("2024A", "A", 2024, "abs", 0),
+            ("2024B", "B", 2024, "abs", 0),
+            ("2024C", "C", 2024, "abs", 0),
         ]
         intent_rows = [
             ("2024A", "method", 3),
@@ -477,7 +510,7 @@ class TestPerPaperSignals:
         """A paper with intent_counts {method, background} should list both
         'methods' and 'background' as alternatives even though only the modal
         intent decides the assignment."""
-        papers_rows = [("2024A", "A", 2024, "abs")]
+        papers_rows = [("2024A", "A", 2024, "abs", 0)]
         intent_rows = [
             ("2024A", "method", 3),
             ("2024A", "background", 1),
@@ -514,7 +547,7 @@ class TestSectionOverrides:
         produces a result where those 3 land in the override sections and
         other papers are unchanged."""
         bibcodes = [f"2024P{i:02d}" for i in range(30)]
-        papers_rows = [(b, f"T{b}", 2024, f"abs{b}") for b in bibcodes]
+        papers_rows = [(b, f"T{b}", 2024, f"abs{b}", 0) for b in bibcodes]
         # All 30 papers in modal community 1 -> would all go to 'background'.
         intent_rows: list[tuple] = []
         community_rows = [(b, 1, "L") for b in bibcodes]
@@ -535,9 +568,7 @@ class TestSectionOverrides:
         )
 
         # Build {bibcode: section_name} from the result.
-        bib_to_section = {
-            p["bibcode"]: s.name for s in result.sections for p in s.cited_papers
-        }
+        bib_to_section = {p["bibcode"]: s.name for s in result.sections for p in s.cited_papers}
         assert bib_to_section["2024P00"] == "methods"
         assert bib_to_section["2024P01"] == "results"
         assert bib_to_section["2024P02"] == "background"
@@ -555,7 +586,7 @@ class TestSectionOverrides:
     def test_override_to_unknown_section_is_ignored(self) -> None:
         """If the override targets a section that isn't in the requested
         sections list, the paper falls through to normal rules."""
-        papers_rows = [("2024A", "A", 2024, "abs")]
+        papers_rows = [("2024A", "A", 2024, "abs", 0)]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "L")]
         conn = _mock_conn([papers_rows, intent_rows, community_rows])
@@ -574,7 +605,7 @@ class TestSectionOverrides:
 
     def test_overrides_with_non_string_keys_or_values_skipped(self) -> None:
         """Defensive: malformed override dict entries don't crash."""
-        papers_rows = [("2024A", "A", 2024, "abs")]
+        papers_rows = [("2024A", "A", 2024, "abs", 0)]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "L")]
         conn = _mock_conn([papers_rows, intent_rows, community_rows])
@@ -599,7 +630,7 @@ class TestSectionOverrides:
 
 class TestMCPDispatchOverrides:
     def test_dispatch_accepts_section_overrides(self) -> None:
-        papers_rows = [("2024A", "T", 2024, "abs")]
+        papers_rows = [("2024A", "T", 2024, "abs", 0)]
         intent_rows: list[tuple] = []
         community_rows = [("2024A", 1, "L")]
         conn = _mock_conn([papers_rows, intent_rows, community_rows])
@@ -630,3 +661,231 @@ class TestMCPDispatchOverrides:
         )
         result = json.loads(out)
         assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Empty-section citation-count fallback (bead scix_experiments-spj0)
+# ---------------------------------------------------------------------------
+
+
+class TestEmptySectionFallback:
+    """AC1-4: when a section is empty after intent + community tiers, fill it
+    from the unattributed working-set papers sorted by citation_count desc,
+    capped at max_papers_per_section // 2.
+
+    Surfaced 2026-04-27 by the lit-review demo: ``citation_contexts.intent``
+    only covers ~0.27% of edges, so the ``results`` section frequently came
+    out empty even when high-citation results papers were present in the
+    working set.
+    """
+
+    def test_results_filled_by_citation_count_when_no_intent(self) -> None:
+        """AC4: 30-paper working set with no result_comparison intent rows
+        still produces a non-empty results section, populated by the
+        highest-citation unattributed papers tagged
+        ``signal_used='citation_count_fallback'``.
+
+        Realistic shape: tiers 1-2 fill ``background`` (community
+        fall-through) and ``methods`` (a few intent rows); ``results``
+        and ``open_questions`` are empty until Tier 3 fires.
+        """
+        bibcodes = [f"2024P{i:02d}" for i in range(30)]
+        # citation_count varies — top citers will land in the fallback pull.
+        papers_rows = [
+            (b, f"Title {b}", 2024, f"abs {b}", 100 - i)  # P00=100, P01=99, ...
+            for i, b in enumerate(bibcodes)
+        ]
+        # No result_comparison intent rows anywhere. P00 -> methods.
+        intent_rows = [
+            ("2024P00", "method", 1),
+        ]
+        # P10..P19 attributed via community to 'background' (modal community).
+        # P20..P29 are entirely unattributed (eligible for Tier 3 fallback).
+        community_rows = [(f"2024P{i:02d}", 1, "Modal") for i in range(10, 20)]
+
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=8,
+        )
+
+        results_section = next(s for s in result.sections if s.name == "results")
+        # AC1: results section is non-empty.
+        assert len(results_section.cited_papers) > 0
+        # AC2: every paper in the fallback-only section is tagged correctly.
+        for row in results_section.cited_papers:
+            assert row["signal_used"] == "citation_count_fallback"
+        bibs_in_results = {p["bibcode"] for p in results_section.cited_papers}
+        # P00 is intent-attributed to methods, must NOT be in the fallback.
+        assert "2024P00" not in bibs_in_results
+        # Community-attributed papers must NOT be in the fallback either.
+        assert bibs_in_results.isdisjoint({f"2024P{i:02d}" for i in range(10, 20)})
+        # Highest-citation unattributed paper (P01, citation_count=99) lands
+        # in the FIRST empty section processed in canonical order. That's
+        # ``results`` here because background was filled by community
+        # fall-through and methods by the intent row.
+        assert "2024P01" in bibs_in_results
+
+    def test_fallback_capped_at_half_max(self) -> None:
+        """AC1: fallback-pulled papers per section <= max_papers_per_section // 2.
+        Tests integer floor: 7 // 2 == 3, 8 // 2 == 4.
+        """
+        bibcodes = [f"2024Q{i:02d}" for i in range(20)]
+        papers_rows = [(b, f"T{b}", 2024, f"a{b}", 50 - i) for i, b in enumerate(bibcodes)]
+        intent_rows: list[tuple] = []  # nothing attributed via intent
+        community_rows: list[tuple] = []  # nothing attributed via community
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=8,
+        )
+
+        # All 4 sections were empty after primary bucketing, so all 4 should
+        # have fallback pulls — each capped at 8 // 2 == 4.
+        for section in result.sections:
+            fallback_rows = [
+                p for p in section.cited_papers if p.get("signal_used") == "citation_count_fallback"
+            ]
+            assert len(fallback_rows) <= 8 // 2
+
+    def test_fallback_capped_at_half_for_odd_max(self) -> None:
+        """Floor division on odd cap: 7 // 2 == 3."""
+        bibcodes = [f"2024R{i:02d}" for i in range(20)]
+        papers_rows = [(b, f"T{b}", 2024, f"a{b}", 50 - i) for i, b in enumerate(bibcodes)]
+        intent_rows: list[tuple] = []
+        community_rows: list[tuple] = []
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=7,
+        )
+        for section in result.sections:
+            fallback_rows = [
+                p for p in section.cited_papers if p.get("signal_used") == "citation_count_fallback"
+            ]
+            assert len(fallback_rows) <= 7 // 2  # 3
+
+    def test_fallback_excludes_already_attributed(self) -> None:
+        """AC3: papers attributed via intent or community must NOT be
+        fallback-pulled into other (empty) sections."""
+        bibcodes = [f"2024S{i:02d}" for i in range(10)]
+        papers_rows = [(b, f"T{b}", 2024, f"a{b}", 100 - i) for i, b in enumerate(bibcodes)]
+        # First 3 papers attributed via intent (high citation_count would make
+        # them attractive fallback candidates if the rule were broken).
+        intent_rows = [
+            ("2024S00", "method", 1),
+            ("2024S01", "method", 1),
+            ("2024S02", "background", 1),
+        ]
+        # Next 3 attributed via community (modal -> background).
+        community_rows = [
+            ("2024S03", 1, "Lbl"),
+            ("2024S04", 1, "Lbl"),
+            ("2024S05", 1, "Lbl"),
+        ]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=8,
+        )
+
+        # 'results' is empty after primary tiers — should be fallback-filled
+        # ONLY from the remaining 4 unattributed papers (S06, S07, S08, S09).
+        results_section = next(s for s in result.sections if s.name == "results")
+        bibs_in_results = {p["bibcode"] for p in results_section.cited_papers}
+        attributed = {f"2024S0{i}" for i in range(6)}  # S00..S05
+        assert bibs_in_results.isdisjoint(
+            attributed
+        ), "fallback must not poach intent/community-attributed papers"
+        # All papers in results are fallback-pulled.
+        for row in results_section.cited_papers:
+            assert row["signal_used"] == "citation_count_fallback"
+
+    def test_coverage_block_has_fallback_pulled_per_section(self) -> None:
+        """AC2: coverage dict exposes ``fallback_pulled_per_section`` as a
+        ``{section_name: int}`` mapping showing how much of each section is
+        secondary signal vs primary."""
+        bibcodes = [f"2024T{i:02d}" for i in range(10)]
+        papers_rows = [(b, f"T{b}", 2024, f"a{b}", 50 - i) for i, b in enumerate(bibcodes)]
+        intent_rows: list[tuple] = []
+        community_rows: list[tuple] = []
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=8,
+        )
+
+        per_section = result.coverage["fallback_pulled_per_section"]
+        assert isinstance(per_section, dict)
+        # Every requested section appears as a key (even if 0).
+        assert set(per_section.keys()) == set(DEFAULT_SECTIONS)
+        # All values are non-negative ints.
+        for k, v in per_section.items():
+            assert isinstance(v, int)
+            assert v >= 0
+        # The wire format also surfaces it (via to_dict()).
+        wire = result.to_dict()
+        assert "fallback_pulled_per_section" in wire["assignment_coverage"]
+
+    def test_overrides_are_not_eligible_for_fallback(self) -> None:
+        """AC3 mirror: a paper pinned via section_overrides to one section
+        must NOT be fallback-pulled into another (even-empty) section."""
+        bibcodes = [f"2024V{i:02d}" for i in range(10)]
+        papers_rows = [(b, f"T{b}", 2024, f"a{b}", 100 - i) for i, b in enumerate(bibcodes)]
+        intent_rows: list[tuple] = []
+        community_rows: list[tuple] = []
+        # Pin the highest-citation paper to 'methods' via override.
+        overrides = {"2024V00": "methods"}
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=8,
+            section_overrides=overrides,
+        )
+
+        # 'results' is empty after primary tiers — fallback should NOT pull V00.
+        results_section = next(s for s in result.sections if s.name == "results")
+        bibs_in_results = {p["bibcode"] for p in results_section.cited_papers}
+        assert "2024V00" not in bibs_in_results
+
+        # V00 still appears in 'methods' with signal_used='override'.
+        methods = next(s for s in result.sections if s.name == "methods")
+        v00_row = next((p for p in methods.cited_papers if p["bibcode"] == "2024V00"), None)
+        assert v00_row is not None
+        assert v00_row["signal_used"] == "override"
+
+    def test_no_unattributed_means_no_fallback(self) -> None:
+        """If all papers are already attributed via tiers 0-2, fallback is
+        a no-op (empty pool). Coverage shows 0 for every section."""
+        bibcodes = [f"2024W{i:02d}" for i in range(5)]
+        papers_rows = [(b, f"T{b}", 2024, f"a{b}", 10) for b in bibcodes]
+        # Every paper has a method intent -> all attributed to 'methods'.
+        intent_rows = [(b, "method", 1) for b in bibcodes]
+        community_rows: list[tuple] = []
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=8,
+        )
+        per_section = result.coverage["fallback_pulled_per_section"]
+        assert all(v == 0 for v in per_section.values())

@@ -1,0 +1,481 @@
+"""Mechanical aggregation: working set + section shape -> grounded outline.
+
+This module backs the ``synthesize_findings`` MCP tool. It is **pure
+mechanism** — no LLM call lives inside this orchestration code (per the
+ZFC pattern in ``rules/common/patterns.md``). The model writes the
+synthesis prose using the structured output as scaffolding; this module
+just bins working-set bibcodes into named sections using two existing
+signals:
+
+  1. ``citation_contexts.intent`` — modal intent across rows where the
+     working-set bibcode is the *target* (i.e., how others cite it). Maps
+     ``method`` -> "methods", ``background`` -> "background",
+     ``result_comparison`` -> "results". Coverage is small (~0.27% of
+     edges per bead 79n) so this signal lights up only a minority of
+     papers.
+
+  2. Community-membership fall-through — when no intent coverage exists
+     for a paper, the modal community across the working set defines
+     "background" and out-of-modal-community papers go to
+     "open_questions" (the cross-community signal).
+
+Papers with no signal in either layer land in ``unattributed_bibcodes``.
+
+The ``theme_summary`` per section is a deterministic concatenation of
+the section's most-common community labels — no semantic generation.
+
+References
+----------
+  * Bead scix_experiments-cfh9 (this implementation)
+  * Bead 79n (citation_contexts.intent partial coverage)
+  * docs/CLAUDE.md "ZFC" guidance
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Sequence
+
+import psycopg
+
+# ---------------------------------------------------------------------------
+# Public constants
+# ---------------------------------------------------------------------------
+
+DEFAULT_SECTIONS: tuple[str, ...] = (
+    "background",
+    "methods",
+    "results",
+    "open_questions",
+)
+
+# Mapping from citation_contexts.intent values to outline section names.
+# The three known intent labels (method, background, result_comparison)
+# come from the citation-intent classifier in src/scix/extract; see
+# bead 79n for coverage notes.
+INTENT_TO_SECTION: Mapping[str, str] = {
+    "background": "background",
+    "method": "methods",
+    "result_comparison": "results",
+}
+
+# Maximum number of bibcodes we will accept in a single call. Mirrors
+# find_gaps' implicit cap (200) so behaviour is consistent across tools.
+_MAX_WORKING_SET_BIBCODES = 200
+
+
+# ---------------------------------------------------------------------------
+# Result dataclasses (frozen — immutable per coding-style guidance)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SectionBucket:
+    """A single named section in the synthesised outline."""
+
+    name: str
+    cited_papers: list[dict[str, Any]] = field(default_factory=list)
+    theme_summary: str = ""
+
+
+@dataclass(frozen=True)
+class SynthesisResult:
+    """Top-level result returned by :func:`synthesize_findings`."""
+
+    sections: list[SectionBucket]
+    unattributed_bibcodes: list[str]
+    coverage: dict[str, int]
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serialisable representation for the MCP wire format."""
+        return {
+            "sections": [
+                {
+                    "name": s.name,
+                    "cited_papers": list(s.cited_papers),
+                    "theme_summary": s.theme_summary,
+                }
+                for s in self.sections
+            ],
+            "unattributed_bibcodes": list(self.unattributed_bibcodes),
+            "coverage": dict(self.coverage),
+            "metadata": dict(self.metadata),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Public entrypoint
+# ---------------------------------------------------------------------------
+
+
+def synthesize_findings(
+    conn: psycopg.Connection,
+    working_set_bibcodes: Sequence[str] | None,
+    *,
+    sections: Sequence[str] | None = None,
+    max_papers_per_section: int = 8,
+) -> SynthesisResult:
+    """Bin a working set of papers into named sections.
+
+    Parameters
+    ----------
+    conn:
+        Open psycopg connection. The function issues three short SELECTs:
+        one against ``papers``, one against ``citation_contexts``, one
+        against ``paper_metrics`` joined to ``communities``.
+    working_set_bibcodes:
+        Bibcodes to synthesise. ``None`` or an empty sequence yields an
+        empty result (the MCP wrapper falls through to the session
+        focused-papers list before calling this function).
+    sections:
+        Section names to emit, in order. Defaults to
+        :data:`DEFAULT_SECTIONS`. Section names that don't appear in the
+        intent map (e.g., ``open_questions``) only receive papers via
+        the community fall-through.
+    max_papers_per_section:
+        Cap on per-section ``cited_papers`` length (deterministic order:
+        first by year desc, then bibcode asc).
+    """
+    sections_list = list(sections) if sections else list(DEFAULT_SECTIONS)
+    bibcodes = _prepare_bibcodes(working_set_bibcodes)
+
+    if not bibcodes:
+        return SynthesisResult(
+            sections=[],
+            unattributed_bibcodes=[],
+            coverage={
+                "total_bibcodes": 0,
+                "assigned_bibcodes": 0,
+                "unattributed_bibcodes": 0,
+                "intent_assigned_bibcodes": 0,
+                "community_assigned_bibcodes": 0,
+            },
+            metadata={
+                "message": (
+                    "Empty working set. Pass working_set_bibcodes or "
+                    "populate the session via lit_review/get_paper first."
+                ),
+                "sections_requested": sections_list,
+            },
+        )
+
+    paper_meta = _fetch_paper_metadata(conn, bibcodes)
+    intent_hist = _fetch_intent_histogram(conn, bibcodes)
+    community_map = _fetch_community_assignments(conn, bibcodes)
+
+    return _assemble_sections(
+        bibcodes=bibcodes,
+        sections=sections_list,
+        paper_meta=paper_meta,
+        intent_hist=intent_hist,
+        community_map=community_map,
+        max_papers_per_section=max_papers_per_section,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Bibcode preparation
+# ---------------------------------------------------------------------------
+
+
+def _prepare_bibcodes(raw: Sequence[str] | None) -> list[str]:
+    """Deduplicate, strip, and cap the input bibcode list."""
+    if not raw:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for b in raw:
+        if not isinstance(b, str):
+            continue
+        bb = b.strip()
+        if not bb or bb in seen:
+            continue
+        seen.add(bb)
+        out.append(bb)
+        if len(out) >= _MAX_WORKING_SET_BIBCODES:
+            break
+    return out
+
+
+# ---------------------------------------------------------------------------
+# DB queries (each kept in its own small function for readability)
+# ---------------------------------------------------------------------------
+
+
+def _fetch_paper_metadata(
+    conn: psycopg.Connection, bibcodes: Sequence[str]
+) -> dict[str, dict[str, Any]]:
+    """Return ``{bibcode: {title, year, abstract_snippet}}`` for the input."""
+    sql = """
+        SELECT bibcode, title, year, abstract
+        FROM papers
+        WHERE bibcode = ANY(%s)
+    """
+    out: dict[str, dict[str, Any]] = {}
+    with conn.cursor() as cur:
+        cur.execute(sql, (list(bibcodes),))
+        for row in cur.fetchall():
+            bibcode = row[0]
+            abstract = row[3] or ""
+            out[bibcode] = {
+                "bibcode": bibcode,
+                "title": row[1],
+                "year": row[2],
+                "abstract_snippet": _snippet(abstract),
+            }
+    return out
+
+
+def _fetch_intent_histogram(
+    conn: psycopg.Connection, bibcodes: Sequence[str]
+) -> dict[str, Counter[str]]:
+    """Return ``{bibcode: Counter({intent: n_rows})}`` from citation_contexts.
+
+    Rows are aggregated server-side via ``GROUP BY``. Rows with NULL
+    ``intent`` are skipped (they carry no signal for section assignment).
+    """
+    sql = """
+        SELECT target_bibcode, intent, COUNT(*) AS n_rows
+        FROM citation_contexts
+        WHERE target_bibcode = ANY(%s)
+          AND intent IS NOT NULL
+        GROUP BY target_bibcode, intent
+    """
+    out: dict[str, Counter[str]] = {}
+    with conn.cursor() as cur:
+        cur.execute(sql, (list(bibcodes),))
+        for row in cur.fetchall():
+            target, intent, n_rows = row[0], row[1], int(row[2])
+            out.setdefault(target, Counter())[intent] = n_rows
+    return out
+
+
+def _fetch_community_assignments(
+    conn: psycopg.Connection, bibcodes: Sequence[str]
+) -> dict[str, dict[str, Any]]:
+    """Return ``{bibcode: {community_id, community_label}}``.
+
+    Uses the semantic-medium partition (``community_semantic_medium``)
+    by default — this matches the ``find_gaps`` default and is the only
+    partition with full 32M-paper coverage. The Phase-A sentinel ``-1``
+    on the citation partition is filtered server-side (the semantic
+    partition has no sentinel but the filter is harmless).
+    """
+    sql = """
+        SELECT pm.bibcode,
+               pm.community_semantic_medium AS community_id,
+               c.label AS community_label
+        FROM paper_metrics pm
+        LEFT JOIN communities c
+               ON c.signal = 'semantic'
+              AND c.resolution = 'medium'
+              AND c.community_id = pm.community_semantic_medium
+        WHERE pm.bibcode = ANY(%s)
+          AND pm.community_semantic_medium IS NOT NULL
+          AND pm.community_semantic_medium <> -1
+    """
+    out: dict[str, dict[str, Any]] = {}
+    with conn.cursor() as cur:
+        cur.execute(sql, (list(bibcodes),))
+        for row in cur.fetchall():
+            bibcode = row[0]
+            out[bibcode] = {
+                "community_id": int(row[1]),
+                "community_label": row[2],
+            }
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Pure-arithmetic assembly
+# ---------------------------------------------------------------------------
+
+
+def _modal_intent(hist: Counter[str]) -> str | None:
+    """Return the modal intent label, or ``None`` if the counter is empty.
+
+    Ties are broken by the canonical order
+    (``background`` < ``method`` < ``result_comparison``) so the
+    function is deterministic.
+    """
+    if not hist:
+        return None
+    canonical = ("background", "method", "result_comparison")
+    rank = {label: i for i, label in enumerate(canonical)}
+    return max(
+        hist.items(),
+        key=lambda kv: (kv[1], -rank.get(kv[0], 999)),
+    )[0]
+
+
+def _modal_community(
+    bibcodes: Sequence[str], community_map: Mapping[str, dict[str, Any]]
+) -> int | None:
+    """Return the most-common community_id across the working set, or None."""
+    counts: Counter[int] = Counter()
+    for b in bibcodes:
+        info = community_map.get(b)
+        if info is not None:
+            counts[info["community_id"]] += 1
+    if not counts:
+        return None
+    # Tiebreak by community_id ascending for determinism.
+    return min(
+        counts.items(),
+        key=lambda kv: (-kv[1], kv[0]),
+    )[0]
+
+
+def _theme_summary_for(
+    bibcodes: Sequence[str],
+    community_map: Mapping[str, dict[str, Any]],
+    top_k: int = 3,
+) -> str:
+    """Build a one-line theme summary by joining top community labels.
+
+    Pure aggregation: the top-K most-common community labels among the
+    section's papers, joined with ``; ``. No LLM, no semantic
+    generation. Returns an empty string if no labels are available.
+    """
+    label_counts: Counter[str] = Counter()
+    for b in bibcodes:
+        info = community_map.get(b)
+        if info and info.get("community_label"):
+            label_counts[info["community_label"]] += 1
+    if not label_counts:
+        return ""
+    top = [label for label, _ in label_counts.most_common(top_k)]
+    return "; ".join(top)
+
+
+def _assemble_sections(
+    *,
+    bibcodes: Sequence[str],
+    sections: Sequence[str],
+    paper_meta: Mapping[str, dict[str, Any]],
+    intent_hist: Mapping[str, Counter[str]],
+    community_map: Mapping[str, dict[str, Any]],
+    max_papers_per_section: int,
+) -> SynthesisResult:
+    """Bin bibcodes into the requested sections via the two-tier rule."""
+
+    # Per-section bucket of bibcodes (preserves working-set order).
+    buckets: dict[str, list[str]] = {name: [] for name in sections}
+    unattributed: list[str] = []
+    intent_assigned = 0
+    community_assigned = 0
+
+    modal_comm = _modal_community(bibcodes, community_map)
+    section_set = set(sections)
+
+    for bibcode in bibcodes:
+        target_section = None
+
+        # Tier 1: intent histogram
+        modal = _modal_intent(intent_hist.get(bibcode, Counter()))
+        if modal is not None:
+            mapped = INTENT_TO_SECTION.get(modal)
+            if mapped is not None and mapped in section_set:
+                target_section = mapped
+                intent_assigned += 1
+
+        # Tier 2: community fall-through
+        if target_section is None:
+            comm = community_map.get(bibcode)
+            if comm is not None:
+                if (
+                    modal_comm is not None
+                    and comm["community_id"] == modal_comm
+                ):
+                    fallback = "background"
+                else:
+                    fallback = "open_questions"
+                if fallback in section_set:
+                    target_section = fallback
+                    community_assigned += 1
+
+        if target_section is None:
+            unattributed.append(bibcode)
+        else:
+            buckets[target_section].append(bibcode)
+
+    # Build SectionBucket list in the requested order; cap each at
+    # max_papers_per_section using a deterministic sort (year desc then
+    # bibcode asc) so callers get a stable outline.
+    out_sections: list[SectionBucket] = []
+    for name in sections:
+        chosen = _select_top_papers(
+            buckets[name], paper_meta, max_papers_per_section
+        )
+        cited = [_paper_row(b, paper_meta, name) for b in chosen]
+        theme = _theme_summary_for(chosen, community_map)
+        out_sections.append(
+            SectionBucket(
+                name=name,
+                cited_papers=cited,
+                theme_summary=theme,
+            )
+        )
+
+    coverage = {
+        "total_bibcodes": len(bibcodes),
+        "assigned_bibcodes": len(bibcodes) - len(unattributed),
+        "unattributed_bibcodes": len(unattributed),
+        "intent_assigned_bibcodes": intent_assigned,
+        "community_assigned_bibcodes": community_assigned,
+    }
+
+    return SynthesisResult(
+        sections=out_sections,
+        unattributed_bibcodes=unattributed,
+        coverage=coverage,
+        metadata={
+            "sections_requested": list(sections),
+            "modal_community_id": modal_comm,
+        },
+    )
+
+
+def _select_top_papers(
+    bibcodes: Sequence[str],
+    paper_meta: Mapping[str, dict[str, Any]],
+    cap: int,
+) -> list[str]:
+    """Sort a section's bibcodes by (year desc, bibcode asc) and cap."""
+    if cap <= 0:
+        return []
+
+    def sort_key(b: str) -> tuple[int, str]:
+        meta = paper_meta.get(b)
+        year = (meta or {}).get("year") or 0
+        # Negative year so descending; bibcode ascending for stable tiebreak.
+        return (-int(year), b)
+
+    return sorted(bibcodes, key=sort_key)[:cap]
+
+
+def _paper_row(
+    bibcode: str,
+    paper_meta: Mapping[str, dict[str, Any]],
+    role: str,
+) -> dict[str, Any]:
+    """Build the per-paper dict for a section's ``cited_papers`` list."""
+    meta = paper_meta.get(bibcode, {})
+    return {
+        "bibcode": bibcode,
+        "title": meta.get("title"),
+        "year": meta.get("year"),
+        "abstract_snippet": meta.get("abstract_snippet", ""),
+        "role": role,
+    }
+
+
+def _snippet(text: str, max_chars: int = 280) -> str:
+    """Truncate an abstract for the outline payload."""
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1].rstrip() + "…"

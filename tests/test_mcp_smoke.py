@@ -93,14 +93,15 @@ def mock_conn() -> MagicMock:
 class TestStartupSelfTest:
     """Validates the server's self-test catches missing/broken tools."""
 
-    def test_expected_tools_has_15_entries(self) -> None:
+    def test_expected_tools_has_20_entries(self) -> None:
         # 2026-04-25 consolidation: citation_graph + citation_chain merged
         # into citation_traverse (-1), find_similar_by_examples retired
         # (was opt-in, now hard-removed). Subsequent PRDs added
-        # claim_blame, find_replications, section_retrieval, and the two
-        # paper_claims retrieval tools. Final = 17.
-        assert len(EXPECTED_TOOLS) == 17
-        assert len(set(EXPECTED_TOOLS)) == 17  # no duplicates
+        # claim_blame, find_replications, section_retrieval, the two
+        # paper_claims retrieval tools, and cited_by_intent. Bead cfh9
+        # added synthesize_findings. Final = 20.
+        assert len(EXPECTED_TOOLS) == 20
+        assert len(set(EXPECTED_TOOLS)) == 20  # no duplicates
 
     def test_self_test_passes_on_fresh_server(self) -> None:
         """A freshly created server must pass the self-test."""
@@ -113,7 +114,7 @@ class TestStartupSelfTest:
             status = startup_self_test()
 
         assert status["ok"] is True
-        assert status["tool_count"] == 17
+        assert status["tool_count"] == 20
         assert status["errors"] == []
         assert sorted(EXPECTED_TOOLS) == status["tool_names"]
 

@@ -204,6 +204,8 @@ def synthesize_findings(
     sections: Sequence[str] | None = None,
     max_papers_per_section: int = 8,
     section_overrides: Mapping[str, str] | None = None,
+    include_full_abstracts: bool = False,
+    include_citation_contexts: bool = False,
 ) -> SynthesisResult:
     """Bin a working set of papers into named sections.
 
@@ -248,6 +250,24 @@ def synthesize_findings(
         are skipped defensively. Overridden papers carry
         ``signal_used='override'`` while still exposing the underlying
         intent/community signals so an agent can audit the override.
+    include_full_abstracts:
+        When True, every ``cited_papers`` row also carries an
+        ``abstract_full`` field with the untruncated ``papers.abstract``
+        text alongside the existing ``abstract_snippet`` (bead tq0t).
+        Default False — preserves the default wire format. Enables the
+        agent to write grounded synthesis without round-tripping
+        through ``read_paper`` for each pivotal seed.
+    include_citation_contexts:
+        When True, papers attributed via ``signal_used='intent_modal'``
+        carry a ``citation_excerpts`` field with up to 3 deterministic
+        ``{context_text, intent, citing_bibcode}`` rows from
+        ``citation_contexts`` (bead tq0t). Papers attributed via
+        community / override / citation-count fallback do NOT receive
+        excerpts (their bucket assignment did not come from a
+        ``citation_contexts`` row, so a citing sentence is not
+        evidence for it). Default False — preserves the default wire
+        format. Triggers ONE extra SELECT against ``citation_contexts``
+        when enabled.
 
     Returns
     -------
@@ -258,7 +278,11 @@ def synthesize_findings(
               "bibcode": str,
               "title": str | None,
               "year": int | None,
+              "first_author": str | None,    # bead tq0t / AC1 (always present)
               "abstract_snippet": str,
+              # Bead tq0t / AC2: present only when
+              # ``include_full_abstracts=True``.
+              "abstract_full": str,           # optional
               "role": str,                    # alias of section_assigned
               "section_assigned": str,
               "signal_used": "intent_modal" | "community_fallthrough" |
@@ -276,6 +300,14 @@ def synthesize_findings(
                 "modal_community_id": int | None,
               },
               "alternative_sections": [section_name, ...],
+              # Bead tq0t / AC3: present only when
+              # ``include_citation_contexts=True`` AND
+              # ``signal_used == 'intent_modal'``. Up to 3 rows from
+              # ``citation_contexts`` whose ``target_bibcode`` matches.
+              "citation_excerpts": [
+                {context_text: str, intent: str, citing_bibcode: str},
+                ...  # capped at 3
+              ],
             }
 
         Each :class:`SectionBucket` also carries a ``theme`` dict
@@ -295,7 +327,12 @@ def synthesize_findings(
                 ...  # sorted by paper_count desc, capped at top 3
               ],
               top_papers_by_citation: [
-                {bibcode: str, title: str | None, citation_count: int},
+                {
+                  bibcode: str,
+                  title: str | None,
+                  first_author: str | None,  # bead tq0t / AC1
+                  citation_count: int,
+                },
                 ...  # sorted by citation_count desc, capped at top 3
               ],
             }
@@ -331,6 +368,19 @@ def synthesize_findings(
     community_map = _fetch_community_assignments(conn, bibcodes)
     overrides = _normalize_overrides(section_overrides, set(sections_list))
 
+    # Bead tq0t: optional citation-excerpt enrichment for intent_modal
+    # papers. Fetched up-front (one query) and threaded through assembly
+    # so ``_paper_row`` can attach excerpts only to papers whose
+    # ``signal_used`` ends up as ``intent_modal``. ``None`` when the
+    # kwarg is False — the assembly step then OMITS the
+    # ``citation_excerpts`` field entirely (preserves default wire
+    # format). When the kwarg is True, the dict may still be empty if
+    # no rows match — in that case intent-modal papers get an explicit
+    # empty list (so the schema is uniform when the flag is on).
+    citation_excerpts: dict[str, list[dict[str, Any]]] | None = None
+    if include_citation_contexts:
+        citation_excerpts = _fetch_citation_excerpts(conn, bibcodes)
+
     return _assemble_sections(
         bibcodes=bibcodes,
         sections=sections_list,
@@ -339,6 +389,8 @@ def synthesize_findings(
         community_map=community_map,
         max_papers_per_section=max_papers_per_section,
         overrides=overrides,
+        include_full_abstracts=include_full_abstracts,
+        citation_excerpts=citation_excerpts,
     )
 
 
@@ -393,8 +445,8 @@ def _prepare_bibcodes(raw: Sequence[str] | None) -> list[str]:
 def _fetch_paper_metadata(
     conn: psycopg.Connection, bibcodes: Sequence[str]
 ) -> dict[str, dict[str, Any]]:
-    """Return ``{bibcode: {title, year, abstract_snippet, citation_count,
-    arxiv_class, keywords}}``.
+    """Return ``{bibcode: {title, year, abstract, abstract_snippet,
+    citation_count, arxiv_class, keywords, first_author}}``.
 
     ``papers.citation_count`` is INTEGER NULL — ``COALESCE`` to 0 so the
     Tier-3 (citation-count) fallback always has a comparable scalar. The
@@ -404,17 +456,28 @@ def _fetch_paper_metadata(
 
     ``arxiv_class`` and ``keywords`` are ``text[]`` arrays — partial
     coverage on prod (~8% / ~49% per spot-check 2026-04-27) — used by
-    the bead-4la8 ``theme`` aggregation. Production rows always return
-    7 columns from the SELECT below; the ``len(row) > 5/6`` guards
-    exist *only* to keep pre-4la8 5-tuple test fixtures working (~20
-    fixtures across ``tests/test_synthesize_findings.py``). Migrating
-    those fixtures to 7-tuples is tracked as a follow-up; once done,
-    drop the guards. Do NOT take inspiration from this guard for new
-    code — the SELECT contract guarantees the column count.
+    the bead-4la8 ``theme`` aggregation. ``first_author`` (added in
+    bead tq0t) is sourced verbatim from ``papers.first_author``;
+    production coverage is high but a small number of legacy rows have
+    it as NULL.
+
+    Production rows always return 8 columns from the SELECT below; the
+    ``len(row) > 5/6/7`` guards exist *only* to keep pre-4la8/pre-tq0t
+    short-tuple test fixtures working (the test suite uses 5-tuples in
+    older suites, 7-tuples in TestSectionTheme, and 8-tuples in
+    TestAdditiveGroundingFields). Migrating those fixtures to 8-tuples
+    is tracked as bead k27h; once done, drop the guards. Do NOT take
+    inspiration from these guards for new code — the SELECT contract
+    guarantees the column count.
+
+    The full ``abstract`` string is stashed under the ``abstract`` key
+    (in addition to the truncated ``abstract_snippet``) so that
+    callers passing ``include_full_abstracts=True`` can surface it in
+    the per-paper payload without a second query.
     """
     sql = """
         SELECT bibcode, title, year, abstract, COALESCE(citation_count, 0),
-               arxiv_class, keywords
+               arxiv_class, keywords, first_author
         FROM papers
         WHERE bibcode = ANY(%s)
     """
@@ -426,18 +489,21 @@ def _fetch_paper_metadata(
             abstract = row[3] or ""
             citation_count = int(row[4])  # COALESCE in SQL guarantees non-NULL
             # Fixture-compat guards: see docstring above. Production rows
-            # always return 7 columns; remove these once the legacy 5-tuple
-            # test fixtures are migrated.
+            # always return 8 columns; remove these once the legacy
+            # short-tuple test fixtures are migrated (bead k27h).
             arxiv_class: list[str] = list(row[5]) if len(row) > 5 and row[5] else []
             keywords: list[str] = list(row[6]) if len(row) > 6 and row[6] else []
+            first_author: str | None = row[7] if len(row) > 7 else None
             out[bibcode] = {
                 "bibcode": bibcode,
                 "title": row[1],
                 "year": row[2],
+                "abstract": abstract,
                 "abstract_snippet": _snippet(abstract),
                 "citation_count": citation_count,
                 "arxiv_class": arxiv_class,
                 "keywords": keywords,
+                "first_author": first_author,
             }
     return out
 
@@ -499,6 +565,63 @@ def _fetch_community_assignments(
                 "community_id": int(row[1]),
                 "community_label": row[2],
             }
+    return out
+
+
+# Bead-tq0t cap: at most 3 citation-context excerpts per paper in the
+# synthesise output. Module-level constant so it's easy to retune
+# alongside the other ``_THEME_MAX_*`` caps.
+_CITATION_EXCERPTS_MAX_PER_PAPER: Final[int] = 3
+
+
+def _fetch_citation_excerpts(
+    conn: psycopg.Connection, bibcodes: Sequence[str]
+) -> dict[str, list[dict[str, Any]]]:
+    """Return ``{target_bibcode: [{context_text, intent, citing_bibcode}, ...]}``.
+
+    One row in ``citation_contexts`` per (source -> target) citation
+    incident. Bead tq0t surfaces up to
+    :data:`_CITATION_EXCERPTS_MAX_PER_PAPER` rows per paper so the agent
+    can ground bucket assignments on actual citing-sentence evidence.
+
+    Determinism: ORDER BY (intent ASC, source_bibcode ASC, char_offset
+    ASC NULLS LAST) so repeated calls return the same excerpts in the
+    same order. Filters out rows with NULL intent (they carry no signal
+    for the synthesise output and are excluded from intent-modal
+    bucketing upstream).
+
+    Implementation notes:
+      * One query, one IN/ANY filter, bounded by the working-set cap
+        (200 bibcodes).
+      * Top-K sliced in Python rather than via SQL ROW_NUMBER —
+        simpler, and the row count for a 200-bibcode working set is
+        tiny in practice.
+    """
+    sql = """
+        SELECT target_bibcode, context_text, intent, source_bibcode
+        FROM citation_contexts
+        WHERE target_bibcode = ANY(%s)
+          AND intent IS NOT NULL
+        ORDER BY target_bibcode ASC,
+                 intent ASC,
+                 source_bibcode ASC,
+                 char_offset ASC NULLS LAST
+    """
+    out: dict[str, list[dict[str, Any]]] = {}
+    with conn.cursor() as cur:
+        cur.execute(sql, (list(bibcodes),))
+        for row in cur.fetchall():
+            target = row[0]
+            bucket = out.setdefault(target, [])
+            if len(bucket) >= _CITATION_EXCERPTS_MAX_PER_PAPER:
+                continue  # cap reached; skip the rest for this target
+            bucket.append(
+                {
+                    "context_text": row[1],
+                    "intent": row[2],
+                    "citing_bibcode": row[3],
+                }
+            )
     return out
 
 
@@ -781,6 +904,10 @@ def _theme_for(
             {
                 "bibcode": b,
                 "title": meta.get("title"),
+                # Bead tq0t / AC1: first_author surfaced alongside the
+                # other thumbnail metadata so the agent can attribute
+                # without round-tripping through ``get_paper``.
+                "first_author": meta.get("first_author"),
                 "citation_count": int(meta.get("citation_count", 0) or 0),
             }
         )
@@ -789,6 +916,31 @@ def _theme_for(
         "communities": communities_payload,
         "top_papers_by_citation": top_papers,
     }
+
+
+def _excerpts_for(
+    *,
+    bibcode: str,
+    signal_used: str,
+    excerpts_map: Mapping[str, list[dict[str, Any]]] | None,
+) -> list[dict[str, Any]] | None:
+    """Pick the citation-excerpts payload for a single paper (bead tq0t).
+
+    Three-state result:
+      * ``None``  -> the kwarg was off OR the paper wasn't bucketed via
+                     ``intent_modal``. ``_paper_row`` will OMIT the
+                     ``citation_excerpts`` field entirely.
+      * ``[]``    -> kwarg was on, paper is intent_modal, no rows in
+                     ``citation_contexts`` for this target.
+      * ``list[dict]`` -> kwarg on, paper is intent_modal, and rows
+                     exist (capped upstream by
+                     :data:`_CITATION_EXCERPTS_MAX_PER_PAPER`).
+    """
+    if excerpts_map is None:
+        return None
+    if signal_used != "intent_modal":
+        return None
+    return list(excerpts_map.get(bibcode, []))
 
 
 def _assemble_sections(
@@ -800,6 +952,8 @@ def _assemble_sections(
     community_map: Mapping[str, dict[str, Any]],
     max_papers_per_section: int,
     overrides: Mapping[str, str],
+    include_full_abstracts: bool = False,
+    citation_excerpts: Mapping[str, list[dict[str, Any]]] | None = None,
 ) -> SynthesisResult:
     """Bin bibcodes into requested sections via override -> intent -> community
     -> citation-count fallback (for empty sections only)."""
@@ -905,6 +1059,16 @@ def _assemble_sections(
                     community_size=community_size,
                     total_bibcodes=total_bibcodes,
                     section_set=section_set,
+                ),
+                include_full_abstract=include_full_abstracts,
+                # Bead tq0t / AC3: forward an excerpt list only when the
+                # caller enabled the kwarg (citation_excerpts is not
+                # None) AND the paper was bucketed via intent_modal.
+                # Other tiers / disabled kwarg -> None -> field omitted.
+                citation_excerpts=_excerpts_for(
+                    bibcode=b,
+                    signal_used=signal_used.get(b, ""),
+                    excerpts_map=citation_excerpts,
                 ),
             )
             for b in chosen
@@ -1118,18 +1282,35 @@ def _paper_row(
     signals: dict[str, Any] | None = None,
     signal_used: str = "",
     alternative_sections: list[str] | None = None,
+    include_full_abstract: bool = False,
+    citation_excerpts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the per-paper dict for a section's ``cited_papers`` list.
 
     ``role`` and ``section_assigned`` are aliases — ``role`` is kept for
     back-compat with earlier callers; ``section_assigned`` is the name
     used by the bead-gtsx signals schema.
+
+    ``first_author`` is always present (bead tq0t / AC1) — populated
+    from ``papers.first_author`` via :func:`_fetch_paper_metadata`. May
+    be ``None`` for legacy fixtures or rows where the column is NULL.
+
+    ``abstract_full`` (bead tq0t / AC2) is added only when
+    ``include_full_abstract`` is True. Coexists with ``abstract_snippet``
+    (additive, not replacement) so wave-1+ wire format remains stable.
+
+    ``citation_excerpts`` (bead tq0t / AC3) is added only when the
+    caller passes a non-None list — by convention, the assembly step
+    forwards a list (possibly empty) for ``signal_used='intent_modal'``
+    papers and forwards ``None`` for everyone else, so this field is
+    omitted entirely on community / override / fallback rows.
     """
     meta = paper_meta.get(bibcode, {})
-    return {
+    row: dict[str, Any] = {
         "bibcode": bibcode,
         "title": meta.get("title"),
         "year": meta.get("year"),
+        "first_author": meta.get("first_author"),
         "abstract_snippet": meta.get("abstract_snippet", ""),
         "role": role,
         "section_assigned": role,
@@ -1137,6 +1318,11 @@ def _paper_row(
         "signals": signals if signals is not None else {},
         "alternative_sections": list(alternative_sections or []),
     }
+    if include_full_abstract:
+        row["abstract_full"] = meta.get("abstract", "")
+    if citation_excerpts is not None:
+        row["citation_excerpts"] = list(citation_excerpts)
+    return row
 
 
 def _snippet(text: str, max_chars: int = 280) -> str:

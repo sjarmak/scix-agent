@@ -1492,3 +1492,383 @@ class TestSectionTheme:
         assert isinstance(bg_wire["theme"], dict)
         assert isinstance(bg_wire["theme"]["communities"], list)
         assert isinstance(bg_wire["theme"]["top_papers_by_citation"], list)
+
+
+# ---------------------------------------------------------------------------
+# Additive grounding fields (bead scix_experiments-tq0t)
+# ---------------------------------------------------------------------------
+
+
+class TestAdditiveGroundingFields:
+    """AC1-3: lit-review demo (2026-04-27) revealed three grounding gaps:
+
+    1. ``first_author`` missing from cited_papers — agent had to parse it
+       from the abstract and got it wrong once.
+    2. Abstract snippets cap at ~280 chars — agent had to call
+       ``read_paper`` separately for full text.
+    3. No citation context texts in output — bucket assignments via
+       ``intent`` are opaque without at least one citing sentence.
+
+    Fix is additive — both new kwargs default ``False`` so the default
+    wire format is unchanged.
+    """
+
+    # -- AC1: first_author always present -------------------------------------
+
+    def test_first_author_present_in_cited_papers(self) -> None:
+        """AC1: every cited_papers row has a ``first_author`` field
+        populated from ``papers.first_author``."""
+        # 8-tuple fixture: bibcode, title, year, abstract, citation_count,
+        # arxiv_class, keywords, first_author
+        papers_rows = [
+            ("2024A", "T", 2024, "abs", 0, [], [], "Breu, S."),
+        ]
+        intent_rows = [("2024A", "method", 1)]
+        community_rows = [("2024A", 1, "L")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+        )
+        methods = next(s for s in result.sections if s.name == "methods")
+        row = next(p for p in methods.cited_papers if p["bibcode"] == "2024A")
+        assert row["first_author"] == "Breu, S."
+
+    def test_first_author_none_when_db_value_null(self) -> None:
+        """AC1 robustness: NULL ``first_author`` (some old papers lack it)
+        surfaces as ``None`` rather than crashing."""
+        papers_rows = [("2024A", "T", 2024, "abs", 0, [], [], None)]
+        intent_rows = [("2024A", "method", 1)]
+        community_rows = [("2024A", 1, "L")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+        )
+        methods = next(s for s in result.sections if s.name == "methods")
+        row = next(p for p in methods.cited_papers if p["bibcode"] == "2024A")
+        assert row["first_author"] is None
+
+    def test_first_author_in_top_papers_by_citation(self) -> None:
+        """AC1 consistency: theme.top_papers_by_citation entries also
+        carry ``first_author`` (parallel to bibcode/title/citation_count)."""
+        papers_rows = [
+            ("2024A", "T", 2024, "abs", 50, [], [], "Smith, J."),
+            ("2024B", "T", 2024, "abs", 30, [], [], "Jones, K."),
+        ]
+        intent_rows: list[tuple] = []
+        community_rows = [("2024A", 1, "L"), ("2024B", 1, "L")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A", "2024B"],
+            sections=list(DEFAULT_SECTIONS),
+        )
+        bg = next(s for s in result.sections if s.name == "background")
+        top = bg.theme["top_papers_by_citation"]
+        # Each entry exposes first_author so the agent can build "Smith
+        # 2024" attribution without parsing abstracts.
+        first_authors = {entry["bibcode"]: entry["first_author"] for entry in top}
+        assert first_authors["2024A"] == "Smith, J."
+        assert first_authors["2024B"] == "Jones, K."
+
+    def test_first_author_default_in_legacy_5tuple_fixtures(self) -> None:
+        """Backwards compatibility: pre-tq0t 5-tuple test fixtures (no
+        first_author column) still produce a row with ``first_author``
+        populated as ``None`` (not missing). Mirrors the wave-4 5/6-tuple
+        guard pattern."""
+        # 5-tuple legacy fixture (bibcode, title, year, abstract, citation_count)
+        papers_rows = [("2024A", "T", 2024, "abs", 0)]
+        intent_rows = [("2024A", "method", 1)]
+        community_rows = [("2024A", 1, "L")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+        )
+        methods = next(s for s in result.sections if s.name == "methods")
+        row = next(p for p in methods.cited_papers if p["bibcode"] == "2024A")
+        # Legacy fixture missing first_author -> None.
+        assert "first_author" in row
+        assert row["first_author"] is None
+
+    # -- AC2: include_full_abstracts kwarg ------------------------------------
+
+    def test_include_full_abstracts_off_by_default(self) -> None:
+        """AC2 default: without the kwarg, only ``abstract_snippet`` is
+        emitted; no ``abstract_full`` field appears."""
+        long_abstract = "X" * 1000  # exceeds the 280-char snippet cap
+        papers_rows = [("2024A", "T", 2024, long_abstract, 0, [], [], "Smith")]
+        intent_rows = [("2024A", "method", 1)]
+        community_rows = [("2024A", 1, "L")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+        )
+        methods = next(s for s in result.sections if s.name == "methods")
+        row = next(p for p in methods.cited_papers if p["bibcode"] == "2024A")
+        assert "abstract_snippet" in row
+        # Snippet truncates to <= 280 chars.
+        assert len(row["abstract_snippet"]) <= 280
+        # No abstract_full field by default — preserves wire format.
+        assert "abstract_full" not in row
+
+    def test_include_full_abstracts_adds_full_text_field(self) -> None:
+        """AC2 opt-in: with the kwarg, every cited_papers row gets an
+        ``abstract_full`` field carrying the untruncated abstract."""
+        long_abstract = "Y" * 1000
+        papers_rows = [("2024A", "T", 2024, long_abstract, 0, [], [], "Smith")]
+        intent_rows = [("2024A", "method", 1)]
+        community_rows = [("2024A", 1, "L")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+            include_full_abstracts=True,
+        )
+        methods = next(s for s in result.sections if s.name == "methods")
+        row = next(p for p in methods.cited_papers if p["bibcode"] == "2024A")
+        # abstract_snippet remains (additive change).
+        assert "abstract_snippet" in row
+        # New abstract_full field carries the full text.
+        assert row["abstract_full"] == long_abstract
+        assert len(row["abstract_full"]) == 1000
+
+    def test_include_full_abstracts_handles_empty_abstract(self) -> None:
+        """AC2 robustness: a paper with NULL/empty abstract gets
+        ``abstract_full = ''`` (consistent with snippet behaviour)."""
+        papers_rows = [("2024A", "T", 2024, None, 0, [], [], "Smith")]
+        intent_rows = [("2024A", "method", 1)]
+        community_rows = [("2024A", 1, "L")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+            include_full_abstracts=True,
+        )
+        methods = next(s for s in result.sections if s.name == "methods")
+        row = next(p for p in methods.cited_papers if p["bibcode"] == "2024A")
+        assert row["abstract_full"] == ""
+
+    # -- AC3: include_citation_contexts kwarg ---------------------------------
+
+    def test_include_citation_contexts_off_by_default(self) -> None:
+        """AC3 default: without the kwarg, no ``citation_excerpts`` field
+        appears on any cited_papers row."""
+        papers_rows = [("2024A", "T", 2024, "abs", 0, [], [], "Smith")]
+        intent_rows = [("2024A", "method", 2)]
+        community_rows = [("2024A", 1, "L")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+        )
+        methods = next(s for s in result.sections if s.name == "methods")
+        row = next(p for p in methods.cited_papers if p["bibcode"] == "2024A")
+        assert "citation_excerpts" not in row
+
+    def test_include_citation_contexts_attaches_excerpts_for_intent_modal(
+        self,
+    ) -> None:
+        """AC3 opt-in: with the kwarg, papers attributed via intent_modal
+        get up to 3 ``citation_excerpts`` rows."""
+        papers_rows = [("2024A", "T", 2024, "abs", 0, [], [], "Smith")]
+        intent_rows = [("2024A", "method", 3)]
+        community_rows = [("2024A", 1, "L")]
+        # Excerpts query rows: (target_bibcode, context_text, intent, source_bibcode)
+        excerpt_rows = [
+            ("2024A", "We use the method of Smith et al.", "method", "2025citerA"),
+            ("2024A", "Following Smith's procedure...", "method", "2025citerB"),
+        ]
+        conn = _mock_conn(
+            [papers_rows, intent_rows, community_rows, excerpt_rows]
+        )
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+            include_citation_contexts=True,
+        )
+        methods = next(s for s in result.sections if s.name == "methods")
+        row = next(p for p in methods.cited_papers if p["bibcode"] == "2024A")
+        assert "citation_excerpts" in row
+        excerpts = row["citation_excerpts"]
+        assert len(excerpts) == 2
+        # Each excerpt has the documented schema.
+        for excerpt in excerpts:
+            assert set(excerpt.keys()) == {
+                "context_text",
+                "intent",
+                "citing_bibcode",
+            }
+        # Excerpt content surfaces faithfully.
+        excerpt_texts = {e["context_text"] for e in excerpts}
+        assert "We use the method of Smith et al." in excerpt_texts
+
+    def test_include_citation_contexts_only_for_intent_modal(self) -> None:
+        """AC3: papers attributed via community_fallthrough, override, or
+        citation_count_fallback do NOT get ``citation_excerpts`` even when
+        the kwarg is true — only intent_modal-assigned papers do (since
+        they're the ones whose section came from a citation_contexts row)."""
+        # 2024A -> intent_modal (methods); 2024B -> community_fallthrough (background).
+        papers_rows = [
+            ("2024A", "TA", 2024, "abs", 0, [], [], "Smith"),
+            ("2024B", "TB", 2024, "abs", 0, [], [], "Jones"),
+        ]
+        intent_rows = [("2024A", "method", 2)]
+        community_rows = [("2024A", 1, "L"), ("2024B", 1, "L")]
+        # Excerpt query returns rows for BOTH bibcodes, but only A should
+        # carry them in the output.
+        excerpt_rows = [
+            ("2024A", "ctx-A1", "method", "2025citerA"),
+            ("2024B", "ctx-B1", "background", "2025citerB"),
+        ]
+        conn = _mock_conn(
+            [papers_rows, intent_rows, community_rows, excerpt_rows]
+        )
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A", "2024B"],
+            sections=list(DEFAULT_SECTIONS),
+            include_citation_contexts=True,
+        )
+        all_rows = {p["bibcode"]: p for s in result.sections for p in s.cited_papers}
+        # 2024A: intent_modal -> excerpts attached.
+        assert all_rows["2024A"]["signal_used"] == "intent_modal"
+        assert "citation_excerpts" in all_rows["2024A"]
+        # 2024B: community_fallthrough -> NO excerpts.
+        assert all_rows["2024B"]["signal_used"] == "community_fallthrough"
+        assert "citation_excerpts" not in all_rows["2024B"]
+
+    def test_include_citation_contexts_capped_at_three_per_paper(self) -> None:
+        """AC3: when more than 3 excerpts exist for a paper, only the
+        first 3 (in deterministic order) are surfaced."""
+        papers_rows = [("2024A", "T", 2024, "abs", 0, [], [], "Smith")]
+        intent_rows = [("2024A", "method", 5)]
+        community_rows = [("2024A", 1, "L")]
+        # 5 excerpt rows for one paper.
+        excerpt_rows = [
+            ("2024A", f"ctx-{i}", "method", f"2025citer{i}") for i in range(5)
+        ]
+        conn = _mock_conn(
+            [papers_rows, intent_rows, community_rows, excerpt_rows]
+        )
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+            include_citation_contexts=True,
+        )
+        methods = next(s for s in result.sections if s.name == "methods")
+        row = next(p for p in methods.cited_papers if p["bibcode"] == "2024A")
+        assert len(row["citation_excerpts"]) == 3
+
+    def test_include_citation_contexts_empty_result_emits_empty_list(
+        self,
+    ) -> None:
+        """AC3 robustness: when no excerpt rows exist for an intent-modal
+        paper, ``citation_excerpts`` is the empty list (not omitted)."""
+        papers_rows = [("2024A", "T", 2024, "abs", 0, [], [], "Smith")]
+        intent_rows = [("2024A", "method", 1)]
+        community_rows = [("2024A", 1, "L")]
+        excerpt_rows: list[tuple] = []  # empty
+        conn = _mock_conn(
+            [papers_rows, intent_rows, community_rows, excerpt_rows]
+        )
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+            include_citation_contexts=True,
+        )
+        methods = next(s for s in result.sections if s.name == "methods")
+        row = next(p for p in methods.cited_papers if p["bibcode"] == "2024A")
+        assert row["citation_excerpts"] == []
+
+    # -- MCP wire dispatch ----------------------------------------------------
+
+    def test_dispatch_accepts_include_full_abstracts_kwarg(self) -> None:
+        """MCP wire: ``include_full_abstracts=true`` flows through the
+        handler and surfaces ``abstract_full`` in JSON output."""
+        long_abstract = "Z" * 1000
+        papers_rows = [("2024A", "T", 2024, long_abstract, 0, [], [], "Smith")]
+        intent_rows = [("2024A", "method", 1)]
+        community_rows = [("2024A", 1, "L")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        out = _dispatch_tool(
+            conn,
+            "synthesize_findings",
+            {
+                "working_set_bibcodes": ["2024A"],
+                "include_full_abstracts": True,
+            },
+        )
+        result = json.loads(out)
+        methods = next(s for s in result["sections"] if s["name"] == "methods")
+        row = next(p for p in methods["cited_papers"] if p["bibcode"] == "2024A")
+        assert row["abstract_full"] == long_abstract
+
+    def test_dispatch_accepts_include_citation_contexts_kwarg(self) -> None:
+        """MCP wire: ``include_citation_contexts=true`` flows through and
+        surfaces ``citation_excerpts`` for intent_modal papers."""
+        papers_rows = [("2024A", "T", 2024, "abs", 0, [], [], "Smith")]
+        intent_rows = [("2024A", "method", 1)]
+        community_rows = [("2024A", 1, "L")]
+        excerpt_rows = [("2024A", "ctx-1", "method", "2025citerA")]
+        conn = _mock_conn(
+            [papers_rows, intent_rows, community_rows, excerpt_rows]
+        )
+
+        out = _dispatch_tool(
+            conn,
+            "synthesize_findings",
+            {
+                "working_set_bibcodes": ["2024A"],
+                "include_citation_contexts": True,
+            },
+        )
+        result = json.loads(out)
+        methods = next(s for s in result["sections"] if s["name"] == "methods")
+        row = next(p for p in methods["cited_papers"] if p["bibcode"] == "2024A")
+        assert "citation_excerpts" in row
+        assert len(row["citation_excerpts"]) == 1
+        assert row["citation_excerpts"][0]["context_text"] == "ctx-1"
+
+    def test_dispatch_first_author_in_wire_format(self) -> None:
+        """MCP wire: ``first_author`` is part of the default JSON output
+        (no kwargs needed; AC1 always-on)."""
+        papers_rows = [("2024A", "T", 2024, "abs", 0, [], [], "Breu")]
+        intent_rows = [("2024A", "method", 1)]
+        community_rows = [("2024A", 1, "L")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        out = _dispatch_tool(
+            conn,
+            "synthesize_findings",
+            {"working_set_bibcodes": ["2024A"]},
+        )
+        result = json.loads(out)
+        methods = next(s for s in result["sections"] if s["name"] == "methods")
+        row = next(p for p in methods["cited_papers"] if p["bibcode"] == "2024A")
+        assert row["first_author"] == "Breu"

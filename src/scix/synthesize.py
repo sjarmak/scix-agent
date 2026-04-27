@@ -44,20 +44,31 @@ signals plus a citation-count safety net:
 
 Papers with no signal in any layer land in ``unattributed_bibcodes``.
 
-The ``theme_summary`` per section is a deterministic concatenation of
-the section's most-common community labels — no semantic generation.
+Each section emits two theme fields (bead 4la8):
+
+  * ``theme_summary`` — legacy formatted string of the section's
+    most-common community labels (deprecated; preserved for backwards
+    compat with pre-4la8 MCP clients).
+  * ``theme`` — a structured payload of raw signals
+    (``communities[].{community_id, label, top_keywords[],
+    top_arxiv_classes[], paper_count_in_section}`` and
+    ``top_papers_by_citation[]``) for the agent to compose its own
+    thematic framing. Do **not** treat ``communities[].label`` as
+    prose — it is a metadata tag, not a description.
 
 References
 ----------
   * Bead scix_experiments-cfh9 (initial three-tier implementation)
   * Bead scix_experiments-spj0 (Tier 3 citation-count fallback)
   * Bead scix_experiments-37wj (weighted Tier 2 share-tier classifier)
+  * Bead scix_experiments-4la8 (structured theme payload)
   * Bead 79n (citation_contexts.intent partial coverage)
   * docs/CLAUDE.md "ZFC" guidance
 """
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, Mapping, Sequence
@@ -120,11 +131,21 @@ def _classify_share_tier(share: float) -> ShareTier:
 
 @dataclass(frozen=True)
 class SectionBucket:
-    """A single named section in the synthesised outline."""
+    """A single named section in the synthesised outline.
+
+    The ``theme`` field (bead 4la8) is a structured payload of raw
+    signals — community membership counts, top arxiv classes, top
+    keywords, and the section's top-cited papers — for the agent to
+    compose its own thematic framing. ``theme_summary`` is the legacy
+    string field (concatenated community labels) preserved for
+    backwards-compat with pre-4la8 MCP clients; new callers should
+    prefer ``theme``.
+    """
 
     name: str
     cited_papers: list[dict[str, Any]] = field(default_factory=list)
     theme_summary: str = ""
+    theme: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -152,6 +173,7 @@ class SynthesisResult:
                     "name": s.name,
                     "cited_papers": list(s.cited_papers),
                     "theme_summary": s.theme_summary,
+                    "theme": dict(s.theme),
                 }
                 for s in self.sections
             ],
@@ -245,6 +267,28 @@ def synthesize_findings(
                 "modal_community_id": int | None,
               },
               "alternative_sections": [section_name, ...],
+            }
+
+        Each :class:`SectionBucket` also carries a ``theme`` dict
+        (bead 4la8) with structured signals for the agent to compose
+        its own thematic framing — do not treat
+        ``theme.communities[].label`` as prose; it is a metadata tag::
+
+            theme: {
+              communities: [
+                {
+                  community_id: int,
+                  label: str | None,
+                  paper_count_in_section: int,
+                  top_arxiv_classes: [str, ...],
+                  top_keywords: [str, ...],
+                },
+                ...  # sorted by paper_count desc, capped at top 3
+              ],
+              top_papers_by_citation: [
+                {bibcode: str, title: str | None, citation_count: int},
+                ...  # sorted by citation_count desc, capped at top 3
+              ],
             }
     """
     sections_list = list(sections) if sections else list(DEFAULT_SECTIONS)
@@ -340,16 +384,24 @@ def _prepare_bibcodes(raw: Sequence[str] | None) -> list[str]:
 def _fetch_paper_metadata(
     conn: psycopg.Connection, bibcodes: Sequence[str]
 ) -> dict[str, dict[str, Any]]:
-    """Return ``{bibcode: {title, year, abstract_snippet, citation_count}}``.
+    """Return ``{bibcode: {title, year, abstract_snippet, citation_count,
+    arxiv_class, keywords}}``.
 
     ``papers.citation_count`` is INTEGER NULL — ``COALESCE`` to 0 so the
     Tier-3 (citation-count) fallback always has a comparable scalar. The
     ``citation_count`` is the *corpus-wide* tally; the fallback ranks
     within the working set, so this is just a per-paper attribute used
     for sorting.
+
+    ``arxiv_class`` and ``keywords`` are ``text[]`` arrays — partial
+    coverage on prod (~8% / ~49% per spot-check 2026-04-27) — used by
+    the bead-4la8 ``theme`` aggregation. Defensively defaults to ``[]``
+    when the row's tuple is shorter than expected (mock cursors in tests
+    may return only the legacy 5-tuple shape).
     """
     sql = """
-        SELECT bibcode, title, year, abstract, COALESCE(citation_count, 0)
+        SELECT bibcode, title, year, abstract, COALESCE(citation_count, 0),
+               arxiv_class, keywords
         FROM papers
         WHERE bibcode = ANY(%s)
     """
@@ -360,12 +412,19 @@ def _fetch_paper_metadata(
             bibcode = row[0]
             abstract = row[3] or ""
             citation_count = int(row[4])  # COALESCE in SQL guarantees non-NULL
+            # Defensive read for arxiv_class / keywords so legacy 5-tuple
+            # test fixtures and any short rows from older callers don't
+            # crash this loop.
+            arxiv_class: list[str] = list(row[5]) if len(row) > 5 and row[5] else []
+            keywords: list[str] = list(row[6]) if len(row) > 6 and row[6] else []
             out[bibcode] = {
                 "bibcode": bibcode,
                 "title": row[1],
                 "year": row[2],
                 "abstract_snippet": _snippet(abstract),
                 "citation_count": citation_count,
+                "arxiv_class": arxiv_class,
+                "keywords": keywords,
             }
     return out
 
@@ -504,6 +563,12 @@ def _theme_summary_for(
     Pure aggregation: the top-K most-common community labels among the
     section's papers, joined with ``; ``. No LLM, no semantic
     generation. Returns an empty string if no labels are available.
+
+    .. deprecated:: 4la8
+        Prefer :func:`_theme_for` which exposes the underlying signals
+        (community sizes, arxiv classes, keywords, top-cited papers) so
+        the agent can compose its own thematic framing. Kept here for
+        backwards compatibility — see ``SectionBucket.theme_summary``.
     """
     label_counts: Counter[str] = Counter()
     for b in bibcodes:
@@ -514,6 +579,195 @@ def _theme_summary_for(
         return ""
     top = [label for label, _ in label_counts.most_common(top_k)]
     return "; ".join(top)
+
+
+# Top-K caps for the structured theme payload. Module-level constants so
+# they are trivial to retune without hunting through the assembly code.
+_THEME_MAX_COMMUNITIES: Final[int] = 3
+_THEME_MAX_TOP_PAPERS: Final[int] = 3
+_THEME_MAX_KEYWORDS_PER_COMMUNITY: Final[int] = 5
+_THEME_MAX_ARXIV_CLASSES_PER_COMMUNITY: Final[int] = 5
+# Rough English/scientific stopword list for the title-token keyword
+# fallback (per CLAUDE.md memory ``community_labels_pipeline.md`` —
+# ``papers.keywords`` is NULL on ~52% of rows so we need a fallback).
+_TITLE_TOKEN_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "as",
+        "at",
+        "by",
+        "for",
+        "from",
+        "in",
+        "of",
+        "on",
+        "or",
+        "the",
+        "to",
+        "with",
+        "via",
+        "vs",
+        "is",
+        "are",
+        "be",
+        "this",
+        "that",
+        "these",
+        "those",
+        "its",
+        "their",
+        "our",
+        "we",
+        "i",
+        "ii",
+        "iii",
+        "iv",
+        "v",
+        "study",
+        "studies",
+        "paper",
+        "papers",
+        "review",
+        "based",
+        "using",
+        "use",
+        "used",
+        "new",
+    }
+)
+
+
+def _title_tokens(title: str | None) -> list[str]:
+    """Tokenize a paper title into lowercase content words.
+
+    Splits on non-alphanumeric, drops short tokens (<3 chars) and
+    English/scientific stopwords. Returns the deduplicated list in
+    first-seen order so a paper contributes each token at most once to
+    the section's keyword counter.
+    """
+    if not title:
+        return []
+    raw = re.split(r"[^A-Za-z0-9]+", title.lower())
+    seen: set[str] = set()
+    out: list[str] = []
+    for tok in raw:
+        if len(tok) < 3:
+            continue
+        if tok in _TITLE_TOKEN_STOPWORDS:
+            continue
+        if tok in seen:
+            continue
+        seen.add(tok)
+        out.append(tok)
+    return out
+
+
+def _theme_for(
+    bibcodes: Sequence[str],
+    paper_meta: Mapping[str, dict[str, Any]],
+    community_map: Mapping[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Build the structured ``theme`` payload for a section (bead 4la8).
+
+    Returns ``{"communities": [...], "top_papers_by_citation": [...]}``.
+
+    ``communities`` is sorted by ``paper_count_in_section`` desc
+    (tiebreak: ``community_id`` asc) and capped at
+    :data:`_THEME_MAX_COMMUNITIES`. Each entry carries
+    ``community_id``, ``label``, ``paper_count_in_section``,
+    ``top_arxiv_classes`` (Counter over the section's papers' arxiv
+    arrays, top N), and ``top_keywords`` (Counter over keywords, with
+    title-token fallback when the keyword arrays are all empty).
+
+    ``top_papers_by_citation`` is the section's papers sorted by
+    ``citation_count`` desc (tiebreak: ``bibcode`` asc) and capped at
+    :data:`_THEME_MAX_TOP_PAPERS`.
+
+    Pure aggregation — no DB, no model. Empty section returns
+    ``{"communities": [], "top_papers_by_citation": []}`` (no crash).
+    """
+    # Group bibcodes by community_id (skip papers with no community).
+    by_community: dict[int, list[str]] = {}
+    community_label: dict[int, str | None] = {}
+    for b in bibcodes:
+        info = community_map.get(b)
+        if info is None:
+            continue
+        cid = int(info["community_id"])
+        by_community.setdefault(cid, []).append(b)
+        if cid not in community_label:
+            community_label[cid] = info.get("community_label")
+
+    # Sort communities by (count desc, community_id asc) for determinism.
+    ordered_cids = sorted(
+        by_community.keys(),
+        key=lambda cid: (-len(by_community[cid]), cid),
+    )[:_THEME_MAX_COMMUNITIES]
+
+    communities_payload: list[dict[str, Any]] = []
+    for cid in ordered_cids:
+        members = by_community[cid]
+        arxiv_counter: Counter[str] = Counter()
+        keyword_counter: Counter[str] = Counter()
+        for member in members:
+            meta = paper_meta.get(member, {})
+            for ax in meta.get("arxiv_class") or []:
+                if isinstance(ax, str) and ax:
+                    arxiv_counter[ax] += 1
+            for kw in meta.get("keywords") or []:
+                if isinstance(kw, str) and kw:
+                    keyword_counter[kw.lower()] += 1
+        # Title-token fallback when no keyword data is available across
+        # the community's section papers (papers.keywords is NULL on
+        # ~52% of prod rows per the labels-pipeline note in CLAUDE.md).
+        if not keyword_counter:
+            for member in members:
+                meta = paper_meta.get(member, {})
+                for tok in _title_tokens(meta.get("title")):
+                    keyword_counter[tok] += 1
+        communities_payload.append(
+            {
+                "community_id": cid,
+                "label": community_label.get(cid),
+                "paper_count_in_section": len(members),
+                "top_arxiv_classes": [
+                    label
+                    for label, _ in arxiv_counter.most_common(
+                        _THEME_MAX_ARXIV_CLASSES_PER_COMMUNITY
+                    )
+                ],
+                "top_keywords": [
+                    label
+                    for label, _ in keyword_counter.most_common(_THEME_MAX_KEYWORDS_PER_COMMUNITY)
+                ],
+            }
+        )
+
+    # Top papers by citation_count (desc, tiebreak bibcode asc).
+    ranked = sorted(
+        bibcodes,
+        key=lambda b: (
+            -int(paper_meta.get(b, {}).get("citation_count", 0) or 0),
+            b,
+        ),
+    )[:_THEME_MAX_TOP_PAPERS]
+    top_papers: list[dict[str, Any]] = []
+    for b in ranked:
+        meta = paper_meta.get(b, {})
+        top_papers.append(
+            {
+                "bibcode": b,
+                "title": meta.get("title"),
+                "citation_count": int(meta.get("citation_count", 0) or 0),
+            }
+        )
+
+    return {
+        "communities": communities_payload,
+        "top_papers_by_citation": top_papers,
+    }
 
 
 def _assemble_sections(
@@ -634,12 +888,14 @@ def _assemble_sections(
             )
             for b in chosen
         ]
-        theme = _theme_summary_for(chosen, community_map)
+        theme_summary = _theme_summary_for(chosen, community_map)
+        theme = _theme_for(chosen, paper_meta, community_map)
         out_sections.append(
             SectionBucket(
                 name=name,
                 cited_papers=cited,
-                theme_summary=theme,
+                theme_summary=theme_summary,
+                theme=theme,
             )
         )
 

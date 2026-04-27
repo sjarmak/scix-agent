@@ -1217,3 +1217,278 @@ class TestWeightedShareClassifier:
         bg = next(s for s in result.sections if s.name == "background")
         bg_bibs = {p["bibcode"] for p in bg.cited_papers}
         assert set(bibcodes).issubset(bg_bibs)
+
+
+# ---------------------------------------------------------------------------
+# Structured theme payload (bead scix_experiments-4la8)
+# ---------------------------------------------------------------------------
+
+
+class TestSectionTheme:
+    """AC1-4: each section emits a structured ``theme`` object alongside
+    the legacy ``theme_summary`` string.
+
+    The synthesis-writing agent ignored the formatted-label string entirely
+    per the lit-review demo (2026-04-27), so this bead exposes the raw
+    signals (community membership counts, top arxiv classes, top keywords,
+    top-cited papers in section) for the agent to compose its own thematic
+    framing.
+    """
+
+    def test_theme_communities_sorted_by_paper_count_desc(self) -> None:
+        """AC2: communities[] is sorted by paper_count_in_section desc.
+
+        Fixture: 4 communities with sizes 6 / 4 / 3 / 2 in the section.
+        Assert the ordering of the first three entries (capped at top 3).
+        """
+        # 15 papers in one core community (share=15/15=1.0 -> background).
+        # All in same section so we can test cross-community aggregation.
+        bibcodes = (
+            [f"2024C1_{i:02d}" for i in range(6)]
+            + [f"2024C2_{i:02d}" for i in range(4)]
+            + [f"2024C3_{i:02d}" for i in range(3)]
+            + [f"2024C4_{i:02d}" for i in range(2)]
+        )
+        papers_rows = [
+            (b, f"Title {b}", 2024, f"abs {b}", 0, ["astro-ph.GA"], ["galaxies"])
+            for b in bibcodes
+        ]
+        intent_rows: list[tuple] = []
+        # All 4 communities are 'core' under the weighted classifier (smallest
+        # share is 2/15=0.133, but below threshold 0.15 -> 'supporting').
+        # To get all into background, we pin via overrides.
+        community_rows = []
+        for i, b in enumerate(bibcodes):
+            if i < 6:
+                community_rows.append((b, 1, "Lbl1"))
+            elif i < 10:
+                community_rows.append((b, 2, "Lbl2"))
+            elif i < 13:
+                community_rows.append((b, 3, "Lbl3"))
+            else:
+                community_rows.append((b, 4, "Lbl4"))
+        # Pin everyone to 'background' to guarantee all 4 communities show up
+        # in the same section's theme.
+        overrides = {b: "background" for b in bibcodes}
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=30,
+            section_overrides=overrides,
+        )
+        bg = next(s for s in result.sections if s.name == "background")
+        theme = bg.theme
+        comms = theme["communities"]
+        # AC2: capped at 3 entries.
+        assert len(comms) == 3
+        # AC2: sorted desc by paper_count_in_section.
+        assert comms[0]["community_id"] == 1 and comms[0]["paper_count_in_section"] == 6
+        assert comms[1]["community_id"] == 2 and comms[1]["paper_count_in_section"] == 4
+        assert comms[2]["community_id"] == 3 and comms[2]["paper_count_in_section"] == 3
+
+    def test_theme_communities_capped_at_three(self) -> None:
+        """AC2: with 5 communities in one section, only the top-3 by
+        paper_count_in_section appear in theme.communities."""
+        bibcodes = []
+        for cid, n in [(1, 8), (2, 5), (3, 4), (4, 3), (5, 2)]:
+            bibcodes.extend([f"2024C{cid}_{i:02d}" for i in range(n)])
+        papers_rows = [
+            (b, f"T{b}", 2024, f"a{b}", 0, ["astro-ph.GA"], ["x"]) for b in bibcodes
+        ]
+        intent_rows: list[tuple] = []
+        community_rows = []
+        offset = 0
+        for cid, n in [(1, 8), (2, 5), (3, 4), (4, 3), (5, 2)]:
+            for i in range(n):
+                community_rows.append((bibcodes[offset + i], cid, f"Lbl{cid}"))
+            offset += n
+        overrides = {b: "background" for b in bibcodes}
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=30,
+            section_overrides=overrides,
+        )
+        bg = next(s for s in result.sections if s.name == "background")
+        comms = bg.theme["communities"]
+        assert len(comms) == 3
+        # Top 3 are communities 1, 2, 3 (highest counts).
+        assert [c["community_id"] for c in comms] == [1, 2, 3]
+
+    def test_top_papers_by_citation_has_three_highest(self) -> None:
+        """AC1: theme.top_papers_by_citation contains the top-3 papers by
+        citation_count (within the section), descending."""
+        bibcodes = [f"2024P{i:02d}" for i in range(8)]
+        # Citation counts: P00=10, P01=50, P02=30, P03=99, P04=5, P05=20, P06=99, P07=0
+        cits = [10, 50, 30, 99, 5, 20, 99, 0]
+        papers_rows = [
+            (b, f"Title {b}", 2024, f"abs {b}", c, [], []) for b, c in zip(bibcodes, cits)
+        ]
+        intent_rows: list[tuple] = []
+        community_rows = [(b, 1, "Modal") for b in bibcodes]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=30,
+        )
+        bg = next(s for s in result.sections if s.name == "background")
+        top = bg.theme["top_papers_by_citation"]
+        assert len(top) == 3
+        # Sorted by citation_count desc; ties broken by bibcode asc.
+        assert top[0]["bibcode"] == "2024P03" and top[0]["citation_count"] == 99
+        assert top[1]["bibcode"] == "2024P06" and top[1]["citation_count"] == 99
+        assert top[2]["bibcode"] == "2024P01" and top[2]["citation_count"] == 50
+        # Each entry has the expected keys.
+        for entry in top:
+            assert set(entry.keys()) >= {"bibcode", "title", "citation_count"}
+
+    def test_theme_empty_section_returns_empty_payload(self) -> None:
+        """An empty section emits ``theme.communities == []`` and
+        ``theme.top_papers_by_citation == []`` — no crash."""
+        # Single paper attributed via intent to 'methods'; other sections
+        # remain empty after primary tiers; with cap=1, fallback is disabled.
+        papers_rows = [("2024A", "T", 2024, "abs", 0, [], [])]
+        intent_rows = [("2024A", "method", 1)]
+        community_rows = [("2024A", 1, "L")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=1,  # disables Tier-3 fallback
+        )
+        # 'results' is empty under this fixture.
+        results_section = next(s for s in result.sections if s.name == "results")
+        assert results_section.cited_papers == []
+        assert results_section.theme["communities"] == []
+        assert results_section.theme["top_papers_by_citation"] == []
+
+    def test_theme_aggregates_arxiv_classes_from_section_papers(self) -> None:
+        """AC1: theme.communities[].top_arxiv_classes is derived from the
+        section's papers' arxiv_class arrays.
+
+        Fixture: 4 papers in one community, 2 with ['astro-ph.EP'] and 2 with
+        ['astro-ph.SR']. Top classes should expose both.
+        """
+        bibcodes = [f"2024A{i:02d}" for i in range(4)]
+        arxiv_classes = [
+            ["astro-ph.EP"],
+            ["astro-ph.EP"],
+            ["astro-ph.SR"],
+            ["astro-ph.SR"],
+        ]
+        papers_rows = [
+            (b, f"Planet paper {i}", 2024, "abs", 0, ax, ["jupiter", "saturn"])
+            for i, (b, ax) in enumerate(zip(bibcodes, arxiv_classes))
+        ]
+        intent_rows: list[tuple] = []
+        community_rows = [(b, 7, "Planets") for b in bibcodes]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=30,
+        )
+        bg = next(s for s in result.sections if s.name == "background")
+        comms = bg.theme["communities"]
+        assert len(comms) == 1
+        comm = comms[0]
+        assert comm["community_id"] == 7
+        assert comm["paper_count_in_section"] == 4
+        # Both arxiv classes appear.
+        top_arxiv = comm["top_arxiv_classes"]
+        assert "astro-ph.EP" in top_arxiv
+        assert "astro-ph.SR" in top_arxiv
+        # And keywords come through too.
+        top_kw = comm["top_keywords"]
+        assert "jupiter" in top_kw
+        assert "saturn" in top_kw
+
+    def test_theme_summary_string_remains_for_backwards_compat(self) -> None:
+        """The legacy ``theme_summary`` string is still emitted for
+        backwards compat with pre-4la8 MCP clients. New ``theme`` field is
+        additive."""
+        papers_rows = [
+            ("2024A", "T", 2024, "abs", 0, [], []),
+            ("2024B", "T", 2024, "abs", 0, [], []),
+        ]
+        intent_rows: list[tuple] = []
+        community_rows = [
+            ("2024A", 1, "Cosmology"),
+            ("2024B", 1, "Cosmology"),
+        ]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A", "2024B"],
+            sections=list(DEFAULT_SECTIONS),
+        )
+        bg = next(s for s in result.sections if s.name == "background")
+        # Legacy field still populated.
+        assert bg.theme_summary == "Cosmology"
+        # New field also populated.
+        assert isinstance(bg.theme, dict)
+        assert "communities" in bg.theme
+        assert "top_papers_by_citation" in bg.theme
+
+    def test_theme_keyword_fallback_uses_title_tokens(self) -> None:
+        """When all section papers' keyword arrays are empty, top_keywords
+        falls back to title-token aggregation (per labels pipeline note in
+        CLAUDE.md memory community_labels_pipeline.md)."""
+        bibcodes = [f"2024K{i:02d}" for i in range(3)]
+        # No keywords; titles share tokens "jupiter atmosphere".
+        papers_rows = [
+            (bibcodes[0], "Jupiter atmosphere dynamics", 2024, "abs", 0, [], []),
+            (bibcodes[1], "Atmosphere of jupiter measured", 2024, "abs", 0, [], []),
+            (bibcodes[2], "Saturn atmosphere different", 2024, "abs", 0, [], []),
+        ]
+        intent_rows: list[tuple] = []
+        community_rows = [(b, 1, "Planets") for b in bibcodes]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=30,
+        )
+        bg = next(s for s in result.sections if s.name == "background")
+        comm = bg.theme["communities"][0]
+        # 'atmosphere' should appear (3x) and 'jupiter' (2x).
+        top_kw = comm["top_keywords"]
+        assert "atmosphere" in top_kw
+        assert "jupiter" in top_kw
+
+    def test_theme_in_wire_format_via_to_dict(self) -> None:
+        """AC1 wire: ``theme`` is serialised via ``to_dict()`` so MCP clients
+        receive it. ``theme_summary`` continues to be emitted alongside."""
+        papers_rows = [("2024A", "T", 2024, "abs", 5, ["astro-ph.GA"], ["galaxies"])]
+        intent_rows: list[tuple] = []
+        community_rows = [("2024A", 1, "Galaxies")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+        )
+        wire = result.to_dict()
+        bg_wire = next(s for s in wire["sections"] if s["name"] == "background")
+        assert "theme" in bg_wire
+        assert "theme_summary" in bg_wire
+        assert isinstance(bg_wire["theme"], dict)
+        assert isinstance(bg_wire["theme"]["communities"], list)
+        assert isinstance(bg_wire["theme"]["top_papers_by_citation"], list)

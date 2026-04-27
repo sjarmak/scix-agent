@@ -486,46 +486,75 @@
         const positions = Object.create(null)
         let umapInstance = null
 
-        const candidates = ['./umap.json', '/data/viz/umap.json']
-        let data = null
-        let lastErr = null
-        for (const url of candidates) {
-          try {
-            const resp = await fetch(url, { cache: 'no-store' })
-            if (!resp.ok) {
-              lastErr = new Error(url + ' -> HTTP ' + resp.status)
-              continue
-            }
-            data = await resp.json()
-            break
-          } catch (err) {
-            lastErr = err
+        function _umapCandidates() {
+          if (window.scixViz && typeof window.scixViz.resolutionFiles === 'function') {
+            return window.scixViz.resolutionFiles().umap
           }
+          return ['./umap.json', '/data/viz/umap.json']
         }
-        if (data && Array.isArray(data)) {
+
+        async function _loadUmap() {
+          const urls = _umapCandidates()
+          let data = null
+          let lastErr = null
+          for (const url of urls) {
+            try {
+              const resp = await fetch(url, { cache: 'no-store' })
+              if (!resp.ok) {
+                lastErr = new Error(url + ' -> HTTP ' + resp.status)
+                continue
+              }
+              data = await resp.json()
+              break
+            } catch (err) {
+              lastErr = err
+            }
+          }
+          if (!data || !Array.isArray(data)) {
+            status.textContent =
+              'Could not load umap data (' +
+              (lastErr ? lastErr.message || String(lastErr) : 'unknown error') +
+              '). Trace events will still be narrated.'
+            return
+          }
+          // Refresh the position lookup against the new dataset.
+          for (const k of Object.keys(positions)) delete positions[k]
           for (let i = 0; i < data.length; i += 1) {
             const p = data[i]
             if (p && p.bibcode) {
               positions[p.bibcode] = [Number(p.x) || 0, Number(p.y) || 0]
             }
           }
-          if (typeof window.renderUMAP === 'function') {
-            try {
-              umapInstance = window.renderUMAP(data, root)
-              window.umapInstance = umapInstance
-            } catch (err) {
-              status.textContent = 'Render failed: ' + (err.message || String(err))
-            }
-          } else {
+          if (typeof window.renderUMAP !== 'function') {
             status.textContent =
               'renderUMAP is not defined — umap_browser.js failed to load.'
+            return
           }
-        } else {
-          status.textContent =
-            'Could not load umap.json (' +
-            (lastErr ? lastErr.message || String(lastErr) : 'unknown error') +
-            '). Trace events will still be narrated.'
+          // Tear down any previous deck.gl instance before mounting a new
+          // one so resolution switches don't leak WebGL contexts.
+          if (umapInstance && typeof umapInstance.finalize === 'function') {
+            try { umapInstance.finalize() } catch (_e) { /* best-effort */ }
+          }
+          while (root.firstChild) root.removeChild(root.firstChild)
+          const tt = document.createElement('div')
+          tt.id = 'umap-tooltip'
+          tt.setAttribute('role', 'tooltip')
+          root.appendChild(tt)
+          try {
+            umapInstance = window.renderUMAP(data, root)
+            window.umapInstance = umapInstance
+            status.textContent = ''
+          } catch (err) {
+            status.textContent = 'Render failed: ' + (err.message || String(err))
+          }
         }
+        await _loadUmap()
+        // Resolution toggle in the shared nav fires this event; reload the
+        // UMAP scatter so the dot view + community labels reflect the
+        // selected resolution.
+        window.addEventListener('scix:resolution-change', function () {
+          _loadUmap()
+        })
 
         function handleEvent(event) {
           appendTraceLine(event)

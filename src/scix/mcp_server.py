@@ -345,6 +345,16 @@ def _log_query(
         result_count = _extract_result_count(result_json) if result_json else 0
         if error_msg is None and _detect_unscoped_broad_block(result_json):
             error_msg = _UNSCOPED_BROAD_TAG
+        # If the tool dispatch left the connection in INERROR (a swallowed
+        # statement_timeout, or a propagated QueryCanceled that exited the
+        # try block before commit), the INSERT below would itself raise
+        # InFailedSqlTransaction and the row would be lost. Roll back first
+        # so this best-effort log write actually lands in the table. See
+        # bead wzqz. Guarded with getattr because some test fixtures pass
+        # a fake connection object without ``info``.
+        info = getattr(conn, "info", None)
+        if info is not None and info.transaction_status == psycopg.pq.TransactionStatus.INERROR:
+            conn.rollback()
         with conn.cursor() as cur:
             cur.execute(
                 """

@@ -770,11 +770,18 @@ def hybrid_search(
     results_lists: list[list[dict[str, Any]]] = [lex_result.papers]
 
     # Extra alias lexical lanes — one per matched entity canonical name.
+    # Each lane runs inside a savepoint (conn.transaction) so a per-lane
+    # statement_timeout failure rolls back to the savepoint without leaving
+    # the outer transaction in INERROR (which would poison every subsequent
+    # DB call in this hybrid_search invocation — see bead wzqz).
     if alias_lane_queries:
         t_alias_lex = time.perf_counter()
         for lane_query in alias_lane_queries:
             try:
-                lane = lexical_search(conn, lane_query, filters=filters, limit=lexical_limit)
+                with conn.transaction():
+                    lane = lexical_search(
+                        conn, lane_query, filters=filters, limit=lexical_limit
+                    )
             except Exception:
                 logger.warning(
                     "Alias lexical lane failed for %r; continuing", lane_query, exc_info=True
@@ -784,13 +791,16 @@ def hybrid_search(
                 results_lists.append(lane.papers)
         timing["alias_lexical_ms"] = _elapsed_ms(t_alias_lex)
 
-    # Body BM25 (full-text via GIN expression index on papers.body)
+    # Body BM25 (full-text via GIN expression index on papers.body). Wrapped
+    # in a savepoint for the same reason as the alias lanes — a body-lane
+    # statement_timeout must not poison the outer transaction.
     timing["body_lexical_ms"] = 0.0
     if include_body:
         try:
-            body_result = lexical_search_body(
-                conn, query_text, filters=filters, limit=lexical_limit
-            )
+            with conn.transaction():
+                body_result = lexical_search_body(
+                    conn, query_text, filters=filters, limit=lexical_limit
+                )
             timing["body_lexical_ms"] = body_result.timing_ms["body_lexical_ms"]
             if body_result.papers:
                 results_lists.append(body_result.papers)
@@ -833,18 +843,20 @@ def hybrid_search(
     else:
         timing["vector_ms"] = 0.0
 
-    # OpenAI vector search — skip entirely when model has 0 rows
+    # OpenAI vector search — skip entirely when model has 0 rows. Savepoint
+    # for the same poisoned-connection reason as the lexical lanes above.
     timing["openai_vector_ms"] = 0.0
     if openai_embedding is not None and _model_has_embeddings(conn, "text-embedding-3-large"):
         try:
-            openai_vec_result = vector_search(
-                conn,
-                openai_embedding,
-                model_name="text-embedding-3-large",
-                filters=filters,
-                limit=vector_limit,
-                ef_search=ef_search,
-            )
+            with conn.transaction():
+                openai_vec_result = vector_search(
+                    conn,
+                    openai_embedding,
+                    model_name="text-embedding-3-large",
+                    filters=filters,
+                    limit=vector_limit,
+                    ef_search=ef_search,
+                )
             timing["openai_vector_ms"] = openai_vec_result.timing_ms["vector_ms"]
             results_lists.append(openai_vec_result.papers)
         except Exception:

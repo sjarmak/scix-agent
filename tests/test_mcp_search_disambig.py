@@ -114,7 +114,13 @@ def test_ambiguous_query_returns_disambiguation(mock_disambig: MagicMock) -> Non
         result_json = _dispatch_tool(
             mock_conn,
             "search",
-            {"query": "Hubble observations of Bennu"},
+            # bypass_unscoped_guard=True so the broad query reaches the
+            # disambiguation step rather than tripping the unscoped guard
+            # (bead scix_experiments-uerc).
+            {
+                "query": "Hubble observations of Bennu",
+                "bypass_unscoped_guard": True,
+            },
         )
         # Search implementation MUST NOT be invoked when disambiguation fires.
         mock_hybrid.assert_not_called()
@@ -161,7 +167,13 @@ def test_unambiguous_query_returns_search(
         result_json = _dispatch_tool(
             mock_conn,
             "search",
-            {"query": "JWST infrared spectroscopy"},
+            # bypass_unscoped_guard=True for parity with the ambiguous-query
+            # test; this case exercises the disambiguator-then-search path,
+            # not the unscoped-broad-query guard.
+            {
+                "query": "JWST infrared spectroscopy",
+                "bypass_unscoped_guard": True,
+            },
         )
         mock_hybrid.assert_called_once()
 
@@ -192,7 +204,14 @@ def test_disambiguate_false_bypasses(
         result_json = _dispatch_tool(
             mock_conn,
             "search",
-            {"query": "Hubble observations of Bennu", "disambiguate": False},
+            {
+                "query": "Hubble observations of Bennu",
+                "disambiguate": False,
+                # bypass_unscoped_guard=True so the broad query reaches the
+                # search path; we're testing the disambiguate=False bypass,
+                # not the unscoped-broad-query guard.
+                "bypass_unscoped_guard": True,
+            },
         )
         mock_hybrid.assert_called_once()
 

@@ -2,19 +2,21 @@
 
 Covers:
 
-1. The MCP ``entity`` tool advertises ``negative_result`` and
-   ``quant_claim`` as accepted ``entity_type`` values (tools/list schema).
-2. ``entity({entity_type='negative_result'})`` returns rows whose top
-   level carries ``evidence_span`` (sourced from M3 spans).
-3. ``entity({entity_type='quant_claim', entity_name='H0'})`` returns
-   rows whose ``payload`` contains ``{value, uncertainty, unit}``
-   (sourced from M4 claims, filtered by canonical quantity).
-4. ``read_paper`` / ``entity`` / ``search_within_paper`` (the latter via
+1. The MCP ``entity`` tool no longer advertises ``negative_result`` /
+   ``quant_claim`` as ``entity_type`` values — they were removed under
+   bead ``scix_experiments-mh14`` because they are claim/finding
+   extractions, not entities. The schema must keep the four real entity
+   types (methods/datasets/instruments/materials).
+2. ``entity({entity_type='negative_result'})`` and
+   ``entity({entity_type='quant_claim'})`` now return a structured
+   error pointing at the follow-up bead (``scix_experiments-c996``).
+3. ``read_paper`` / ``entity`` / ``search_within_paper`` (the latter via
    the deprecated alias path that resolves to ``read_paper`` with
-   ``search_query``) all carry a top-level ``coverage_note`` field.
-5. The ``coverage_note`` string mentions ``full-text coverage``, a
+   ``search_query``) all carry a top-level ``coverage_note`` field on
+   the still-supported call shapes.
+4. The ``coverage_note`` string mentions ``full-text coverage``, a
    percentage, and cites ``docs/full_text_coverage_analysis.md``.
-6. When the coverage-bias JSON is missing the fallback note still
+5. When the coverage-bias JSON is missing the fallback note still
    cites the docs path so the link is always present.
 
 DB and the JSON file read are mocked — no live DB and no real disk read.
@@ -89,47 +91,10 @@ _NEG_RESULT_ROW: tuple[Any, ...] = (
     "Search for dark matter in the Galactic halo",
 )
 
-# Sample M4 quant_claim extraction row (matches scix.claim_extractor
-# payload shape: {extraction_type, extraction_version, source, claims}).
-_QUANT_CLAIM_ROW: tuple[Any, ...] = (
-    "2024ApJ...002B",
-    "quant_claim",
-    "quant_claim_regex_v1",
-    {
-        "extraction_type": "quant_claim",
-        "extraction_version": "quant_claim_regex_v1",
-        "source": "claim_extractor_regex",
-        "claims": [
-            {
-                "quantity": "H0",
-                "value": 73.0,
-                "uncertainty": 1.0,
-                "unit": "km/s/Mpc",
-                "span": [200, 230],
-                "uncertainty_pos": None,
-                "uncertainty_neg": None,
-                "surface": "H0 = 73 +/- 1 km/s/Mpc",
-                "confidence_tier": 1,
-            },
-            {
-                "quantity": "Omega_m",
-                "value": 0.3,
-                "uncertainty": 0.05,
-                "unit": None,
-                "span": [240, 260],
-                "uncertainty_pos": None,
-                "uncertainty_neg": None,
-                "surface": "Omega_m = 0.3 +/- 0.05",
-                "confidence_tier": 2,
-            },
-        ],
-    },
-    "Local measurement of the Hubble constant",
-)
-
-
 # ---------------------------------------------------------------------------
-# AC1: schema advertises new entity_type values
+# AC1 (mh14): the entity tool's entity_type enum no longer advertises the
+# claim/finding extraction kinds — those are not entities and have been
+# removed under bead scix_experiments-mh14.
 # ---------------------------------------------------------------------------
 
 
@@ -153,96 +118,61 @@ def _get_entity_tool_schema() -> dict[str, Any]:
     return entity_tool.inputSchema  # type: ignore[no-any-return]
 
 
-def test_schema_accepts_negative_result_and_quant_claim() -> None:
-    """AC1: tools/list response advertises the two new entity_type values."""
+def test_schema_drops_negative_result_and_quant_claim() -> None:
+    """AC1 (mh14): tools/list response no longer advertises the legacy
+    extraction-row kinds under entity_type."""
     try:
         schema = _get_entity_tool_schema()
     except (ImportError, AttributeError):
         pytest.skip("mcp SDK not installed or server API changed")
 
     enum_values = schema["properties"]["entity_type"]["enum"]
-    assert "negative_result" in enum_values
-    assert "quant_claim" in enum_values
-    # Backwards compatibility — original values must still be there.
+    assert "negative_result" not in enum_values
+    assert "quant_claim" not in enum_values
+    # Backwards compatibility — the four real entity-containment types
+    # must still be advertised.
     for legacy in ("methods", "datasets", "instruments", "materials"):
         assert legacy in enum_values, f"{legacy} dropped from entity_type enum"
 
 
 # ---------------------------------------------------------------------------
-# AC2: negative_result rows surface evidence_span
+# AC2 (mh14): the runtime handler returns a structured error for the
+# legacy extraction-row kinds instead of dispatching them through the
+# entity-search code path.
 # ---------------------------------------------------------------------------
 
 
-def test_entity_negative_result_returns_evidence_span() -> None:
-    """AC2: entity({entity_type='negative_result'}) rows carry evidence_span."""
+@pytest.mark.parametrize("legacy_type", ["negative_result", "quant_claim"])
+def test_entity_legacy_extraction_type_returns_error(legacy_type: str) -> None:
+    """AC2 (mh14): the entity tool refuses claim/finding extraction kinds
+    with a structured error that points at the follow-up bead so an agent
+    can recover in one turn."""
+    conn = _make_conn([_NEG_RESULT_ROW])  # row contents are irrelevant — DB never queried
+
+    out = _dispatch_tool(conn, "entity", {"entity_type": legacy_type})
+    data = json.loads(out)
+
+    assert "error" in data
+    assert legacy_type in data["error"]
+    # Surface the follow-up bead reference so an agent / human reading
+    # the error can find the long-term home for this functionality.
+    assert "scix_experiments-c996" in data["error"]
+
+
+@pytest.mark.parametrize("legacy_type", ["negative_result", "quant_claim"])
+def test_entity_legacy_extraction_type_does_not_query_db(legacy_type: str) -> None:
+    """The rejection happens at the front door — the handler must not
+    open a cursor for the legacy types."""
     conn = _make_conn([_NEG_RESULT_ROW])
 
-    out = _dispatch_tool(conn, "entity", {"entity_type": "negative_result"})
-    data = json.loads(out)
-
-    assert data["total"] == 1
-    paper = data["papers"][0]
-    assert paper["bibcode"] == "2024ApJ...001A"
-    assert "evidence_span" in paper, "negative_result rows must surface evidence_span"
-    assert "no significant" in paper["evidence_span"]
-    # Spans list also preserved for downstream callers.
-    assert paper["spans"][0]["confidence_label"] == "high"
-
-
-def test_entity_negative_result_filter_by_query() -> None:
-    """A name_filter on negative_result restricts to spans matching the substring."""
-    conn = _make_conn([_NEG_RESULT_ROW])
-
-    out = _dispatch_tool(
+    _dispatch_tool(
         conn,
         "entity",
-        {"entity_type": "negative_result", "entity_name": "no significant"},
+        {"entity_type": legacy_type, "entity_name": "anything"},
     )
-    data = json.loads(out)
-    assert data["total"] == 1
-    assert "no significant" in data["papers"][0]["evidence_span"]
 
-
-# ---------------------------------------------------------------------------
-# AC3: quant_claim rows expose {value, uncertainty, unit} via payload
-# ---------------------------------------------------------------------------
-
-
-def test_entity_quant_claim_h0_payload_shape() -> None:
-    """AC3: entity({entity_type='quant_claim', entity_name='H0'}) returns {value, uncertainty, unit}."""
-    conn = _make_conn([_QUANT_CLAIM_ROW])
-
-    out = _dispatch_tool(
-        conn,
-        "entity",
-        {"entity_type": "quant_claim", "entity_name": "H0"},
-    )
-    data = json.loads(out)
-
-    assert data["total"] == 1
-    paper = data["papers"][0]
-    payload = paper["payload"]
-    assert payload["value"] == 73.0
-    assert payload["uncertainty"] == 1.0
-    assert payload["unit"] == "km/s/Mpc"
-    # Filter dropped the Omega_m claim.
-    assert len(paper["claims"]) == 1
-    assert paper["claims"][0]["quantity"] == "H0"
-
-
-def test_entity_quant_claim_no_filter_returns_all_claims() -> None:
-    """Without entity_name, all claims survive the filter."""
-    conn = _make_conn([_QUANT_CLAIM_ROW])
-
-    out = _dispatch_tool(conn, "entity", {"entity_type": "quant_claim"})
-    data = json.loads(out)
-
-    assert data["total"] == 1
-    paper = data["papers"][0]
-    # First claim's payload is promoted to top-level.
-    assert paper["payload"]["quantity"] == "H0"
-    # All claims still present.
-    assert {c["quantity"] for c in paper["claims"]} == {"H0", "Omega_m"}
+    # No SQL execution attempted.
+    assert not conn.cursor.called
 
 
 # ---------------------------------------------------------------------------
@@ -259,9 +189,24 @@ def _assert_coverage_note(note: str) -> None:
 
 
 def test_entity_response_includes_coverage_note() -> None:
-    """AC4: entity responses carry top-level coverage_note."""
-    conn = _make_conn([_NEG_RESULT_ROW])
-    out = _dispatch_tool(conn, "entity", {"entity_type": "negative_result"})
+    """AC4: entity responses on the still-supported call shape carry
+    top-level coverage_note. Uses ``methods`` (a real entity-containment
+    type) since the legacy ``negative_result`` / ``quant_claim`` kinds
+    were removed under bead scix_experiments-mh14 and now early-error
+    without dispatching through _inject_coverage_note."""
+    methods_row: tuple[Any, ...] = (
+        "2024ApJ...003C",
+        "methods",
+        "v1",
+        {"methods": ["JWST"]},
+        "Some methods paper",
+    )
+    conn = _make_conn([methods_row])
+    out = _dispatch_tool(
+        conn,
+        "entity",
+        {"action": "search", "entity_type": "methods", "query": "JWST"},
+    )
     data = json.loads(out)
     assert "coverage_note" in data
     _assert_coverage_note(data["coverage_note"])

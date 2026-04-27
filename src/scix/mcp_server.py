@@ -1622,25 +1622,39 @@ def create_server(_run_self_test: bool = True):
                 },
             ),
             # --- M4: entity (merges entity_search + resolve_entity) ---
+            #
+            # NOTE (scix_experiments-mh14, 2026-04-27): the entity tool
+            # advertises three distinct workflows behind the ``action`` enum.
+            # ``negative_result`` and ``quant_claim`` used to be smuggled in
+            # under ``entity_type`` for action='search', but those are
+            # claim/finding extractions, not entities — they share no
+            # parameter shape with real entity types. They were removed from
+            # the schema; surfacing them is tracked under the follow-up bead
+            # for a dedicated claim_search tool. See
+            # ``docs/mcp_tool_audit_2026-04.md`` for the rationale.
             Tool(
                 name="entity",
                 description=(
                     "Look up named scientific entities across 13 vocabularies "
                     "(method, dataset, instrument, material, gene, software, "
                     "mission, organism, target, observable, chemical, "
-                    "location, taxon — ~9M entities total). "
-                    "action='resolve' maps a free-text mention to canonical "
-                    "entity records (use this for cross-discipline lookup: "
-                    "'p53', 'transformer', 'JWST'). "
-                    "action='papers' returns papers tagged with an entity "
-                    "via document_entities (57M paper-entity links across "
-                    "16M papers); pass entity_id (from resolve) or query "
-                    "(auto-resolves first candidate). "
-                    "action='search' is a narrower path that searches the "
-                    "older extractions table for 4 specific types "
+                    "location, taxon — ~9M entities total). The tool exposes "
+                    "three distinct actions; pick by what you have on input "
+                    "and what you want back. "
+                    "action='resolve' (text→entity_id): you have a free-text "
+                    "mention ('p53', 'transformer', 'JWST') and want canonical "
+                    "entity records to disambiguate it. "
+                    "action='papers' (entity_id→papers): you already have an "
+                    "entity_id (from a prior resolve, or document_entities "
+                    "joins) and want the papers tagged with it; pass "
+                    "entity_id directly, or query='<text>' to auto-resolve "
+                    "first. "
+                    "action='search' (legacy entity-extractions search): a "
+                    "narrower path that scans the older extractions table "
+                    "for one of four containment-payload entity types "
                     "(methods/datasets/instruments/materials). "
-                    "Use entity_context once you have an entity_id and "
-                    "need its full profile and relationships."
+                    "Use entity_context once you have an entity_id and need "
+                    "its full profile and relationships."
                 ),
                 inputSchema={
                     "type": "object",
@@ -1649,9 +1663,15 @@ def create_server(_run_self_test: bool = True):
                             "type": "string",
                             "enum": ["search", "resolve", "papers"],
                             "description": (
-                                "resolve=name→canonical entity (cross-discipline); "
-                                "papers=entity→papers tagged with it; "
-                                "search=narrow search of extractions table"
+                                "resolve: text mention -> canonical entity records "
+                                "(cross-discipline disambiguation). "
+                                "papers: entity_id (or auto-resolved query) -> "
+                                "papers tagged with that entity via "
+                                "document_entities. "
+                                "search: legacy narrow scan of the extractions "
+                                "table for one of the four containment-payload "
+                                "entity types (methods/datasets/instruments/"
+                                "materials)."
                             ),
                         },
                         "entity_id": {
@@ -1665,18 +1685,17 @@ def create_server(_run_self_test: bool = True):
                                 "datasets",
                                 "instruments",
                                 "materials",
-                                "negative_result",
-                                "quant_claim",
                             ],
                             "description": (
                                 "Entity type (required for action=search). "
-                                "'methods'/'datasets'/'instruments'/'materials' "
-                                "search the in-line containment payload. "
-                                "'negative_result' returns null-finding spans "
-                                "(M3) with evidence_span. 'quant_claim' returns "
-                                "extracted numeric claims (M4) with payload "
-                                "{value, uncertainty, unit}; pass entity_name "
-                                "to filter to one canonical quantity (e.g. 'H0')."
+                                "Searches the in-line containment payload on "
+                                "extractions rows. NOTE: 'negative_result' "
+                                "and 'quant_claim' were removed in 2026-04 "
+                                "(bead scix_experiments-mh14) — those are "
+                                "claim/finding extractions, not entities. A "
+                                "dedicated tool for surfacing them is tracked "
+                                "as a follow-up; see docs/mcp_tool_audit_2026"
+                                "-04.md."
                             ),
                         },
                         "query": {
@@ -3566,11 +3585,26 @@ _TIER_MIN_TO_ALLOWED: dict[int, list[str]] = {
 }
 
 
-#: Entity types whose rows live in ``staging.extractions`` keyed on
-#: ``extraction_type`` (the row IS the entity, not a containment payload).
-#: For these the entity tool surfaces the raw extraction payload — the
-#: shape is documented in scix.negative_results / scix.claim_extractor.
-_EXTRACTION_TYPE_ENTITIES: frozenset[str] = frozenset({"negative_result", "quant_claim"})
+#: Entity types that used to be smuggled into the entity tool under
+#: ``entity_type`` for action='search'. They are claim/finding extraction
+#: payload kinds (M3 negative_result, M4 quant_claim), not entities, and
+#: were removed from the entity tool's schema in 2026-04 under bead
+#: ``scix_experiments-mh14``. The handler rejects them with a structured
+#: error so a client that rediscovers the old contract gets a clear,
+#: actionable response instead of falling through to a different code path.
+#:
+#: A dedicated tool to surface these extractions is tracked under follow-up
+#: bead ``scix_experiments-c996``. ``_handle_entity_extraction_search``
+#: below is retained as the implementation that follow-up tool will reuse.
+_LEGACY_EXTRACTION_TYPES: frozenset[str] = frozenset({"negative_result", "quant_claim"})
+
+#: The four entity-containment types that the entity tool's
+#: ``action='search'`` path still supports. These map to
+#: ``staging.extractions`` rows whose ``payload`` is a JSONB object keyed by
+#: type name ({"methods": ["JWST", ...]}).
+_VALID_ENTITY_TYPES: frozenset[str] = frozenset(
+    {"methods", "datasets", "instruments", "materials"}
+)
 
 
 def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
@@ -3582,13 +3616,29 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     query = args.get("query") or args.get("entity_name") or ""
     entity_type = args.get("entity_type")
 
-    # Only the containment-style entity types require a non-empty query.
-    # Extraction-row entity types (negative_result, quant_claim) accept an
-    # empty query and treat ``entity_name`` as an optional filter.
+    # mh14: reject the legacy extraction-row kinds at the front door so the
+    # error is the same regardless of action and the caller can recover in
+    # one turn. These used to be valid entity_type values but they're
+    # claim/finding extractions, not entities — a follow-up bead (c996)
+    # will surface them under a dedicated tool.
+    if entity_type in _LEGACY_EXTRACTION_TYPES:
+        return json.dumps(
+            {
+                "error": (
+                    f"entity_type='{entity_type}' is no longer accepted by the "
+                    f"entity tool — it is a claim/finding extraction, not an "
+                    f"entity. Valid entity_type values are: "
+                    f"{sorted(_VALID_ENTITY_TYPES)}. Surfacing "
+                    f"negative_result / quant_claim is tracked under bead "
+                    f"scix_experiments-c996; see "
+                    f"docs/mcp_tool_audit_2026-04.md for the rationale."
+                )
+            }
+        )
+
     # action='papers' accepts entity_id directly, no query needed when given.
-    is_extraction_row = action == "search" and entity_type in _EXTRACTION_TYPE_ENTITIES
     is_papers_with_id = action == "papers" and args.get("entity_id") is not None
-    if not is_extraction_row and not is_papers_with_id and (not query or not query.strip()):
+    if not is_papers_with_id and (not query or not query.strip()):
         return json.dumps({"error": "query must be a non-empty string"})
 
     if action == "resolve":
@@ -3628,25 +3678,15 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         return _inject_coverage_note(result_json)
 
     if action == "search":
-        # ---- Extraction-row entity types (M3 negative_result, M4 quant_claim) ----
-        if entity_type in _EXTRACTION_TYPE_ENTITIES:
-            return _inject_coverage_note(
-                _handle_entity_extraction_search(
-                    conn,
-                    extraction_type=entity_type,
-                    name_filter=query.strip() if query else None,
-                    limit=min(args.get("limit", 20), 200),
-                )
-            )
-
-        _VALID_ENTITY_TYPES = {"methods", "datasets", "instruments", "materials"}
+        # mh14: legacy extraction-row kinds (negative_result, quant_claim)
+        # are filtered out earlier by the front-door check; this branch
+        # only sees real containment-payload entity types.
         if not entity_type or entity_type not in _VALID_ENTITY_TYPES:
             return json.dumps(
                 {
                     "error": (
                         f"Invalid entity_type '{entity_type}'. "
-                        f"Must be one of: "
-                        f"{sorted(_VALID_ENTITY_TYPES | _EXTRACTION_TYPE_ENTITIES)}"
+                        f"Must be one of: {sorted(_VALID_ENTITY_TYPES)}"
                     )
                 }
             )
@@ -3837,7 +3877,16 @@ def _handle_entity_extraction_search(
     name_filter: str | None,
     limit: int,
 ) -> str:
-    """Surface rows from ``staging.extractions`` for an extraction-row entity.
+    """Surface rows from ``staging.extractions`` for a claim/finding-extraction kind.
+
+    .. note::
+
+       Unreachable from the ``entity`` MCP tool as of 2026-04 (bead
+       ``scix_experiments-mh14``). The entity tool's ``entity_type`` enum
+       no longer accepts ``negative_result`` / ``quant_claim`` because
+       those are claim/finding extractions, not entities. This helper is
+       retained as the implementation that the follow-up tool (bead
+       ``scix_experiments-c996``) will reuse when claim_search lands.
 
     Currently supports:
 

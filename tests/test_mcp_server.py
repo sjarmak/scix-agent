@@ -364,6 +364,118 @@ class TestEntityTool:
 
 
 # ---------------------------------------------------------------------------
+# scix_experiments-mh14: entity tool no longer accepts negative_result /
+# quant_claim under entity_type. Those are claim/finding extractions, not
+# entities — relocating to a dedicated tool is tracked under bead c996.
+# ---------------------------------------------------------------------------
+
+
+class TestEntityToolRejectsLegacyExtractionTypes:
+    """The entity tool used to overload entity_type with M3/M4 extraction
+    payload kinds. The mh14 cleanup removes them from the schema and makes
+    the handler reject them with a structured error so an agent that
+    rediscovers the old contract gets a clear, actionable response.
+    """
+
+    @pytest.mark.parametrize("legacy_type", ["negative_result", "quant_claim"])
+    def test_handler_rejects_legacy_extraction_type(self, legacy_type: str) -> None:
+        """The runtime handler returns a structured validation error for
+        the two extraction-row kinds that used to be wired through the
+        entity tool. The error mentions the legacy type and points at the
+        valid entity types so an agent can recover in one turn."""
+        conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(
+                conn,
+                "entity",
+                {"action": "search", "entity_type": legacy_type, "query": "anything"},
+            )
+        )
+        assert "error" in result
+        # The error explicitly names the rejected legacy value so callers
+        # don't have to guess what their schema is doing wrong.
+        assert legacy_type in result["error"]
+        # And it lists the four real entity types (the things the schema
+        # actually still accepts) so the next call is obvious.
+        for valid in ("methods", "datasets", "instruments", "materials"):
+            assert valid in result["error"]
+
+    @pytest.mark.parametrize("legacy_type", ["negative_result", "quant_claim"])
+    def test_handler_rejects_without_explicit_action(self, legacy_type: str) -> None:
+        """Default action is 'search'; passing the legacy entity_type
+        without 'action' must still error out, not fall through to a
+        different code path."""
+        conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(
+                conn,
+                "entity",
+                {"entity_type": legacy_type},
+            )
+        )
+        assert "error" in result
+        assert legacy_type in result["error"]
+
+
+class TestEntityToolSchema:
+    """Schema-level guarantees for the entity tool inputSchema. The
+    extraction-row kinds must not appear in the entity_type enum; the
+    legacy four types must remain.
+    """
+
+    @staticmethod
+    def _entity_tool_schema() -> dict:
+        """Pull the live entity tool inputSchema via the MCP tools/list handler."""
+        import asyncio
+
+        try:
+            from mcp.types import ListToolsRequest
+
+            from scix.mcp_server import create_server
+        except (ImportError, AttributeError):
+            pytest.skip("mcp SDK not installed or server API changed")
+
+        server = create_server(_run_self_test=False)
+        handler = server.request_handlers[ListToolsRequest]
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(handler(ListToolsRequest(method="tools/list")))
+        finally:
+            loop.close()
+        tools = result.root.tools if hasattr(result, "root") else result.tools
+        entity_tool = next(t for t in tools if t.name == "entity")
+        return entity_tool.inputSchema
+
+    def test_entity_type_enum_excludes_extraction_kinds(self) -> None:
+        """negative_result and quant_claim must NOT appear in the enum —
+        they're claim/finding extractions, not entities."""
+        schema = self._entity_tool_schema()
+        enum_values = schema["properties"]["entity_type"]["enum"]
+        assert "negative_result" not in enum_values
+        assert "quant_claim" not in enum_values
+
+    def test_entity_type_enum_keeps_real_entity_types(self) -> None:
+        """The four real entity-containment types remain advertised."""
+        schema = self._entity_tool_schema()
+        enum_values = schema["properties"]["entity_type"]["enum"]
+        for et in ("methods", "datasets", "instruments", "materials"):
+            assert et in enum_values, f"{et} dropped from entity_type enum"
+
+    def test_action_enum_distinguishes_three_workflows(self) -> None:
+        """The action enum lists the three distinct workflows the tool
+        supports; the description must distinguish them so an agent can
+        pick correctly."""
+        schema = self._entity_tool_schema()
+        action_prop = schema["properties"]["action"]
+        assert set(action_prop["enum"]) == {"search", "resolve", "papers"}
+        # The description should call out all three to steer the agent.
+        desc = action_prop["description"].lower()
+        assert "resolve" in desc
+        assert "papers" in desc
+        assert "search" in desc
+
+
+# ---------------------------------------------------------------------------
 # AC11: entity_context
 # ---------------------------------------------------------------------------
 

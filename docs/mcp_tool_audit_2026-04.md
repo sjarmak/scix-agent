@@ -14,6 +14,61 @@ tool, and record deprecation notes for the aliased legacy tools.
 | Deprecation notes per removed tool | **Met.** Aliases map to the new tools via `src/scix/mcp_server.py::_DEPRECATED_ALIASES`; schema transforms in `_transform_deprecated_args`; responses wrapped with `{deprecated: true, use_instead, original_tool}` by `_wrap_deprecated`. |
 | `SKILL.md` tool table reflects the new set | Stale — needs update to reflect 15-tool surface and the 4 env-hidden tools. |
 
+## 2026-04-27 — entity tool: drop claim/finding extractions from entity_type enum (bead `scix_experiments-mh14`)
+
+**Change:** the `entity` MCP tool's `entity_type` enum no longer accepts
+`negative_result` or `quant_claim`. Both used to dispatch to
+`_handle_entity_extraction_search` (a scan over `staging.extractions` rows
+keyed by `extraction_type`). The handler now rejects these legacy values
+at the front door with a structured error that names the offending value,
+lists the still-valid `entity_type` choices
+(`methods` / `datasets` / `instruments` / `materials`), and points at the
+follow-up bead.
+
+**Why:** the entity tool exposes three distinct workflows behind the
+`action` enum:
+
+- `action='resolve'` — text mention -> canonical `entity_id` (modern
+  resolver, ~9M entities, 13 vocabularies).
+- `action='papers'` — `entity_id` -> tagged papers via
+  `document_entities` (57.7M paper-entity links).
+- `action='search'` — legacy narrow scan of the `extractions` table for
+  the four containment-payload entity types.
+
+`negative_result` and `quant_claim` smuggled into the third action's
+`entity_type` enum are not entities — they are claim/finding extraction
+payload kinds with completely different parameter shapes
+(`spans[].evidence_span`, `claims[].{quantity, value, uncertainty,
+unit}`). Keeping them under `entity_type` confused agent routing and
+broke the type-shape contract: an `entity_type` value should describe
+*what kind of entity* you want, not *what kind of claim* you want. The
+mh14 bead chose the lower-risk path: drop the misfit values from the
+schema and reject them at runtime, rather than splitting `entity` into
+three separate tools (which would conflict with parallel beads on other
+consolidated tools).
+
+**Splitting `entity` into 3 tools** was considered and explicitly
+deferred — it is a `wqr.9`-class consolidation. The three actions still
+share `query` / `entity_id` / `limit` and a coherent agent-mental model
+("the named-entity lookup tool"); the misfit was the extraction-payload
+overlap, not the action multiplexing.
+
+**Surfacing negative_result + quant_claim** is tracked under follow-up
+bead `scix_experiments-c996` (a dedicated `claim_search` tool reusing
+`_handle_entity_extraction_search`, which is retained in
+`src/scix/mcp_server.py` as the implementation that future tool will
+adopt).
+
+**Test impact:** `tests/test_mcp_extraction_wiring.py` (the
+prd_full_text_applications_v2 acceptance suite) was updated to assert
+the new contract: schema must not advertise the legacy types, and the
+runtime handler must error on them. Five tests inverted (AC1, AC2 x2,
+AC3 x2 -> "rejected" assertions); coverage_note test switched to a
+`methods` payload to keep the still-supported call shape exercised.
+
+**Landed in:** bead `scix_experiments-mh14` worktree commit (current
+branch).
+
 ## 2026-04-26 — pre-talk demo prep changes
 
 The session that landed these changes was preparing a live agent demo. New
@@ -75,7 +130,7 @@ names and legacy aliases into `_dispatch_consolidated` (line 1520).
 | 5 | `citation_traverse` | **consolidated** (citation_graph, citation_chain, get_citations, get_references, get_citation_context) | Citation graph traversal: neighbourhood walk OR shortest-path chain, selected by `mode`. | `mode ∈ {graph, chain}`; per-mode required-param sets are validated in the handler with a structured `missing_required_params` payload (bead `zjt9`) since JSON Schema can't express the disjoint sets. |
 | 6 | `citation_similarity` | **consolidated** (co_citation_analysis, bibliographic_coupling) | Structural similarity via shared citations. | `method ∈ {co_citation, coupling}` replaces 2 legacy tools. |
 | 7 | _(slot folded into `citation_traverse` row 5)_ | — | — | The original `citation_chain` "keep separate" recommendation was reversed on 2026-04-25; see Recommendation §3 below. |
-| 8 | `entity` | **consolidated** (entity_search, resolve_entity) | `action ∈ {search, resolve}`. | Added entity-type / confidence-tier / provenance-source filters in later builds. |
+| 8 | `entity` | **consolidated** (entity_search, resolve_entity) | `action ∈ {search, resolve, papers}`. | Added entity-type / confidence-tier / provenance-source filters in later builds. mh14 (2026-04-27): dropped `negative_result` / `quant_claim` from the `entity_type` enum — they are claim/finding extractions, not entities; surfacing tracked under bead c996. |
 | 9 | `entity_context` | keep | Full entity profile by `entity_id`. | Separate from `entity` because the input is a numeric id, not text. |
 | 10 | `graph_context` | **consolidated** (get_paper_metrics, explore_community) | PageRank/HITS + community membership (citation / semantic / taxonomic) for a bibcode. | `include_community=true` replaces `explore_community`. |
 | 11 | `find_gaps` | **consolidated** (get_working_set, get_session_summary, clear_working_set) | Cross-community gap detection over implicit session. | Replaces three explicit session tools with one action-oriented tool + implicit session tracking. |

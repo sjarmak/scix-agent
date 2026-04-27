@@ -2490,6 +2490,47 @@ def _fetch_uat_papers(
     return [PaperStub.from_row(row).to_dict() for row in rows]
 
 
+def _concept_search_lexical_fallback(
+    conn: psycopg.Connection,
+    *,
+    query: str,
+    vocabs: tuple[str, ...],
+    limit: int,
+    t0: float,
+) -> SearchResult:
+    """Fallback path used when the vocabulary router returns zero hits.
+
+    Runs a plain :func:`lexical_search` (BM25 over title+abstract tsvector)
+    so a natural-language phrase like ``"granular mechanics in microgravity"``
+    still returns useful papers from the corpus. We use lexical search rather
+    than full hybrid here because (a) the embedding pipeline isn't part of
+    this module's dependency surface (lives in mcp_server), (b) lexical
+    requires no external state, and (c) it's the right tool for queries
+    that have already failed exact label matching — they tend to be free-form
+    multi-word phrases where BM25 is competitive.
+
+    Returns the result with ``metadata['fallback']='lexical_search'`` so
+    callers can see the path taken; ``concept_found`` stays False because
+    no controlled-vocabulary concept resolved.
+    """
+    fallback_result = lexical_search(conn, query, limit=limit)
+    return SearchResult(
+        papers=fallback_result.papers,
+        total=fallback_result.total,
+        timing_ms={
+            "query_ms": _elapsed_ms(t0),
+            **fallback_result.timing_ms,
+        },
+        metadata={
+            "concept_found": False,
+            "query": query,
+            "vocabularies_searched": list(vocabs),
+            "concepts": [],
+            "fallback": "lexical_search",
+        },
+    )
+
+
 def concept_search(
     conn: psycopg.Connection,
     query: str,
@@ -2498,6 +2539,7 @@ def concept_search(
     include_descendants: bool = True,
     include_subtopics: bool | None = None,
     limit: int = 20,
+    fallback: bool = True,
 ) -> SearchResult:
     """Search for concepts across one or more controlled vocabularies.
 
@@ -2512,6 +2554,15 @@ def concept_search(
     preserves backwards compatibility with callers that read ``papers``
     directly. Other vocabularies have no paper-side mappings yet, so
     ``papers`` is empty when the best hit is non-UAT.
+
+    Free-text fallback (scix_experiments-2ixv): when the vocabulary lookup
+    yields zero hits AND ``fallback=True`` (the default), the function falls
+    through to :func:`lexical_search` so a natural-language query like
+    ``"granular mechanics in microgravity"`` returns plausible papers
+    instead of an empty list. The result carries ``metadata['fallback'] =
+    'lexical_search'`` so callers can see the path taken. Set
+    ``fallback=False`` to preserve strict legacy behavior (empty papers
+    when no concept resolves).
 
     Parameters
     ----------
@@ -2529,17 +2580,26 @@ def concept_search(
         Maximum number of papers AND maximum number of concept hits to
         return. Concept hits are ranked by score; ties broken by
         ``(vocabulary, concept_id)``.
+    fallback
+        When True (default), free-text queries that resolve to no
+        vocabulary concept fall through to :func:`lexical_search` so the
+        tool returns useful papers instead of an empty list. Set False
+        for strict vocabulary-only behavior.
 
     Returns
     -------
     SearchResult
-        ``papers`` is populated only when the best hit is a UAT concept that
-        has paper mappings (or descendants do). ``metadata['concepts']`` is
-        the full ranked list of concept candidates with vocabulary tags.
-        ``metadata['concept_found']`` is True iff at least one concept
-        matched. Legacy keys ``concept_id``, ``concept_label``,
-        ``include_descendants``, and ``include_subtopics`` are populated
-        from the best hit for backwards compatibility.
+        ``papers`` is populated when the best vocabulary hit is a UAT
+        concept that has paper mappings (or descendants do), OR when the
+        vocabulary lookup misses and the lexical fallback returns hits.
+        ``metadata['concepts']`` is the full ranked list of concept
+        candidates with vocabulary tags. ``metadata['concept_found']`` is
+        True iff at least one concept matched. ``metadata['fallback']`` is
+        ``'lexical_search'`` iff the fallback path ran (regardless of
+        whether it returned papers). Legacy keys ``concept_id``,
+        ``concept_label``, ``include_descendants``, and
+        ``include_subtopics`` are populated from the best hit for
+        backwards compatibility.
     """
     if include_subtopics is not None:
         include_descendants = include_subtopics
@@ -2549,6 +2609,16 @@ def concept_search(
     hits = _lookup_concepts_unified(conn, query, vocabs, limit=limit)
 
     if not hits:
+        # Empty / whitespace-only queries short-circuit before fallback so we
+        # don't run a tsvector match on the empty string.
+        if fallback and query.strip():
+            return _concept_search_lexical_fallback(
+                conn,
+                query=query,
+                vocabs=vocabs,
+                limit=limit,
+                t0=t0,
+            )
         return SearchResult(
             papers=[],
             total=0,

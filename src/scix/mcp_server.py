@@ -1594,8 +1594,8 @@ def create_server(_run_self_test: bool = True):
                     "method='co_citation' returns papers often cited together with the seed "
                     "(peer works in the same discussion). method='coupling' returns papers "
                     "that share many references with the seed (papers built on similar "
-                    "foundations). Use citation_graph instead when you want direct citing "
-                    "or cited papers rather than structurally similar ones."
+                    "foundations). Use citation_traverse(mode='graph') instead when you "
+                    "want direct citing or cited papers rather than structurally similar ones."
                 ),
                 inputSchema={
                     "type": "object",
@@ -1745,8 +1745,10 @@ def create_server(_run_self_test: bool = True):
                     "and `top_keywords` where available. Optionally also returns sibling "
                     "papers in the same community ranked by influence; the `signal` "
                     "parameter selects which community signal to explore for siblings. "
-                    "Use citation_graph instead when you want direct citing or cited "
-                    "papers rather than computed scores and community membership."
+                    "Default `resolution='medium'` matches `find_gaps` so back-to-back "
+                    "calls land on the same partition. "
+                    "Use citation_traverse(mode='graph') instead when you want direct "
+                    "citing or cited papers rather than computed scores and community membership."
                 ),
                 inputSchema={
                     "type": "object",
@@ -1763,8 +1765,11 @@ def create_server(_run_self_test: bool = True):
                         "resolution": {
                             "type": "string",
                             "enum": ["coarse", "medium", "fine"],
-                            "default": "coarse",
-                            "description": "Community resolution level",
+                            "default": "medium",
+                            "description": (
+                                "Community resolution level. Default 'medium' "
+                                "matches find_gaps for cross-tool consistency."
+                            ),
                         },
                         "signal": {
                             "type": "string",
@@ -1791,9 +1796,9 @@ def create_server(_run_self_test: bool = True):
                     "literature you might be missing during a research session. Two ways to "
                     "seed the working set: (a) call get_paper on one or more papers first "
                     "(implicit session state); (b) pass query='<topic>' to auto-seed via "
-                    "concept_search in a single call. Use citation_graph instead when you "
-                    "want direct citations of a single paper rather than cross-community "
-                    "gap detection. The 'signal' parameter picks which community partition "
+                    "concept_search in a single call. Use citation_traverse(mode='graph') "
+                    "instead when you want direct citations of a single paper rather than "
+                    "cross-community gap detection. The 'signal' parameter picks which community partition "
                     "to traverse: 'semantic' (default, INDUS k-means, full 32M-paper "
                     "coverage) or 'citation' (currently offline — Leiden Phase B has not "
                     "completed, so this path returns empty)."
@@ -1984,10 +1989,10 @@ def create_server(_run_self_test: bool = True):
                     "replication relation (replicates / refutes / qualifies / partial / "
                     "unknown), and a hedge_present flag. Relation and hedge are derived "
                     "from a documented heuristic substitute for NegBERT (see module "
-                    "docstring); NegBERT is the future drop-in. Use citation_graph with "
-                    "direction='forward' instead when you want raw forward citations "
-                    "without relation inference; use claim_blame when you want the "
-                    "earliest origin of a claim rather than its replications."
+                    "docstring); NegBERT is the future drop-in. Use "
+                    "citation_traverse(mode='graph', direction='forward') instead when you "
+                    "want raw forward citations without relation inference; use claim_blame "
+                    "when you want the earliest origin of a claim rather than its replications."
                 ),
                 inputSchema={
                     "type": "object",
@@ -3918,7 +3923,9 @@ def _handle_graph_context(conn: psycopg.Connection, args: dict[str, Any]) -> str
     if not include_community:
         return _result_to_json(metrics_result)
 
-    resolution = args.get("resolution", "coarse")
+    # Default 'medium' matches the schema default and find_gaps so back-to-back
+    # agent calls land on the same community partition (bead unmm).
+    resolution = args.get("resolution", "medium")
     limit = args.get("limit", 20)
     signal = args.get("signal", "semantic")
     try:

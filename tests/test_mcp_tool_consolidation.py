@@ -388,3 +388,133 @@ class TestListToolsCount:
         # PRD bead cfh9: synthesize_findings is not env-hidden, so it must
         # appear in the visible self-test surface.
         assert "synthesize_findings" in status["tool_names"]
+
+
+# ---------------------------------------------------------------------------
+# Bead scix_experiments-4c5v: no LIVE tool description should reference the
+# retired ``citation_graph`` tool name. The deprecation alias entry in
+# ``_DEPRECATED_ALIASES`` and internal handler names (``_handle_citation_graph``)
+# are infrastructure, not agent-visible surface, and are explicitly allowed.
+# ---------------------------------------------------------------------------
+
+
+def _list_tools_via_server() -> list[Any]:
+    """Drive the registered ``list_tools()`` handler and return the Tool list.
+
+    Mirrors the dispatch in ``startup_self_test`` so we exercise the same
+    registration surface that agents see, not a hand-rolled snapshot.
+    """
+    import asyncio
+
+    pytest.importorskip("mcp.types")
+    from mcp.types import ListToolsRequest
+
+    from scix.mcp_server import create_server
+
+    with patch("scix.mcp_server._init_model_impl"):
+        server = create_server(_run_self_test=False)
+
+    handler = server.request_handlers[ListToolsRequest]
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(handler(ListToolsRequest(method="tools/list")))
+    finally:
+        loop.close()
+
+    if hasattr(result, "root") and hasattr(result.root, "tools"):
+        return list(result.root.tools)
+    if hasattr(result, "tools"):
+        return list(result.tools)
+    raise RuntimeError(f"unexpected list_tools result shape: {result!r}")
+
+
+class TestNoLiveCitationGraphDescriptionReferences:
+    def test_no_tool_description_mentions_citation_graph(self) -> None:
+        """Agent-visible descriptions must point at ``citation_traverse``.
+
+        The 28→13 consolidation in commit 7fe258d renamed ``citation_graph``
+        to ``citation_traverse`` (with ``mode='graph'``). Any live tool
+        description that still mentions ``citation_graph`` is a phantom
+        breadcrumb — agents that follow it will hit the deprecation shim
+        instead of routing directly to the modern tool.
+        """
+        tools = _list_tools_via_server()
+        offenders: list[tuple[str, str]] = []
+        for tool in tools:
+            description = getattr(tool, "description", "") or ""
+            if "citation_graph" in description:
+                offenders.append((tool.name, description))
+        assert not offenders, (
+            "Live tool descriptions reference the retired tool 'citation_graph'. "
+            "Replace with 'citation_traverse' (or 'citation_traverse(mode=\"graph\")' "
+            f"where the distinction matters). Offending tools: "
+            f"{[name for name, _ in offenders]}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Bead scix_experiments-unmm: every tool that accepts a ``resolution``
+# parameter must agree on the default ('medium' — the production-quality
+# partition per CLAUDE.md community_labels_pipeline memory).
+# ---------------------------------------------------------------------------
+
+
+_RESOLUTION_DEFAULT = "medium"
+
+
+class TestResolutionDefaultUnified:
+    def test_graph_context_resolution_default_is_medium(self) -> None:
+        tools = {t.name: t for t in _list_tools_via_server()}
+        schema = tools["graph_context"].inputSchema
+        assert schema["properties"]["resolution"]["default"] == _RESOLUTION_DEFAULT
+
+    def test_find_gaps_resolution_default_is_medium(self) -> None:
+        tools = {t.name: t for t in _list_tools_via_server()}
+        schema = tools["find_gaps"].inputSchema
+        assert schema["properties"]["resolution"]["default"] == _RESOLUTION_DEFAULT
+
+    def test_all_tools_with_resolution_share_same_default(self) -> None:
+        """Cross-tool consistency check: every tool exposing ``resolution``
+        must default to the same value so back-to-back agent calls don't
+        silently mismatch on partition granularity."""
+        tools = _list_tools_via_server()
+        defaults: dict[str, str] = {}
+        for tool in tools:
+            schema = getattr(tool, "inputSchema", None) or {}
+            props = schema.get("properties") or {}
+            res = props.get("resolution")
+            if not isinstance(res, dict) or "default" not in res:
+                continue
+            defaults[tool.name] = res["default"]
+        assert defaults, "Expected at least one tool to expose 'resolution'"
+        unique_defaults = set(defaults.values())
+        assert unique_defaults == {_RESOLUTION_DEFAULT}, (
+            f"Inconsistent 'resolution' defaults across tools: {defaults}. "
+            f"All must default to {_RESOLUTION_DEFAULT!r}."
+        )
+
+    def test_handle_graph_context_defaults_resolution_to_medium(self) -> None:
+        """The handler's runtime default must match the schema default.
+
+        ``_handle_graph_context`` reads ``args.get('resolution', ...)`` to
+        cover callers that bypass schema validation (e.g. internal in-process
+        dispatch). It must default to the same value advertised in the schema.
+        """
+        from scix.search import SearchResult
+
+        with patch("scix.search.get_paper_metrics") as mock_metrics, patch(
+            "scix.search.explore_community"
+        ) as mock_explore:
+            mock_metrics.return_value = SearchResult(
+                papers=[], total=0, timing_ms={"query_ms": 1.0}
+            )
+            mock_explore.return_value = SearchResult(
+                papers=[], total=0, timing_ms={"query_ms": 1.0}
+            )
+            from scix.mcp_server import _handle_graph_context
+
+            _handle_graph_context(
+                MagicMock(),
+                {"bibcode": "X", "include_community": True},
+            )
+            assert mock_explore.call_args.kwargs["resolution"] == _RESOLUTION_DEFAULT

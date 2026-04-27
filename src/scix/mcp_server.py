@@ -3960,7 +3960,11 @@ _TIER_MIN_TO_ALLOWED: dict[int, list[str]] = {
 #: tool added under bead ``scix_experiments-c996``; the rejection error
 #: points callers there. ``_handle_entity_extraction_search`` below is
 #: the shared implementation called by ``_handle_claim_search``.
-_LEGACY_EXTRACTION_TYPES: frozenset[str] = frozenset({"negative_result", "quant_claim"})
+#:
+#: Canonical list lives at ``_CLAIM_SEARCH_ACTIONS`` below — the
+#: ``claim_search`` tool accepts exactly these as ``action`` values. The
+#: entity tool reuses that frozenset for its rejection guard so the two
+#: surfaces stay in sync if a third extraction kind is added.
 
 #: The four entity-containment types that the entity tool's
 #: ``action='search'`` path still supports. These map to
@@ -3983,7 +3987,7 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     # one turn. These used to be valid entity_type values but they're
     # claim/finding extractions, not entities — a follow-up bead (c996)
     # will surface them under a dedicated tool.
-    if entity_type in _LEGACY_EXTRACTION_TYPES:
+    if entity_type in _CLAIM_SEARCH_ACTIONS:
         return json.dumps(
             {
                 "error": (
@@ -4249,7 +4253,7 @@ def _handle_claim_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     (both read from the ``extractions`` table).
     """
     action = args.get("action")
-    if action not in _CLAIM_SEARCH_ACTIONS:
+    if not isinstance(action, str) or action not in _CLAIM_SEARCH_ACTIONS:
         return json.dumps(
             {
                 "error": (
@@ -4262,7 +4266,15 @@ def _handle_claim_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     query = args.get("query")
     name_filter = query.strip() if isinstance(query, str) and query.strip() else None
 
-    limit = min(int(args.get("limit") or 20), 200)
+    raw_limit = args.get("limit", 20)
+    try:
+        limit = min(int(raw_limit), 200)
+    except (TypeError, ValueError):
+        return json.dumps(
+            {"error": f"limit must be an integer, got {raw_limit!r}"}
+        )
+    if limit < 1:
+        limit = 20
 
     result_json = _handle_entity_extraction_search(
         conn,
@@ -4511,7 +4523,6 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     # can run gap analysis in one shot. Pure convenience — same downstream
     # logic, just bootstrapped.
     seed_query = args.get("query")
-    auto_seeded = False
     if not ws_bibcodes and isinstance(seed_query, str) and seed_query.strip():
         try:
             from scix.search import concept_search as _concept_search
@@ -4524,7 +4535,6 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                 for p in (seed_result.papers or [])
                 if isinstance(p, dict) and p.get("bibcode")
             ]
-            auto_seeded = bool(ws_bibcodes)
         except Exception:
             # Best-effort: fall through to the no-papers branch below.
             ws_bibcodes = []

@@ -29,6 +29,7 @@ DB is mocked — no live DB.
 from __future__ import annotations
 
 import json
+from collections.abc import Generator
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -42,7 +43,7 @@ from scix.mcp_server import _dispatch_tool, _reset_coverage_note_cache
 
 
 @pytest.fixture(autouse=True)
-def _reset_cov_cache() -> None:
+def _reset_cov_cache() -> Generator[None, None, None]:
     """Drop the cached coverage note between tests."""
     _reset_coverage_note_cache()
     yield

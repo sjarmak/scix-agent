@@ -18,6 +18,7 @@ both the heuristic and the early-return ordering.
 from __future__ import annotations
 
 import json
+from collections.abc import Generator
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -33,14 +34,14 @@ from scix.search import SearchResult
 
 
 @pytest.fixture(autouse=True)
-def _disable_disambiguator() -> None:
+def _disable_disambiguator() -> Generator[None, None, None]:
     """Patch the disambiguator so the search path never short-circuits."""
     with patch("scix.mcp_server.disambiguate_query", return_value=[]):
         yield
 
 
 @pytest.fixture(autouse=True)
-def _disable_hnsw() -> None:
+def _disable_hnsw() -> Generator[None, None, None]:
     """Force the lexical-only path inside _handle_search — no embedding load."""
     with patch("scix.mcp_server._hnsw_index_exists", return_value=False):
         yield

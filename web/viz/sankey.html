@@ -98,11 +98,17 @@
   </head>
   <body>
     <main class="viz-container">
-      <h1>Temporal Community Flow</h1>
+      <h1>Temporal Community Flow (deferred)</h1>
       <p class="viz-sub">
-        Decade-to-decade transitions between detected communities, sized by
-        paper count. Hover a node to highlight incident links; click a link
-        to log the target community to the browser console.
+        <strong>Note:</strong> this view is removed from the nav pending a
+        rebuild. Each band is one Leiden community sliced by decade —
+        communities are detected once across the full citation/semantic
+        graph, so by construction every flow is
+        <em>community&nbsp;C in decade&nbsp;D</em> →
+        <em>community&nbsp;C in decade&nbsp;D+1</em>. Both ends carry the
+        same label and there are no cross-community transitions. See
+        <a href="./streamgraph.html">V7 Streams</a> for the same
+        size-over-time signal in a clearer stacked form.
       </p>
       <div id="sankey-controls">
         <span>Show top</span>

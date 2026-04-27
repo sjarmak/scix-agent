@@ -69,6 +69,52 @@ AC3 x2 -> "rejected" assertions); coverage_note test switched to a
 **Landed in:** bead `scix_experiments-mh14` worktree commit (current
 branch).
 
+## 2026-04-27 — consolidation drift fixes (beads 4c5v + unmm)
+
+Two consolidation-drift bugs landed together because they touched the same
+`graph_context` and `find_gaps` tool definitions:
+
+- **Bead `scix_experiments-4c5v`**: removed stale `citation_graph` references
+  from four LIVE tool descriptions. The 28→13 consolidation in commit `7fe258d`
+  renamed `citation_graph` → `citation_traverse(mode='graph')`, but four tool
+  descriptions still pointed agents at the retired name:
+  - `citation_similarity`
+  - `graph_context`
+  - `find_gaps`
+  - `find_replications`
+
+  All four now reference `citation_traverse(mode='graph')`. Deprecation
+  infrastructure (`_DEPRECATED_ALIASES`, `_transform_deprecated_args`,
+  `_dispatch_consolidated`, `_handle_citation_graph` internal handler,
+  `TOOL_TIMEOUTS` legacy entries, historical comments) intentionally retains
+  `citation_graph` references — they're alias-map metadata, not agent-visible
+  surface. Regression-guarded by
+  `TestNoLiveCitationGraphDescriptionReferences::test_no_tool_description_mentions_citation_graph`
+  in `tests/test_mcp_tool_consolidation.py` — walks the registered
+  `list_tools()` surface and fails on any description containing
+  `citation_graph`.
+
+- **Bead `scix_experiments-unmm`**: unified the `resolution` parameter default
+  across MCP tools. Before: `graph_context.resolution` defaulted to `'coarse'`
+  while `find_gaps.resolution` defaulted to `'medium'`, so back-to-back agent
+  calls on the same paper landed on different community partitions. After:
+  both default to `'medium'` (the production-quality partition per
+  `community_labels_pipeline.md` — 2,089 semantic labels persisted, sharp
+  CS-readable labels; coarse is too broad, fine is TF-IDF-noisy). Updated:
+  - `graph_context` schema `resolution.default = "medium"` (was `"coarse"`)
+  - `graph_context` description notes the default matches `find_gaps`
+  - `_handle_graph_context` runtime fallback `args.get("resolution", "medium")`
+    (was `"coarse"`) — keeps the handler default in sync with the schema for
+    callers that bypass schema validation.
+  - Regression-guarded by `TestResolutionDefaultUnified` in
+    `tests/test_mcp_tool_consolidation.py` (4 tests covering schema + handler
+    + cross-tool consistency).
+
+  **Client migration note:** any client pinning the prior `'coarse'` default
+  on `graph_context` continues to work (pass `resolution='coarse'` explicitly).
+  Callers that omit `resolution` will now receive a finer partition; the
+  community labels are sharper as a result.
+
 ## 2026-04-26 — pre-talk demo prep changes
 
 The session that landed these changes was preparing a live agent demo. New

@@ -4771,8 +4771,20 @@ def _handle_cited_by_intent(conn: psycopg.Connection, args: dict[str, Any]) -> s
     just that it does.
 
     Coverage: ~825K citation contexts across ~30K source papers and ~250K
-    cited papers. For papers not covered, returns empty cleanly.
+    cited papers. For papers not covered, returns empty cleanly. The
+    ``coverage`` block on every response (mirroring ``claim_blame`` /
+    ``find_replications``) lets agents distinguish 'no events' (target is
+    in citation_contexts but has no incoming intent-classified citations)
+    from 'no coverage' (target is not in citation_contexts at all).
+
+    Results are deduplicated to one row per ``source_bibcode``: a single
+    citing paper may have multiple matching contexts (e.g. references the
+    target several times), and surfacing them as separate rows wastes the
+    ``limit`` budget. ``n_contexts`` reports the per-source count so
+    agents can see context density without the bloat.
     """
+    from scix.citation_contexts_coverage import compute_coverage
+
     target_bibcode = args.get("target_bibcode")
     if not isinstance(target_bibcode, str) or not target_bibcode.strip():
         return json.dumps({"error": "target_bibcode must be a non-empty string"})
@@ -4788,35 +4800,54 @@ def _handle_cited_by_intent(conn: psycopg.Connection, args: dict[str, Any]) -> s
         )
 
     limit = min(int(args.get("limit", 20)), 200)
+    target = target_bibcode.strip()
 
+    # Window-function dedup: one row per source_bibcode, keeping the
+    # earliest-id matching context as the excerpt and counting all matching
+    # contexts in n_contexts. Outer ORDER BY prioritises high-citation citing
+    # papers; ASC tiebreaker on source_bibcode for deterministic output.
     sql = """
+        WITH ranked AS (
+            SELECT
+                cc.source_bibcode,
+                cc.intent,
+                substr(cc.context_text, 1, 400) AS context_excerpt,
+                p.title,
+                p.year,
+                p.authors[1] AS first_author,
+                p.citation_count,
+                COUNT(*) OVER (PARTITION BY cc.source_bibcode) AS n_contexts,
+                ROW_NUMBER() OVER (
+                    PARTITION BY cc.source_bibcode
+                    ORDER BY cc.id ASC
+                ) AS rn
+            FROM citation_contexts cc
+            LEFT JOIN papers p ON cc.source_bibcode = p.bibcode
+            WHERE cc.target_bibcode = %s
+              AND ( %s::text IS NULL OR cc.intent = %s::text )
+        )
         SELECT
-            cc.source_bibcode,
-            cc.intent,
-            substr(cc.context_text, 1, 400) AS context_excerpt,
-            p.title,
-            p.year,
-            p.authors[1] AS first_author,
-            p.citation_count
-        FROM citation_contexts cc
-        LEFT JOIN papers p ON cc.source_bibcode = p.bibcode
-        WHERE cc.target_bibcode = %s
-          AND ( %s::text IS NULL OR cc.intent = %s::text )
-        ORDER BY p.citation_count DESC NULLS LAST, cc.id ASC
+            source_bibcode, intent, context_excerpt,
+            title, year, first_author, citation_count, n_contexts
+        FROM ranked
+        WHERE rn = 1
+        ORDER BY citation_count DESC NULLS LAST, source_bibcode ASC
         LIMIT %s
     """
     with conn.cursor() as cur:
-        cur.execute(sql, (target_bibcode.strip(), intent, intent, limit))
+        cur.execute(sql, (target, intent, intent, limit))
         rows = cur.fetchall()
         cols = [d.name for d in cur.description]
 
     papers = [dict(zip(cols, r)) for r in rows]
+    coverage = compute_coverage(conn, [target])
     return json.dumps(
         {
             "target_bibcode": target_bibcode,
             "intent": intent,
             "papers": papers,
             "total": len(papers),
+            "coverage": coverage,
         },
         indent=2,
         default=str,

@@ -307,6 +307,61 @@ surface area — it should not live in the skill prompt (cost: tokens; value
 to a forward-looking agent: near zero). Keeping the alias map in
 `src/scix/mcp_server.py` + this audit doc is the right split.
 
+## Telemetry conventions for `query_log`
+
+**Bead:** `scix_experiments-3qun`. Pinned by
+`tests/test_mcp_search_unscoped_guard.py::test_telemetry_convention_*`.
+
+`call_tool` in `src/scix/mcp_server.py` writes one row to `query_log` per
+tool invocation. The `success` and `error_msg` columns follow this
+convention:
+
+| Outcome | `success` | `error_msg` | Examples |
+|---|---|---|---|
+| Tool raised an exception | `FALSE` | `str(exc)` | DB error, internal bug, timeout escalated to exception |
+| Structured error + lifted stable tag | `TRUE` | stable tag string | `unscoped_broad_query` (lifted from `unscoped_broad_blocked: true` marker by `_log_query`) |
+| Structured error WITHOUT a lifted tag | `TRUE` | `NULL` | `missing_required_params` (citation_traverse), entity legacy-type rejection (`negative_result` / `quant_claim`), `Invalid mode` / `Invalid action` / `Invalid direction` / `Invalid method`, `query must be a non-empty string`, `Unknown tool`, `entity_id is required`, etc. |
+
+The middle case — `success=TRUE` even though the tool returned an error
+payload — is intentional: `_dispatch_tool` returns the error JSON without
+raising, so `call_tool`'s exception handler doesn't fire. `_log_query`
+performs a post-hoc lift of stable telemetry markers (currently only
+`unscoped_broad_blocked`) into `error_msg` so operators can track block
+rate via a single column without scanning result payloads.
+
+### Recommended dashboard query
+
+```sql
+SELECT * FROM query_log
+WHERE success = FALSE OR error_msg IS NOT NULL;
+```
+
+This catches exceptions (case 1) plus lifted structured errors (case 2).
+The intuitive query `WHERE success = FALSE AND error_msg IS NOT NULL`
+silently drops every blocked-by-guard request and is the trap that
+motivated bead `scix_experiments-3qun`.
+
+### Known blind spot
+
+Case 3 (unlifted structured errors) is not surfaced by the recommended
+query. Operators who need full coverage of blocked requests today must
+inspect `params_json` or pre-filter on `tool_name` and inspect the
+result payload offline. The forward-looking fix is to extend the lift
+list in `_log_query` with additional stable tags (e.g. an
+`error_code`-based detector) so each new structured-error class lands
+with both a payload marker AND a `query_log` tag in the same change.
+
+### Stable lifted tags (current)
+
+| Tag | Source detector | Originating bead |
+|---|---|---|
+| `unscoped_broad_query` | `_detect_unscoped_broad_block` (matches `unscoped_broad_blocked: true` in result JSON) | `scix_experiments-uerc` |
+
+Add new entries here when a future bead extends `_log_query`'s lift
+list. The pinned-convention tests in `test_mcp_search_unscoped_guard.py`
+must be updated in the same change so any flip in semantics breaks
+visibly.
+
 ## Acceptance checklist
 
 - [x] Tool count ≤ 15 (current: 13 core + 1 optional Qdrant).

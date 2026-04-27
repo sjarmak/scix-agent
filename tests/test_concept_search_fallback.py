@@ -6,13 +6,13 @@ controlled-vocabulary concept. The tool name implies broader concept retrieval,
 so an agent reaches for it and hits an empty response.
 
 Fix: when the vocabulary router yields zero hits, fall through to
-``hybrid_search(query)`` and return those papers tagged with
-``metadata.fallback='hybrid_search'`` so the agent can see what happened.
+``lexical_search(query)`` and return those papers tagged with
+``metadata.fallback='lexical_search'`` so the agent can see what happened.
 
 Coverage:
 
 * Free-text query that resolves to no vocabulary concept yields >0 papers via
-  the hybrid_search fallback (the bead's acceptance criterion #1).
+  the lexical_search fallback (the bead's acceptance criterion #1).
 * The vocabulary path still wins when a concept resolves (back-compat).
 * Fallback can be disabled via ``fallback=False`` for callers that want
   legacy strict behavior.
@@ -224,14 +224,12 @@ def test_freetext_query_falls_back_to_lexical(
 
     # The seeded fixtures should appear in the fallback's lexical results.
     returned = {p["bibcode"] for p in result.papers}
-    assert returned & set(_FALLBACK_BIBCODES), (
-        f"Expected at least one seeded bibcode in fallback results; got {returned}"
-    )
+    assert returned & set(
+        _FALLBACK_BIBCODES
+    ), f"Expected at least one seeded bibcode in fallback results; got {returned}"
 
 
-def test_vocab_hit_does_not_trigger_fallback(
-    conn: psycopg.Connection, vocab_hit_seed: str
-) -> None:
+def test_vocab_hit_does_not_trigger_fallback(conn: psycopg.Connection, vocab_hit_seed: str) -> None:
     """When the vocabulary path resolves a concept, the fallback must not
     run and the result preserves legacy semantics."""
     label = vocab_hit_seed
@@ -245,9 +243,7 @@ def test_vocab_hit_does_not_trigger_fallback(
     assert _FALLBACK_UAT_BIBCODE in {p["bibcode"] for p in result.papers}
 
 
-def test_fallback_disabled_returns_empty(
-    conn: psycopg.Connection, freetext_corpus: None
-) -> None:
+def test_fallback_disabled_returns_empty(conn: psycopg.Connection, freetext_corpus: None) -> None:
     """``fallback=False`` preserves legacy behavior: 0 vocab hits → empty."""
     result = concept_search(conn, _BEAD_FREETEXT_QUERY, limit=20, fallback=False)
 

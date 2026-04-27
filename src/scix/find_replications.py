@@ -55,8 +55,9 @@ surfaced first.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import asdict, dataclass
-from typing import Any, Iterable, Literal
+from typing import Any, Literal
 
 import psycopg
 
@@ -211,8 +212,7 @@ def find_replications(
         return {"citations": [], "coverage": empty_coverage()}
     if relation is not None and relation not in VALID_RELATIONS:
         raise ValueError(
-            f"relation must be one of {sorted(VALID_RELATIONS)} or None; "
-            f"got {relation!r}"
+            f"relation must be one of {sorted(VALID_RELATIONS)} or None; " f"got {relation!r}"
         )
 
     effective_scope = scope or ResearchScope()
@@ -280,18 +280,6 @@ def _query_citations(
         "vce.context_snippet, "
         "vce.section_name "
         "FROM v_claim_edges vce "
-    )
-
-    needs_papers_join = scope.year_window is None and any(
-        getattr(scope, name) is not None
-        for name in (
-            "community_ids",
-            "methodology_class",
-            "instruments",
-            "exclude_authors",
-            "exclude_funders",
-            "min_venue_tier",
-        )
     )
 
     where_parts = ["vce.target_bibcode = %s"]
@@ -387,8 +375,6 @@ def _detect_hedge(text: str) -> bool:
     if not any(cue in lowered for cue in HEDGE_CUES):
         return False
     # Tokenise on non-alphanumeric for cheap word-boundary semantics.
-    import re
-
     tokens = set(re.findall(r"[a-z]+", lowered))
     return bool(tokens & HEDGE_CUES)
 

@@ -139,7 +139,7 @@ class _FakePool:
         return _PoolCM(_FakeConnection(self._cursor))
 
 
-def _no_embed(_text: str) -> None:
+def _no_embed(_text: str) -> list[float] | None:
     return None
 
 

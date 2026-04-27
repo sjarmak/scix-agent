@@ -13,6 +13,7 @@ and ``citation_chain`` continue to work via the ``_DEPRECATED_ALIASES``
 shim and arrive at the new handler with the appropriate ``mode``
 injected.
 """
+
 from __future__ import annotations
 
 import json
@@ -29,7 +30,6 @@ from scix.mcp_server import (
     EXPECTED_TOOLS,
 )
 from scix.search import SearchResult
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -80,9 +80,7 @@ class TestCitationTraverseGraphMode:
         )
         data = json.loads(out)
         assert "error" not in data
-        mock_cit.assert_called_once_with(
-            mock_conn, "2024ApJ...962L..15J", limit=10
-        )
+        mock_cit.assert_called_once_with(mock_conn, "2024ApJ...962L..15J", limit=10)
 
     @patch("scix.mcp_server._log_query")
     @patch("scix.search.get_references")
@@ -105,9 +103,7 @@ class TestCitationTraverseGraphMode:
         )
         data = json.loads(out)
         assert "error" not in data
-        mock_ref.assert_called_once_with(
-            mock_conn, "2024ApJ...962L..15J", limit=5
-        )
+        mock_ref.assert_called_once_with(mock_conn, "2024ApJ...962L..15J", limit=5)
 
     @patch("scix.mcp_server._log_query")
     @patch("scix.search.get_citations")
@@ -280,9 +276,7 @@ class TestDeprecatedCitationAliases:
             {"source_bibcode": "A", "target_bibcode": "B", "max_depth": 2},
         )
         data = json.loads(out)
-        mock_cc.assert_called_once_with(
-            mock_conn, "A", "B", max_depth=2
-        )
+        mock_cc.assert_called_once_with(mock_conn, "A", "B", max_depth=2)
         assert data["deprecated"] is True
         assert data["use_instead"] == "citation_traverse"
         assert data["original_tool"] == "citation_chain"

@@ -11,6 +11,7 @@ connection so the test suite stays runnable without ``SCIX_TEST_DSN``.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from unittest.mock import MagicMock
 
 import pytest
@@ -24,14 +25,13 @@ from scix.synthesize import (
     synthesize_findings,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
-def _reset_session() -> None:
+def _reset_session() -> Iterator[None]:
     """Clear session state between tests (mirrors test_mcp_server.py)."""
     _session_state.clear_working_set()
     _session_state.clear_focused()
@@ -233,9 +233,7 @@ class TestDeterministicStructure:
 
     def test_max_papers_per_section_is_respected(self) -> None:
         # 10 papers all assigned to background via modal community.
-        papers_rows = [
-            (f"2024P{i}", f"P{i}", 2024, f"a{i}") for i in range(10)
-        ]
+        papers_rows = [(f"2024P{i}", f"P{i}", 2024, f"a{i}") for i in range(10)]
         intent_rows: list[tuple] = []
         community_rows = [(f"2024P{i}", 1, "Common") for i in range(10)]
         conn = _mock_conn([papers_rows, intent_rows, community_rows])
@@ -297,7 +295,10 @@ class TestMCPDispatch:
         # Default section list -> 4 buckets.
         assert len(result["sections"]) == len(DEFAULT_SECTIONS)
         assert "unattributed_bibcodes" in result
-        assert "coverage" in result
+        assert "assignment_coverage" in result
+        # Confirm we did NOT regress the wire format to the colliding "coverage"
+        # key, which is reserved for claim_blame/find_replications shape.
+        assert "coverage" not in result
 
     def test_dispatch_falls_through_to_session_focused_papers(self) -> None:
         # Seed focused papers via session_state directly (simulating prior

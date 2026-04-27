@@ -68,7 +68,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict, dataclass
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
 import psycopg
 
@@ -259,7 +259,6 @@ def _run_claim_blame(
     # that referenced paper, so we can rank targets directly.
     all_hops: list[dict[str, Any]] = []
     seen_keys: set[tuple[str, str, int | None]] = set()
-    candidate_bibcodes: list[str] = [c[0] for c in candidates]
     candidate_years: dict[str, int | None] = {c[0]: c[1] for c in candidates}
 
     for cand_bibcode, _cand_year, _cand_embedding in candidates:
@@ -289,11 +288,7 @@ def _run_claim_blame(
     # cited paper isn't). Drop those.
     if scope.year_window is not None:
         lo, hi = scope.year_window
-        universe = {
-            bib: yr
-            for bib, yr in universe.items()
-            if yr is None or lo <= yr <= hi
-        }
+        universe = {bib: yr for bib, yr in universe.items() if yr is None or lo <= yr <= hi}
 
     if not universe:
         return {
@@ -391,11 +386,7 @@ def _run_claim_blame(
         else 0.5
     )
     semantic_score_01 = (origin_semantic + 1.0) / 2.0
-    confidence = (
-        0.5 * origin_weight
-        + 0.3 * chronology_score
-        + 0.2 * semantic_score_01
-    )
+    confidence = 0.5 * origin_weight + 0.3 * chronology_score + 0.2 * semantic_score_01
     confidence = max(0.0, min(1.0, confidence))
 
     return {
@@ -513,8 +504,7 @@ def _seed_candidates_default(
     pattern = "%" + "%".join(tokens) + "%"
 
     base_sql = (
-        "SELECT p.bibcode, p.year FROM papers p "
-        "WHERE (p.title ILIKE %s OR p.abstract ILIKE %s)"
+        "SELECT p.bibcode, p.year FROM papers p " "WHERE (p.title ILIKE %s OR p.abstract ILIKE %s)"
     )
     params: list[Any] = [pattern, pattern]
 
@@ -625,7 +615,6 @@ def _build_lineage(
     # the origin contributes a Hop. We use the candidate-level hop record
     # that pointed AT the origin when available; otherwise a synthetic Hop.
     appended: set[str] = {origin_bib}
-    candidate_year_lookup: dict[str, int | None] = {c[0]: c[1] for c in candidates}
 
     # Sort candidates chronologically ascending so the lineage reads
     # forward in time.
@@ -642,8 +631,7 @@ def _build_lineage(
             (
                 h
                 for h in all_hops
-                if h["source_bibcode"] == cand_bib
-                and h["target_bibcode"] == origin_bib
+                if h["source_bibcode"] == cand_bib and h["target_bibcode"] == origin_bib
             ),
             None,
         )
@@ -653,9 +641,7 @@ def _build_lineage(
                     bibcode=cand_bib,
                     year=cand_hop.get("source_year") or cand_year,
                     intent=cand_hop.get("intent"),
-                    intent_weight=INTENT_WEIGHTS.get(
-                        cand_hop.get("intent"), DEFAULT_INTENT_WEIGHT
-                    ),
+                    intent_weight=INTENT_WEIGHTS.get(cand_hop.get("intent"), DEFAULT_INTENT_WEIGHT),
                     context_snippet=cand_hop.get("context_snippet", "") or "",
                     section_name=cand_hop.get("section_name"),
                 )

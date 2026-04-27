@@ -104,19 +104,29 @@ class TestStartupSelfTest:
         assert len(set(EXPECTED_TOOLS)) == 20  # no duplicates
 
     def test_self_test_passes_on_fresh_server(self) -> None:
-        """A freshly created server must pass the self-test."""
+        """A freshly created server must pass the self-test.
+
+        ``EXPECTED_TOOLS`` lists every registered tool, but
+        ``list_tools()`` filters by ``_HIDDEN_TOOLS`` (default: tools whose
+        backing data is not yet populated). The visible count is
+        ``len(_expected_tool_set())`` — derive the assertion from it so
+        future hide/unhide changes don't churn this test.
+        """
         try:
             import mcp.types  # noqa: F401
         except ImportError:
             pytest.skip("mcp SDK not installed")
 
+        from scix.mcp_server import _expected_tool_set
+
+        expected_visible = _expected_tool_set()
         with patch("scix.mcp_server._init_model_impl"):
             status = startup_self_test()
 
         assert status["ok"] is True
-        assert status["tool_count"] == 20
+        assert status["tool_count"] == len(expected_visible)
         assert status["errors"] == []
-        assert sorted(EXPECTED_TOOLS) == status["tool_names"]
+        assert sorted(expected_visible) == status["tool_names"]
 
     def test_self_test_raises_on_wrong_tool_count(self) -> None:
         """If list_tools() returns the wrong count, self-test raises."""
@@ -442,6 +452,30 @@ class TestToolSmoke:
         _assert_non_error(out, "facet_counts")
 
     @patch("scix.mcp_server._log_query")
+    def test_synthesize_findings(
+        self,
+        _mock_log: MagicMock,
+        mock_conn: MagicMock,
+    ) -> None:
+        """Bead cfh9: synthesize_findings dispatch returns the wire envelope.
+
+        Empty working set + no DB rows yields a structurally-valid response
+        with the assignment_coverage block and an empty sections list.
+        """
+        out = _dispatch_tool(
+            mock_conn,
+            "synthesize_findings",
+            {"working_set_bibcodes": []},
+        )
+        data = _assert_non_error(out, "synthesize_findings")
+        assert "sections" in data
+        assert "unattributed_bibcodes" in data
+        assert "assignment_coverage" in data
+        # Cross-bead schema-collision guard: synthesize must NOT emit the
+        # bare "coverage" key (reserved for claim_blame/find_replications).
+        assert "coverage" not in data
+
+    @patch("scix.mcp_server._log_query")
     def test_claim_blame(
         self,
         _mock_log: MagicMock,
@@ -654,9 +688,7 @@ def test_chunk_search_tool_listed_when_qdrant_enabled(
     import scix.mcp_server as mcp_server_module
 
     if mcp_server_module._qdrant_tools is not None:
-        monkeypatch.setattr(
-            mcp_server_module._qdrant_tools, "is_enabled", lambda: True
-        )
+        monkeypatch.setattr(mcp_server_module._qdrant_tools, "is_enabled", lambda: True)
     else:
         monkeypatch.setattr(mcp_server_module, "_qdrant_enabled", lambda: True)
 
@@ -679,9 +711,7 @@ def test_chunk_search_tool_hidden_when_qdrant_disabled(
     import scix.mcp_server as mcp_server_module
 
     if mcp_server_module._qdrant_tools is not None:
-        monkeypatch.setattr(
-            mcp_server_module._qdrant_tools, "is_enabled", lambda: False
-        )
+        monkeypatch.setattr(mcp_server_module._qdrant_tools, "is_enabled", lambda: False)
     else:
         monkeypatch.setattr(mcp_server_module, "_qdrant_enabled", lambda: False)
 
@@ -727,12 +757,8 @@ def test_chunk_search_dispatch_happy_path(
     monkeypatch.setattr(mcp_server_module, "_qdrant_enabled", lambda: True)
 
     # Stub the INDUS embedder so we never touch the real model.
-    monkeypatch.setattr(
-        "scix.embed.load_model", lambda *a, **k: (MagicMock(), MagicMock())
-    )
-    monkeypatch.setattr(
-        "scix.embed.embed_batch", lambda *a, **k: [[0.0] * 768]
-    )
+    monkeypatch.setattr("scix.embed.load_model", lambda *a, **k: (MagicMock(), MagicMock()))
+    monkeypatch.setattr("scix.embed.embed_batch", lambda *a, **k: [[0.0] * 768])
     # Reset the cached embedder so the patched load_model is used.
     monkeypatch.setattr(mcp_server_module, "_indus_embedder", None)
 

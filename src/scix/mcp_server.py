@@ -177,9 +177,7 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "cited_by_intent": float(os.environ.get("SCIX_TIMEOUT_CITED_BY_INTENT", "5")),
     # Terminal synthesis tool — three short SELECTs against papers,
     # citation_contexts, paper_metrics; cap matches find_gaps.
-    "synthesize_findings": float(
-        os.environ.get("SCIX_TIMEOUT_SYNTHESIZE_FINDINGS", "15")
-    ),
+    "synthesize_findings": float(os.environ.get("SCIX_TIMEOUT_SYNTHESIZE_FINDINGS", "15")),
 }
 
 # Tools whose backing data is missing on this deployment. Default-hidden so
@@ -3172,6 +3170,20 @@ def _handle_read_paper(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     return _inject_coverage_note(_result_to_json(result))
 
 
+def _session_fallthrough_bibcodes() -> list[str]:
+    """Session-state fall-through: focused papers, then working set, then [].
+
+    Shared by every tool that scopes to "what the agent has been looking at"
+    when no explicit bibcode list is supplied. Used by both
+    :func:`_resolve_working_set_bibcodes` and the synthesize / find_gaps
+    handlers (which take their explicit-list arg under different names).
+    """
+    focused = _session_state.get_focused_papers()
+    if focused:
+        return list(focused)
+    return [e.bibcode for e in _session_state.get_working_set()]
+
+
 def _resolve_working_set_bibcodes(args: dict[str, Any]) -> list[str]:
     """Return the bibcodes to scope a tool call to.
 
@@ -3188,17 +3200,14 @@ def _resolve_working_set_bibcodes(args: dict[str, Any]) -> list[str]:
     (e.g. ``facet_counts``).
 
     This is the canonical pattern referenced by the bead-3uvn working_set
-    abstraction; ``find_gaps`` uses an inline equivalent.
+    abstraction; ``find_gaps`` and ``synthesize_findings`` use the same
+    fall-through via :func:`_session_fallthrough_bibcodes` (they take the
+    explicit-list arg under different names).
     """
     explicit = args.get("bibcodes")
     if isinstance(explicit, list) and explicit:
         return [str(b) for b in explicit]
-
-    focused = _session_state.get_focused_papers()
-    if focused:
-        return list(focused)
-
-    return [e.bibcode for e in _session_state.get_working_set()]
+    return _session_fallthrough_bibcodes()
 
 
 def _handle_facet_counts(conn: psycopg.Connection, args: dict[str, Any]) -> str:
@@ -4517,9 +4526,7 @@ def _handle_cited_by_intent(conn: psycopg.Connection, args: dict[str, Any]) -> s
 # ---------------------------------------------------------------------------
 
 
-def _handle_synthesize_findings(
-    conn: psycopg.Connection, args: dict[str, Any]
-) -> str:
+def _handle_synthesize_findings(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Bin a working set of papers into a section outline.
 
     Mirrors the ``find_gaps`` fall-through pattern: explicit
@@ -4530,10 +4537,8 @@ def _handle_synthesize_findings(
     """
     raw_bibcodes = args.get("working_set_bibcodes")
     if raw_bibcodes is None:
-        # Session fall-through (matches find_gaps).
-        bibcodes: list[str] = _session_state.get_focused_papers()
-        if not bibcodes:
-            bibcodes = [e.bibcode for e in _session_state.get_working_set()]
+        # Session fall-through — same path as 3uvn / find_gaps.
+        bibcodes: list[str] = _session_fallthrough_bibcodes()
     elif isinstance(raw_bibcodes, list):
         bibcodes = [b for b in raw_bibcodes if isinstance(b, str)]
     else:

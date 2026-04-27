@@ -13,6 +13,7 @@ Bead scix_experiments-3uvn:
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -26,7 +27,7 @@ from scix.session import SessionState
 
 
 @pytest.fixture(autouse=True)
-def _reset_session_state() -> None:
+def _reset_session_state() -> Iterator[None]:
     """Clear the module-level session state between tests."""
     mcp_server._session_state.clear_working_set()
     mcp_server._session_state.clear_focused()

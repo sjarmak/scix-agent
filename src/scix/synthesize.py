@@ -89,7 +89,14 @@ class SynthesisResult:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """JSON-serialisable representation for the MCP wire format."""
+        """JSON-serialisable representation for the MCP wire format.
+
+        Note: the section-assignment accounting is keyed as
+        ``assignment_coverage`` (NOT ``coverage``) to avoid colliding with
+        the ``coverage`` envelope emitted by ``claim_blame`` /
+        ``find_replications``, which describes citation_contexts edge
+        coverage — a structurally different concept.
+        """
         return {
             "sections": [
                 {
@@ -100,7 +107,7 @@ class SynthesisResult:
                 for s in self.sections
             ],
             "unattributed_bibcodes": list(self.unattributed_bibcodes),
-            "coverage": dict(self.coverage),
+            "assignment_coverage": dict(self.coverage),
             "metadata": dict(self.metadata),
         }
 
@@ -385,10 +392,7 @@ def _assemble_sections(
         if target_section is None:
             comm = community_map.get(bibcode)
             if comm is not None:
-                if (
-                    modal_comm is not None
-                    and comm["community_id"] == modal_comm
-                ):
+                if modal_comm is not None and comm["community_id"] == modal_comm:
                     fallback = "background"
                 else:
                     fallback = "open_questions"
@@ -406,9 +410,7 @@ def _assemble_sections(
     # bibcode asc) so callers get a stable outline.
     out_sections: list[SectionBucket] = []
     for name in sections:
-        chosen = _select_top_papers(
-            buckets[name], paper_meta, max_papers_per_section
-        )
+        chosen = _select_top_papers(buckets[name], paper_meta, max_papers_per_section)
         cited = [_paper_row(b, paper_meta, name) for b in chosen]
         theme = _theme_summary_for(chosen, community_map)
         out_sections.append(

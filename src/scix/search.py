@@ -3010,6 +3010,7 @@ def _read_section_from_papers_fulltext(
     char_offset: int,
     limit: int,
     title: str,
+    first_author: str | None,
     classify_fn,
     elapsed_ms: float = 0.0,
 ) -> SearchResult | None:
@@ -3114,6 +3115,7 @@ def _read_section_from_papers_fulltext(
             {
                 "bibcode": bibcode,
                 "title": title,
+                "first_author": first_author,
                 "section_name": matched_heading,
                 "section_text": section_text,
                 "has_body": True,
@@ -3174,7 +3176,7 @@ def read_paper_section(
 
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
-            "SELECT body, abstract, title FROM papers WHERE bibcode = %s",
+            "SELECT body, abstract, title, first_author FROM papers WHERE bibcode = %s",
             (bibcode,),
         )
         row = cur.fetchone()
@@ -3192,6 +3194,7 @@ def read_paper_section(
     body = row.get("body")
     abstract = row.get("abstract") or ""
     title = row.get("title") or ""
+    first_author = row.get("first_author")
     has_body = body is not None and len(body) > 0
 
     # When a specific section or role is requested, try the structured
@@ -3209,6 +3212,7 @@ def read_paper_section(
             char_offset=char_offset,
             limit=limit,
             title=title,
+            first_author=first_author,
             classify_fn=classify_section_role,
             elapsed_ms=_elapsed_ms(t0),
         )
@@ -3223,6 +3227,7 @@ def read_paper_section(
                 {
                     "bibcode": bibcode,
                     "title": title,
+                    "first_author": first_author,
                     "section_name": "abstract",
                     "section_text": section_text,
                     "has_body": False,
@@ -3307,6 +3312,7 @@ def read_paper_section(
                 {
                     "bibcode": bibcode,
                     "title": title,
+                    "first_author": first_author,
                     "section_name": section_name,
                     "section_text": budget_result["snippet"],
                     "has_body": True,
@@ -3330,6 +3336,7 @@ def read_paper_section(
             {
                 "bibcode": bibcode,
                 "title": title,
+                "first_author": first_author,
                 "section_name": section_name,
                 "section_text": section_text,
                 "has_body": True,
@@ -3555,7 +3562,7 @@ def search_within_paper(
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             """
-            SELECT bibcode, title, body,
+            SELECT bibcode, title, first_author, body,
                    ts_headline(
                        'english',
                        body,
@@ -3690,6 +3697,7 @@ def search_within_paper(
                 {
                     "bibcode": row["bibcode"],
                     "title": row["title"],
+                    "first_author": row.get("first_author"),
                     "headline": budget_result["snippet"],
                     "has_body": True,
                     "canonical_url": budget_result["canonical_url"],
@@ -3712,6 +3720,7 @@ def search_within_paper(
             {
                 "bibcode": row["bibcode"],
                 "title": row["title"],
+                "first_author": row.get("first_author"),
                 "headline": headline_out,
                 "has_body": True,
                 "sections": sections_payload,

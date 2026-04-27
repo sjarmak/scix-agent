@@ -568,12 +568,6 @@ def _fetch_community_assignments(
     return out
 
 
-# Bead-tq0t cap: at most 3 citation-context excerpts per paper in the
-# synthesise output. Module-level constant so it's easy to retune
-# alongside the other ``_THEME_MAX_*`` caps.
-_CITATION_EXCERPTS_MAX_PER_PAPER: Final[int] = 3
-
-
 def _fetch_citation_excerpts(
     conn: psycopg.Connection, bibcodes: Sequence[str]
 ) -> dict[str, list[dict[str, Any]]]:
@@ -584,11 +578,13 @@ def _fetch_citation_excerpts(
     :data:`_CITATION_EXCERPTS_MAX_PER_PAPER` rows per paper so the agent
     can ground bucket assignments on actual citing-sentence evidence.
 
-    Determinism: ORDER BY (intent ASC, source_bibcode ASC, char_offset
-    ASC NULLS LAST) so repeated calls return the same excerpts in the
-    same order. Filters out rows with NULL intent (they carry no signal
-    for the synthesise output and are excluded from intent-modal
-    bucketing upstream).
+    Determinism: ORDER BY (target_bibcode ASC, intent ASC, source_bibcode
+    ASC, char_offset ASC NULLS LAST) so repeated calls return the same
+    excerpts in the same order. The leading target_bibcode key groups
+    rows contiguously per target so the cap-3 logic in this function can
+    use a simple per-target counter. Filters out rows with NULL intent
+    (they carry no signal for the synthesise output and are excluded
+    from intent-modal bucketing upstream).
 
     Implementation notes:
       * One query, one IN/ANY filter, bounded by the working-set cap
@@ -723,6 +719,9 @@ _THEME_MAX_COMMUNITIES: Final[int] = 3
 _THEME_MAX_TOP_PAPERS: Final[int] = 3
 _THEME_MAX_KEYWORDS_PER_COMMUNITY: Final[int] = 5
 _THEME_MAX_ARXIV_CLASSES_PER_COMMUNITY: Final[int] = 5
+# Bead-tq0t cap: at most 3 citation-context excerpts per paper in the
+# synthesise output. Collocated with the _THEME_MAX_* caps for retuning.
+_CITATION_EXCERPTS_MAX_PER_PAPER: Final[int] = 3
 # Rough English/scientific stopword list for the title-token keyword
 # fallback (per CLAUDE.md memory ``community_labels_pipeline.md`` —
 # ``papers.keywords`` is NULL on ~52% of rows so we need a fallback).

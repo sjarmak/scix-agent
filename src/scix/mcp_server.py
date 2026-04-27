@@ -4983,11 +4983,24 @@ def _handle_synthesize_findings(conn: psycopg.Connection, args: dict[str, Any]) 
         )
 
     # Bead tq0t: two boolean opt-ins for additive grounding fields. Both
-    # default False to preserve the default wire format. ``bool()`` is
-    # the conventional truthy coercion (matches MCP JSON-Schema's
-    # boolean type).
-    include_full_abstracts = bool(args.get("include_full_abstracts", False))
-    include_citation_contexts = bool(args.get("include_citation_contexts", False))
+    # default False to preserve the default wire format. Validate as
+    # actual bools rather than truthy-coercing — the MCP SDK delivers
+    # JSON-parsed values, but a hand-crafted client could send a string
+    # like "false" which `bool()` would silently flip to True.
+    raw_full = args.get("include_full_abstracts", False)
+    if not isinstance(raw_full, bool):
+        return json.dumps(
+            {"error": "include_full_abstracts must be a boolean"},
+            indent=2,
+        )
+    raw_ctx = args.get("include_citation_contexts", False)
+    if not isinstance(raw_ctx, bool):
+        return json.dumps(
+            {"error": "include_citation_contexts must be a boolean"},
+            indent=2,
+        )
+    include_full_abstracts: bool = raw_full
+    include_citation_contexts: bool = raw_ctx
 
     result = _synthesize_findings(
         conn,

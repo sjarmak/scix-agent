@@ -1726,19 +1726,37 @@ class TestAdditiveGroundingFields:
         """AC3: papers attributed via community_fallthrough, override, or
         citation_count_fallback do NOT get ``citation_excerpts`` even when
         the kwarg is true — only intent_modal-assigned papers do (since
-        they're the ones whose section came from a citation_contexts row)."""
-        # 2024A -> intent_modal (methods); 2024B -> community_fallthrough (background).
+        they're the ones whose section came from a citation_contexts row).
+
+        Fixture exercises ALL THREE non-intent_modal tiers:
+          - 2024A -> intent_modal (methods)            [excerpts expected]
+          - 2024B -> community_fallthrough (background) [no excerpts]
+          - 2024C -> override (open_questions)          [no excerpts]
+          - 2024D -> citation_count_fallback (results)  [no excerpts]
+        """
         papers_rows = [
             ("2024A", "TA", 2024, "abs", 0, [], [], "Smith"),
             ("2024B", "TB", 2024, "abs", 0, [], [], "Jones"),
+            ("2024C", "TC", 2024, "abs", 0, [], [], "Brown"),
+            ("2024D", "TD", 2024, "abs", 100, [], [], "Davis"),
         ]
         intent_rows = [("2024A", "method", 2)]
-        community_rows = [("2024A", 1, "L"), ("2024B", 1, "L")]
-        # Excerpt query returns rows for BOTH bibcodes, but only A should
-        # carry them in the output.
+        # 2024A/B/C in the same core community so 2024B falls through to
+        # background and 2024C is eligible to be overridden away from it.
+        # 2024D has NO community row, so it lands in unattributed and Tier-3
+        # citation-count fallback pulls it (highest cit_count=100) into the
+        # first empty section.
+        community_rows = [
+            ("2024A", 1, "L"),
+            ("2024B", 1, "L"),
+            ("2024C", 1, "L"),
+        ]
+        # Excerpt query returns rows for all four; only A should carry them.
         excerpt_rows = [
             ("2024A", "ctx-A1", "method", "2025citerA"),
             ("2024B", "ctx-B1", "background", "2025citerB"),
+            ("2024C", "ctx-C1", "method", "2025citerC"),
+            ("2024D", "ctx-D1", "background", "2025citerD"),
         ]
         conn = _mock_conn(
             [papers_rows, intent_rows, community_rows, excerpt_rows]
@@ -1746,8 +1764,9 @@ class TestAdditiveGroundingFields:
 
         result = synthesize_findings(
             conn,
-            working_set_bibcodes=["2024A", "2024B"],
+            working_set_bibcodes=["2024A", "2024B", "2024C", "2024D"],
             sections=list(DEFAULT_SECTIONS),
+            section_overrides={"2024C": "open_questions"},
             include_citation_contexts=True,
         )
         all_rows = {p["bibcode"]: p for s in result.sections for p in s.cited_papers}
@@ -1757,6 +1776,12 @@ class TestAdditiveGroundingFields:
         # 2024B: community_fallthrough -> NO excerpts.
         assert all_rows["2024B"]["signal_used"] == "community_fallthrough"
         assert "citation_excerpts" not in all_rows["2024B"]
+        # 2024C: override -> NO excerpts.
+        assert all_rows["2024C"]["signal_used"] == "override"
+        assert "citation_excerpts" not in all_rows["2024C"]
+        # 2024D: citation_count_fallback -> NO excerpts.
+        assert all_rows["2024D"]["signal_used"] == "citation_count_fallback"
+        assert "citation_excerpts" not in all_rows["2024D"]
 
     def test_include_citation_contexts_capped_at_three_per_paper(self) -> None:
         """AC3: when more than 3 excerpts exist for a paper, only the
@@ -1781,6 +1806,11 @@ class TestAdditiveGroundingFields:
         methods = next(s for s in result.sections if s.name == "methods")
         row = next(p for p in methods.cited_papers if p["bibcode"] == "2024A")
         assert len(row["citation_excerpts"]) == 3
+        # The first 3 in fixture (= ORDER BY) order are kept; rows 3 and 4
+        # are skipped. Pinning the exact set protects the determinism
+        # contract against a future change that randomises the slice.
+        kept_citers = {e["citing_bibcode"] for e in row["citation_excerpts"]}
+        assert kept_citers == {"2025citer0", "2025citer1", "2025citer2"}
 
     def test_include_citation_contexts_empty_result_emits_empty_list(
         self,

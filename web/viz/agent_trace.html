@@ -85,6 +85,28 @@
       #trace-head button:hover {
         background: #eaeaea;
       }
+      #trace-narration {
+        background: #f4f7fb;
+        border: 1px solid #d6e3f3;
+        border-radius: 4px;
+        padding: 8px 10px;
+        margin-bottom: 8px;
+        font-size: 12px;
+        line-height: 1.45;
+        color: #1a3a5c;
+        display: none;
+      }
+      #trace-narration.active {
+        display: block;
+      }
+      #trace-narration .scenario-name {
+        font-weight: 600;
+        color: #0b60b0;
+        margin-right: 6px;
+        text-transform: uppercase;
+        font-size: 10px;
+        letter-spacing: 0.04em;
+      }
       #trace-panel {
         flex: 1;
         overflow-y: auto;
@@ -267,41 +289,23 @@
         <input
           id="query-input"
           type="text"
-          placeholder="e.g. galaxy clusters at high redshift"
+          placeholder="e.g. JWST asteroid"
           aria-label="Research query"
         />
         <button type="submit" id="query-submit">Search</button>
-        <div class="quick" aria-label="Example queries">
+        <div class="quick" aria-label="Example demo flows">
           <button
             type="button"
             data-scenario="search"
+            data-q="JWST asteroid"
+            title="Single hybrid search — dense + lexical fusion via RRF"
+          >Search · JWST asteroid</button>
+          <button
+            type="button"
+            data-scenario="lit_review"
             data-q="galaxy clusters dark matter"
-          >search</button>
-          <button
-            type="button"
-            data-scenario="survey"
-            data-q="galaxy clusters dark matter"
-          >survey</button>
-          <button
-            type="button"
-            data-scenario="methods"
-            data-q="deep learning image segmentation"
-          >methods</button>
-          <button
-            type="button"
-            data-scenario="disambig"
-            data-q="JWST NIRCam"
-          >disambig</button>
-          <button
-            type="button"
-            data-scenario="search"
-            data-q="exoplanet atmosphere spectroscopy"
-          >exoplanets</button>
-          <button
-            type="button"
-            data-scenario="search"
-            data-q="protein folding prediction"
-          >protein folding</button>
+            title="Step-by-step research-copilot pipeline — search seeds, citation_traverse refs+cites, graph_context, get_paper"
+          >Lit Review · galaxy clusters dark matter</button>
         </div>
       </form>
       <div id="trace-layout">
@@ -314,6 +318,7 @@
             <span class="trace-count" id="trace-count">0 events</span>
             <button type="button" id="trace-clear" title="Clear the trace log">clear</button>
           </div>
+          <div id="trace-narration" aria-live="polite"></div>
           <div id="trace-panel" aria-live="polite">
             <div class="empty">Waiting for events…</div>
           </div>
@@ -574,26 +579,68 @@
         // Wire the query bar. Each scenario submits to a different endpoint
         // under /viz/api/demo/*; every endpoint runs a real MCP tool sequence
         // and the SSE subscription above narrates the instrumented events.
+        // Demo scenarios are tightly curated to flows that exercise tools
+        // proven to work end-to-end on the current corpus + indexes. Survey
+        // and Methods endpoints still exist but aren't surfaced as pills:
+        // Lit Review supersedes Survey (canonical lit_review tool); Methods
+        // hits slow paths on common queries and isn't ready to demo.
+        // Disambig pill removed: entity(action='resolve') currently returns
+        // 0 candidates for common mentions like 'Kepler', and entity(papers)
+        // times out at the 10 s budget on popular entities. Until entity
+        // resolution + papers query latency are fixed, the pill produced
+        // theatre rather than real disambiguation. The /demo/disambig
+        // endpoint still exists for direct API callers.
         const SCENARIO_LABELS = {
           search: 'Search',
-          survey: 'Survey',
-          methods: 'Methods',
-          disambig: 'Disambig',
+          lit_review: 'Lit Review',
         }
         const SCENARIO_ENDPOINTS = {
           search: '/viz/api/demo/search',
-          survey: '/viz/api/demo/survey',
-          methods: '/viz/api/demo/methods',
-          disambig: '/viz/api/demo/disambig',
+          lit_review: '/viz/api/demo/lit_review',
+        }
+        // What each scenario does, so the trace chips have context. Shown
+        // above the trace panel while the scenario is in flight.
+        const SCENARIO_NARRATIONS = {
+          search:
+            'Single hybrid search — INDUS dense embedding + BM25 lexical, fused via RRF. ' +
+            'One trace event with the top-N result set.',
+          lit_review:
+            'Step-by-step research-copilot motion. Step 1: hybrid search for seed papers. ' +
+            'Steps 2-4: citation_traverse(direction=backward) for top-3 seeds — 1-hop ancestors. ' +
+            'Steps 5-7: citation_traverse(direction=forward) for top-3 seeds — 1-hop descendants. ' +
+            'Step 8: graph_context on the top seed — community + structural neighbours. ' +
+            'Steps 9-10: get_paper on top-2 seeds — full abstracts for synthesis. Each step ' +
+            'fires its own trace event so you see the pipeline narrate, not one big hang.',
+          disambig:
+            'Entity resolution flow. Step 1-2: resolve the mention to a specific entity ' +
+            '(e.g. "Kepler" → spacecraft vs astronomer vs exoplanet). Step 3: pull entity_context ' +
+            '(aliases, vocab, related entities). Step 4-5: search papers filtered by entity_id, ' +
+            'with an unfiltered fallback if zero hits. Step 6-8: graph_context per top paper. ' +
+            'Step 9: temporal_evolution for the entity. Step 10: get_paper for synthesis material.',
         }
         let activeScenario = 'search'
         const form = document.getElementById('query-bar')
         const input = document.getElementById('query-input')
         const submit = document.getElementById('query-submit')
+        const narration = document.getElementById('trace-narration')
+        function _renderNarration(name) {
+          if (!narration) return
+          const label = SCENARIO_LABELS[name] || name
+          const text = SCENARIO_NARRATIONS[name] || ''
+          if (!text) {
+            narration.classList.remove('active')
+            narration.innerHTML = ''
+            return
+          }
+          narration.innerHTML =
+            '<span class="scenario-name">' + label + '</span>' + text
+          narration.classList.add('active')
+        }
         function setScenario(name) {
           if (!SCENARIO_ENDPOINTS[name]) return
           activeScenario = name
           submit.textContent = SCENARIO_LABELS[name] || 'Run'
+          _renderNarration(name)
         }
         async function runScenario(q, scenario) {
           const query = (q || input.value || '').trim()

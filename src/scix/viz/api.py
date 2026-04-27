@@ -243,18 +243,31 @@ def demo_search(payload: DemoSearchRequest) -> dict:
     if not query:
         raise HTTPException(status_code=400, detail="empty query")
 
-    # Real search dispatch — the MCP hook publishes one TraceEvent with the
-    # full result set (bibcodes drive the line-flash on UMAP). Hybrid mode
-    # lets the server-side preloaded INDUS model contribute a dense signal,
-    # but vector_search on the full ``pe.embedding`` (float32 768d) HNSW
-    # over the 32M-row prod corpus blows past the 30s statement_timeout. We
-    # therefore gate the hybrid switch on ``SCIX_USE_HALFVEC`` — the same
-    # flag ``scix.search`` uses to pick the halfvec column. Until migrations
-    # 053/054 are applied (bead d0a) and the flag is flipped on, the demo
-    # stays in keyword mode so it doesn't 500 on prod.
-    use_hybrid = os.environ.get("SCIX_USE_HALFVEC", "0") == "1"
-    mode = "hybrid" if use_hybrid else "keyword"
-    search_args = {"query": query, "mode": mode, "limit": payload.top_n}
+    # Real search dispatch — the MCP hook publishes one TraceEvent with
+    # the full result set (bibcodes drive the line-flash on UMAP). Hybrid
+    # mode is on by default: the viz server preloads INDUS in lifespan(),
+    # the float32 HNSW index ``idx_embed_hnsw_indus`` returns vector hits
+    # in ~300ms with hnsw.ef_search=40 + iterative_scan='relaxed_order',
+    # and the dense lane recovers semantically-relevant papers that pure
+    # tsvector misses. The earlier ``SCIX_USE_HALFVEC`` gate was put in
+    # while halfvec migrations 053/054 were still pending; empirical
+    # latency made it unnecessary, so the demo just runs hybrid now.
+    # disambiguate=False: this is an instrumentation/trace demo, not an
+    # interactive search. The default (True) short-circuits to a
+    # {"disambiguation": [...]} payload whenever the query contains an
+    # entity mention, which the agent-trace UI then reports as 0 bibcodes.
+    search_args = {
+        "query": query,
+        "mode": "hybrid",
+        "limit": payload.top_n,
+        "disambiguate": False,
+        # bypass_unscoped_guard: the search tool blocks unscoped queries of
+        # 3+ tokens by default. The agent-trace demo is an explicit showcase
+        # path where broad multi-word queries are exactly what we want to
+        # demonstrate; the guard is meant for autonomous agents wandering
+        # into expensive scans, not curated demo flows.
+        "bypass_unscoped_guard": True,
+    }
     search_json = mcp_server.call_tool("search", search_args)
     search_payload = json.loads(search_json)
 
@@ -296,6 +309,130 @@ def demo_search(payload: DemoSearchRequest) -> dict:
             for p in papers
         ],
     }
+
+
+@router.post("/demo/lit_review")
+def demo_lit_review(payload: DemoSearchRequest) -> dict:
+    """Literature-review showcase, narrated step-by-step.
+
+    Mirrors the ``scix.search.lit_review`` composite tool's internal flow
+    using individual MCP tool calls so each step fires its own trace
+    event — instead of one ~13 s hang followed by a single ``lit_review``
+    chip. Pipeline:
+
+      1. ``search`` (hybrid)               — seed papers
+      2. ``citation_traverse`` × top-3     — refs (1-hop ancestors)
+      3. ``citation_traverse`` × top-3     — cites (1-hop descendants)
+      4. ``concept_search``                — community-aligned thematic neighbours
+      5. ``get_paper`` × top-2             — abstract sampling for synthesis
+
+    Each step publishes a TraceEvent via ``mcp_server.call_tool``'s
+    instrumentation hook, so the agent-trace overlay narrates the entire
+    research-copilot motion in real time.
+    """
+    query = payload.query.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="empty query")
+
+    t_start = time.monotonic()
+    steps: list[dict] = []
+
+    # 1 — seed search (hybrid + disambiguate=False + bypass guard).
+    search_args = {
+        "query": query,
+        "mode": "hybrid",
+        "limit": payload.top_n,
+        "disambiguate": False,
+        "bypass_unscoped_guard": True,
+    }
+    search_res, ms = _call_mcp("search", search_args)
+    seed_bibs = _bibcodes_of(search_res)
+    _record_step(
+        steps,
+        tool="search",
+        args={"query": query[:120], "mode": "hybrid", "limit": payload.top_n},
+        bibcodes=seed_bibs,
+        latency_ms=ms,
+        error=_error_of(search_res),
+    )
+
+    # 2 — citation_traverse references on top-3 seeds (1-hop ancestors).
+    # citation_traverse uses mode='graph' with direction= for refs/cites.
+    for bib in seed_bibs[:3]:
+        ref_args = {
+            "bibcode": bib,
+            "mode": "graph",
+            "direction": "backward",
+            "limit": 10,
+        }
+        ref_res, ms = _call_mcp("citation_traverse", ref_args)
+        _record_step(
+            steps,
+            tool="citation_traverse",
+            args=ref_args,
+            bibcodes=_bibcodes_of(ref_res),
+            latency_ms=ms,
+            error=_error_of(ref_res),
+        )
+
+    # 3 — citation_traverse citations on top-3 seeds (1-hop descendants).
+    for bib in seed_bibs[:3]:
+        cite_args = {
+            "bibcode": bib,
+            "mode": "graph",
+            "direction": "forward",
+            "limit": 10,
+        }
+        cite_res, ms = _call_mcp("citation_traverse", cite_args)
+        _record_step(
+            steps,
+            tool="citation_traverse",
+            args=cite_args,
+            bibcodes=_bibcodes_of(cite_res),
+            latency_ms=ms,
+            error=_error_of(cite_res),
+        )
+
+    # 4 — graph_context on the top seed for community + neighbours. Replaces
+    # the earlier concept_search step which routinely timed out on broad
+    # title-derived terms (e.g. fallback to the original query).
+    if seed_bibs:
+        gc_args = {
+            "bibcode": seed_bibs[0],
+            "include_community": True,
+            "limit": 5,
+        }
+        gc_res, ms = _call_mcp("graph_context", gc_args)
+        _record_step(
+            steps,
+            tool="graph_context",
+            args=gc_args,
+            bibcodes=_bibcodes_of(gc_res) or [seed_bibs[0]],
+            latency_ms=ms,
+            error=_error_of(gc_res),
+        )
+
+    # 5 — get_paper on top-2 seeds (synthesis material; full abstracts).
+    for bib in seed_bibs[:2]:
+        gp_args = {"bibcode": bib}
+        gp_res, ms = _call_mcp("get_paper", gp_args)
+        _record_step(
+            steps,
+            tool="get_paper",
+            args=gp_args,
+            bibcodes=_bibcodes_of(gp_res),
+            latency_ms=ms,
+            error=_error_of(gp_res),
+        )
+
+    return {
+        "query": query,
+        "scenario": "lit_review",
+        "total_latency_ms": round((time.monotonic() - t_start) * 1000.0, 1),
+        "bibcodes": seed_bibs,
+        "steps": steps,
+    }
+
 
 
 # ---------------------------------------------------------------------------
@@ -511,14 +648,23 @@ def demo_survey(payload: DemoSearchRequest) -> dict:
     t_start = time.monotonic()
     steps: list[dict] = []
 
-    # 1 — seed search.
-    search_args = {"query": query, "mode": "keyword", "limit": payload.top_n}
+    # 1 — seed search. Hybrid + disambiguate=False so the pipeline gets
+    # real bibcodes regardless of whether the query mentions known entities.
+    # bypass_unscoped_guard=True because demo queries are usually 3+ tokens
+    # and the guard would otherwise block them.
+    search_args = {
+        "query": query,
+        "mode": "hybrid",
+        "limit": payload.top_n,
+        "disambiguate": False,
+        "bypass_unscoped_guard": True,
+    }
     search_res, ms = _call_mcp("search", search_args)
     seed_bibs = _bibcodes_of(search_res)
     _record_step(
         steps,
         tool="search",
-        args={"query": query[:120], "mode": "keyword", "limit": payload.top_n},
+        args={"query": query[:120], "mode": "hybrid", "limit": payload.top_n},
         bibcodes=seed_bibs,
         latency_ms=ms,
         error=_error_of(search_res),
@@ -611,14 +757,23 @@ def demo_methods(payload: DemoSearchRequest) -> dict:
     t_start = time.monotonic()
     steps: list[dict] = []
 
-    # 1 — seed search.
-    search_args = {"query": query, "mode": "keyword", "limit": payload.top_n}
+    # 1 — seed search. Hybrid + disambiguate=False so the pipeline gets
+    # real bibcodes regardless of whether the query mentions known entities.
+    # bypass_unscoped_guard=True because demo queries are usually 3+ tokens
+    # and the guard would otherwise block them.
+    search_args = {
+        "query": query,
+        "mode": "hybrid",
+        "limit": payload.top_n,
+        "disambiguate": False,
+        "bypass_unscoped_guard": True,
+    }
     search_res, ms = _call_mcp("search", search_args)
     seed_bibs = _bibcodes_of(search_res)
     _record_step(
         steps,
         tool="search",
-        args={"query": query[:120], "mode": "keyword", "limit": payload.top_n},
+        args={"query": query[:120], "mode": "hybrid", "limit": payload.top_n},
         bibcodes=seed_bibs,
         latency_ms=ms,
         error=_error_of(search_res),

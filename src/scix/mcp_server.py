@@ -376,9 +376,14 @@ def _log_query(
 def _extract_bibcodes_from_result(result_json: str | None) -> tuple[str, ...]:
     """Best-effort bibcode extraction from a tool's JSON result.
 
-    Handles two common shapes:
+    Handles three common shapes:
       * ``{"papers": [{"bibcode": ...}, ...]}`` — multi-paper result.
       * ``{"bibcode": "..."}`` — single-paper result.
+      * ``{"metadata": {"working_set_bibcodes": [...]}}`` — composite tools
+        like ``lit_review`` whose seeds list (papers) is short but whose
+        full working set lives under metadata. Working-set bibcodes are
+        appended after seeds, dedup'd, so the trace reflects every paper
+        the tool actually touched.
 
     Returns an empty tuple on any parse failure or when the result
     represents an error payload. The result is capped at
@@ -394,6 +399,16 @@ def _extract_bibcodes_from_result(result_json: str | None) -> tuple[str, ...]:
         return ()
 
     bibcodes: list[str] = []
+    seen: set[str] = set()
+
+    def _push(bc: str) -> bool:
+        """Append if new and under cap. Return False once cap is hit."""
+        if bc in seen:
+            return True
+        bibcodes.append(bc)
+        seen.add(bc)
+        return len(bibcodes) < _MAX_TRACE_BIBCODES
+
     papers = data.get("papers")
     if isinstance(papers, list):
         for paper in papers:
@@ -401,9 +416,18 @@ def _extract_bibcodes_from_result(result_json: str | None) -> tuple[str, ...]:
                 continue
             bc = paper.get("bibcode")
             if isinstance(bc, str):
-                bibcodes.append(bc)
-                if len(bibcodes) >= _MAX_TRACE_BIBCODES:
+                if not _push(bc):
                     break
+
+    if len(bibcodes) < _MAX_TRACE_BIBCODES:
+        metadata = data.get("metadata")
+        if isinstance(metadata, dict):
+            ws = metadata.get("working_set_bibcodes")
+            if isinstance(ws, list):
+                for bc in ws:
+                    if isinstance(bc, str):
+                        if not _push(bc):
+                            break
 
     if not bibcodes:
         bc = data.get("bibcode")

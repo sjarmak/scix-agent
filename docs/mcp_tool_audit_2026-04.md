@@ -10,9 +10,40 @@ tool, and record deprecation notes for the aliased legacy tools.
 
 | Target | Status |
 |---|---|
-| Collapse MCP tools to `≤ 15` | **Met.** 13 core tools, `+1` optional (`find_similar_by_examples`, gated by `QDRANT_URL`). 14 max in any deployment. |
-| Deprecation notes per removed tool | **Met.** 21 aliases map to the 13 new tools via `src/scix/mcp_server.py::_DEPRECATED_ALIASES`; schema transforms in `_transform_deprecated_args`; responses wrapped with `{deprecated: true, use_instead, original_tool}` by `_wrap_deprecated`. |
-| `SKILL.md` tool table reflects the new set | **Met.** `~/.claude/skills/scix-mcp/SKILL.md` §"Tool Overview (13 tools)" matches the current registration. |
+| Collapse MCP tools to `≤ 15` | **Met.** 15 agent-visible tools as of 2026-04-26 (added `cited_by_intent`, expanded `entity` with `action='papers'`). 4 additional tools (`chunk_search`, `section_retrieval`, `read_paper_claims`, `find_claims`) are env-hidden (`_HIDDEN_TOOLS`) because their backing data isn't yet populated; restore via `SCIX_HIDDEN_TOOLS=`. |
+| Deprecation notes per removed tool | **Met.** Aliases map to the new tools via `src/scix/mcp_server.py::_DEPRECATED_ALIASES`; schema transforms in `_transform_deprecated_args`; responses wrapped with `{deprecated: true, use_instead, original_tool}` by `_wrap_deprecated`. |
+| `SKILL.md` tool table reflects the new set | Stale — needs update to reflect 15-tool surface and the 4 env-hidden tools. |
+
+## 2026-04-26 — pre-talk demo prep changes
+
+The session that landed these changes was preparing a live agent demo. New
+capabilities + rationale:
+
+- **New tool: `cited_by_intent(target_bibcode, intent)`** — exploits
+  `citation_contexts.intent` (method / background / result_comparison)
+  populated for ~825K rows. Demonstrates structural citation awareness.
+- **New action: `entity(action='papers', entity_id=N)`** — surfaces
+  `document_entities` (57.7M rows, 13 entity types). Pass `entity_id` from
+  `action='resolve'`, or `query` to auto-resolve. Cross-discipline flex.
+- **`entity(action='papers')` adds `precision_estimate` + `precision_band`**
+  per row from `src/scix/extract/ner_quality_profile.py` — the dbl.3 D3
+  quality profile visible at the agent surface. Bead bqva partial (entity
+  wired; `get_paper` and `find_gaps` deferred).
+- **`citation_traverse` annotates each edge with `intent`** when covered
+  by `citation_contexts` (~0.27% per bead 79n).
+- **`read_paper(section=...)` now reads from `papers_fulltext.sections` JSONB**
+  (14.4M populated, 96.2%) — accurate section retrieval rather than
+  heuristic regex on flat body. Falls back when papers_fulltext has no entry.
+- **`find_gaps` accepts optional `query` param** to auto-seed working set
+  via concept_search in a single call.
+- **4 tools env-hidden via `_HIDDEN_TOOLS`:** `chunk_search`,
+  `section_retrieval`, `read_paper_claims`, `find_claims` — registered
+  handlers but missing backing data. Override via `SCIX_HIDDEN_TOOLS=`.
+- **`hnsw.ef_search` lowered to 40** at DB level
+  (`ALTER DATABASE scix SET hnsw.ef_search = 40`). Trades ~1pp recall for
+  2-3× speedup; reversible via `RESET`.
+- **`pg_prewarm`** called on `idx_embed_hnsw_indus` to push the
+  most-traversed graph nodes into OS page cache.
 
 Landing commits (for migration-guidance cross-refs):
 

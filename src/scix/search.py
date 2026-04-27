@@ -376,16 +376,21 @@ def vector_search(
         iterative_applied = configure_iterative_scan(conn, mode=scan_mode)
 
     # Match the per-model partial HNSW expression: halfvec(768) for INDUS,
-    # vector(N) for pilots.
+    # vector(N) for pilots. The LHS cast `({vec_col})::{vec_cast}` is required
+    # for the planner to match the indexed expression `((embedding)::vector(768))`
+    # — without it, the planner falls back to a Seq Scan over 32M rows + Sort
+    # (verified 2026-04-26: omitting the cast produces cost=11.5M / ~44s wall-clock;
+    # adding it produces cost=4k / sub-100ms HNSW lookup).
+    cast_vec = f"({vec_col})::{vec_cast}"
     query = f"""
         SELECT {STUB_COLUMNS},
-               1 - ({vec_col} <=> %s::{vec_cast}) AS similarity
+               1 - ({cast_vec} <=> %s::{vec_cast}) AS similarity
         FROM paper_embeddings pe
         JOIN papers p ON p.bibcode = pe.bibcode
         WHERE pe.model_name = %s
         {filter_clause}
         {entity_clause}
-        ORDER BY {vec_col} <=> %s::{vec_cast}
+        ORDER BY {cast_vec} <=> %s::{vec_cast}
         LIMIT %s
     """
     params: list[Any] = [vec_str, model_name] + filter_params + entity_params + [vec_str, limit]
@@ -2611,6 +2616,136 @@ def _check_body_latex_provenance(
 # ---------------------------------------------------------------------------
 
 
+def _read_section_from_papers_fulltext(
+    conn: psycopg.Connection,
+    *,
+    bibcode: str,
+    section: str,
+    role: str | None,
+    char_offset: int,
+    limit: int,
+    title: str,
+    classify_fn,
+    elapsed_ms: float = 0.0,
+) -> SearchResult | None:
+    """Read a section from the structured papers_fulltext.sections JSONB.
+
+    Returns a SearchResult if a matching section is found, None if the
+    paper has no papers_fulltext entry or no section matches. The caller
+    falls back to body-parsing on None.
+
+    Heading matching is case-insensitive substring (e.g. 'methods' matches
+    'METHODS', 'Materials and Methods', '2 Methods'). Role matching uses
+    ``classify_fn(heading)`` to pick the first heading whose canonical
+    role matches.
+
+    Schema reminder: papers_fulltext.sections is jsonb NOT NULL — array of
+    {text: str, heading: str, level: int, offset: int}.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            "SELECT sections FROM papers_fulltext WHERE bibcode = %s",
+            (bibcode,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    sections_json = row.get("sections") or []
+    if not sections_json:
+        return None
+
+    # Normalize each section into (heading, text, level, offset)
+    parsed = [
+        (
+            (s.get("heading") or "").strip(),
+            (s.get("text") or ""),
+            int(s.get("level") or 0),
+            int(s.get("offset") or 0),
+        )
+        for s in sections_json
+        if isinstance(s, dict)
+    ]
+    if not parsed:
+        return None
+
+    section_lower = section.lower().strip()
+    matched_heading = None
+    matched_text = None
+
+    if role is not None:
+        role_lower = role.lower()
+        for h, t, _lvl, _off in parsed:
+            if classify_fn(h) == role_lower:
+                matched_heading, matched_text = h, t
+                break
+        if matched_heading is None:
+            available = [h for h, _t, _l, _o in parsed]
+            return SearchResult(
+                papers=[],
+                total=0,
+                timing_ms={"query_ms": elapsed_ms},
+                metadata={
+                    "error": f"No section with role '{role}' found",
+                    "available_sections": available,
+                    "has_body": True,
+                    "source": "papers_fulltext.sections",
+                },
+            )
+    else:
+        # Substring match (case-insensitive). Multiple candidates: prefer
+        # the heading that starts with the query (less generic match), then
+        # any substring match. e.g. section='methods' prefers 'Methods'
+        # over 'Methodology and Approach'.
+        starts_with: list[tuple[str, str]] = []
+        contains: list[tuple[str, str]] = []
+        for h, t, _lvl, _off in parsed:
+            hl = h.lower()
+            if hl.startswith(section_lower):
+                starts_with.append((h, t))
+            elif section_lower in hl:
+                contains.append((h, t))
+        candidates = starts_with or contains
+        if candidates:
+            matched_heading, matched_text = candidates[0]
+        else:
+            available = [h for h, _t, _l, _o in parsed]
+            return SearchResult(
+                papers=[],
+                total=0,
+                timing_ms={"query_ms": elapsed_ms},
+                metadata={
+                    "error": f"Section '{section}' not found",
+                    "available_sections": available,
+                    "has_body": True,
+                    "source": "papers_fulltext.sections",
+                },
+            )
+
+    total_chars = len(matched_text)
+    section_text = matched_text[char_offset : char_offset + limit]
+
+    return SearchResult(
+        papers=[
+            {
+                "bibcode": bibcode,
+                "title": title,
+                "section_name": matched_heading,
+                "section_text": section_text,
+                "has_body": True,
+                "char_offset": char_offset,
+                "total_chars": total_chars,
+            }
+        ],
+        total=1,
+        timing_ms={"query_ms": elapsed_ms},
+        metadata={
+            "has_body": True,
+            "available_sections": [h for h, _t, _l, _o in parsed],
+            "source": "papers_fulltext.sections",
+        },
+    )
+
+
 def read_paper_section(
     conn: psycopg.Connection,
     bibcode: str,
@@ -2673,6 +2808,27 @@ def read_paper_section(
     abstract = row.get("abstract") or ""
     title = row.get("title") or ""
     has_body = body is not None and len(body) > 0
+
+    # When a specific section or role is requested, try the structured
+    # papers_fulltext.sections JSONB first (14.4M papers populated, ~96.2%
+    # of full-text rows). The structured sections come from GROBID/parser
+    # output and are far more accurate than regex heuristics on flat body
+    # text. Fall through to the body-parsing path only if the paper has no
+    # papers_fulltext entry or no matching section.
+    if section != "full" or role is not None:
+        structured = _read_section_from_papers_fulltext(
+            conn,
+            bibcode=bibcode,
+            section=section,
+            role=role,
+            char_offset=char_offset,
+            limit=limit,
+            title=title,
+            classify_fn=classify_section_role,
+            elapsed_ms=_elapsed_ms(t0),
+        )
+        if structured is not None:
+            return structured
 
     if not has_body:
         # Fallback to abstract

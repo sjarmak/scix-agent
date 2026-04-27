@@ -164,7 +164,28 @@ TOOL_TIMEOUTS: dict[str, float] = {
     # PRD nanopub-claim-extraction — paper_claims retrieval tools (mig 062).
     "read_paper_claims": float(os.environ.get("SCIX_TIMEOUT_READ_PAPER_CLAIMS", "5")),
     "find_claims": float(os.environ.get("SCIX_TIMEOUT_FIND_CLAIMS", "8")),
+    # PRD MH-4 — Deep Search v1 provenance tools.
+    "claim_blame": float(os.environ.get("SCIX_TIMEOUT_CLAIM_BLAME", "15")),
+    "find_replications": float(os.environ.get("SCIX_TIMEOUT_FIND_REPLICATIONS", "15")),
+    # Structural-citation lookup over citation_contexts.intent
+    "cited_by_intent": float(os.environ.get("SCIX_TIMEOUT_CITED_BY_INTENT", "5")),
 }
+
+# Tools whose backing data is missing on this deployment. Default-hidden so
+# agents don't waste calls on tools that can't return real results. Override
+# via SCIX_HIDDEN_TOOLS env var (comma-separated; empty string to show all).
+#   * chunk_search       — Qdrant collection scix_chunks_v1 not yet populated
+#   * section_retrieval  — section_embeddings table not yet populated
+#   * read_paper_claims, find_claims — paper_claims table empty (no extraction
+#     run yet); table itself exists per migration 062
+_HIDDEN_TOOLS: frozenset[str] = frozenset(
+    t.strip()
+    for t in os.environ.get(
+        "SCIX_HIDDEN_TOOLS",
+        "chunk_search,section_retrieval,read_paper_claims,find_claims",
+    ).split(",")
+    if t.strip()
+)
 
 
 def _set_timeout(conn: psycopg.Connection, tool_name: str) -> None:
@@ -932,6 +953,9 @@ EXPECTED_TOOLS: tuple[str, ...] = (
     # PRD nanopub-claim-extraction — paper_claims retrieval (migration 062)
     "read_paper_claims",
     "find_claims",
+    # Structural-citation lookup — exploits citation_contexts.intent
+    # (method / background / result_comparison) classification.
+    "cited_by_intent",
 )
 
 # Tools that appear only when an optional backend is wired up. The
@@ -944,6 +968,9 @@ def _expected_tool_set() -> set[str]:
     tools = set(EXPECTED_TOOLS)
     if _OPTIONAL_TOOLS and _qdrant_enabled():
         tools.update(_OPTIONAL_TOOLS)
+    # Drop tools the deployment has chosen to hide (e.g. ones whose backing
+    # data isn't yet populated — see _HIDDEN_TOOLS comment).
+    tools -= _HIDDEN_TOOLS
     return tools
 
 
@@ -1483,11 +1510,21 @@ def create_server(_run_self_test: bool = True):
             Tool(
                 name="entity",
                 description=(
-                    "Look up named scientific entities (methods, datasets, instruments, "
-                    "materials). action='search' returns papers that mention the entity of "
-                    "a given type. action='resolve' maps a free-text mention to canonical "
-                    "entity records with aliases and identifiers. Use search instead for "
-                    "free-form queries. Use entity_context once you have an entity_id and "
+                    "Look up named scientific entities across 13 vocabularies "
+                    "(method, dataset, instrument, material, gene, software, "
+                    "mission, organism, target, observable, chemical, "
+                    "location, taxon — ~9M entities total). "
+                    "action='resolve' maps a free-text mention to canonical "
+                    "entity records (use this for cross-discipline lookup: "
+                    "'p53', 'transformer', 'JWST'). "
+                    "action='papers' returns papers tagged with an entity "
+                    "via document_entities (57M paper-entity links across "
+                    "16M papers); pass entity_id (from resolve) or query "
+                    "(auto-resolves first candidate). "
+                    "action='search' is a narrower path that searches the "
+                    "older extractions table for 4 specific types "
+                    "(methods/datasets/instruments/materials). "
+                    "Use entity_context once you have an entity_id and "
                     "need its full profile and relationships."
                 ),
                 inputSchema={
@@ -1495,8 +1532,18 @@ def create_server(_run_self_test: bool = True):
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["search", "resolve"],
-                            "description": "search=find papers by entity, resolve=find canonical entity",
+                            "enum": ["search", "resolve", "papers"],
+                            "description": (
+                                "resolve=name→canonical entity (cross-discipline); "
+                                "papers=entity→papers tagged with it; "
+                                "search=narrow search of extractions table"
+                            ),
+                        },
+                        "entity_id": {
+                            "type": "integer",
+                            "description": (
+                                "Entity id (from resolve). Used by action='papers'."
+                            ),
                         },
                         "entity_type": {
                             "type": "string",
@@ -1553,7 +1600,7 @@ def create_server(_run_self_test: bool = True):
                             ),
                         },
                     },
-                    "required": ["action", "query"],
+                    "required": ["action"],
                 },
             ),
             # --- entity_context (unchanged) ---
@@ -1631,11 +1678,11 @@ def create_server(_run_self_test: bool = True):
                 name="find_gaps",
                 description=(
                     "Surface papers in communities you have not yet explored that still "
-                    "cite papers you already inspected via get_paper. Requires a non-empty "
-                    "working set — call get_paper on one or more papers first, otherwise "
-                    "this returns nothing. Helps catch adjacent literature you might be "
-                    "missing during a research session. Reads from implicit session state "
-                    "tracked across get_paper calls. Use citation_graph instead when you "
+                    "cite papers you already inspected via get_paper. Helps catch adjacent "
+                    "literature you might be missing during a research session. Two ways to "
+                    "seed the working set: (a) call get_paper on one or more papers first "
+                    "(implicit session state); (b) pass query='<topic>' to auto-seed via "
+                    "concept_search in a single call. Use citation_graph instead when you "
                     "want direct citations of a single paper rather than cross-community "
                     "gap detection. The 'signal' parameter picks which community partition "
                     "to traverse: 'semantic' (default, INDUS k-means, full 32M-paper "
@@ -1645,6 +1692,15 @@ def create_server(_run_self_test: bool = True):
                 inputSchema={
                     "type": "object",
                     "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": (
+                                "Optional. When the working set is empty, auto-seeds it "
+                                "via concept_search(query) so the gap analysis runs in a "
+                                "single call. Ignored when prior get_paper calls have "
+                                "already populated the working set."
+                            ),
+                        },
                         "signal": {
                             "type": "string",
                             "enum": ["semantic", "citation"],
@@ -1823,6 +1879,56 @@ def create_server(_run_self_test: bool = True):
                             "type": "integer",
                             "default": 50,
                             "description": "Max citations to return.",
+                        },
+                    },
+                    "required": ["target_bibcode"],
+                },
+            ),
+            # --- Structural-citation lookup (intent-aware) ---
+            Tool(
+                name="cited_by_intent",
+                description=(
+                    "Find papers that cite a target paper for a specific reason. "
+                    "Surfaces the citation_contexts.intent classification "
+                    "(method / background / result_comparison) — letting agents "
+                    "ask 'which papers used X as their method?' or 'which "
+                    "papers compared their results to X?' — questions that "
+                    "vanilla retrieval cannot answer because they require "
+                    "understanding *why* one paper cites another, not just "
+                    "that it does. Each result includes the source bibcode, "
+                    "the intent label, and a 400-char excerpt of the citation "
+                    "context. Coverage is partial (~825K contexts across 30K "
+                    "source papers and 250K cited papers); papers without "
+                    "context coverage return empty cleanly. Use "
+                    "citation_traverse instead when you want raw forward "
+                    "citations regardless of intent."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "target_bibcode": {
+                            "type": "string",
+                            "description": (
+                                "ADS bibcode whose incoming citations to filter."
+                            ),
+                        },
+                        "intent": {
+                            "type": "string",
+                            "enum": ["method", "background", "result_comparison"],
+                            "description": (
+                                "Citation intent. 'method' = papers that used "
+                                "this work's method; 'background' = papers "
+                                "citing this as background context "
+                                "(introductions, motivation); "
+                                "'result_comparison' = papers comparing "
+                                "their results to this work's. Omit for "
+                                "any-intent."
+                            ),
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "default": 20,
+                            "description": "Max papers to return (1..200).",
                         },
                     },
                     "required": ["target_bibcode"],
@@ -2093,6 +2199,8 @@ def create_server(_run_self_test: bool = True):
                 )
             )
 
+        if _HIDDEN_TOOLS:
+            tool_list = [t for t in tool_list if t.name not in _HIDDEN_TOOLS]
         return tool_list
 
     @server.call_tool()
@@ -2443,6 +2551,10 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
     if name == "find_replications":
         return _handle_find_replications(conn, args)
 
+    # --- Structural-citation lookup (intent-aware) ---
+    if name == "cited_by_intent":
+        return _handle_cited_by_intent(conn, args)
+
     # --- PRD section-embeddings-mcp-consolidation: section_retrieval ---
     if name == "section_retrieval":
         return _handle_section_retrieval(conn, args)
@@ -2746,25 +2858,100 @@ def _handle_citation_traverse(conn: psycopg.Connection, args: dict[str, Any]) ->
     })
 
 
+def _enrich_citations_with_intent(
+    conn: psycopg.Connection,
+    *,
+    target_bibcode: str,
+    source_bibcodes: list[str],
+    direction: str,
+) -> dict[str, str]:
+    """Return {source_bibcode: intent} for any covered citation contexts.
+
+    Covers forward direction (sources that cite target) and backward
+    (target cites these references — passed in as ``source_bibcodes`` with
+    direction='backward'). Citation_contexts is keyed
+    (source_bibcode, target_bibcode) so we swap the WHERE column based
+    on direction. Returns empty dict if nothing covered (~99.7% of edges
+    are not in citation_contexts per bead 79n).
+    """
+    if not source_bibcodes:
+        return {}
+    if direction == "forward":
+        sql = (
+            "SELECT source_bibcode, intent FROM citation_contexts "
+            "WHERE target_bibcode = %s AND source_bibcode = ANY(%s) "
+            "AND intent IS NOT NULL"
+        )
+        params: tuple = (target_bibcode, list(source_bibcodes))
+    else:  # backward
+        sql = (
+            "SELECT target_bibcode AS bib, intent FROM citation_contexts "
+            "WHERE source_bibcode = %s AND target_bibcode = ANY(%s) "
+            "AND intent IS NOT NULL"
+        )
+        params = (target_bibcode, list(source_bibcodes))
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        return {row[0]: row[1] for row in cur.fetchall()}
+
+
+def _annotate_papers_with_intent(
+    papers: list[dict[str, Any]], intent_by_bibcode: dict[str, str]
+) -> list[dict[str, Any]]:
+    """Add 'intent' field to each paper dict if covered by citation_contexts."""
+    for p in papers:
+        bib = p.get("bibcode")
+        if bib and bib in intent_by_bibcode:
+            p["intent"] = intent_by_bibcode[bib]
+    return papers
+
+
 def _handle_citation_graph(conn: psycopg.Connection, args: dict[str, Any]) -> str:
-    """Get citations/references with direction control."""
+    """Get citations/references with direction control.
+
+    Each returned edge is annotated with 'intent' (method / background /
+    result_comparison) when the citation appears in citation_contexts —
+    surfacing the structural-citation signal for ~0.27% of edges that
+    have context coverage.
+    """
     bibcode = args["bibcode"]
     direction = args.get("direction", "forward")
     limit = args.get("limit", 20)
+
+    def annotate(result_json_str: str, dir_: str) -> str:
+        try:
+            payload = json.loads(result_json_str)
+        except (ValueError, TypeError):
+            return result_json_str
+        papers = payload.get("papers") or []
+        if not papers:
+            return result_json_str
+        sources = [p["bibcode"] for p in papers if p.get("bibcode")]
+        intents = _enrich_citations_with_intent(
+            conn,
+            target_bibcode=bibcode,
+            source_bibcodes=sources,
+            direction=dir_,
+        )
+        if intents:
+            _annotate_papers_with_intent(papers, intents)
+        return json.dumps(payload, indent=2, default=str)
 
     results: list[dict[str, Any]] = []
 
     if direction in ("forward", "both"):
         fwd = search.get_citations(conn, bibcode, limit=limit)
+        fwd_json = annotate(_result_to_json(fwd), "forward")
         if direction == "forward":
-            return _result_to_json(fwd)
-        results.append({"direction": "forward", "result": json.loads(_result_to_json(fwd))})
+            return fwd_json
+        results.append({"direction": "forward", "result": json.loads(fwd_json)})
 
     if direction in ("backward", "both"):
         bwd = search.get_references(conn, bibcode, limit=limit)
+        bwd_json = annotate(_result_to_json(bwd), "backward")
         if direction == "backward":
-            return _result_to_json(bwd)
-        results.append({"direction": "backward", "result": json.loads(_result_to_json(bwd))})
+            return bwd_json
+        results.append({"direction": "backward", "result": json.loads(bwd_json)})
 
     if direction == "both":
         return json.dumps({"bibcode": bibcode, "directions": results}, indent=2, default=str)
@@ -2825,10 +3012,18 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     # Only the containment-style entity types require a non-empty query.
     # Extraction-row entity types (negative_result, quant_claim) accept an
     # empty query and treat ``entity_name`` as an optional filter.
+    # action='papers' accepts entity_id directly, no query needed when given.
     is_extraction_row = (
         action == "search" and entity_type in _EXTRACTION_TYPE_ENTITIES
     )
-    if not is_extraction_row and (not query or not query.strip()):
+    is_papers_with_id = (
+        action == "papers" and args.get("entity_id") is not None
+    )
+    if (
+        not is_extraction_row
+        and not is_papers_with_id
+        and (not query or not query.strip())
+    ):
         return json.dumps({"error": "query must be a non-empty string"})
 
     if action == "resolve":
@@ -2951,7 +3146,112 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             )
         )
 
-    return json.dumps({"error": f"Invalid action: {action}. Use 'search' or 'resolve'."})
+    if action == "papers":
+        # Surface document_entities (57.7M rows linking papers to harvested
+        # entities across all 13 types — gene, software, mission, organism,
+        # target, observable, chemical, location, taxon, plus the original
+        # methods/datasets/instruments/materials). This is the dbl-epic
+        # payoff: every entity in the resolver maps to its tagged papers.
+        entity_id = args.get("entity_id")
+        if entity_id is None:
+            # Fall back to resolving the query first if no entity_id given
+            if not query.strip():
+                return json.dumps(
+                    {"error": "entity_id or query must be provided for action='papers'"}
+                )
+            resolver = EntityResolver(conn)
+            cands = resolver.resolve(query.strip(), fuzzy=False)
+            if not cands:
+                return json.dumps(
+                    {"query": query, "entity_id": None, "papers": [], "total": 0}
+                )
+            entity_id = cands[0].entity_id
+
+        try:
+            entity_id = int(entity_id)
+        except (TypeError, ValueError):
+            return json.dumps({"error": "entity_id must be an integer"})
+
+        limit = min(args.get("limit", 20), 200)
+        # Pull entity metadata (entity_type, source) and per-link
+        # provenance (match_method, evidence with optional 'agreement'
+        # flag from the classifier post-pass) so we can attach a
+        # precision_estimate per result row — making the dbl.3 D3
+        # quality_profile visible at the agent surface.
+        sql = """
+            SELECT de.bibcode, de.link_type, de.confidence, de.match_method,
+                   de.evidence,
+                   e.canonical_name AS entity_name,
+                   e.entity_type    AS entity_type,
+                   e.source         AS entity_source,
+                   p.title, p.year, p.authors[1] AS first_author, p.citation_count
+            FROM document_entities de
+            JOIN entities e ON e.id = de.entity_id
+            LEFT JOIN papers p ON p.bibcode = de.bibcode
+            WHERE de.entity_id = %s
+            ORDER BY p.citation_count DESC NULLS LAST, de.bibcode ASC
+            LIMIT %s
+        """
+        with conn.cursor() as cur:
+            cur.execute(sql, (entity_id, limit))
+            rows = cur.fetchall()
+            cols = [d.name for d in cur.description]
+        papers = [dict(zip(cols, r)) for r in rows]
+
+        # Attach precision_estimate + precision_band per row.
+        # Source: dbl.3 quality_profile from src/scix/extract/ner_quality_profile.py.
+        # Per-row inputs: entity_type (from entities), source (from entities,
+        # 'gliner' triggers the empirical precision lookup, anything else
+        # falls to LEXICAL_PRECISION_DEFAULT), agreement (from
+        # document_entities.evidence->>'agreement' when the classifier
+        # post-pass has run), year (from papers).
+        from scix.extract.ner_quality_profile import (
+            precision_band,
+            precision_estimate,
+        )
+        entity_type_val: str | None = None
+        for p in papers:
+            ev = p.get("evidence") or {}
+            agreement_raw = ev.get("agreement") if isinstance(ev, dict) else None
+            agreement: bool | None
+            if isinstance(agreement_raw, bool):
+                agreement = agreement_raw
+            else:
+                agreement = None
+            etype = p.get("entity_type") or ""
+            esrc = p.get("entity_source") or ""
+            year = p.get("year")
+            year_int = int(year) if isinstance(year, int) else None
+            try:
+                pe = precision_estimate(
+                    entity_type=etype,
+                    source=esrc,
+                    agreement=agreement,
+                    year=year_int,
+                )
+                p["precision_estimate"] = round(pe, 2)
+                p["precision_band"] = precision_band(pe)
+            except Exception:
+                # Quality profile is best-effort; never break the response
+                # on a profile lookup failure.
+                pass
+            if entity_type_val is None:
+                entity_type_val = etype
+
+        return json.dumps(
+            {
+                "entity_id": entity_id,
+                "entity_type": entity_type_val,
+                "papers": papers,
+                "total": len(papers),
+            },
+            indent=2,
+            default=str,
+        )
+
+    return json.dumps(
+        {"error": f"Invalid action: {action}. Use 'search', 'resolve', or 'papers'."}
+    )
 
 
 def _handle_entity_extraction_search(
@@ -3163,11 +3463,34 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     community_col = f"{column_prefix}_{resolution}"
 
     # Use focused papers (from get_paper calls) as primary source,
-    # fall back to working set for backward compatibility
+    # fall back to working set for backward compatibility.
     ws_bibcodes = _session_state.get_focused_papers()
     if not ws_bibcodes:
         ws_bibcodes = [e.bibcode for e in _session_state.get_working_set()]
     ws_bibcodes = ws_bibcodes[:200]
+
+    # When no working set is populated and the caller passed a query, seed
+    # the working set on-the-fly via concept_search so single-call agents
+    # can run gap analysis in one shot. Pure convenience — same downstream
+    # logic, just bootstrapped.
+    seed_query = args.get("query")
+    auto_seeded = False
+    if not ws_bibcodes and isinstance(seed_query, str) and seed_query.strip():
+        try:
+            from scix.search import concept_search as _concept_search
+
+            seed_result = _concept_search(
+                conn, seed_query.strip(), limit=20, include_subtopics=False
+            )
+            ws_bibcodes = [
+                p["bibcode"]
+                for p in (seed_result.papers or [])
+                if isinstance(p, dict) and p.get("bibcode")
+            ]
+            auto_seeded = bool(ws_bibcodes)
+        except Exception:
+            # Best-effort: fall through to the no-papers branch below.
+            ws_bibcodes = []
 
     if not ws_bibcodes:
         return json.dumps(
@@ -3175,7 +3498,11 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                 "papers": [],
                 "total": 0,
                 "signal": signal,
-                "message": "No focused papers yet. Use get_paper to inspect papers first.",
+                "message": (
+                    "No focused papers and no query provided. "
+                    "Use get_paper(bibcode) to inspect papers first, or "
+                    "pass query='<topic>' to auto-seed via concept_search."
+                ),
             },
             indent=2,
         )
@@ -3586,6 +3913,80 @@ def _handle_find_replications(conn: psycopg.Connection, args: dict[str, Any]) ->
         limit=limit,
     )
     return json.dumps({"citations": result, "total": len(result)}, indent=2, default=str)
+
+
+# ---------------------------------------------------------------------------
+# cited_by_intent handler — exploits citation_contexts.intent classification
+# ---------------------------------------------------------------------------
+
+_VALID_CITATION_INTENTS: frozenset[str] = frozenset(
+    {"method", "background", "result_comparison"}
+)
+
+
+def _handle_cited_by_intent(conn: psycopg.Connection, args: dict[str, Any]) -> str:
+    """Find papers that cite ``target_bibcode`` for a specific reason.
+
+    Surfaces the structural-citation signal in ``citation_contexts.intent``:
+    each row carries an intent label (method / background / result_comparison)
+    classified from the citation context text. This lets agents answer
+    questions like 'which papers used X as their method?' or 'which papers
+    compared their results to X?' — questions that vanilla retrieval cannot
+    answer because they require knowing *why* one paper cites another, not
+    just that it does.
+
+    Coverage: ~825K citation contexts across ~30K source papers and ~250K
+    cited papers. For papers not covered, returns empty cleanly.
+    """
+    target_bibcode = args.get("target_bibcode")
+    if not isinstance(target_bibcode, str) or not target_bibcode.strip():
+        return json.dumps({"error": "target_bibcode must be a non-empty string"})
+
+    intent = args.get("intent")
+    if intent is not None and intent not in _VALID_CITATION_INTENTS:
+        return json.dumps(
+            {
+                "error": (
+                    f"intent must be one of {sorted(_VALID_CITATION_INTENTS)} "
+                    f"or null (any)"
+                )
+            }
+        )
+
+    limit = min(int(args.get("limit", 20)), 200)
+
+    sql = """
+        SELECT
+            cc.source_bibcode,
+            cc.intent,
+            substr(cc.context_text, 1, 400) AS context_excerpt,
+            p.title,
+            p.year,
+            p.authors[1] AS first_author,
+            p.citation_count
+        FROM citation_contexts cc
+        LEFT JOIN papers p ON cc.source_bibcode = p.bibcode
+        WHERE cc.target_bibcode = %s
+          AND ( %s::text IS NULL OR cc.intent = %s::text )
+        ORDER BY p.citation_count DESC NULLS LAST, cc.id ASC
+        LIMIT %s
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (target_bibcode.strip(), intent, intent, limit))
+        rows = cur.fetchall()
+        cols = [d.name for d in cur.description]
+
+    papers = [dict(zip(cols, r)) for r in rows]
+    return json.dumps(
+        {
+            "target_bibcode": target_bibcode,
+            "intent": intent,
+            "papers": papers,
+            "total": len(papers),
+        },
+        indent=2,
+        default=str,
+    )
 
 
 # ---------------------------------------------------------------------------

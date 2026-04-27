@@ -1,6 +1,6 @@
 # SciX Agent
 
-Agent-navigable knowledge layer on the full NASA ADS/SciX corpus. Transforms 32.4M scientific papers and 299M citation edges into infrastructure that AI agents can navigate programmatically via a 13-tool MCP server.
+Agent-navigable knowledge layer on the full NASA ADS/SciX corpus. Transforms 32.4M scientific papers and 299M citation edges into infrastructure that AI agents can navigate programmatically via a 15-tool MCP server.
 
 ## What This Does
 
@@ -53,7 +53,7 @@ Single PostgreSQL 16 instance with pgvector 0.8.2. No separate search engine or 
 
 ```
 src/scix/                     -- Python package (76 modules)
-  mcp_server.py               -- MCP stdio server (13 tools)
+  mcp_server.py               -- MCP stdio server (15 tools)
   mcp_server_http.py          -- MCP HTTP/streamable transport
   search.py                   -- Hybrid search with RRF fusion
   db.py                       -- DB helpers (connection pool, IndexManager, IngestLog)
@@ -169,30 +169,37 @@ The default DSN (`dbname=scix`) points at the production database with 32M paper
 | Tool         | Description                                                                                                                                    |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `get_paper`  | Full metadata for a paper by bibcode: title, abstract, authors, affiliations, keywords, citation counts. Optionally includes linked entities.  |
-| `read_paper` | Read or search inside a paper's full-text body. Supports section selection (introduction, methods, results, etc.) and in-paper keyword search. |
+| `read_paper` | Read inside a paper's full-text body. `section='methods'` / `role='method'` reads from `papers_fulltext.sections` JSONB (14.4M papers / 96.2%) when available, falling back to flat-body heuristic parsing. Also supports in-paper keyword search via `search_query`. |
 
 **Citation Graph**
 
 | Tool                  | Description                                                                                                                                         |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `citation_graph`      | Walk the citation graph: forward (papers that cite it), backward (references), or both. Optionally includes surrounding citation context sentences. |
+| `citation_traverse`   | Walk the citation graph: forward (papers that cite it), backward (references), or both. Each returned edge is annotated with `intent` (method / background / result_comparison) when covered by `citation_contexts`. Also supports `mode='chain'` for shortest-path search between two papers. |
 | `citation_similarity` | Find structurally related papers via co-citation (cited together) or bibliographic coupling (shared references).                                    |
-| `citation_chain`      | Trace the shortest citation path between two papers (BFS up to 5 hops).                                                                             |
+| `cited_by_intent`     | Filter incoming citations to a target by their structural-citation intent (method / background / result_comparison) — answers "which papers used X as their method?" or "which papers compared their results to X?" via the `citation_contexts.intent` classification. |
 | `temporal_evolution`  | Citations-per-year for a paper, or publications-per-year for a search query.                                                                        |
 
 **Entities**
 
 | Tool             | Description                                                                                                                                                           |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `entity`         | Look up scientific entities (methods, datasets, instruments, materials). Search for papers mentioning an entity, or resolve a free-text mention to canonical records. |
+| `entity`         | Cross-discipline entity lookup across 13 vocabularies (gene, software, mission, organism, target, observable, chemical, location, taxon, plus methods/datasets/instruments/materials — ~9M entities). `action='resolve'` maps free text to canonical entities; `action='papers'` returns papers tagged with an entity via `document_entities` (57.7M paper-entity links). Each result row includes `precision_estimate` + `precision_band` from the dbl.3 NER quality profile. |
 | `entity_context` | Full profile of a known entity by ID: canonical name, type, external identifiers, aliases, related entities, paper count.                                             |
+
+**Provenance & Replication**
+
+| Tool                | Description                                                                                                                                                                                                |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claim_blame`       | Trace a natural-language claim to its earliest non-retracted origin paper by walking reverse references over citation contexts. Returns the origin bibcode plus a Hop chain with intent and intent_weight. |
+| `find_replications` | Enumerate forward citations to a target paper, each annotated with citation intent and an inferred replication relation (replicates / refutes / qualifies / partial / unknown).                            |
 
 **Graph Analytics & Session**
 
-| Tool            | Description                                                                                                                                                                         |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `graph_context` | Citation-graph analytics for a paper: PageRank, HITS hub/authority, community membership at coarse/medium/fine resolution. Optionally returns sibling papers in the same community. |
-| `find_gaps`     | Surface papers in unexplored communities that cite papers you already inspected. Reads from implicit session state across `get_paper` calls.                                        |
+| Tool            | Description                                                                                                                                                                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `graph_context` | Citation-graph analytics for a paper: PageRank, HITS hub/authority, community membership at coarse/medium/fine resolution. Optionally returns sibling papers in the same community.                                                               |
+| `find_gaps`     | Surface papers in unexplored communities that cite papers you already inspected. Reads from implicit session state across `get_paper` calls. Optional `query` parameter auto-seeds the working set via `concept_search` for single-call workflows. |
 
 ## Performance
 

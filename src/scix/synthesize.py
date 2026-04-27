@@ -123,8 +123,18 @@ def synthesize_findings(
     *,
     sections: Sequence[str] | None = None,
     max_papers_per_section: int = 8,
+    section_overrides: Mapping[str, str] | None = None,
 ) -> SynthesisResult:
     """Bin a working set of papers into named sections.
+
+    Each entry in a section's ``cited_papers`` list carries a
+    ``signal_used`` tag (``intent_modal`` | ``community_fallthrough`` |
+    ``override``), a ``signals`` payload exposing the raw inputs that
+    drove the assignment (intent histogram, community membership, modal
+    community share), and an ``alternative_sections`` list naming the
+    other sections the paper *could* have landed in under the available
+    signals — so an agent can confidently re-bucket a paper it
+    disagrees with.
 
     Parameters
     ----------
@@ -144,6 +154,39 @@ def synthesize_findings(
     max_papers_per_section:
         Cap on per-section ``cited_papers`` length (deterministic order:
         first by year desc, then bibcode asc).
+    section_overrides:
+        Optional ``{bibcode: section_name}`` mapping that pins specific
+        papers to specific sections, overriding the intent-modal and
+        community-fallthrough rules. The override target must appear in
+        ``sections``; out-of-set targets are silently ignored and the
+        paper falls back to the normal rules. Non-string keys/values
+        are skipped defensively. Overridden papers carry
+        ``signal_used='override'`` while still exposing the underlying
+        intent/community signals so an agent can audit the override.
+
+    Returns
+    -------
+    :class:`SynthesisResult`
+        Each ``cited_papers`` entry has the schema::
+
+            {
+              "bibcode": str,
+              "title": str | None,
+              "year": int | None,
+              "abstract_snippet": str,
+              "role": str,                    # alias of section_assigned
+              "section_assigned": str,
+              "signal_used": "intent_modal" | "community_fallthrough" | "override",
+              "signals": {
+                "intent_counts": {intent: n_rows, ...},
+                "intent_total_rows": int,
+                "community_id": int | None,
+                "community_share": float,    # fraction of working set in same community
+                "is_modal_community": bool,
+                "modal_community_id": int | None,
+              },
+              "alternative_sections": [section_name, ...],
+            }
     """
     sections_list = list(sections) if sections else list(DEFAULT_SECTIONS)
     bibcodes = _prepare_bibcodes(working_set_bibcodes)
@@ -171,6 +214,7 @@ def synthesize_findings(
     paper_meta = _fetch_paper_metadata(conn, bibcodes)
     intent_hist = _fetch_intent_histogram(conn, bibcodes)
     community_map = _fetch_community_assignments(conn, bibcodes)
+    overrides = _normalize_overrides(section_overrides, set(sections_list))
 
     return _assemble_sections(
         bibcodes=bibcodes,
@@ -179,7 +223,29 @@ def synthesize_findings(
         intent_hist=intent_hist,
         community_map=community_map,
         max_papers_per_section=max_papers_per_section,
+        overrides=overrides,
     )
+
+
+def _normalize_overrides(
+    raw: Mapping[str, str] | None, valid_sections: set[str]
+) -> dict[str, str]:
+    """Return a clean ``{bibcode: section_name}`` dict.
+
+    Drops non-string keys/values and any entry whose section name isn't
+    in the requested ``sections`` set (so callers can't sneak in unknown
+    section names). Pure validation; no DB or model calls.
+    """
+    if not raw:
+        return {}
+    out: dict[str, str] = {}
+    for bibcode, section in raw.items():
+        if not isinstance(bibcode, str) or not isinstance(section, str):
+            continue
+        if section not in valid_sections:
+            continue
+        out[bibcode.strip()] = section
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -365,11 +431,14 @@ def _assemble_sections(
     intent_hist: Mapping[str, Counter[str]],
     community_map: Mapping[str, dict[str, Any]],
     max_papers_per_section: int,
+    overrides: Mapping[str, str],
 ) -> SynthesisResult:
-    """Bin bibcodes into the requested sections via the two-tier rule."""
+    """Bin bibcodes into the requested sections via override -> intent -> community."""
 
     # Per-section bucket of bibcodes (preserves working-set order).
     buckets: dict[str, list[str]] = {name: [] for name in sections}
+    # Per-bibcode signal_used label, for the cited_papers payload.
+    signal_used: dict[str, str] = {}
     unattributed: list[str] = []
     intent_assigned = 0
     community_assigned = 0
@@ -377,18 +446,34 @@ def _assemble_sections(
     modal_comm = _modal_community(bibcodes, community_map)
     section_set = set(sections)
 
+    # Working-set community share: how many bibcodes share each community_id?
+    community_size: Counter[int] = Counter()
+    for b in bibcodes:
+        info = community_map.get(b)
+        if info is not None:
+            community_size[info["community_id"]] += 1
+    total_bibcodes = len(bibcodes)
+
     for bibcode in bibcodes:
-        target_section = None
+        target_section: str | None = None
 
-        # Tier 1: intent histogram
-        modal = _modal_intent(intent_hist.get(bibcode, Counter()))
-        if modal is not None:
-            mapped = INTENT_TO_SECTION.get(modal)
-            if mapped is not None and mapped in section_set:
-                target_section = mapped
-                intent_assigned += 1
+        # Tier 0: explicit override (highest precedence).
+        override = overrides.get(bibcode)
+        if override is not None:
+            target_section = override
+            signal_used[bibcode] = "override"
 
-        # Tier 2: community fall-through
+        # Tier 1: intent histogram.
+        if target_section is None:
+            modal = _modal_intent(intent_hist.get(bibcode, Counter()))
+            if modal is not None:
+                mapped = INTENT_TO_SECTION.get(modal)
+                if mapped is not None and mapped in section_set:
+                    target_section = mapped
+                    signal_used[bibcode] = "intent_modal"
+                    intent_assigned += 1
+
+        # Tier 2: community fall-through.
         if target_section is None:
             comm = community_map.get(bibcode)
             if comm is not None:
@@ -398,6 +483,7 @@ def _assemble_sections(
                     fallback = "open_questions"
                 if fallback in section_set:
                     target_section = fallback
+                    signal_used[bibcode] = "community_fallthrough"
                     community_assigned += 1
 
         if target_section is None:
@@ -411,7 +497,31 @@ def _assemble_sections(
     out_sections: list[SectionBucket] = []
     for name in sections:
         chosen = _select_top_papers(buckets[name], paper_meta, max_papers_per_section)
-        cited = [_paper_row(b, paper_meta, name) for b in chosen]
+        cited = [
+            _paper_row(
+                b,
+                paper_meta,
+                name,
+                signals=_build_signals(
+                    bibcode=b,
+                    intent_hist=intent_hist,
+                    community_map=community_map,
+                    modal_comm=modal_comm,
+                    community_size=community_size,
+                    total_bibcodes=total_bibcodes,
+                ),
+                signal_used=signal_used.get(b, ""),
+                alternative_sections=_alternative_sections(
+                    bibcode=b,
+                    chosen_section=name,
+                    intent_hist=intent_hist,
+                    community_map=community_map,
+                    modal_comm=modal_comm,
+                    section_set=section_set,
+                ),
+            )
+            for b in chosen
+        ]
         theme = _theme_summary_for(chosen, community_map)
         out_sections.append(
             SectionBucket(
@@ -436,8 +546,81 @@ def _assemble_sections(
         metadata={
             "sections_requested": list(sections),
             "modal_community_id": modal_comm,
+            "override_count": len(overrides),
         },
     )
+
+
+def _build_signals(
+    *,
+    bibcode: str,
+    intent_hist: Mapping[str, Counter[str]],
+    community_map: Mapping[str, dict[str, Any]],
+    modal_comm: int | None,
+    community_size: Mapping[int, int],
+    total_bibcodes: int,
+) -> dict[str, Any]:
+    """Build the per-paper ``signals`` payload (pure aggregation)."""
+    hist = intent_hist.get(bibcode, Counter())
+    intent_counts = dict(hist)
+    intent_total = sum(intent_counts.values())
+
+    comm_info = community_map.get(bibcode)
+    community_id = comm_info["community_id"] if comm_info is not None else None
+
+    if community_id is not None and total_bibcodes > 0:
+        share = community_size.get(community_id, 0) / total_bibcodes
+    else:
+        share = 0.0
+
+    is_modal = community_id is not None and community_id == modal_comm
+
+    return {
+        "intent_counts": intent_counts,
+        "intent_total_rows": intent_total,
+        "community_id": community_id,
+        "community_share": share,
+        "is_modal_community": bool(is_modal),
+        "modal_community_id": modal_comm,
+    }
+
+
+def _alternative_sections(
+    *,
+    bibcode: str,
+    chosen_section: str,
+    intent_hist: Mapping[str, Counter[str]],
+    community_map: Mapping[str, dict[str, Any]],
+    modal_comm: int | None,
+    section_set: set[str],
+) -> list[str]:
+    """Return sections (other than ``chosen_section``) the paper could have
+    landed in given the available signals — sorted for determinism.
+
+    Sources of alternatives:
+      * Every intent label with at least one row maps to its section
+        (per :data:`INTENT_TO_SECTION`).
+      * If the paper is in the modal community, ``background`` is an
+        alternative. If it's in any other community, ``open_questions``
+        is an alternative.
+    """
+    alts: set[str] = set()
+    for intent_label in intent_hist.get(bibcode, Counter()):
+        mapped = INTENT_TO_SECTION.get(intent_label)
+        if mapped is not None and mapped in section_set:
+            alts.add(mapped)
+
+    comm_info = community_map.get(bibcode)
+    if comm_info is not None:
+        if modal_comm is not None and comm_info["community_id"] == modal_comm:
+            if "background" in section_set:
+                alts.add("background")
+        else:
+            if "open_questions" in section_set:
+                alts.add("open_questions")
+
+    alts.discard(chosen_section)
+    return sorted(alts)
 
 
 def _select_top_papers(
@@ -462,8 +645,17 @@ def _paper_row(
     bibcode: str,
     paper_meta: Mapping[str, dict[str, Any]],
     role: str,
+    *,
+    signals: dict[str, Any] | None = None,
+    signal_used: str = "",
+    alternative_sections: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Build the per-paper dict for a section's ``cited_papers`` list."""
+    """Build the per-paper dict for a section's ``cited_papers`` list.
+
+    ``role`` and ``section_assigned`` are aliases — ``role`` is kept for
+    back-compat with earlier callers; ``section_assigned`` is the name
+    used by the bead-gtsx signals schema.
+    """
     meta = paper_meta.get(bibcode, {})
     return {
         "bibcode": bibcode,
@@ -471,6 +663,10 @@ def _paper_row(
         "year": meta.get("year"),
         "abstract_snippet": meta.get("abstract_snippet", ""),
         "role": role,
+        "section_assigned": role,
+        "signal_used": signal_used,
+        "signals": signals if signals is not None else {},
+        "alternative_sections": list(alternative_sections or []),
     }
 
 

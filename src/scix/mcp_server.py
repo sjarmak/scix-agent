@@ -2078,22 +2078,33 @@ def create_server(_run_self_test: bool = True):
                 description=(
                     "Bin a working set of papers into a section outline ready "
                     "for the agent to write up. Pure mechanical aggregation: "
-                    "each paper is assigned to a section first by modal "
-                    "citation_contexts.intent (method->methods, "
+                    "each paper is assigned to a section by override first, "
+                    "then by modal citation_contexts.intent (method->methods, "
                     "background->background, result_comparison->results), then "
                     "by community membership (papers in the working set's "
                     "modal community fall through to 'background', papers in "
-                    "minority communities to 'open_questions'). Returns a "
-                    "deterministic structure with cited_papers per section "
-                    "(bibcode, title, year, abstract_snippet, role), a "
-                    "theme_summary built from each section's most-common "
-                    "community labels (no LLM), unattributed_bibcodes for "
-                    "papers with no signal, and a coverage block reporting "
-                    "how many bibcodes had each kind of signal. Falls "
-                    "through to the session's focused papers when "
-                    "working_set_bibcodes is omitted (mirrors find_gaps). "
-                    "Use after lit_review or a retrieval+characterization "
-                    "loop when you want a scaffold to write the synthesis."
+                    "minority communities to 'open_questions'). Each "
+                    "cited_papers entry exposes the signals that produced "
+                    "its assignment so the agent can audit and re-bucket: "
+                    "signal_used ('intent_modal' | 'community_fallthrough' | "
+                    "'override'), section_assigned, and a signals payload "
+                    "with intent_counts (Counter of intent->n_rows), "
+                    "intent_total_rows, community_id, community_share "
+                    "(fraction of working set in the same community), "
+                    "is_modal_community, modal_community_id. Each entry also "
+                    "carries alternative_sections — the other sections the "
+                    "paper could have landed in given the available signals "
+                    "— which an agent can feed straight back into "
+                    "section_overrides to re-bucket. Returns a deterministic "
+                    "structure with theme_summary built from each section's "
+                    "most-common community labels (no LLM), "
+                    "unattributed_bibcodes for papers with no signal, and a "
+                    "coverage block reporting how many bibcodes had each "
+                    "kind of signal. Falls through to the session's focused "
+                    "papers when working_set_bibcodes is omitted (mirrors "
+                    "find_gaps). Use after lit_review or a "
+                    "retrieval+characterization loop when you want a "
+                    "scaffold to write the synthesis."
                 ),
                 inputSchema={
                     "type": "object",
@@ -2126,6 +2137,22 @@ def create_server(_run_self_test: bool = True):
                                 "Cap on per-section cited_papers length. "
                                 "Sorted by year desc, bibcode asc for "
                                 "deterministic output."
+                            ),
+                        },
+                        "section_overrides": {
+                            "type": "object",
+                            "additionalProperties": {"type": "string"},
+                            "description": (
+                                "Optional {bibcode: section_name} mapping "
+                                "that pins specific papers to specific "
+                                "sections, overriding the intent / community "
+                                "rules. The override target must appear in "
+                                "the requested sections list — out-of-set "
+                                "targets are ignored and the paper falls "
+                                "back to the normal rules. Use this to "
+                                "re-bucket papers based on the signals "
+                                "exposed in a previous synthesize_findings "
+                                "call."
                             ),
                         },
                     },
@@ -4610,11 +4637,18 @@ def _handle_synthesize_findings(conn: psycopg.Connection, args: dict[str, Any]) 
     # Hard cap to keep payload sizes sane; matches find_gaps' 200 cap.
     max_papers = max(0, min(max_papers, 200))
 
+    raw_overrides = args.get("section_overrides")
+    if raw_overrides is not None and not isinstance(raw_overrides, dict):
+        return json.dumps(
+            {"error": "section_overrides must be an object {bibcode: section_name}"},
+        )
+
     result = _synthesize_findings(
         conn,
         working_set_bibcodes=bibcodes,
         sections=sections,
         max_papers_per_section=max_papers,
+        section_overrides=raw_overrides,
     )
     return json.dumps(result.to_dict(), indent=2, default=str)
 

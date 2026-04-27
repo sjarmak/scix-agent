@@ -648,6 +648,191 @@ class TestGetPaperPrecisionWiring:
 
 
 # ---------------------------------------------------------------------------
+# eq95: NER mention denylist applied at MCP surfaces
+# ---------------------------------------------------------------------------
+
+
+class TestEntityDenylistOnGetPaper:
+    """Denylisted (canonical, type) pairs are dropped from linked_entities."""
+
+    @staticmethod
+    def _conn_with_doc_entity_rows(rows: list[tuple]) -> MagicMock:
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.__enter__ = lambda self: self
+        cur.__exit__ = MagicMock(return_value=False)
+        cur.fetchall.return_value = rows
+        conn.cursor.return_value = cur
+        return conn
+
+    @patch("scix.search.get_document_context")
+    def test_denylisted_entity_dropped_from_get_paper(
+        self, mock_fn: MagicMock
+    ) -> None:
+        from scix.search import SearchResult
+
+        mock_fn.return_value = SearchResult(
+            papers=[
+                {
+                    "bibcode": "2024X",
+                    "year": 2024,
+                    "linked_entities": [
+                        # Real entity that should survive
+                        {"entity_id": 11, "name": "JWST", "type": "instrument"},
+                        # Denylisted: 'data' / dataset is the bead's must-include
+                        {"entity_id": 99, "name": "data", "type": "dataset"},
+                        # Denylisted: 'method' / method
+                        {"entity_id": 88, "name": "Method", "type": "method"},
+                    ],
+                }
+            ],
+            total=1,
+            timing_ms={"query_ms": 1.0},
+        )
+        conn = self._conn_with_doc_entity_rows(
+            [
+                (11, "gliner", {"agreement": True}),
+                (99, "gliner", {}),
+                (88, "gliner", {}),
+            ]
+        )
+
+        result = json.loads(
+            _dispatch_tool(
+                conn, "get_paper", {"bibcode": "2024X", "include_entities": True}
+            )
+        )
+        names = {e["name"] for e in result["papers"][0]["linked_entities"]}
+        assert names == {"JWST"}
+
+
+class TestEntityDenylistOnResolveAndPapers:
+    """Denylisted entities don't surface as resolve candidates and aren't
+    auto-picked when entity_id is omitted on action='papers'."""
+
+    @patch("scix.mcp_server.EntityResolver")
+    def test_resolve_drops_denylisted_candidates(
+        self, mock_resolver_cls: MagicMock
+    ) -> None:
+        from scix.entity_resolver import EntityCandidate
+
+        # Two candidates — one real, one denylisted.
+        mock_resolver = MagicMock()
+        mock_resolver.resolve.return_value = [
+            EntityCandidate(
+                entity_id=11,
+                canonical_name="JWST",
+                entity_type="instrument",
+                source="canonical",
+                discipline="astrophysics",
+                confidence=1.0,
+                match_method="canonical_exact",
+            ),
+            EntityCandidate(
+                entity_id=99,
+                canonical_name="data",
+                entity_type="dataset",
+                source="gliner",
+                discipline=None,
+                confidence=0.6,
+                match_method="alias",
+            ),
+        ]
+        mock_resolver_cls.return_value = mock_resolver
+
+        conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(
+                conn, "entity", {"action": "resolve", "query": "JWST"}
+            )
+        )
+        names = {c["canonical_name"] for c in result["candidates"]}
+        assert names == {"JWST"}
+        assert result["total"] == 1
+
+    @patch("scix.mcp_server.EntityResolver")
+    def test_papers_auto_resolve_skips_denylisted_top_candidate(
+        self, mock_resolver_cls: MagicMock
+    ) -> None:
+        """When the top candidate is denylisted but a non-denylisted one
+        follows, the second one is used."""
+        from scix.entity_resolver import EntityCandidate
+
+        mock_resolver = MagicMock()
+        mock_resolver.resolve.return_value = [
+            # Top candidate is denylisted — should be skipped past.
+            EntityCandidate(
+                entity_id=99,
+                canonical_name="data",
+                entity_type="dataset",
+                source="gliner",
+                discipline=None,
+                confidence=0.9,
+                match_method="alias",
+            ),
+            # Real entity follows.
+            EntityCandidate(
+                entity_id=11,
+                canonical_name="HST",
+                entity_type="instrument",
+                source="canonical",
+                discipline="astrophysics",
+                confidence=0.7,
+                match_method="canonical_exact",
+            ),
+        ]
+        mock_resolver_cls.return_value = mock_resolver
+
+        # Set up cursor for the action='papers' SQL — return a single
+        # paper row matching entity_id=11.
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.__enter__ = lambda self: self
+        cur.__exit__ = MagicMock(return_value=False)
+        cur.fetchall.return_value = [
+            (
+                "2024X",  # bibcode
+                "uses_instrument",  # link_type
+                0.9,  # confidence
+                "canonical_exact",  # match_method
+                {},  # evidence
+                "HST",  # entity_name
+                "instrument",  # entity_type
+                "canonical",  # entity_source
+                "Title",  # title
+                2024,  # year
+                "Author",  # first_author
+                10,  # citation_count
+            )
+        ]
+        cur.description = [
+            MagicMock(name=f) for f in [
+                "bibcode", "link_type", "confidence", "match_method",
+                "evidence", "entity_name", "entity_type", "entity_source",
+                "title", "year", "first_author", "citation_count",
+            ]
+        ]
+        for d, n in zip(cur.description, [
+            "bibcode", "link_type", "confidence", "match_method",
+            "evidence", "entity_name", "entity_type", "entity_source",
+            "title", "year", "first_author", "citation_count",
+        ]):
+            d.name = n
+        conn.cursor.return_value = cur
+
+        result = json.loads(
+            _dispatch_tool(
+                conn,
+                "entity",
+                {"action": "papers", "query": "HST"},
+            )
+        )
+        # The non-denylisted candidate (entity_id=11) was used.
+        assert result["entity_id"] == 11
+        assert result["total"] == 1
+
+
+# ---------------------------------------------------------------------------
 # AC14-15: find_gaps reads from implicit session state
 # ---------------------------------------------------------------------------
 

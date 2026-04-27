@@ -2862,10 +2862,20 @@ def _attach_precision_to_linked_entities(
         precision_estimate,
     )
 
+    # eq95: drop denylisted (name, type) pairs from linked_entities so
+    # generic-word noise ('data'/'dataset', 'method'/'method', etc.) never
+    # surfaces alongside real entities. Applied before precision estimate
+    # so the SQL noise lookup we just did isn't wasted on rows we'd drop
+    # anyway — but the lookup is keyed by entity_id, not canonical_name,
+    # so the cost is one batch regardless.
+    from scix.extract.ner_denylist import is_denylisted as _is_denylisted
+
     enriched: list[Any] = []
     for ent in linked:
         if not isinstance(ent, dict):
             enriched.append(ent)
+            continue
+        if _is_denylisted(ent.get("name"), ent.get("type")):
             continue
         eid = ent.get("entity_id")
         etype = ent.get("type") or ""
@@ -3171,6 +3181,17 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             discipline=args.get("discipline"),
             fuzzy=args.get("fuzzy", False),
         )
+        # eq95: drop denylisted (canonical_name, entity_type) pairs so
+        # noisy generic-word entities ('data'/'dataset', 'method'/'method',
+        # etc.) don't surface as resolution candidates. Caller can still
+        # query a denylisted entity by passing its entity_id directly.
+        from scix.extract.ner_denylist import is_denylisted as _is_denylisted
+
+        candidates = [
+            c
+            for c in candidates
+            if not _is_denylisted(c.canonical_name, c.entity_type)
+        ]
         result_json = json.dumps(
             {
                 "query": query.strip(),
@@ -3299,6 +3320,17 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                 )
             resolver = EntityResolver(conn)
             cands = resolver.resolve(query.strip(), fuzzy=False)
+            # eq95: skip past denylisted candidates rather than auto-picking
+            # one — protects callers who passed a query that resolves to a
+            # noisy generic-word entity. Callers who explicitly want a
+            # denylisted entity can pass entity_id directly.
+            from scix.extract.ner_denylist import is_denylisted as _is_denylisted
+
+            cands = [
+                c
+                for c in cands
+                if not _is_denylisted(c.canonical_name, c.entity_type)
+            ]
             if not cands:
                 return json.dumps(
                     {"query": query, "entity_id": None, "papers": [], "total": 0}

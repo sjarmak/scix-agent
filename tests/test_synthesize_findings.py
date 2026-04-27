@@ -366,3 +366,267 @@ class TestAcceptanceCoverage:
         assert assigned > len(bibcodes) * 0.5
         # All 4 sections present.
         assert {s.name for s in result.sections} == set(DEFAULT_SECTIONS)
+
+
+# ---------------------------------------------------------------------------
+# Per-paper section-assignment signals (bead scix_experiments-gtsx)
+# ---------------------------------------------------------------------------
+
+
+class TestPerPaperSignals:
+    """AC1: each cited_papers entry exposes the signals that produced its
+    section assignment, so an agent can re-bucket papers it disagrees with."""
+
+    def test_signal_used_intent_modal_when_modal_intent_decides(self) -> None:
+        papers_rows = [("2024A", "Method paper", 2024, "abs")]
+        intent_rows = [
+            ("2024A", "method", 2),
+            ("2024A", "background", 1),
+        ]
+        community_rows = [("2024A", 7, "Cosmology")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+        )
+        methods = next(s for s in result.sections if s.name == "methods")
+        row = next(p for p in methods.cited_papers if p["bibcode"] == "2024A")
+        assert row["signal_used"] == "intent_modal"
+        assert row["section_assigned"] == "methods"
+
+    def test_signal_used_community_fallthrough_when_no_intent_coverage(self) -> None:
+        papers_rows = [
+            ("2024X", "X", 2024, "abs"),
+            ("2024Y", "Y", 2024, "abs"),
+        ]
+        intent_rows: list[tuple] = []
+        community_rows = [
+            ("2024X", 5, "Modal"),
+            ("2024Y", 5, "Modal"),
+        ]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024X", "2024Y"],
+            sections=list(DEFAULT_SECTIONS),
+        )
+        background = next(s for s in result.sections if s.name == "background")
+        for row in background.cited_papers:
+            assert row["signal_used"] == "community_fallthrough"
+
+    def test_signals_payload_has_full_schema(self) -> None:
+        """AC1 schema: signals.{intent_counts, intent_total_rows, community_id,
+        community_share, is_modal_community, modal_community_id}."""
+        papers_rows = [
+            ("2024A", "A", 2024, "abs"),
+            ("2024B", "B", 2024, "abs"),
+            ("2024C", "C", 2024, "abs"),
+        ]
+        intent_rows = [
+            ("2024A", "method", 3),
+            ("2024A", "background", 1),
+        ]
+        # 2024A & 2024B share modal community 1; 2024C is in community 2.
+        community_rows = [
+            ("2024A", 1, "Lbl1"),
+            ("2024B", 1, "Lbl1"),
+            ("2024C", 2, "Lbl2"),
+        ]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A", "2024B", "2024C"],
+            sections=list(DEFAULT_SECTIONS),
+        )
+
+        # Find each paper's row across all sections.
+        all_rows = {p["bibcode"]: p for s in result.sections for p in s.cited_papers}
+
+        # 2024A — intent_modal in 'methods'.
+        row_a = all_rows["2024A"]
+        assert row_a["signals"]["intent_counts"] == {"method": 3, "background": 1}
+        assert row_a["signals"]["intent_total_rows"] == 4
+        assert row_a["signals"]["community_id"] == 1
+        assert row_a["signals"]["modal_community_id"] == 1
+        assert row_a["signals"]["is_modal_community"] is True
+        # community_share: how many of the 3 working-set bibcodes share community 1?
+        assert row_a["signals"]["community_share"] == pytest.approx(2 / 3)
+        # alternative_sections: a paper with intent_counts {method,background}
+        # AND community evidence has multiple options.
+        assert isinstance(row_a["alternative_sections"], list)
+
+        # 2024B — community fall-through to 'background'.
+        row_b = all_rows["2024B"]
+        assert row_b["signal_used"] == "community_fallthrough"
+        assert row_b["signals"]["intent_counts"] == {}
+        assert row_b["signals"]["intent_total_rows"] == 0
+        assert row_b["signals"]["is_modal_community"] is True
+
+        # 2024C — community fall-through to 'open_questions' (minority).
+        row_c = all_rows["2024C"]
+        assert row_c["signal_used"] == "community_fallthrough"
+        assert row_c["signals"]["community_id"] == 2
+        assert row_c["signals"]["is_modal_community"] is False
+        assert row_c["signals"]["modal_community_id"] == 1
+
+    def test_alternative_sections_includes_other_options(self) -> None:
+        """A paper with intent_counts {method, background} should list both
+        'methods' and 'background' as alternatives even though only the modal
+        intent decides the assignment."""
+        papers_rows = [("2024A", "A", 2024, "abs")]
+        intent_rows = [
+            ("2024A", "method", 3),
+            ("2024A", "background", 1),
+            ("2024A", "result_comparison", 1),
+        ]
+        community_rows = [("2024A", 1, "Lbl")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+        )
+        methods = next(s for s in result.sections if s.name == "methods")
+        row = next(p for p in methods.cited_papers if p["bibcode"] == "2024A")
+        # Alternatives should include the other two intent-mapped sections
+        # plus 'background' from the community signal (paper is in modal
+        # community here since it's the only paper).
+        alts = set(row["alternative_sections"])
+        assert "background" in alts
+        assert "results" in alts
+        # The chosen section itself should NOT appear in alternatives.
+        assert "methods" not in alts
+
+
+# ---------------------------------------------------------------------------
+# section_overrides kwarg (bead scix_experiments-gtsx AC2/AC3)
+# ---------------------------------------------------------------------------
+
+
+class TestSectionOverrides:
+    def test_overrides_pin_papers_regardless_of_signals(self) -> None:
+        """AC3: 30-paper working set + section_overrides for 3 of them
+        produces a result where those 3 land in the override sections and
+        other papers are unchanged."""
+        bibcodes = [f"2024P{i:02d}" for i in range(30)]
+        papers_rows = [(b, f"T{b}", 2024, f"abs{b}") for b in bibcodes]
+        # All 30 papers in modal community 1 -> would all go to 'background'.
+        intent_rows: list[tuple] = []
+        community_rows = [(b, 1, "L") for b in bibcodes]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        overrides = {
+            "2024P00": "methods",
+            "2024P01": "results",
+            "2024P02": "background",  # already where it would land
+        }
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=30,
+            section_overrides=overrides,
+        )
+
+        # Build {bibcode: section_name} from the result.
+        bib_to_section = {
+            p["bibcode"]: s.name for s in result.sections for p in s.cited_papers
+        }
+        assert bib_to_section["2024P00"] == "methods"
+        assert bib_to_section["2024P01"] == "results"
+        assert bib_to_section["2024P02"] == "background"
+
+        # The other 27 papers should still land in 'background' (modal community).
+        other_bibcodes = [b for b in bibcodes if b not in overrides]
+        for b in other_bibcodes:
+            assert bib_to_section[b] == "background"
+
+        # Overridden papers carry signal_used='override'.
+        methods = next(s for s in result.sections if s.name == "methods")
+        row = next(p for p in methods.cited_papers if p["bibcode"] == "2024P00")
+        assert row["signal_used"] == "override"
+
+    def test_override_to_unknown_section_is_ignored(self) -> None:
+        """If the override targets a section that isn't in the requested
+        sections list, the paper falls through to normal rules."""
+        papers_rows = [("2024A", "A", 2024, "abs")]
+        intent_rows = [("2024A", "method", 1)]
+        community_rows = [("2024A", 1, "L")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+            section_overrides={"2024A": "not_a_real_section"},
+        )
+        # Falls back to intent-modal -> methods.
+        methods = next(s for s in result.sections if s.name == "methods")
+        assert any(p["bibcode"] == "2024A" for p in methods.cited_papers)
+        row = next(p for p in methods.cited_papers if p["bibcode"] == "2024A")
+        assert row["signal_used"] == "intent_modal"
+
+    def test_overrides_with_non_string_keys_or_values_skipped(self) -> None:
+        """Defensive: malformed override dict entries don't crash."""
+        papers_rows = [("2024A", "A", 2024, "abs")]
+        intent_rows = [("2024A", "method", 1)]
+        community_rows = [("2024A", 1, "L")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        # Cast to silence type checkers — we're testing runtime defense.
+        bad_overrides = {123: "methods", "2024A": 456}  # type: ignore[dict-item]
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+            section_overrides=bad_overrides,  # type: ignore[arg-type]
+        )
+        # The bad entries are skipped; paper falls back to intent-modal.
+        methods = next(s for s in result.sections if s.name == "methods")
+        assert any(p["bibcode"] == "2024A" for p in methods.cited_papers)
+
+
+# ---------------------------------------------------------------------------
+# MCP wiring for section_overrides (bead scix_experiments-gtsx)
+# ---------------------------------------------------------------------------
+
+
+class TestMCPDispatchOverrides:
+    def test_dispatch_accepts_section_overrides(self) -> None:
+        papers_rows = [("2024A", "T", 2024, "abs")]
+        intent_rows: list[tuple] = []
+        community_rows = [("2024A", 1, "L")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        out = _dispatch_tool(
+            conn,
+            "synthesize_findings",
+            {
+                "working_set_bibcodes": ["2024A"],
+                "section_overrides": {"2024A": "methods"},
+            },
+        )
+        result = json.loads(out)
+        methods = next(s for s in result["sections"] if s["name"] == "methods")
+        assert any(p["bibcode"] == "2024A" for p in methods["cited_papers"])
+        row = next(p for p in methods["cited_papers"] if p["bibcode"] == "2024A")
+        assert row["signal_used"] == "override"
+        # Signals payload survives the JSON round-trip.
+        assert "signals" in row
+        assert "alternative_sections" in row
+
+    def test_dispatch_rejects_non_dict_section_overrides(self) -> None:
+        conn = MagicMock()
+        out = _dispatch_tool(
+            conn,
+            "synthesize_findings",
+            {"working_set_bibcodes": ["2024A"], "section_overrides": ["not", "a", "dict"]},
+        )
+        result = json.loads(out)
+        assert "error" in result

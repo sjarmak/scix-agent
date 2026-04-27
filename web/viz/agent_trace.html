@@ -85,6 +85,28 @@
       #trace-head button:hover {
         background: #eaeaea;
       }
+      #trace-narration {
+        background: #f4f7fb;
+        border: 1px solid #d6e3f3;
+        border-radius: 4px;
+        padding: 8px 10px;
+        margin-bottom: 8px;
+        font-size: 12px;
+        line-height: 1.45;
+        color: #1a3a5c;
+        display: none;
+      }
+      #trace-narration.active {
+        display: block;
+      }
+      #trace-narration .scenario-name {
+        font-weight: 600;
+        color: #0b60b0;
+        margin-right: 6px;
+        text-transform: uppercase;
+        font-size: 10px;
+        letter-spacing: 0.04em;
+      }
       #trace-panel {
         flex: 1;
         overflow-y: auto;
@@ -302,6 +324,7 @@
             <span class="trace-count" id="trace-count">0 events</span>
             <button type="button" id="trace-clear" title="Clear the trace log">clear</button>
           </div>
+          <div id="trace-narration" aria-live="polite"></div>
           <div id="trace-panel" aria-live="polite">
             <div class="empty">Waiting for events…</div>
           </div>
@@ -577,14 +600,47 @@
           lit_review: '/viz/api/demo/lit_review',
           disambig: '/viz/api/demo/disambig',
         }
+        // What each scenario does, so the trace chips have context. Shown
+        // above the trace panel while the scenario is in flight.
+        const SCENARIO_NARRATIONS = {
+          search:
+            'Single hybrid search — INDUS dense embedding + BM25 lexical, fused via RRF. ' +
+            'One trace event with the top-N result set.',
+          lit_review:
+            'Canonical lit_review tool — runs hybrid_search for seeds, then walks the citation ' +
+            'graph (refs + cites per seed), aggregates communities + top venues + year ' +
+            'distribution + abstract samples, and populates the session working set in one call. ' +
+            'The single trace event represents the full composite.',
+          disambig:
+            'Entity resolution flow. Step 1-2: resolve the mention to a specific entity ' +
+            '(e.g. "Kepler" → spacecraft vs astronomer vs exoplanet). Step 3: pull entity_context ' +
+            '(aliases, vocab, related entities). Step 4-5: search papers filtered by entity_id, ' +
+            'with an unfiltered fallback if zero hits. Step 6-8: graph_context per top paper. ' +
+            'Step 9: temporal_evolution for the entity. Step 10: get_paper for synthesis material.',
+        }
         let activeScenario = 'search'
         const form = document.getElementById('query-bar')
         const input = document.getElementById('query-input')
         const submit = document.getElementById('query-submit')
+        const narration = document.getElementById('trace-narration')
+        function _renderNarration(name) {
+          if (!narration) return
+          const label = SCENARIO_LABELS[name] || name
+          const text = SCENARIO_NARRATIONS[name] || ''
+          if (!text) {
+            narration.classList.remove('active')
+            narration.innerHTML = ''
+            return
+          }
+          narration.innerHTML =
+            '<span class="scenario-name">' + label + '</span>' + text
+          narration.classList.add('active')
+        }
         function setScenario(name) {
           if (!SCENARIO_ENDPOINTS[name]) return
           activeScenario = name
           submit.textContent = SCENARIO_LABELS[name] || 'Run'
+          _renderNarration(name)
         }
         async function runScenario(q, scenario) {
           const query = (q || input.value || '').trim()

@@ -72,6 +72,7 @@ from typing import Any, Callable, Iterable
 
 import psycopg
 
+from scix.citation_contexts_coverage import compute_coverage, empty_coverage
 from scix.research_scope import ResearchScope, scope_to_sql_clauses
 
 logger = logging.getLogger(__name__)
@@ -185,11 +186,14 @@ def claim_blame(
           that have a retraction event in ``papers.correction_events``.
     """
     if not isinstance(claim_text, str) or not claim_text.strip():
+        # No DB call possible without claim text — emit a zero coverage
+        # block so the response shape stays uniform for callers.
         return {
             "origin": "",
             "lineage": [],
             "confidence": 0.0,
             "retraction_warnings": [],
+            "coverage": empty_coverage(),
         }
 
     effective_scope = scope or ResearchScope()
@@ -238,12 +242,16 @@ def _run_claim_blame(
 
     query_embedding = embed_fn(claim_text)
     candidates = seed_fn(conn, claim_text, scope, candidate_limit)
+    # Coverage probe: do candidate seeds appear in citation_contexts?
+    # The result lets agents distinguish 'no events' from 'no coverage'.
+    coverage = compute_coverage(conn, [c[0] for c in candidates])
     if not candidates:
         return {
             "origin": "",
             "lineage": [],
             "confidence": 0.0,
             "retraction_warnings": [],
+            "coverage": coverage,
         }
 
     # Walk reverse references for each candidate. ``hops_by_target`` maps
@@ -293,6 +301,7 @@ def _run_claim_blame(
             "lineage": [],
             "confidence": 0.0,
             "retraction_warnings": [],
+            "coverage": coverage,
         }
 
     retracted = _lookup_retractions(conn, list(universe.keys()))
@@ -343,6 +352,7 @@ def _run_claim_blame(
             "lineage": [],
             "confidence": 0.0,
             "retraction_warnings": sorted(retracted),
+            "coverage": coverage,
         }
 
     # Sort: chronological ASC (None last), then intent_weight DESC,
@@ -393,6 +403,7 @@ def _run_claim_blame(
         "lineage": [asdict(h) for h in lineage],
         "confidence": confidence,
         "retraction_warnings": sorted(retracted),
+        "coverage": coverage,
     }
 
 

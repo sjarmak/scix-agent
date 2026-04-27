@@ -4430,7 +4430,15 @@ def _handle_find_replications(conn: psycopg.Connection, args: dict[str, Any]) ->
         conn=conn,
         limit=limit,
     )
-    return json.dumps({"citations": result, "total": len(result)}, indent=2, default=str)
+    # find_replications now returns {"citations": [...], "coverage": {...}}.
+    # Add the (cheap) total convenience key for backward compatibility with
+    # earlier agents that read ``total``.
+    response = {
+        "citations": result["citations"],
+        "total": len(result["citations"]),
+        "coverage": result["coverage"],
+    }
+    return json.dumps(response, indent=2, default=str)
 
 
 # ---------------------------------------------------------------------------

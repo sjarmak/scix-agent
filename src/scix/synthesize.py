@@ -4,8 +4,8 @@ This module backs the ``synthesize_findings`` MCP tool. It is **pure
 mechanism** — no LLM call lives inside this orchestration code (per the
 ZFC pattern in ``rules/common/patterns.md``). The model writes the
 synthesis prose using the structured output as scaffolding; this module
-just bins working-set bibcodes into named sections using two existing
-signals:
+just bins working-set bibcodes into named sections using three existing
+signals plus a citation-count safety net:
 
   1. ``citation_contexts.intent`` — modal intent across rows where the
      working-set bibcode is the *target* (i.e., how others cite it). Maps
@@ -19,7 +19,14 @@ signals:
      "background" and out-of-modal-community papers go to
      "open_questions" (the cross-community signal).
 
-Papers with no signal in either layer land in ``unattributed_bibcodes``.
+  3. Empty-section citation-count fallback (bead spj0) — when a section
+     remains empty after tiers 1 and 2, fill it from the unattributed
+     remainder sorted by ``papers.citation_count`` desc, capped at
+     ``max_papers_per_section // 2`` so the fallback is clearly
+     secondary. Each pulled paper carries
+     ``signal_used='citation_count_fallback'``.
+
+Papers with no signal in any layer land in ``unattributed_bibcodes``.
 
 The ``theme_summary`` per section is a deterministic concatenation of
 the section's most-common community labels — no semantic generation.
@@ -129,12 +136,12 @@ def synthesize_findings(
 
     Each entry in a section's ``cited_papers`` list carries a
     ``signal_used`` tag (``intent_modal`` | ``community_fallthrough`` |
-    ``override``), a ``signals`` payload exposing the raw inputs that
-    drove the assignment (intent histogram, community membership, modal
-    community share), and an ``alternative_sections`` list naming the
-    other sections the paper *could* have landed in under the available
-    signals — so an agent can confidently re-bucket a paper it
-    disagrees with.
+    ``override`` | ``citation_count_fallback``), a ``signals`` payload
+    exposing the raw inputs that drove the assignment (intent histogram,
+    community membership, modal community share), and an
+    ``alternative_sections`` list naming the other sections the paper
+    *could* have landed in under the available signals — so an agent
+    can confidently re-bucket a paper it disagrees with.
 
     Parameters
     ----------
@@ -176,7 +183,8 @@ def synthesize_findings(
               "abstract_snippet": str,
               "role": str,                    # alias of section_assigned
               "section_assigned": str,
-              "signal_used": "intent_modal" | "community_fallthrough" | "override",
+              "signal_used": "intent_modal" | "community_fallthrough" |
+                             "override" | "citation_count_fallback",
               "signals": {
                 "intent_counts": {intent: n_rows, ...},
                 "intent_total_rows": int,
@@ -202,6 +210,8 @@ def synthesize_findings(
                 "intent_assigned_bibcodes": 0,
                 "community_assigned_bibcodes": 0,
                 "override_assigned_bibcodes": 0,
+                "fallback_pulled_bibcodes": 0,
+                "fallback_pulled_per_section": {name: 0 for name in sections_list},
             },
             metadata={
                 "message": (
@@ -228,9 +238,7 @@ def synthesize_findings(
     )
 
 
-def _normalize_overrides(
-    raw: Mapping[str, str] | None, valid_sections: set[str]
-) -> dict[str, str]:
+def _normalize_overrides(raw: Mapping[str, str] | None, valid_sections: set[str]) -> dict[str, str]:
     """Return a clean ``{bibcode: section_name}`` dict.
 
     Drops non-string keys/values and any entry whose section name isn't
@@ -281,9 +289,16 @@ def _prepare_bibcodes(raw: Sequence[str] | None) -> list[str]:
 def _fetch_paper_metadata(
     conn: psycopg.Connection, bibcodes: Sequence[str]
 ) -> dict[str, dict[str, Any]]:
-    """Return ``{bibcode: {title, year, abstract_snippet}}`` for the input."""
+    """Return ``{bibcode: {title, year, abstract_snippet, citation_count}}``.
+
+    ``papers.citation_count`` is INTEGER NULL — ``COALESCE`` to 0 so the
+    Tier-3 (citation-count) fallback always has a comparable scalar. The
+    ``citation_count`` is the *corpus-wide* tally; the fallback ranks
+    within the working set, so this is just a per-paper attribute used
+    for sorting.
+    """
     sql = """
-        SELECT bibcode, title, year, abstract
+        SELECT bibcode, title, year, abstract, COALESCE(citation_count, 0)
         FROM papers
         WHERE bibcode = ANY(%s)
     """
@@ -293,11 +308,13 @@ def _fetch_paper_metadata(
         for row in cur.fetchall():
             bibcode = row[0]
             abstract = row[3] or ""
+            citation_count = int(row[4]) if len(row) > 4 and row[4] is not None else 0
             out[bibcode] = {
                 "bibcode": bibcode,
                 "title": row[1],
                 "year": row[2],
                 "abstract_snippet": _snippet(abstract),
+                "citation_count": citation_count,
             }
     return out
 
@@ -434,7 +451,8 @@ def _assemble_sections(
     max_papers_per_section: int,
     overrides: Mapping[str, str],
 ) -> SynthesisResult:
-    """Bin bibcodes into the requested sections via override -> intent -> community."""
+    """Bin bibcodes into requested sections via override -> intent -> community
+    -> citation-count fallback (for empty sections only)."""
 
     # Per-section bucket of bibcodes (preserves working-set order).
     buckets: dict[str, list[str]] = {name: [] for name in sections}
@@ -494,6 +512,18 @@ def _assemble_sections(
         else:
             buckets[target_section].append(bibcode)
 
+    # Tier 3: empty-section citation-count fallback (bead spj0). Pulls from
+    # the ``unattributed`` pool only — already-attributed (override / intent /
+    # community) papers are NEVER moved or duplicated into other sections.
+    fallback_pulled_per_section = _apply_citation_count_fallback(
+        sections=sections,
+        buckets=buckets,
+        unattributed=unattributed,
+        paper_meta=paper_meta,
+        signal_used=signal_used,
+        max_papers_per_section=max_papers_per_section,
+    )
+
     # Build SectionBucket list in the requested order; cap each at
     # max_papers_per_section using a deterministic sort (year desc then
     # bibcode asc) so callers get a stable outline.
@@ -534,13 +564,19 @@ def _assemble_sections(
             )
         )
 
+    fallback_pulled_total = sum(fallback_pulled_per_section.values())
     coverage = {
         "total_bibcodes": len(bibcodes),
+        # ``unattributed`` was mutated in-place by the Tier-3 helper to remove
+        # any bibcode that was successfully fallback-pulled, so the
+        # ``assigned_bibcodes`` total reflects all four tiers.
         "assigned_bibcodes": len(bibcodes) - len(unattributed),
         "unattributed_bibcodes": len(unattributed),
         "intent_assigned_bibcodes": intent_assigned,
         "community_assigned_bibcodes": community_assigned,
         "override_assigned_bibcodes": override_assigned,
+        "fallback_pulled_bibcodes": fallback_pulled_total,
+        "fallback_pulled_per_section": dict(fallback_pulled_per_section),
     }
 
     return SynthesisResult(
@@ -553,6 +589,59 @@ def _assemble_sections(
             "override_count": len(overrides),
         },
     )
+
+
+def _apply_citation_count_fallback(
+    *,
+    sections: Sequence[str],
+    buckets: dict[str, list[str]],
+    unattributed: list[str],
+    paper_meta: Mapping[str, dict[str, Any]],
+    signal_used: dict[str, str],
+    max_papers_per_section: int,
+) -> dict[str, int]:
+    """Fill empty sections from the unattributed pool by citation_count desc.
+
+    Mutates ``buckets``, ``unattributed``, and ``signal_used`` in place.
+    Returns a ``{section_name: int}`` map of how many papers were pulled
+    per section (always populated for every section in ``sections``,
+    even if zero).
+
+    Why ``unattributed`` only? AC3 — fallback must not poach papers
+    that were already attributed by a primary signal (override / intent
+    / community). They keep their primary assignment; only orphaned
+    papers are eligible to fill empty sections.
+
+    Sections process in input order; each pulls up to
+    ``max_papers_per_section // 2`` papers from the *remaining* pool, so
+    a paper goes to at most one section.
+    """
+    pulled_per_section: dict[str, int] = {name: 0 for name in sections}
+    cap = max_papers_per_section // 2
+    if cap <= 0 or not unattributed:
+        return pulled_per_section
+
+    # Snapshot the pool sorted by (citation_count desc, bibcode asc) so
+    # cross-section pulls follow a single deterministic ranking.
+    remaining = sorted(
+        unattributed,
+        key=lambda b: (-int(paper_meta.get(b, {}).get("citation_count", 0) or 0), b),
+    )
+
+    for section_name in sections:
+        if buckets.get(section_name):
+            continue  # tier 0/1/2 already populated this section
+        if not remaining:
+            break
+        take = remaining[:cap]
+        for bibcode in take:
+            buckets[section_name].append(bibcode)
+            signal_used[bibcode] = "citation_count_fallback"
+            unattributed.remove(bibcode)
+        remaining = remaining[cap:]
+        pulled_per_section[section_name] = len(take)
+
+    return pulled_per_section
 
 
 def _build_signals(

@@ -300,6 +300,24 @@ def _extract_result_count(result_json: str) -> int:
     return 0
 
 
+def _detect_unscoped_broad_block(result_json: str | None) -> bool:
+    """Return True when ``result_json`` carries the unscoped-broad-block marker.
+
+    The ``search`` tool's unscoped-broad-query guard emits a structured
+    response with ``{"unscoped_broad_blocked": true, "error":
+    "unscoped_broad_query", ...}``. ``_log_query`` lifts this marker into
+    ``query_log.error_msg`` so operators can track block rate via a single
+    SELECT — see bead ``scix_experiments-uerc``.
+    """
+    if not result_json:
+        return False
+    try:
+        data = json.loads(result_json)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return isinstance(data, dict) and data.get("unscoped_broad_blocked") is True
+
+
 def _log_query(
     conn: psycopg.Connection,
     tool_name: str,
@@ -315,11 +333,18 @@ def _log_query(
     """Write a row to query_log with both legacy and migration-031 columns.
 
     Best-effort: failures are logged, not raised.
+
+    Lifts the ``unscoped_broad_blocked`` marker from ``result_json`` into
+    ``error_msg`` (when no real error_msg is set) so operators can track
+    the unscoped-broad-query block rate without a JSONB scan over result
+    payloads — see bead ``scix_experiments-uerc``.
     """
     try:
         params_json = json.dumps(params, default=str)
         query_text = _extract_query_text(params)
         result_count = _extract_result_count(result_json) if result_json else 0
+        if error_msg is None and _detect_unscoped_broad_block(result_json):
+            error_msg = _UNSCOPED_BROAD_TAG
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -616,6 +641,119 @@ def _coerce_year(raw: Any, name: str) -> int | None:
     if not _MIN_YEAR <= year <= _MAX_YEAR:
         raise ValueError(f"{name} must be in [{_MIN_YEAR}, {_MAX_YEAR}], got {year}")
     return year
+
+
+# ---------------------------------------------------------------------------
+# Unscoped-broad-query guard for the `search` tool (bead scix_experiments-uerc)
+# ---------------------------------------------------------------------------
+#
+# The `search` tool's description warns that unscoped queries run a full-text
+# scan over all 32M papers and may hit the statement timeout. Agents that don't
+# read the description hit the timeout and get a generic DB error. This guard
+# intercepts unscoped + broad queries before they reach Postgres and returns
+# a structured error with actionable hints.
+#
+# Heuristic: a query is "broad" when it has >= 3 tokens OR length >= 30 chars.
+# A request is "scoped" when filters has at least one non-None, non-empty value
+# in {year_min, year_max, arxiv_class, doctype, first_author, entity_types,
+# entity_ids}. Empty lists count as no filter (matches SearchFilters
+# normalization in scix.search).
+
+_UNSCOPED_BROAD_MIN_TOKENS: int = 3
+_UNSCOPED_BROAD_MIN_CHARS: int = 30
+
+# Stable telemetry tag — surfaced in result_json AND lifted into query_log.error_msg
+# by _log_query so operators can track unscoped-broad block rate with a single
+# SELECT count(*) FROM query_log WHERE error_msg = 'unscoped_broad_query'.
+_UNSCOPED_BROAD_TAG: str = "unscoped_broad_query"
+
+
+def _filters_are_scoped(filters: dict[str, Any] | None) -> bool:
+    """Return True when ``filters`` constrains the candidate set.
+
+    A filter is "scoping" when at least one of these fields has a non-None,
+    non-empty value: year_min, year_max, arxiv_class, doctype, first_author,
+    entity_types, entity_ids. ``filters=None``, ``filters={}``, and
+    ``filters={'year_min': None, 'entity_ids': []}`` all count as unscoped.
+    """
+    if not filters:
+        return False
+    for field in (
+        "year_min",
+        "year_max",
+        "arxiv_class",
+        "doctype",
+        "first_author",
+        "entity_types",
+        "entity_ids",
+    ):
+        value = filters.get(field)
+        if value is None:
+            continue
+        # Empty list/string normalizes to "no filter".
+        if isinstance(value, (list, str)) and len(value) == 0:
+            continue
+        return True
+    return False
+
+
+def _is_unscoped_broad_query(
+    query: str,
+    filters: dict[str, Any] | None,
+    *,
+    bypass: bool = False,
+) -> bool:
+    """Return True when the query should be blocked by the unscoped-broad guard.
+
+    The guard only fires when ALL of the following hold:
+      * ``bypass`` is False (escape hatch for tests / power users).
+      * The request has no scoping filters (see ``_filters_are_scoped``).
+      * The query is broad: >= 3 tokens OR length >= 30 chars (after strip).
+
+    Empty / whitespace-only queries are not blocked here — the schema
+    enforces presence of ``query`` and the existing search code handles
+    blank input.
+    """
+    if bypass:
+        return False
+    if _filters_are_scoped(filters):
+        return False
+    stripped = (query or "").strip()
+    if not stripped:
+        return False
+    token_count = len(stripped.split())
+    if token_count >= _UNSCOPED_BROAD_MIN_TOKENS:
+        return True
+    if len(stripped) >= _UNSCOPED_BROAD_MIN_CHARS:
+        return True
+    return False
+
+
+def _unscoped_broad_response(query: str) -> str:
+    """Build the structured unscoped-broad-query error payload.
+
+    The response carries the stable ``unscoped_broad_blocked: true`` flag so
+    ``_log_query`` can lift it into ``query_log.error_msg`` for telemetry.
+    """
+    payload = {
+        "error": _UNSCOPED_BROAD_TAG,
+        "hint": (
+            "Unscoped broad queries scan all 32M papers and frequently hit the "
+            "statement timeout. Add filters.arxiv_class (e.g. 'astro-ph') or "
+            "filters.year_min to scope the search."
+        ),
+        "query": query,
+        "suggestions": {
+            "filters.year_min": 2020,
+            "filters.arxiv_class": "astro-ph",
+        },
+        "bypass": (
+            "Pass bypass_unscoped_guard=true to run the unscoped query anyway "
+            "(may hit statement timeout)."
+        ),
+        "unscoped_broad_blocked": True,
+    }
+    return json.dumps(payload, indent=2, default=str)
 
 
 # ---------------------------------------------------------------------------
@@ -1224,6 +1362,10 @@ def create_server(_run_self_test: bool = True):
                     "search. For broad multi-keyword queries, pass filters.arxiv_class "
                     "(e.g. 'cs.SE') or a filters.year_min — unscoped queries run a full-text "
                     "scan over all 32M papers and may hit the statement timeout. "
+                    "Unscoped + broad queries (no filters AND >=3 tokens or >=30 chars) are "
+                    "blocked up-front with a structured {error: 'unscoped_broad_query', hint, "
+                    "suggestions, ...} response — read the hint and retry with filters, or "
+                    "pass bypass_unscoped_guard=true to run the unscoped query anyway. "
                     "Use concept_search instead when the query is a "
                     "formal astronomy taxonomy term (e.g., 'Exoplanets'). Use entity with "
                     "action='search' when looking up a named method, dataset, or instrument. "
@@ -1270,6 +1412,20 @@ def create_server(_run_self_test: bool = True):
                                 "operator can flip on a future domain-tuned reranker without "
                                 "code changes. Setting use_rerank=false bypasses reranking "
                                 "even when a model is configured."
+                            ),
+                        },
+                        "bypass_unscoped_guard": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": (
+                                "If true, skip the unscoped-broad-query guard and run the "
+                                "search even when no filters are set and the query is broad "
+                                "(>=3 tokens or >=30 chars). The default is false: such "
+                                "queries are blocked up-front with a structured "
+                                "{error: 'unscoped_broad_query', ...} response so the agent "
+                                "can retry with scoping filters instead of waiting for the "
+                                "statement timeout. Use only when you genuinely need an "
+                                "unscoped scan (tests, power-user exploration)."
                             ),
                         },
                     },
@@ -2864,10 +3020,22 @@ def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     ``{"disambiguation": [...]}`` JSON payload and skips the search. When
     ``disambiguate`` is false, the disambiguation check is bypassed entirely
     and the normal search path runs.
+
+    Unscoped + broad queries (no filters AND >=3 tokens or >=30 chars) are
+    blocked by an early guard that returns a structured ``unscoped_broad_query``
+    error rather than letting them fall into the 32M-paper full-text scan.
+    Pass ``bypass_unscoped_guard=true`` to skip the guard. See bead
+    ``scix_experiments-uerc``.
     """
     mode = args.get("mode", "hybrid")
     query = args["query"]
     disambiguate = args.get("disambiguate", True)
+    bypass_guard = bool(args.get("bypass_unscoped_guard", False))
+
+    # Unscoped-broad-query guard (bead uerc) — fires before disambiguation
+    # and before any DB / embedding work so blocked queries cost ~0ms.
+    if _is_unscoped_broad_query(query, args.get("filters"), bypass=bypass_guard):
+        return _unscoped_broad_response(query)
 
     if disambiguate:
         disamb_response = _maybe_disambiguate(conn, query)

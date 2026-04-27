@@ -9,8 +9,10 @@ from scix.citation_context import (
     CitationMarker,
     _enrich_with_sections,
     _parse_marker_numbers,
+    extract_author_year_citations,
     extract_citation_contexts,
     process_paper,
+    resolve_author_year_markers,
     resolve_citation_markers,
 )
 
@@ -408,3 +410,314 @@ class TestBatchRowFormat:
         contexts = process_paper("SRC_BIB", body, SAMPLE_REFERENCES)
         assert len(contexts) == 1
         assert contexts[0].section_name == "introduction"
+
+
+# ---------------------------------------------------------------------------
+# extract_author_year_citations — pattern coverage
+# ---------------------------------------------------------------------------
+
+# Refs deliberately chosen so that (year, surname-initial) is unique-per-pair.
+# Bibcode last char encodes the first author's surname initial (uppercase).
+AUTHOR_YEAR_REFERENCES = [
+    "2020ApJ...900..100A",  # year=2020, initial=A (Adams 2020)
+    "2021MNRAS.500..200B",  # year=2021, initial=B (Brown 2021)
+    "2022A&A...650..300C",  # year=2022, initial=C (Carter 2022)
+    "2003ApJ...500..100S",  # year=2003, initial=S (Smith/Smith&Jones 2003)
+    "2001AJ....120..200H",  # year=2001, initial=H (Hong 2001)
+    "1999A&A...340..400J",  # year=1999, initial=J (Jones 1999)
+]
+
+
+class TestExtractAuthorYearPatterns:
+    """Each pattern variant should produce at least one author-year marker."""
+
+    def test_et_al_no_comma(self) -> None:
+        body = "We follow Hong et al. 2001 in this analysis."
+        markers = extract_author_year_citations(body)
+        assert len(markers) == 1
+        assert markers[0].marker_authors == ("Hong",)
+        assert markers[0].marker_year == 2001
+
+    def test_et_al_with_comma(self) -> None:
+        body = "Earlier work by Hong et al., 2001 established this."
+        markers = extract_author_year_citations(body)
+        assert len(markers) == 1
+        assert markers[0].marker_authors == ("Hong",)
+        assert markers[0].marker_year == 2001
+
+    def test_paren_single_author(self) -> None:
+        body = "These results agree (Adams, 2020) with predictions."
+        markers = extract_author_year_citations(body)
+        assert len(markers) == 1
+        assert markers[0].marker_authors == ("Adams",)
+        assert markers[0].marker_year == 2020
+
+    def test_paren_two_authors_ampersand(self) -> None:
+        body = "The model (Smith & Jones, 2003) was extended."
+        markers = extract_author_year_citations(body)
+        assert len(markers) == 1
+        # First surname encodes first-author bibcode-initial
+        assert markers[0].marker_authors[0] == "Smith"
+        assert markers[0].marker_year == 2003
+
+    def test_paren_two_authors_and(self) -> None:
+        body = "This builds on (Smith and Jones, 2003)."
+        markers = extract_author_year_citations(body)
+        assert len(markers) == 1
+        assert markers[0].marker_authors[0] == "Smith"
+        assert markers[0].marker_year == 2003
+
+    def test_narrative_single(self) -> None:
+        body = "As Adams (2020) showed, the trend is real."
+        markers = extract_author_year_citations(body)
+        assert len(markers) == 1
+        assert markers[0].marker_authors == ("Adams",)
+        assert markers[0].marker_year == 2020
+
+    def test_narrative_two_authors(self) -> None:
+        body = "Smith and Jones (2003) demonstrated the relation."
+        markers = extract_author_year_citations(body)
+        assert len(markers) == 1
+        assert markers[0].marker_authors[0] == "Smith"
+        assert markers[0].marker_year == 2003
+
+    def test_initial_before_surname(self) -> None:
+        """'J. Smith 2001' — single initial then surname; surname extracted is 'Smith'."""
+        body = "As J. Smith et al. 2001 showed earlier."
+        markers = extract_author_year_citations(body)
+        assert len(markers) == 1
+        assert markers[0].marker_authors == ("Smith",)
+        assert markers[0].marker_year == 2001
+
+    def test_three_authors_comma(self) -> None:
+        """'Smith, Jones, & Brown 2003' — first surname is Smith."""
+        body = "The trio (Smith, Jones, & Brown, 2003) co-authored this."
+        markers = extract_author_year_citations(body)
+        assert len(markers) == 1
+        assert markers[0].marker_authors[0] == "Smith"
+        assert markers[0].marker_year == 2003
+
+
+class TestExtractAuthorYearNegatives:
+    """Patterns that look citation-shaped but are not citations."""
+
+    def test_numbered_marker_not_matched(self) -> None:
+        body = "We follow [1] in this analysis."
+        assert extract_author_year_citations(body) == []
+
+    def test_month_year_not_matched(self) -> None:
+        """'May 2020' alone is a date, not a citation."""
+        body = "The data were collected in May 2020 at the observatory."
+        assert extract_author_year_citations(body) == []
+
+    def test_figure_year_not_matched(self) -> None:
+        """'Figure 2020' or 'Section 2020' must not match."""
+        body = "See Figure 2020 of the supplement."
+        assert extract_author_year_citations(body) == []
+
+    def test_year_alone_not_matched(self) -> None:
+        body = "Observations in 2020 were limited."
+        assert extract_author_year_citations(body) == []
+
+    def test_year_out_of_range(self) -> None:
+        """Year < 1500 or > 2099 should not be treated as a citation year."""
+        body = "Smith et al. 1066 surveyed medieval texts."
+        assert extract_author_year_citations(body) == []
+
+    def test_empty_body(self) -> None:
+        assert extract_author_year_citations("") == []
+
+
+class TestExtractAuthorYearOffsetsAndContext:
+    def test_char_offsets_correct(self) -> None:
+        body = "Earlier Hong et al. 2001 showed this."
+        markers = extract_author_year_citations(body)
+        assert len(markers) == 1
+        assert body[markers[0].char_start : markers[0].char_end].startswith("Hong")
+        assert "2001" in body[markers[0].char_start : markers[0].char_end]
+
+    def test_context_contains_marker(self) -> None:
+        body = "Earlier Hong et al. 2001 showed this trend in detail."
+        markers = extract_author_year_citations(body)
+        assert "Hong et al. 2001" in markers[0].context_text
+
+
+# ---------------------------------------------------------------------------
+# resolve_author_year_markers — name+year disambiguation
+# ---------------------------------------------------------------------------
+
+
+def _ay_marker(authors: tuple[str, ...], year: int, char_start: int = 0) -> CitationMarker:
+    return CitationMarker(
+        marker_text=f"{authors[0]} et al. {year}",
+        marker_numbers=(),
+        char_start=char_start,
+        char_end=char_start + 16,
+        context_text=f"{authors[0]} et al. {year} text",
+        context_start=0,
+        marker_authors=authors,
+        marker_year=year,
+    )
+
+
+class TestResolveAuthorYearUnambiguous:
+    def test_resolves_unique_match(self) -> None:
+        marker = _ay_marker(("Hong",), 2001)
+        contexts = resolve_author_year_markers([marker], AUTHOR_YEAR_REFERENCES, "SRC")
+        assert len(contexts) == 1
+        assert contexts[0].target_bibcode == "2001AJ....120..200H"
+        assert contexts[0].source_bibcode == "SRC"
+
+    def test_resolves_multiple_unique_markers(self) -> None:
+        markers = [
+            _ay_marker(("Adams",), 2020, char_start=0),
+            _ay_marker(("Hong",), 2001, char_start=80),
+        ]
+        contexts = resolve_author_year_markers(markers, AUTHOR_YEAR_REFERENCES, "SRC")
+        targets = sorted(c.target_bibcode for c in contexts)
+        assert targets == sorted(["2020ApJ...900..100A", "2001AJ....120..200H"])
+
+
+class TestResolveAuthorYearMissing:
+    def test_no_year_match_dropped(self) -> None:
+        """Author-year that points to a year not in references is dropped."""
+        marker = _ay_marker(("Hong",), 1850)
+        contexts = resolve_author_year_markers([marker], AUTHOR_YEAR_REFERENCES, "SRC")
+        assert contexts == []
+
+    def test_no_initial_match_dropped(self) -> None:
+        """Surname initial that doesn't match any 2001 ref is dropped."""
+        # 'Zhao 2001' — no ref ends with 'Z' in 2001
+        marker = _ay_marker(("Zhao",), 2001)
+        contexts = resolve_author_year_markers([marker], AUTHOR_YEAR_REFERENCES, "SRC")
+        assert contexts == []
+
+    def test_empty_references(self) -> None:
+        marker = _ay_marker(("Hong",), 2001)
+        contexts = resolve_author_year_markers([marker], [], "SRC")
+        assert contexts == []
+
+
+class TestResolveAuthorYearAmbiguity:
+    def test_two_candidates_below_threshold_rejected_at_min_confidence_0_6(self) -> None:
+        """Two candidates -> confidence 0.5; reject when min_confidence>0.5."""
+        refs = [
+            "2020ApJ...900..100A",  # Adams 2020 (initial A)
+            "2020Sci...380..200A",  # Andrews 2020 (initial A) — same year+initial
+        ]
+        marker = _ay_marker(("Adams",), 2020)
+        contexts = resolve_author_year_markers(
+            [marker], refs, "SRC", min_confidence=0.6
+        )
+        assert contexts == []
+
+    def test_two_candidates_accepted_at_min_confidence_0_5(self) -> None:
+        """Two candidates -> confidence 0.5; accept when min_confidence<=0.5."""
+        refs = [
+            "2020ApJ...900..100A",
+            "2020Sci...380..200A",
+        ]
+        marker = _ay_marker(("Adams",), 2020)
+        contexts = resolve_author_year_markers(
+            [marker], refs, "SRC", min_confidence=0.5
+        )
+        # Both candidates are emitted (the marker is genuinely ambiguous, but
+        # under-threshold rejection only kicks in below min_confidence).
+        assert len(contexts) == 2
+
+    def test_three_candidates_rejected_at_default_threshold(self) -> None:
+        """Default threshold 0.5 -> N>=3 rejects (1/3 < 0.5)."""
+        refs = [
+            "2020ApJ...900..100A",
+            "2020Sci...380..200A",
+            "2020Natur.600..300A",
+        ]
+        marker = _ay_marker(("Adams",), 2020)
+        contexts = resolve_author_year_markers([marker], refs, "SRC")
+        assert contexts == []
+
+
+class TestResolveAuthorYearMalformedRefs:
+    def test_arxiv_style_ref_excluded_from_initial_match(self) -> None:
+        """References whose last char is non-alpha (e.g. arXiv '.') must not
+        be matched by the initial filter — otherwise we'd over-resolve."""
+        refs = ["2020arXiv200112345."]  # last char is '.'
+        marker = _ay_marker(("Smith",), 2020)
+        contexts = resolve_author_year_markers([marker], refs, "SRC")
+        assert contexts == []
+
+    def test_short_ref_skipped(self) -> None:
+        """A bibcode-shaped string < 5 chars cannot encode year+initial."""
+        refs = ["short"]
+        marker = _ay_marker(("Smith",), 2020)
+        contexts = resolve_author_year_markers([marker], refs, "SRC")
+        assert contexts == []
+
+
+# ---------------------------------------------------------------------------
+# process_paper — author-year integration
+# ---------------------------------------------------------------------------
+
+
+class TestProcessPaperAuthorYear:
+    def test_paper_with_only_author_year_yields_contexts(self) -> None:
+        """A paper that uses only author-year style should produce >0 contexts.
+
+        Acceptance criteria #4: 'a paper known to use author-year style yields
+        citation_contexts rows after the new extractor runs.'
+        """
+        body = (
+            "Earlier work by Hong et al. 2001 established the framework. "
+            "Adams (2020) extended this analysis, "
+            "and (Smith & Jones, 2003) generalized further."
+        )
+        contexts = process_paper("SRC_BIB", body, AUTHOR_YEAR_REFERENCES)
+        assert len(contexts) >= 3
+        target_bibs = {c.target_bibcode for c in contexts}
+        assert "2001AJ....120..200H" in target_bibs
+        assert "2020ApJ...900..100A" in target_bibs
+        assert "2003ApJ...500..100S" in target_bibs
+
+    def test_mixed_styles_both_resolved(self) -> None:
+        """Mixed [N] and author-year markers should both produce contexts."""
+        body = (
+            "We use [1] as our baseline. "
+            "Hong et al. 2001 showed a related trend."
+        )
+        contexts = process_paper("SRC_BIB", body, AUTHOR_YEAR_REFERENCES)
+        target_bibs = {c.target_bibcode for c in contexts}
+        # [1] -> AUTHOR_YEAR_REFERENCES[0] -> Adams 2020
+        assert "2020ApJ...900..100A" in target_bibs
+        # 'Hong et al. 2001' -> 2001AJ....120..200H
+        assert "2001AJ....120..200H" in target_bibs
+
+    def test_coverage_uplift_on_author_year_only_paper(self) -> None:
+        """Acceptance #5: a paper using only author-year style produces
+        >0 rows after the new extractor (was 0 before)."""
+        body_only_author_year = (
+            "Hong et al. 2001 reports the original measurement. "
+            "Subsequent analyses (Adams, 2020; Smith & Jones, 2003) refined it. "
+            "Brown et al., 2021 confirmed the result. "
+            "Carter (2022) further extended the model."
+        )
+        contexts = process_paper("SRC_BIB", body_only_author_year, AUTHOR_YEAR_REFERENCES)
+        # Pre-extractor [N]-only behavior would yield 0; post-extractor expects ≥4 rows
+        assert len(contexts) >= 4
+
+
+class TestCitationMarkerAuthorYearFields:
+    """The CitationMarker dataclass must support author-year fields without
+    breaking existing [N]-style call sites (default values, not required)."""
+
+    def test_existing_marker_construction_still_works(self) -> None:
+        """Existing tests construct CitationMarker without author-year fields."""
+        marker = CitationMarker(
+            marker_text="[1]",
+            marker_numbers=(1,),
+            char_start=0,
+            char_end=3,
+            context_text="[1] text",
+            context_start=0,
+        )
+        assert marker.marker_authors == ()
+        assert marker.marker_year is None

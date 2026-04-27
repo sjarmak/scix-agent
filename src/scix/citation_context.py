@@ -28,15 +28,25 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class CitationMarker:
-    """A citation marker found in body text."""
+    """A citation marker found in body text.
 
-    marker_text: str  # e.g. "[1]", "[1, 2, 3]", "[1-3]"
-    marker_numbers: tuple[int, ...]  # resolved integer references (1-indexed)
+    Numbered ``[N]`` markers populate ``marker_numbers`` and leave the
+    author-year fields empty.  Author-year markers (e.g. ``Hong et al. 2001``)
+    populate ``marker_authors`` and ``marker_year`` and leave
+    ``marker_numbers`` empty.  Both shapes are unified into the same
+    dataclass so downstream stages handle them uniformly.
+    """
+
+    marker_text: str  # e.g. "[1]", "[1, 2, 3]", "[1-3]", "Hong et al. 2001"
+    marker_numbers: tuple[int, ...]  # numbered refs (1-indexed); () for author-year
     char_start: int  # start offset in body
     char_end: int  # end offset in body
     context_text: str  # ~250-word window around the marker
     context_start: int  # char offset where context window begins
     section_name: str | None = None  # which section this appears in
+    # Author-year fields. Empty/None for numbered markers.
+    marker_authors: tuple[str, ...] = ()  # surnames in citation order; first is primary
+    marker_year: int | None = None
 
 
 @dataclass(frozen=True)
@@ -215,6 +225,269 @@ def resolve_citation_markers(
     return contexts
 
 
+# ---------------------------------------------------------------------------
+# Author-year citation marker extraction
+# ---------------------------------------------------------------------------
+
+# Year range considered plausible for a citation. Values outside this range
+# (e.g. 'Section 2099' or 'Smith 1066') are rejected as noise.
+_MIN_CITATION_YEAR = 1500
+_MAX_CITATION_YEAR = 2099
+
+# Surname-shaped tokens that are almost always false positives in author-year
+# context (capitalized common nouns followed by a number that happens to fall
+# inside the year range, e.g. 'Section 2020 reports').
+_SURNAME_FALSE_POSITIVES = frozenset(
+    {
+        "Figure",
+        "Fig",
+        "Table",
+        "Section",
+        "Sect",
+        "Equation",
+        "Eq",
+        "Eqn",
+        "Ref",
+        "Refs",
+        "Vol",
+        "Volume",
+        "Page",
+        "Chapter",
+        "Chap",
+        "Appendix",
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Sept",
+        "Oct",
+        "Nov",
+        "Dec",
+    }
+)
+
+# Surname pattern: capitalized word, optionally hyphenated (e.g. "Smith-Jones").
+# The leading character is `[A-Z]` and the rest is `[a-z]+` so a single-letter
+# initial like "J." won't match — we strip leading initials separately.
+_SURNAME = r"[A-Z][a-z]+(?:-[A-Z][a-z]+)?"
+
+# Year token: 4 digits. Range is validated post-match.
+_YEAR = r"(\d{4})"
+
+# Pattern A — narrative form: "Surname (YYYY)" or "Surname and Other (YYYY)".
+# The optional second author after "and" / "&" is captured but not strictly
+# required. We anchor with a word boundary so we don't match within tokens.
+_AY_NARRATIVE = re.compile(
+    rf"\b({_SURNAME})"
+    rf"(?:\s+(?:and|&)\s+(?:{_SURNAME}))?"
+    rf"\s*\(\s*{_YEAR}\s*\)"
+)
+
+# Pattern B — "Surname et al. YYYY" / "Surname et al., YYYY".
+_AY_ET_AL = re.compile(
+    rf"\b({_SURNAME})\s+et\s+al\.?,?\s*\(?\s*{_YEAR}\s*\)?"
+)
+
+# Pattern C — fully parenthetical: "(Surname, YYYY)" / "(Surname & Other, YYYY)"
+# / "(Surname et al., YYYY)" / "(Surname, Other, & Third, YYYY)".
+# Capture only the first surname inside the parens — that's what the bibcode
+# initial encodes.
+_AY_PAREN = re.compile(
+    rf"\(\s*({_SURNAME})"
+    rf"(?:\s+et\s+al\.?)?"
+    rf"(?:(?:\s+(?:and|&)\s+|,\s+|,\s*&\s+){_SURNAME})*"
+    rf",?\s*{_YEAR}\s*\)"
+)
+
+# Pattern D — sub-citation inside a multi-cite paren block. Matches "Surname
+# [et al.] [& Other], YYYY" only when preceded by '(' or '; ' (i.e. inside a
+# paren-separated list like "(Adams, 2020; Smith & Jones, 2003)"). The leading
+# delimiter is consumed as part of group(0) but group(1) is the surname only.
+_AY_SUBCITE = re.compile(
+    rf"(?<=[\(;])\s*({_SURNAME})"
+    rf"(?:\s+et\s+al\.?)?"
+    rf"(?:\s+(?:and|&)\s+{_SURNAME})?"
+    rf",\s*{_YEAR}(?=\s*[;\)])"
+)
+
+
+def _is_valid_year(year: int) -> bool:
+    return _MIN_CITATION_YEAR <= year <= _MAX_CITATION_YEAR
+
+
+def _is_surname_candidate(token: str) -> bool:
+    """Reject capitalized common-noun false positives."""
+    return token not in _SURNAME_FALSE_POSITIVES
+
+
+def extract_author_year_citations(body: str) -> list[CitationMarker]:
+    """Find author-year citations in body text.
+
+    Handles patterns:
+
+      * ``Surname et al. YYYY`` / ``Surname et al., YYYY``
+      * ``Surname (YYYY)`` / ``Surname and Other (YYYY)``
+      * ``(Surname, YYYY)`` / ``(Surname & Other, YYYY)`` /
+        ``(Surname et al., YYYY)`` / ``(Surname, Other, & Third, YYYY)``
+
+    Returns one :class:`CitationMarker` per match with ``marker_authors`` set
+    to a 1-tuple ``(first_surname,)`` and ``marker_year`` set to an
+    in-range year.  Numbered ``[N]`` markers are not produced here; use
+    :func:`extract_citation_contexts` for those.
+
+    Overlapping matches across the three patterns are de-duplicated by
+    ``char_start``.
+    """
+    if not body:
+        return []
+
+    spans: list[tuple[int, int]] = []  # accepted (start, end) for overlap check
+    out: list[CitationMarker] = []
+
+    def _overlaps(start: int, end: int) -> bool:
+        for s, e in spans:
+            if start < e and end > s:
+                return True
+        return False
+
+    # Order matters: et-al pattern is tried before narrative because
+    # narrative would otherwise mis-capture "Smith et al" as just "Smith".
+    # The sub-citation pattern is last because it's the most permissive and
+    # should only fire when none of the structured patterns already covered
+    # the span.
+    for pattern in (_AY_ET_AL, _AY_NARRATIVE, _AY_PAREN, _AY_SUBCITE):
+        for m in pattern.finditer(body):
+            char_start = m.start()
+            char_end = m.end()
+            if _overlaps(char_start, char_end):
+                continue
+
+            surname = m.group(1)
+            if not _is_surname_candidate(surname):
+                continue
+            try:
+                year = int(m.group(2))
+            except (ValueError, IndexError):
+                continue
+            if not _is_valid_year(year):
+                continue
+
+            win_start, win_end = _word_boundary_window(body, char_start, char_end)
+            context = body[win_start:win_end]
+
+            spans.append((char_start, char_end))
+            out.append(
+                CitationMarker(
+                    marker_text=m.group(0),
+                    marker_numbers=(),
+                    char_start=char_start,
+                    char_end=char_end,
+                    context_text=context,
+                    context_start=win_start,
+                    marker_authors=(surname,),
+                    marker_year=year,
+                )
+            )
+
+    out.sort(key=lambda mk: mk.char_start)
+    return out
+
+
+def resolve_author_year_markers(
+    markers: list[CitationMarker],
+    references: list[str],
+    source_bibcode: str,
+    min_confidence: float = 0.5,
+) -> list[CitationContext]:
+    """Resolve author-year markers to target bibcodes via name+year disambiguation.
+
+    A reference bibcode encodes the first author's surname initial as its last
+    character (uppercase) and the publication year as its first four
+    characters.  For each marker, we filter the reference list to entries
+    whose bibcode starts with the marker year *and* ends with the marker's
+    first surname initial (case-insensitive).
+
+    Resolution rules:
+
+      * 0 candidates  -> drop (no citation emitted).
+      * 1 candidate   -> resolve at confidence 1.0.
+      * N candidates  -> confidence = 1/N.  All N candidates are emitted
+        if confidence >= ``min_confidence``; otherwise the marker is
+        dropped (deterministic, no LLM disambiguation).
+
+    References whose last char is non-alphabetic (e.g. arXiv-style
+    ``2020arXiv200112345.``) are excluded from the initial-match filter
+    because they don't encode a surname-initial — over-resolving on year
+    alone would inflate false positives.
+    """
+    if not markers or not references:
+        return []
+
+    contexts: list[CitationContext] = []
+
+    for marker in markers:
+        if marker.marker_year is None or not marker.marker_authors:
+            continue
+
+        first_surname = marker.marker_authors[0]
+        if not first_surname:
+            continue
+        target_initial = first_surname[0].upper()
+        year_prefix = f"{marker.marker_year:04d}"
+
+        candidates: list[str] = []
+        for ref in references:
+            if not isinstance(ref, str) or len(ref) < 5:
+                continue
+            if not ref.startswith(year_prefix):
+                continue
+            last_char = ref[-1]
+            if not last_char.isalpha():
+                # Non-alphabetic terminator (e.g. arXiv refs) cannot be
+                # disambiguated by surname initial — skip rather than
+                # accept on year-only.
+                continue
+            if last_char.upper() != target_initial:
+                continue
+            candidates.append(ref)
+
+        n = len(candidates)
+        if n == 0:
+            continue
+        confidence = 1.0 if n == 1 else 1.0 / n
+        if confidence < min_confidence:
+            continue
+
+        for target in candidates:
+            contexts.append(
+                CitationContext(
+                    source_bibcode=source_bibcode,
+                    target_bibcode=target,
+                    context_text=marker.context_text,
+                    char_offset=marker.char_start,
+                    section_name=marker.section_name,
+                )
+            )
+
+    return contexts
+
+
 def _enrich_with_sections(
     markers: list[CitationMarker],
     sections: list[tuple[str, int, int, str]],
@@ -236,6 +509,8 @@ def _enrich_with_sections(
                 context_text=marker.context_text,
                 context_start=marker.context_start,
                 section_name=section_name,
+                marker_authors=marker.marker_authors,
+                marker_year=marker.marker_year,
             )
         )
     return enriched
@@ -248,7 +523,11 @@ def process_paper(
 ) -> list[CitationContext]:
     """Extract and resolve citation contexts for a single paper.
 
-    Combines extraction, section enrichment, and resolution.
+    Runs both the numbered ``[N]`` extractor and the author-year extractor,
+    enriches both with section names, and merges resolved contexts.
+    Duplicate (target_bibcode, char_offset) pairs are de-duplicated so a
+    single physical marker never produces two rows even if both extractors
+    happen to fire on overlapping spans.
 
     Parameters
     ----------
@@ -267,14 +546,33 @@ def process_paper(
     if not body or not references:
         return []
 
-    markers = extract_citation_contexts(body)
-    if not markers:
+    numbered_markers = extract_citation_contexts(body)
+    author_year_markers = extract_author_year_citations(body)
+    if not numbered_markers and not author_year_markers:
         return []
 
     sections = parse_sections(body)
-    enriched_markers = _enrich_with_sections(markers, sections)
 
-    return resolve_citation_markers(enriched_markers, references, bibcode)
+    contexts: list[CitationContext] = []
+    if numbered_markers:
+        enriched = _enrich_with_sections(numbered_markers, sections)
+        contexts.extend(resolve_citation_markers(enriched, references, bibcode))
+    if author_year_markers:
+        enriched = _enrich_with_sections(author_year_markers, sections)
+        contexts.extend(resolve_author_year_markers(enriched, references, bibcode))
+
+    if len(contexts) <= 1:
+        return contexts
+
+    seen: set[tuple[str, int]] = set()
+    deduped: list[CitationContext] = []
+    for ctx in contexts:
+        key = (ctx.target_bibcode, ctx.char_offset)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(ctx)
+    return deduped
 
 
 # ---------------------------------------------------------------------------

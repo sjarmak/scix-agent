@@ -357,8 +357,14 @@ def demo_lit_review(payload: DemoSearchRequest) -> dict:
     )
 
     # 2 — citation_traverse references on top-3 seeds (1-hop ancestors).
+    # citation_traverse uses mode='graph' with direction= for refs/cites.
     for bib in seed_bibs[:3]:
-        ref_args = {"bibcode": bib, "mode": "references", "limit": 10}
+        ref_args = {
+            "bibcode": bib,
+            "mode": "graph",
+            "direction": "backward",
+            "limit": 10,
+        }
         ref_res, ms = _call_mcp("citation_traverse", ref_args)
         _record_step(
             steps,
@@ -371,7 +377,12 @@ def demo_lit_review(payload: DemoSearchRequest) -> dict:
 
     # 3 — citation_traverse citations on top-3 seeds (1-hop descendants).
     for bib in seed_bibs[:3]:
-        cite_args = {"bibcode": bib, "mode": "citations", "limit": 10}
+        cite_args = {
+            "bibcode": bib,
+            "mode": "graph",
+            "direction": "forward",
+            "limit": 10,
+        }
         cite_res, ms = _call_mcp("citation_traverse", cite_args)
         _record_step(
             steps,
@@ -382,17 +393,23 @@ def demo_lit_review(payload: DemoSearchRequest) -> dict:
             error=_error_of(cite_res),
         )
 
-    # 4 — concept_search on a title-derived term to surface communities.
-    for term in _concept_terms(_titles_of(search_res), fallback_query=query)[:1]:
-        cs_args = {"query": term, "limit": 5}
-        cs_res, ms = _call_mcp("concept_search", cs_args)
+    # 4 — graph_context on the top seed for community + neighbours. Replaces
+    # the earlier concept_search step which routinely timed out on broad
+    # title-derived terms (e.g. fallback to the original query).
+    if seed_bibs:
+        gc_args = {
+            "bibcode": seed_bibs[0],
+            "include_community": True,
+            "limit": 5,
+        }
+        gc_res, ms = _call_mcp("graph_context", gc_args)
         _record_step(
             steps,
-            tool="concept_search",
-            args=cs_args,
-            bibcodes=_bibcodes_of(cs_res),
+            tool="graph_context",
+            args=gc_args,
+            bibcodes=_bibcodes_of(gc_res) or [seed_bibs[0]],
             latency_ms=ms,
-            error=_error_of(cs_res),
+            error=_error_of(gc_res),
         )
 
     # 5 — get_paper on top-2 seeds (synthesis material; full abstracts).

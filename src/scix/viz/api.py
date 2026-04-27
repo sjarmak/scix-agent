@@ -518,14 +518,23 @@ def demo_survey(payload: DemoSearchRequest) -> dict:
     t_start = time.monotonic()
     steps: list[dict] = []
 
-    # 1 — seed search.
-    search_args = {"query": query, "mode": "keyword", "limit": payload.top_n}
+    # 1 — seed search. Use hybrid + disambiguate=False so the pipeline gets
+    # real bibcodes regardless of whether the query mentions known entities;
+    # otherwise the seed search short-circuits to a {disambiguation:[...]}
+    # payload and every downstream step (citation_similarity, concept_search,
+    # get_paper, graph_context) cascades to zero results.
+    search_args = {
+        "query": query,
+        "mode": "hybrid",
+        "limit": payload.top_n,
+        "disambiguate": False,
+    }
     search_res, ms = _call_mcp("search", search_args)
     seed_bibs = _bibcodes_of(search_res)
     _record_step(
         steps,
         tool="search",
-        args={"query": query[:120], "mode": "keyword", "limit": payload.top_n},
+        args={"query": query[:120], "mode": "hybrid", "limit": payload.top_n},
         bibcodes=seed_bibs,
         latency_ms=ms,
         error=_error_of(search_res),
@@ -618,14 +627,23 @@ def demo_methods(payload: DemoSearchRequest) -> dict:
     t_start = time.monotonic()
     steps: list[dict] = []
 
-    # 1 — seed search.
-    search_args = {"query": query, "mode": "keyword", "limit": payload.top_n}
+    # 1 — seed search. Use hybrid + disambiguate=False so the pipeline gets
+    # real bibcodes regardless of whether the query mentions known entities;
+    # otherwise the seed search short-circuits to a {disambiguation:[...]}
+    # payload and the coupling/graph_context/concept_search steps cascade
+    # to zero results.
+    search_args = {
+        "query": query,
+        "mode": "hybrid",
+        "limit": payload.top_n,
+        "disambiguate": False,
+    }
     search_res, ms = _call_mcp("search", search_args)
     seed_bibs = _bibcodes_of(search_res)
     _record_step(
         steps,
         tool="search",
-        args={"query": query[:120], "mode": "keyword", "limit": payload.top_n},
+        args={"query": query[:120], "mode": "hybrid", "limit": payload.top_n},
         bibcodes=seed_bibs,
         latency_ms=ms,
         error=_error_of(search_res),

@@ -364,31 +364,40 @@
       })
       .then(function (payload) {
         var fetchMs = Math.round(performance.now() - started)
-        _updatePanel(payload.center, payload.counts || {
+        var counts = payload.counts || {
           direct_refs: (payload.direct_refs || []).length,
           direct_cites: (payload.direct_cites || []).length,
           second_hop: (payload.second_hop_sample || []).length,
-        })
+          edges: 0,
+        }
+        _updatePanel(payload.center, counts)
         _render(container, payload)
-        _updateStats(
-          (payload.counts
-            ? payload.counts.direct_refs +
-              ' refs · ' +
-              payload.counts.direct_cites +
-              ' cites · ' +
-              payload.counts.second_hop +
-              ' 2-hop · ' +
-              payload.counts.edges +
-              ' edges'
-            : 'loaded') +
-            ' · ' +
+        var emptyGraph =
+          counts.direct_refs === 0 &&
+          counts.direct_cites === 0 &&
+          counts.second_hop === 0
+        var statsText = emptyGraph
+          ? 'no citation edges in DB for ' +
+            bibcode +
+            ' (paper exists but has no refs/cites populated) · ' +
             fetchMs +
-            ' ms',
-        )
+            ' ms'
+          : counts.direct_refs +
+            ' refs · ' +
+            counts.direct_cites +
+            ' cites · ' +
+            counts.second_hop +
+            ' 2-hop · ' +
+            (counts.edges || 0) +
+            ' edges · ' +
+            fetchMs +
+            ' ms'
+        _updateStats(statsText)
         if (typeof onDone === 'function') onDone(null, payload)
       })
       .catch(function (err) {
-        _updateStats('error')
+        var msg = (err && err.message) ? err.message : 'fetch failed'
+        _updateStats(msg)
         if (typeof onDone === 'function') onDone(err)
       })
   }

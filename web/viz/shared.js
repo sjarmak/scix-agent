@@ -13,7 +13,10 @@
   // a `scix:resolution-change` CustomEvent on `window` whenever the choice
   // changes (viz pages subscribe to refetch data + re-render).
   var STORAGE_KEY = 'scix.viz.resolution'
-  var VALID_RES = ['coarse', 'medium', 'fine']
+  // 'fine' is temporarily disabled: data/viz/ has no umap.fine.json or
+  // community_labels.fine.json. Add it back here once the fine-resolution
+  // builds run successfully.
+  var VALID_RES = ['coarse', 'medium']
   var DEFAULT_RES = 'coarse'
   var RESOLUTION_LABELS = {
     coarse: 'coarse (~20)',
@@ -230,8 +233,12 @@
     home.style.cssText = 'color:#333;text-decoration:none;font-weight:600'
     nav.appendChild(home)
 
+    // V2 Sankey dropped from the nav: the data is structurally tautological
+    // (every link is same-community persistence by design in
+    // build_temporal_sankey_data.py), so the diagram conveys community size
+    // over time but no real flow story. V7 Streams shows the same signal
+    // more honestly. Tracked for rebuild in bead deferred-sankey-rebuild.
     var pages = [
-      { href: './sankey.html', label: 'V2 Sankey' },
       { href: './umap_browser.html', label: 'V3 UMAP' },
       { href: './agent_trace.html', label: 'V4 Trace' },
       { href: './heatmap.html', label: 'V5 Topology' },

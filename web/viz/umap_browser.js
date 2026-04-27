@@ -595,22 +595,26 @@
     let _currentZoom = initialViewState.zoom
     function _rebuildLabelsForZoom() {
       if (!labelLayer) return null
-      // At low zoom show only the top-8 centroids with bigger font; as the
-      // user zooms in, reveal more labels at a smaller font so text fits
-      // the denser regions without piling up.
+      // At default fits-all zoom, the 32M-point map is far too dense for
+      // big bold labels — they pile on top of each other. Show fewer
+      // smaller labels initially and progressively reveal more (smaller
+      // still) as the user zooms in.
       const zoom = _currentZoom
       const baseZoom = initialViewState.zoom
       const delta = zoom - baseZoom
       let count, size
-      if (delta < 0.5) {
-        count = Math.min(8, topCentroids.length)
-        size = 18
+      if (delta < 1) {
+        count = Math.min(4, topCentroids.length)
+        size = 13
       } else if (delta < 2) {
+        count = Math.min(8, allCentroids.length)
+        size = 12
+      } else if (delta < 3.5) {
         count = Math.min(12, allCentroids.length)
-        size = 16
+        size = 11
       } else {
         count = allCentroids.length
-        size = 14
+        size = 11
       }
       return _makeLabelLayer(allCentroids.slice(0, count), size)
     }

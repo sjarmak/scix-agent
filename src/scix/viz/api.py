@@ -311,6 +311,64 @@ def demo_search(payload: DemoSearchRequest) -> dict:
     }
 
 
+@router.post("/demo/lit_review")
+def demo_lit_review(payload: DemoSearchRequest) -> dict:
+    """Literature-review showcase using the canonical ``lit_review`` tool.
+
+    One MCP call vs the survey endpoint's manual 8-step pipeline. The
+    underlying ``scix.search.lit_review`` composes hybrid_search seeds +
+    citation expansion + community/venue/year aggregation + abstract
+    sampling in a single SQL round-trip, populates the session-state
+    working set, and emits one TraceEvent. lit_review calls
+    ``hybrid_search`` directly so the unscoped-broad-query guard does
+    not apply.
+    """
+    query = payload.query.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="empty query")
+
+    args = {
+        "query": query,
+        "top_seeds": payload.top_n,
+        "expand_per_seed": 10,
+        "sample_abstracts": 3,
+    }
+    result_json = mcp_server.call_tool("lit_review", args)
+    result = json.loads(result_json)
+    if "error" in result:
+        raise HTTPException(status_code=502, detail=result["error"])
+
+    papers = [p for p in (result.get("papers") or []) if isinstance(p, dict)]
+    bibcodes = tuple(str(p.get("bibcode")) for p in papers if p.get("bibcode"))
+    timing = result.get("timing_ms") or {}
+    if isinstance(timing, dict):
+        latency_ms = float(sum(v for v in timing.values() if isinstance(v, (int, float))))
+    else:
+        latency_ms = float(timing or 0.0)
+
+    metadata = result.get("metadata") or {}
+    return {
+        "query": query,
+        "scenario": "lit_review",
+        "latency_ms": round(latency_ms, 1),
+        "total": result.get("total", len(papers)),
+        "bibcodes": list(bibcodes),
+        "papers": [
+            {
+                "bibcode": p.get("bibcode"),
+                "title": p.get("title"),
+                "score": p.get("rrf_score") or p.get("score"),
+            }
+            for p in papers
+        ],
+        "working_set_size": metadata.get("working_set_size"),
+        "communities": metadata.get("communities"),
+        "top_venues": metadata.get("top_venues"),
+        "year_distribution": metadata.get("year_distribution"),
+    }
+
+
+
 # ---------------------------------------------------------------------------
 # Composite multi-step demo endpoints — each runs a real MCP tool sequence
 # and relies entirely on the instrumentation hook inside

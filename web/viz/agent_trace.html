@@ -607,10 +607,12 @@
             'Single hybrid search — INDUS dense embedding + BM25 lexical, fused via RRF. ' +
             'One trace event with the top-N result set.',
           lit_review:
-            'Canonical lit_review tool — runs hybrid_search for seeds, then walks the citation ' +
-            'graph (refs + cites per seed), aggregates communities + top venues + year ' +
-            'distribution + abstract samples, and populates the session working set in one call. ' +
-            'The single trace event represents the full composite.',
+            'Step-by-step research-copilot motion. Step 1: hybrid search for seed papers. ' +
+            'Steps 2-4: citation_traverse references for the top-3 seeds (1-hop ancestors). ' +
+            'Steps 5-7: citation_traverse citations for the top-3 seeds (1-hop descendants). ' +
+            'Step 8: concept_search on a title-derived term to surface community-aligned ' +
+            'neighbours. Steps 9-10: get_paper on the top-2 seeds for full abstracts. Each step ' +
+            'fires its own trace event so you see the full pipeline narrate, not one big hang.',
           disambig:
             'Entity resolution flow. Step 1-2: resolve the mention to a specific entity ' +
             '(e.g. "Kepler" → spacecraft vs astronomer vs exoplanet). Step 3: pull entity_context ' +

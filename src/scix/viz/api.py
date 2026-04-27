@@ -313,58 +313,107 @@ def demo_search(payload: DemoSearchRequest) -> dict:
 
 @router.post("/demo/lit_review")
 def demo_lit_review(payload: DemoSearchRequest) -> dict:
-    """Literature-review showcase using the canonical ``lit_review`` tool.
+    """Literature-review showcase, narrated step-by-step.
 
-    One MCP call vs the survey endpoint's manual 8-step pipeline. The
-    underlying ``scix.search.lit_review`` composes hybrid_search seeds +
-    citation expansion + community/venue/year aggregation + abstract
-    sampling in a single SQL round-trip, populates the session-state
-    working set, and emits one TraceEvent. lit_review calls
-    ``hybrid_search`` directly so the unscoped-broad-query guard does
-    not apply.
+    Mirrors the ``scix.search.lit_review`` composite tool's internal flow
+    using individual MCP tool calls so each step fires its own trace
+    event — instead of one ~13 s hang followed by a single ``lit_review``
+    chip. Pipeline:
+
+      1. ``search`` (hybrid)               — seed papers
+      2. ``citation_traverse`` × top-3     — refs (1-hop ancestors)
+      3. ``citation_traverse`` × top-3     — cites (1-hop descendants)
+      4. ``concept_search``                — community-aligned thematic neighbours
+      5. ``get_paper`` × top-2             — abstract sampling for synthesis
+
+    Each step publishes a TraceEvent via ``mcp_server.call_tool``'s
+    instrumentation hook, so the agent-trace overlay narrates the entire
+    research-copilot motion in real time.
     """
     query = payload.query.strip()
     if not query:
         raise HTTPException(status_code=400, detail="empty query")
 
-    args = {
+    t_start = time.monotonic()
+    steps: list[dict] = []
+
+    # 1 — seed search (hybrid + disambiguate=False + bypass guard).
+    search_args = {
         "query": query,
-        "top_seeds": payload.top_n,
-        "expand_per_seed": 10,
-        "sample_abstracts": 3,
+        "mode": "hybrid",
+        "limit": payload.top_n,
+        "disambiguate": False,
+        "bypass_unscoped_guard": True,
     }
-    result_json = mcp_server.call_tool("lit_review", args)
-    result = json.loads(result_json)
-    if "error" in result:
-        raise HTTPException(status_code=502, detail=result["error"])
+    search_res, ms = _call_mcp("search", search_args)
+    seed_bibs = _bibcodes_of(search_res)
+    _record_step(
+        steps,
+        tool="search",
+        args={"query": query[:120], "mode": "hybrid", "limit": payload.top_n},
+        bibcodes=seed_bibs,
+        latency_ms=ms,
+        error=_error_of(search_res),
+    )
 
-    papers = [p for p in (result.get("papers") or []) if isinstance(p, dict)]
-    bibcodes = tuple(str(p.get("bibcode")) for p in papers if p.get("bibcode"))
-    timing = result.get("timing_ms") or {}
-    if isinstance(timing, dict):
-        latency_ms = float(sum(v for v in timing.values() if isinstance(v, (int, float))))
-    else:
-        latency_ms = float(timing or 0.0)
+    # 2 — citation_traverse references on top-3 seeds (1-hop ancestors).
+    for bib in seed_bibs[:3]:
+        ref_args = {"bibcode": bib, "mode": "references", "limit": 10}
+        ref_res, ms = _call_mcp("citation_traverse", ref_args)
+        _record_step(
+            steps,
+            tool="citation_traverse",
+            args=ref_args,
+            bibcodes=_bibcodes_of(ref_res),
+            latency_ms=ms,
+            error=_error_of(ref_res),
+        )
 
-    metadata = result.get("metadata") or {}
+    # 3 — citation_traverse citations on top-3 seeds (1-hop descendants).
+    for bib in seed_bibs[:3]:
+        cite_args = {"bibcode": bib, "mode": "citations", "limit": 10}
+        cite_res, ms = _call_mcp("citation_traverse", cite_args)
+        _record_step(
+            steps,
+            tool="citation_traverse",
+            args=cite_args,
+            bibcodes=_bibcodes_of(cite_res),
+            latency_ms=ms,
+            error=_error_of(cite_res),
+        )
+
+    # 4 — concept_search on a title-derived term to surface communities.
+    for term in _concept_terms(_titles_of(search_res), fallback_query=query)[:1]:
+        cs_args = {"query": term, "limit": 5}
+        cs_res, ms = _call_mcp("concept_search", cs_args)
+        _record_step(
+            steps,
+            tool="concept_search",
+            args=cs_args,
+            bibcodes=_bibcodes_of(cs_res),
+            latency_ms=ms,
+            error=_error_of(cs_res),
+        )
+
+    # 5 — get_paper on top-2 seeds (synthesis material; full abstracts).
+    for bib in seed_bibs[:2]:
+        gp_args = {"bibcode": bib}
+        gp_res, ms = _call_mcp("get_paper", gp_args)
+        _record_step(
+            steps,
+            tool="get_paper",
+            args=gp_args,
+            bibcodes=_bibcodes_of(gp_res),
+            latency_ms=ms,
+            error=_error_of(gp_res),
+        )
+
     return {
         "query": query,
         "scenario": "lit_review",
-        "latency_ms": round(latency_ms, 1),
-        "total": result.get("total", len(papers)),
-        "bibcodes": list(bibcodes),
-        "papers": [
-            {
-                "bibcode": p.get("bibcode"),
-                "title": p.get("title"),
-                "score": p.get("rrf_score") or p.get("score"),
-            }
-            for p in papers
-        ],
-        "working_set_size": metadata.get("working_set_size"),
-        "communities": metadata.get("communities"),
-        "top_venues": metadata.get("top_venues"),
-        "year_distribution": metadata.get("year_distribution"),
+        "total_latency_ms": round((time.monotonic() - t_start) * 1000.0, 1),
+        "bibcodes": seed_bibs,
+        "steps": steps,
     }
 
 

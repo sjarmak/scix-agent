@@ -338,17 +338,18 @@ class TestFindSimilarByExamplesRetired:
 
 
 # ---------------------------------------------------------------------------
-# AC6: list_tools count is exactly 17 and contains the expected names
+# AC6: list_tools count is exactly 20 and contains the expected names
 # ---------------------------------------------------------------------------
 
 
 class TestListToolsCount:
-    def test_expected_tools_has_15_entries(self) -> None:
+    def test_expected_tools_has_20_entries(self) -> None:
         # Subsequent PRDs grew the list past the original 15: section_retrieval
         # (section-embeddings-mcp-consolidation) + 2 paper_claims retrieval
-        # tools (nanopub-claim-extraction). Final = 17.
-        assert len(EXPECTED_TOOLS) == 17
-        assert len(set(EXPECTED_TOOLS)) == 17  # no duplicates
+        # tools (nanopub-claim-extraction) + cited_by_intent (structural
+        # citation lookup) + synthesize_findings (bead cfh9). Final = 20.
+        assert len(EXPECTED_TOOLS) == 20
+        assert len(set(EXPECTED_TOOLS)) == 20  # no duplicates
 
     def test_expected_tools_contains_citation_traverse(self) -> None:
         assert "citation_traverse" in EXPECTED_TOOLS
@@ -364,8 +365,8 @@ class TestListToolsCount:
         # find_similar_by_examples is the retirement.
         assert "find_similar_by_examples" not in EXPECTED_TOOLS
 
-    def test_list_tools_returns_15_via_self_test(self) -> None:
-        """Round-trip through startup_self_test: registers exactly 17 tools."""
+    def test_list_tools_returns_20_via_self_test(self) -> None:
+        """Round-trip through startup_self_test: registers exactly 20 tools."""
         try:
             import mcp.types  # noqa: F401
         except ImportError:
@@ -376,7 +377,7 @@ class TestListToolsCount:
         with patch("scix.mcp_server._init_model_impl"):
             status = startup_self_test()
         assert status["ok"] is True
-        assert status["tool_count"] == 17
+        assert status["tool_count"] == 20
         assert "citation_traverse" in status["tool_names"]
         assert "citation_graph" not in status["tool_names"]
         assert "citation_chain" not in status["tool_names"]

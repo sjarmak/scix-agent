@@ -41,6 +41,10 @@ from scix.entity_resolver import EntityResolver
 from scix.jit.disambiguator import disambiguate_query
 from scix.search import CrossEncoderReranker
 from scix.session import SessionState, WorkingSetEntry
+from scix.synthesize import (
+    DEFAULT_SECTIONS as _SYNTH_DEFAULT_SECTIONS,
+    synthesize_findings as _synthesize_findings,
+)
 
 # Optional Qdrant-backed discovery tool. Feature-flagged via QDRANT_URL so the
 # default production deployment (Postgres-only) is unaffected.
@@ -170,6 +174,11 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "find_replications": float(os.environ.get("SCIX_TIMEOUT_FIND_REPLICATIONS", "15")),
     # Structural-citation lookup over citation_contexts.intent
     "cited_by_intent": float(os.environ.get("SCIX_TIMEOUT_CITED_BY_INTENT", "5")),
+    # Terminal synthesis tool — three short SELECTs against papers,
+    # citation_contexts, paper_metrics; cap matches find_gaps.
+    "synthesize_findings": float(
+        os.environ.get("SCIX_TIMEOUT_SYNTHESIZE_FINDINGS", "15")
+    ),
 }
 
 # Tools whose backing data is missing on this deployment. Default-hidden so
@@ -958,6 +967,8 @@ EXPECTED_TOOLS: tuple[str, ...] = (
     # Structural-citation lookup — exploits citation_contexts.intent
     # (method / background / result_comparison) classification.
     "cited_by_intent",
+    # Terminal step — bin a working set into a section outline (bead cfh9).
+    "synthesize_findings",
 )
 
 # Tools that appear only when an optional backend is wired up. The
@@ -2006,6 +2017,65 @@ def create_server(_run_self_test: bool = True):
                     "required": ["target_bibcode"],
                 },
             ),
+            # --- Terminal synthesis (bead cfh9) ---
+            Tool(
+                name="synthesize_findings",
+                description=(
+                    "Bin a working set of papers into a section outline ready "
+                    "for the agent to write up. Pure mechanical aggregation: "
+                    "each paper is assigned to a section first by modal "
+                    "citation_contexts.intent (method->methods, "
+                    "background->background, result_comparison->results), then "
+                    "by community membership (papers in the working set's "
+                    "modal community fall through to 'background', papers in "
+                    "minority communities to 'open_questions'). Returns a "
+                    "deterministic structure with cited_papers per section "
+                    "(bibcode, title, year, abstract_snippet, role), a "
+                    "theme_summary built from each section's most-common "
+                    "community labels (no LLM), unattributed_bibcodes for "
+                    "papers with no signal, and a coverage block reporting "
+                    "how many bibcodes had each kind of signal. Falls "
+                    "through to the session's focused papers when "
+                    "working_set_bibcodes is omitted (mirrors find_gaps). "
+                    "Use after lit_review or a retrieval+characterization "
+                    "loop when you want a scaffold to write the synthesis."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "working_set_bibcodes": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Bibcodes to synthesise. Omit to fall "
+                                "through to session-focused papers (capped "
+                                "at 200)."
+                            ),
+                        },
+                        "sections": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "default": list(_SYNTH_DEFAULT_SECTIONS),
+                            "description": (
+                                "Section names to emit, in order. Default: "
+                                "background, methods, results, "
+                                "open_questions. Custom names that don't "
+                                "appear in the intent map only receive "
+                                "papers via the community fall-through."
+                            ),
+                        },
+                        "max_papers_per_section": {
+                            "type": "integer",
+                            "default": 8,
+                            "description": (
+                                "Cap on per-section cited_papers length. "
+                                "Sorted by year desc, bibcode asc for "
+                                "deterministic output."
+                            ),
+                        },
+                    },
+                },
+            ),
             # --- PRD section-embeddings-mcp-consolidation: section_retrieval ---
             Tool(
                 name="section_retrieval",
@@ -2630,6 +2700,10 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
     # --- Structural-citation lookup (intent-aware) ---
     if name == "cited_by_intent":
         return _handle_cited_by_intent(conn, args)
+
+    # --- Terminal synthesis (bead cfh9) ---
+    if name == "synthesize_findings":
+        return _handle_synthesize_findings(conn, args)
 
     # --- PRD section-embeddings-mcp-consolidation: section_retrieval ---
     if name == "section_retrieval":
@@ -4257,6 +4331,58 @@ def _handle_cited_by_intent(conn: psycopg.Connection, args: dict[str, Any]) -> s
         indent=2,
         default=str,
     )
+
+
+# ---------------------------------------------------------------------------
+# synthesize_findings handler (bead cfh9)
+# ---------------------------------------------------------------------------
+
+
+def _handle_synthesize_findings(
+    conn: psycopg.Connection, args: dict[str, Any]
+) -> str:
+    """Bin a working set of papers into a section outline.
+
+    Mirrors the ``find_gaps`` fall-through pattern: explicit
+    ``working_set_bibcodes`` win; otherwise read from the session's
+    focused papers; otherwise from the working set. Pure mechanism —
+    the actual synthesis logic lives in :mod:`scix.synthesize` and is
+    LLM-free per ZFC.
+    """
+    raw_bibcodes = args.get("working_set_bibcodes")
+    if raw_bibcodes is None:
+        # Session fall-through (matches find_gaps).
+        bibcodes: list[str] = _session_state.get_focused_papers()
+        if not bibcodes:
+            bibcodes = [e.bibcode for e in _session_state.get_working_set()]
+    elif isinstance(raw_bibcodes, list):
+        bibcodes = [b for b in raw_bibcodes if isinstance(b, str)]
+    else:
+        return json.dumps(
+            {"error": "working_set_bibcodes must be a list of strings"},
+        )
+
+    sections = args.get("sections")
+    if sections is not None and not isinstance(sections, list):
+        return json.dumps({"error": "sections must be a list of strings"})
+
+    raw_cap = args.get("max_papers_per_section", 8)
+    try:
+        max_papers = int(raw_cap)
+    except (TypeError, ValueError):
+        return json.dumps(
+            {"error": "max_papers_per_section must be an integer"},
+        )
+    # Hard cap to keep payload sizes sane; matches find_gaps' 200 cap.
+    max_papers = max(0, min(max_papers, 200))
+
+    result = _synthesize_findings(
+        conn,
+        working_set_bibcodes=bibcodes,
+        sections=sections,
+        max_papers_per_section=max_papers,
+    )
+    return json.dumps(result.to_dict(), indent=2, default=str)
 
 
 # ---------------------------------------------------------------------------

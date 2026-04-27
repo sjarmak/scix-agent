@@ -304,14 +304,8 @@
             type="button"
             data-scenario="lit_review"
             data-q="galaxy clusters dark matter"
-            title="One-call lit_review tool — seeds + citation expansion + working set + community/venue/year aggregation"
+            title="Step-by-step research-copilot pipeline — search seeds, citation_traverse refs+cites, graph_context, get_paper"
           >Lit Review · galaxy clusters dark matter</button>
-          <button
-            type="button"
-            data-scenario="disambig"
-            data-q="Kepler"
-            title="Entity resolution flow — entity → entity_context → filtered search → graph_context"
-          >Disambig · Kepler</button>
         </div>
       </form>
       <div id="trace-layout">
@@ -590,15 +584,19 @@
         // and Methods endpoints still exist but aren't surfaced as pills:
         // Lit Review supersedes Survey (canonical lit_review tool); Methods
         // hits slow paths on common queries and isn't ready to demo.
+        // Disambig pill removed: entity(action='resolve') currently returns
+        // 0 candidates for common mentions like 'Kepler', and entity(papers)
+        // times out at the 10 s budget on popular entities. Until entity
+        // resolution + papers query latency are fixed, the pill produced
+        // theatre rather than real disambiguation. The /demo/disambig
+        // endpoint still exists for direct API callers.
         const SCENARIO_LABELS = {
           search: 'Search',
           lit_review: 'Lit Review',
-          disambig: 'Disambig',
         }
         const SCENARIO_ENDPOINTS = {
           search: '/viz/api/demo/search',
           lit_review: '/viz/api/demo/lit_review',
-          disambig: '/viz/api/demo/disambig',
         }
         // What each scenario does, so the trace chips have context. Shown
         // above the trace panel while the scenario is in flight.

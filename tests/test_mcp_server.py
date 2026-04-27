@@ -423,6 +423,57 @@ class TestGetPaper:
 
 
 # ---------------------------------------------------------------------------
+# nn03: lit_review composite tool dispatch
+# ---------------------------------------------------------------------------
+
+
+class TestLitReview:
+    @patch("scix.search.lit_review")
+    def test_dispatches_with_session_state(self, mock_fn: MagicMock) -> None:
+        """The singleton session_state must be threaded through so the
+        working-set side effect propagates to subsequent tool calls."""
+        from scix.search import SearchResult
+
+        mock_fn.return_value = SearchResult(
+            papers=[{"bibcode": "2024X"}],
+            total=1,
+            timing_ms={"query_ms": 1.0},
+            metadata={
+                "working_set_size": 1,
+                "working_set_bibcodes": ["2024X"],
+                "communities": [],
+                "top_venues": [],
+                "year_distribution": [],
+                "citation_contexts_coverage": {
+                    "covered_papers": 0,
+                    "total_papers": 1,
+                    "coverage_pct": 0.0,
+                    "context_rows": 0,
+                    "note": "",
+                },
+            },
+        )
+        conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(
+                conn,
+                "lit_review",
+                {"query": "granular mechanics", "year_max": 2020, "top_seeds": 10},
+            )
+        )
+        assert result["total"] == 1
+        _, kwargs = mock_fn.call_args
+        assert kwargs.get("session_state") is _session_state
+        assert kwargs.get("year_max") == 2020
+        assert kwargs.get("top_seeds") == 10
+
+    def test_rejects_empty_query(self) -> None:
+        conn = MagicMock()
+        result = json.loads(_dispatch_tool(conn, "lit_review", {"query": ""}))
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
 # bqva: precision_estimate + precision_band wiring on get_paper(include_entities)
 # ---------------------------------------------------------------------------
 

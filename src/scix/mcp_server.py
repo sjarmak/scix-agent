@@ -142,6 +142,7 @@ def _get_conn() -> Generator[psycopg.Connection, None, None]:
 # Per-tool timeout in seconds (configurable via env vars)
 TOOL_TIMEOUTS: dict[str, float] = {
     "search": float(os.environ.get("SCIX_TIMEOUT_SEARCH", "30")),
+    "lit_review": float(os.environ.get("SCIX_TIMEOUT_LIT_REVIEW", "30")),
     "concept_search": float(os.environ.get("SCIX_TIMEOUT_CONCEPT", "15")),
     "get_paper": float(os.environ.get("SCIX_TIMEOUT_PAPER", "5")),
     "read_paper": float(os.environ.get("SCIX_TIMEOUT_READ_PAPER", "10")),
@@ -933,6 +934,7 @@ def _rrf_fuse(
 
 EXPECTED_TOOLS: tuple[str, ...] = (
     "search",
+    "lit_review",
     "concept_search",
     "get_paper",
     "read_paper",
@@ -1261,6 +1263,65 @@ def create_server(_run_self_test: bool = True):
                                 "code changes. Setting use_rerank=false bypasses reranking "
                                 "even when a model is configured."
                             ),
+                        },
+                    },
+                    "required": ["query"],
+                },
+            ),
+            # --- lit_review (composite — bead nn03) ---
+            Tool(
+                name="lit_review",
+                description=(
+                    "Open a literature-review session in one call. Composes "
+                    "hybrid_search for seed papers, citation expansion (refs + "
+                    "forward citations on the top-K seeds), community decomposition "
+                    "(semantic-medium clusters with labels), top-venue and "
+                    "year-distribution facets over the resulting working set, and "
+                    "full abstracts on the highest-ranked seeds. Side effect: the "
+                    "working set is populated in session state so follow-up tools "
+                    "(find_gaps, etc.) operate on it without re-listing bibcodes. "
+                    "Use this as the FIRST call when the user asks for a literature "
+                    "review or topic survey; use plain search instead when you only "
+                    "need a flat ranked list."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Free-text research question or topic.",
+                        },
+                        "year_min": {
+                            "type": "integer",
+                            "description": "Earliest publication year to include in seed retrieval (inclusive).",
+                        },
+                        "year_max": {
+                            "type": "integer",
+                            "description": "Latest publication year to include (inclusive). Filters seeds AND citation-expanded papers.",
+                        },
+                        "top_seeds": {
+                            "type": "integer",
+                            "default": 20,
+                            "description": "Hybrid-search seed count (1..100).",
+                        },
+                        "expansion_seeds": {
+                            "type": "integer",
+                            "default": 5,
+                            "description": "How many top seeds to expand via refs+citations (0..top_seeds).",
+                        },
+                        "expand_per_seed": {
+                            "type": "integer",
+                            "default": 20,
+                            "description": "Per-seed reference + citation fetch limit (0..50).",
+                        },
+                        "sample_abstracts": {
+                            "type": "integer",
+                            "default": 5,
+                            "description": "Number of seeds to attach full abstracts to in the response (0..top_seeds).",
+                        },
+                        "discipline": {
+                            "type": "string",
+                            "description": "Optional discipline hint (currently informational, surfaced in metadata).",
                         },
                     },
                     "required": ["query"],
@@ -2461,6 +2522,10 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
     if name == "search":
         return _handle_search(conn, args)
 
+    # --- lit_review (composite — bead nn03) ---
+    if name == "lit_review":
+        return _handle_lit_review(conn, args)
+
     # --- concept_search (multi-vocabulary router, dbl.7) ---
     if name == "concept_search":
         result = search.concept_search(
@@ -2775,6 +2840,41 @@ def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         filters=filters,
         top_n=limit,
         reranker=reranker,
+    )
+    return _result_to_json(result)
+
+
+def _handle_lit_review(conn: psycopg.Connection, args: dict[str, Any]) -> str:
+    """Composite tool: open a literature-review session in one call.
+
+    Wraps ``scix.search.lit_review`` and threads the session-state
+    singleton through so the working set is populated for follow-up
+    tool calls. See bead ``scix_experiments-nn03``.
+    """
+    query = args.get("query", "")
+    if not isinstance(query, str) or not query.strip():
+        return json.dumps({"error": "query must be a non-empty string"})
+
+    def _coerce_int(name: str, default: int | None) -> int | None:
+        v = args.get(name, default)
+        if v is None:
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return default
+
+    result = search.lit_review(
+        conn,
+        query,
+        year_min=_coerce_int("year_min", None),
+        year_max=_coerce_int("year_max", None),
+        top_seeds=_coerce_int("top_seeds", 20) or 20,
+        expand_per_seed=_coerce_int("expand_per_seed", 20) or 20,
+        expansion_seeds=_coerce_int("expansion_seeds", 5) or 5,
+        sample_abstracts=_coerce_int("sample_abstracts", 5) or 5,
+        discipline=args.get("discipline"),
+        session_state=_session_state,
     )
     return _result_to_json(result)
 

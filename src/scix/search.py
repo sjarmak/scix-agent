@@ -1706,6 +1706,261 @@ def facet_counts(
 
 
 # ---------------------------------------------------------------------------
+# Composite lit-review tool
+# ---------------------------------------------------------------------------
+
+
+def lit_review(
+    conn: psycopg.Connection,
+    query: str,
+    *,
+    year_min: int | None = None,
+    year_max: int | None = None,
+    top_seeds: int = 20,
+    expand_per_seed: int = 20,
+    expansion_seeds: int = 5,
+    sample_abstracts: int = 5,
+    discipline: str | None = None,
+    session_state: Any = None,
+) -> SearchResult:
+    """One-call composite for opening a literature-review session.
+
+    Composes the 4-5-call sequence every research-copilot agent makes:
+
+    1. ``hybrid_search`` for ``top_seeds`` seed papers (year-filtered).
+    2. For each of the top ``expansion_seeds`` seeds, expand via
+       ``get_references`` + ``get_citations`` (``expand_per_seed`` each
+       direction). Year-filter the expansion.
+    3. Aggregate seeds + expansion into a working set; populate
+       ``_session_state`` so follow-up tool calls can read the set
+       without re-listing bibcodes.
+    4. Compute community distribution (``community_semantic_medium``
+       with labels), top venues, and year distribution over the working
+       set in a single SQL round-trip.
+    5. Pull full abstracts for ``sample_abstracts`` of the highest-ranked
+       seeds so the agent has synthesis material in the same response.
+    6. Surface ``citation_contexts`` coverage on the working set so
+       downstream calls to ``claim_blame`` / ``find_replications`` know
+       whether to expect substantive results.
+
+    Returns a SearchResult whose ``papers`` carry the seed list (with
+    full abstracts on the first ``sample_abstracts`` rows) and whose
+    ``metadata`` carries the structural characterization. The full
+    working set is in ``metadata['working_set_bibcodes']``.
+
+    ``session_state`` is the optional SessionState singleton from
+    mcp_server. When provided, every working-set bibcode is added
+    via ``add_to_working_set(source_tool='lit_review', ...)`` so
+    follow-up tool calls in the same session see the working set
+    without re-listing bibcodes. Pure search.py (no MCP) callers can
+    omit it.
+    """
+    t0 = time.perf_counter()
+
+    query = (query or "").strip()
+    if not query:
+        return SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"query_ms": _elapsed_ms(t0)},
+            metadata={"error": "query must be a non-empty string"},
+        )
+
+    top_seeds = max(1, min(top_seeds, 100))
+    expand_per_seed = max(0, min(expand_per_seed, 50))
+    expansion_seeds = max(0, min(expansion_seeds, top_seeds))
+    sample_abstracts = max(0, min(sample_abstracts, top_seeds))
+
+    # ---- Step 1: seed retrieval --------------------------------------------
+    filters = SearchFilters(year_min=year_min, year_max=year_max)
+    seed_result = hybrid_search(conn, query, filters=filters, top_n=top_seeds)
+    seeds = list(seed_result.papers)
+    seed_bibs = [p["bibcode"] for p in seeds if p.get("bibcode")]
+
+    # ---- Step 2: citation expansion ----------------------------------------
+    expanded: set[str] = set()
+    if expansion_seeds and expand_per_seed:
+        for bib in seed_bibs[:expansion_seeds]:
+            for fn in (get_references, get_citations):
+                try:
+                    cit = fn(conn, bib, limit=expand_per_seed)
+                except Exception:
+                    # Skip missing / error rows; lit_review is best-effort.
+                    continue
+                for p in cit.papers:
+                    b = p.get("bibcode")
+                    y = p.get("year")
+                    if not b or b in seed_bibs:
+                        continue
+                    if year_min is not None and (y is None or y < year_min):
+                        continue
+                    if year_max is not None and (y is None or y > year_max):
+                        continue
+                    expanded.add(b)
+
+    working_set = list(dict.fromkeys(seed_bibs + sorted(expanded)))
+
+    # ---- Step 3: side-effect — populate session working set ----------------
+    if session_state is not None:
+        for bib in working_set:
+            if not session_state.is_in_working_set(bib):
+                session_state.add_to_working_set(
+                    bibcode=bib,
+                    source_tool="lit_review",
+                    source_context=query[:120],
+                )
+
+    # ---- Step 4: structural characterization (single round-trip) -----------
+    communities: list[dict[str, Any]] = []
+    top_venues: list[dict[str, Any]] = []
+    year_distribution: list[dict[str, Any]] = []
+    if working_set:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT pm.community_semantic_medium AS cid,
+                       (SELECT label FROM communities c
+                        WHERE c.signal = 'semantic'
+                          AND c.resolution = 'medium'
+                          AND c.community_id = pm.community_semantic_medium) AS label,
+                       (SELECT top_keywords FROM communities c
+                        WHERE c.signal = 'semantic'
+                          AND c.resolution = 'medium'
+                          AND c.community_id = pm.community_semantic_medium) AS top_keywords,
+                       count(*) AS n
+                FROM paper_metrics pm
+                WHERE pm.bibcode = ANY(%s)
+                  AND pm.community_semantic_medium IS NOT NULL
+                GROUP BY pm.community_semantic_medium
+                ORDER BY n DESC
+                LIMIT 8
+                """,
+                (working_set,),
+            )
+            communities = [
+                {
+                    "community_id": cid,
+                    "label": label,
+                    "top_keywords": list(kws) if kws else [],
+                    "count": n,
+                }
+                for cid, label, kws, n in cur.fetchall()
+            ]
+
+            cur.execute(
+                """
+                SELECT b AS bibstem, count(*) AS n
+                FROM papers, unnest(bibstem) AS b
+                WHERE bibcode = ANY(%s)
+                GROUP BY b
+                ORDER BY n DESC
+                LIMIT 8
+                """,
+                (working_set,),
+            )
+            top_venues = [{"bibstem": b, "count": n} for b, n in cur.fetchall()]
+
+            cur.execute(
+                """
+                SELECT year, count(*) AS n
+                FROM papers
+                WHERE bibcode = ANY(%s) AND year IS NOT NULL
+                GROUP BY year
+                ORDER BY year
+                """,
+                (working_set,),
+            )
+            year_distribution = [{"year": y, "count": n} for y, n in cur.fetchall()]
+
+    # ---- Step 5: full abstracts for the top sample_abstracts seeds ---------
+    if sample_abstracts and seed_bibs:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT bibcode, abstract
+                FROM papers
+                WHERE bibcode = ANY(%s)
+                """,
+                (seed_bibs[:sample_abstracts],),
+            )
+            ab_by_bib = {row["bibcode"]: row["abstract"] for row in cur.fetchall()}
+        for p in seeds[:sample_abstracts]:
+            ab = ab_by_bib.get(p.get("bibcode"))
+            if ab:
+                p["abstract"] = ab
+
+    # ---- Step 6: citation_contexts coverage --------------------------------
+    covered = 0
+    coverage_pct = 0.0
+    contexts_rows = 0
+    if working_set:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT count(*) FROM (
+                    SELECT DISTINCT b FROM (
+                        SELECT source_bibcode AS b FROM citation_contexts WHERE source_bibcode = ANY(%s)
+                        UNION
+                        SELECT target_bibcode AS b FROM citation_contexts WHERE target_bibcode = ANY(%s)
+                    ) t
+                ) tt
+                """,
+                (working_set, working_set),
+            )
+            covered = cur.fetchone()[0]
+            coverage_pct = (covered / len(working_set)) * 100.0
+            cur.execute(
+                """
+                SELECT count(*) FROM citation_contexts
+                WHERE source_bibcode = ANY(%s) OR target_bibcode = ANY(%s)
+                """,
+                (working_set, working_set),
+            )
+            contexts_rows = cur.fetchone()[0]
+
+    if working_set:
+        coverage_note = (
+            f"citation_contexts touches {covered}/{len(working_set)} "
+            f"working-set papers ({coverage_pct:.1f}%); "
+        )
+        if coverage_pct < 5.0:
+            coverage_note += (
+                "claim_blame / find_replications will return mostly empty for this "
+                "topic — the substrate covers ~0.27% of edges corpus-wide (bead 79n). "
+            )
+    else:
+        coverage_note = ""
+    coverage_note += "See docs/full_text_coverage_analysis.md."
+
+    return SearchResult(
+        papers=seeds,
+        total=len(seeds),
+        timing_ms={
+            "query_ms": _elapsed_ms(t0),
+            "seed_query_ms": seed_result.timing_ms.get("query_ms", 0.0),
+        },
+        metadata={
+            "query": query,
+            "year_min": year_min,
+            "year_max": year_max,
+            "discipline": discipline,
+            "working_set_size": len(working_set),
+            "working_set_bibcodes": working_set,
+            "communities": communities,
+            "top_venues": top_venues,
+            "year_distribution": year_distribution,
+            "citation_contexts_coverage": {
+                "covered_papers": covered if working_set else 0,
+                "total_papers": len(working_set),
+                "coverage_pct": round(coverage_pct, 2),
+                "context_rows": contexts_rows,
+                "note": coverage_note,
+            },
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Graph metrics queries
 # ---------------------------------------------------------------------------
 

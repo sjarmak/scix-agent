@@ -92,7 +92,8 @@ class SynthesisResult:
 
     sections: list[SectionBucket]
     unattributed_bibcodes: list[str]
-    coverage: dict[str, int]
+    # int counters plus dict[str, int] for fallback_pulled_per_section.
+    coverage: dict[str, Any]
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -160,7 +161,9 @@ def synthesize_findings(
         the community fall-through.
     max_papers_per_section:
         Cap on per-section ``cited_papers`` length (deterministic order:
-        first by year desc, then bibcode asc).
+        first by year desc, then bibcode asc). The Tier-3 citation-count
+        fallback is capped at ``max_papers_per_section // 2``, so values
+        of 1 disable the fallback entirely (floor division yields 0).
     section_overrides:
         Optional ``{bibcode: section_name}`` mapping that pins specific
         papers to specific sections, overriding the intent-modal and
@@ -308,7 +311,7 @@ def _fetch_paper_metadata(
         for row in cur.fetchall():
             bibcode = row[0]
             abstract = row[3] or ""
-            citation_count = int(row[4]) if len(row) > 4 and row[4] is not None else 0
+            citation_count = int(row[4])  # COALESCE in SQL guarantees non-NULL
             out[bibcode] = {
                 "bibcode": bibcode,
                 "title": row[1],
@@ -628,6 +631,7 @@ def _apply_citation_count_fallback(
         key=lambda b: (-int(paper_meta.get(b, {}).get("citation_count", 0) or 0), b),
     )
 
+    pulled_set: set[str] = set()
     for section_name in sections:
         if buckets.get(section_name):
             continue  # tier 0/1/2 already populated this section
@@ -637,9 +641,14 @@ def _apply_citation_count_fallback(
         for bibcode in take:
             buckets[section_name].append(bibcode)
             signal_used[bibcode] = "citation_count_fallback"
-            unattributed.remove(bibcode)
+            pulled_set.add(bibcode)
         remaining = remaining[cap:]
         pulled_per_section[section_name] = len(take)
+
+    # Single O(n) rebuild of `unattributed` instead of N x O(n) `remove()`
+    # calls inside the loop above.
+    if pulled_set:
+        unattributed[:] = [b for b in unattributed if b not in pulled_set]
 
     return pulled_per_section
 

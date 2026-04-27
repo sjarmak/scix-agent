@@ -700,7 +700,9 @@ class TestEmptySectionFallback:
             ("2024P00", "method", 1),
         ]
         # P10..P19 attributed via community to 'background' (modal community).
-        # P20..P29 are entirely unattributed (eligible for Tier 3 fallback).
+        # P00 (excluding the intent-pinned P00) and P01..P09 + P20..P29 are
+        # all unattributed and eligible for Tier 3 fallback. P01 (cit=99)
+        # is the highest-citation eligible candidate.
         community_rows = [(f"2024P{i:02d}", 1, "Modal") for i in range(10, 20)]
 
         conn = _mock_conn([papers_rows, intent_rows, community_rows])
@@ -746,12 +748,14 @@ class TestEmptySectionFallback:
         )
 
         # All 4 sections were empty after primary bucketing, so all 4 should
-        # have fallback pulls — each capped at 8 // 2 == 4.
+        # have fallback pulls — each capped at exactly 8 // 2 == 4 since the
+        # pool (20) >= sum-of-caps (16). Asserting equality (not <=) catches
+        # both over-pull and under-pull regressions.
         for section in result.sections:
             fallback_rows = [
                 p for p in section.cited_papers if p.get("signal_used") == "citation_count_fallback"
             ]
-            assert len(fallback_rows) <= 8 // 2
+            assert len(fallback_rows) == 8 // 2
 
     def test_fallback_capped_at_half_for_odd_max(self) -> None:
         """Floor division on odd cap: 7 // 2 == 3."""
@@ -767,11 +771,12 @@ class TestEmptySectionFallback:
             sections=list(DEFAULT_SECTIONS),
             max_papers_per_section=7,
         )
+        # Pool (20) >= sum-of-caps (4 sections * 3 each = 12); exact pulls.
         for section in result.sections:
             fallback_rows = [
                 p for p in section.cited_papers if p.get("signal_used") == "citation_count_fallback"
             ]
-            assert len(fallback_rows) <= 7 // 2  # 3
+            assert len(fallback_rows) == 7 // 2  # 3
 
     def test_fallback_excludes_already_attributed(self) -> None:
         """AC3: papers attributed via intent or community must NOT be
@@ -889,3 +894,66 @@ class TestEmptySectionFallback:
         )
         per_section = result.coverage["fallback_pulled_per_section"]
         assert all(v == 0 for v in per_section.values())
+
+    def test_fallback_cap_one_pulls_exactly_one(self) -> None:
+        """Boundary: max_papers_per_section=2 -> cap=1 -> exactly one paper
+        per empty section. Smallest non-zero cap; the most likely place for
+        an off-by-one regression in remaining[:cap]."""
+        bibcodes = [f"2024X{i:02d}" for i in range(20)]
+        papers_rows = [
+            (b, f"T{b}", 2024, f"a{b}", 100 - i) for i, b in enumerate(bibcodes)
+        ]
+        intent_rows: list[tuple] = []
+        community_rows: list[tuple] = []
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=2,
+        )
+        # All 4 sections were empty after primary bucketing; pool (20) >>
+        # sum-of-caps (4); each section receives exactly 1.
+        for section in result.sections:
+            fallback_rows = [
+                p
+                for p in section.cited_papers
+                if p.get("signal_used") == "citation_count_fallback"
+            ]
+            assert len(fallback_rows) == 1
+
+    def test_coverage_invariant_assigned_equals_sum_of_tiers(self) -> None:
+        """Coverage invariant: assigned_bibcodes equals the sum of
+        intent + community + override + fallback_pulled. Catches future
+        accounting drift where a tier increments its counter but forgets to
+        remove the bibcode from `unattributed` (or vice versa)."""
+        # Mix of all four tiers in one working set.
+        bibcodes = [f"2024Y{i:02d}" for i in range(10)]
+        papers_rows = [
+            (b, f"T{b}", 2024, f"a{b}", 100 - i) for i, b in enumerate(bibcodes)
+        ]
+        # Y00 -> intent (methods).
+        intent_rows = [("2024Y00", "method", 1)]
+        # Y01-Y04 -> community (modal community 1 -> background).
+        community_rows = [(f"2024Y{i:02d}", 1, "Modal") for i in range(1, 5)]
+        # Y05 -> pinned to 'open_questions' via override.
+        # Y06-Y09 -> unattributed; eligible for fallback to fill 'results'.
+        overrides = {"2024Y05": "open_questions"}
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=8,
+            section_overrides=overrides,
+        )
+        c = result.coverage
+        assert (
+            c["intent_assigned_bibcodes"]
+            + c["community_assigned_bibcodes"]
+            + c["override_assigned_bibcodes"]
+            + c["fallback_pulled_bibcodes"]
+            == c["assigned_bibcodes"]
+        )

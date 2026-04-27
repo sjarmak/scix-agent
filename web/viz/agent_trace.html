@@ -530,8 +530,14 @@
               'renderUMAP is not defined — umap_browser.js failed to load.'
             return
           }
-          // Tear down any previous deck.gl instance before mounting a new
-          // one so resolution switches don't leak WebGL contexts.
+          // Capture the previous instance's view state before teardown so
+          // the user's pan/zoom survives a resolution toggle. UMAP
+          // coordinates are projection-stable across coarse/medium so the
+          // saved camera lands on the same region after the swap.
+          const savedViewState =
+            umapInstance && umapInstance._lastViewState
+              ? umapInstance._lastViewState
+              : null
           if (umapInstance && typeof umapInstance.finalize === 'function') {
             try { umapInstance.finalize() } catch (_e) { /* best-effort */ }
           }
@@ -541,7 +547,9 @@
           tt.setAttribute('role', 'tooltip')
           root.appendChild(tt)
           try {
-            umapInstance = window.renderUMAP(data, root)
+            umapInstance = window.renderUMAP(data, root, {
+              initialViewState: savedViewState,
+            })
             window.umapInstance = umapInstance
             status.textContent = ''
           } catch (err) {

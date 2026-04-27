@@ -53,6 +53,7 @@ except ImportError:  # pragma: no cover — qdrant-client not installed
 def _qdrant_enabled() -> bool:
     return _qdrant_tools is not None and _qdrant_tools.is_enabled()
 
+
 # Optional import — viz/trace_stream is only needed when the viz extras are
 # installed. When absent we fall back to a no-op, and the emission hook in
 # :func:`call_tool` silently skips publishing. This keeps the MCP server
@@ -451,7 +452,9 @@ def _result_to_json(result: Any) -> str:
 # Default policy is always-on per the PRD's Open Question default decision.
 
 #: Repo-relative path to the coverage-bias report produced by M1.
-_COVERAGE_BIAS_PATH: Path = Path(__file__).resolve().parents[2] / "results" / "full_text_coverage_bias.json"
+_COVERAGE_BIAS_PATH: Path = (
+    Path(__file__).resolve().parents[2] / "results" / "full_text_coverage_bias.json"
+)
 
 #: Documentation path included verbatim in every coverage_note (so the link
 #: survives even when the JSON file is unreadable).
@@ -1051,9 +1054,7 @@ def startup_self_test(server: Any = None) -> dict[str, Any]:
     tool_count = len(tools)
     expected_set = _expected_tool_set()
     if tool_count != len(expected_set):
-        errors.append(
-            f"expected exactly {len(expected_set)} tools, got {tool_count}"
-        )
+        errors.append(f"expected exactly {len(expected_set)} tools, got {tool_count}")
 
     seen: set[str] = set()
 
@@ -1110,9 +1111,7 @@ def startup_self_test(server: Any = None) -> dict[str, Any]:
         smoke_errors = _smoke_call_new_tools()
         if smoke_errors:
             status["smoke_errors"] = smoke_errors
-            logger.critical(
-                "startup_self_test FAILED smoke calls: %s", smoke_errors
-            )
+            logger.critical("startup_self_test FAILED smoke calls: %s", smoke_errors)
             raise RuntimeError(f"startup_self_test smoke calls failed: {smoke_errors}")
 
     logger.info(
@@ -1480,11 +1479,14 @@ def create_server(_run_self_test: bool = True):
                     "Traverse the citation graph. mode='graph' walks the neighborhood of a "
                     "single paper (citing or cited papers); mode='chain' traces the shortest "
                     "citation path between a source and a target paper. mode='graph' "
-                    "(default) requires bibcode and supports direction (forward=citing, "
-                    "backward=references, both=all) and include_context. mode='chain' "
-                    "requires source_bibcode and target_bibcode and accepts max_depth. "
-                    "Use citation_similarity instead when you want papers related via shared "
-                    "citation patterns rather than direct citation links."
+                    "(default) requires bibcode OR bibcodes=[...] for working-set "
+                    "expansion (multi-paper neighborhoods returned under by_bibcode); when "
+                    "neither is given, falls through to the session's focused papers. "
+                    "Supports direction (forward=citing, backward=references, both=all) "
+                    "and include_context. mode='chain' requires source_bibcode and "
+                    "target_bibcode and accepts max_depth (working-set scoping does not "
+                    "apply). Use citation_similarity instead when you want papers related "
+                    "via shared citation patterns rather than direct citation links."
                 ),
                 inputSchema={
                     "type": "object",
@@ -1500,7 +1502,22 @@ def create_server(_run_self_test: bool = True):
                         },
                         "bibcode": {
                             "type": "string",
-                            "description": "ADS bibcode (required when mode='graph')",
+                            "description": (
+                                "ADS bibcode (used when mode='graph' and "
+                                "bibcodes is not provided)"
+                            ),
+                        },
+                        "bibcodes": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Optional list of bibcodes for working-set "
+                                "expansion (mode='graph' only). When provided, "
+                                "the neighborhood walk runs per source bibcode "
+                                "and results are returned under by_bibcode. "
+                                "When omitted, falls through to the session's "
+                                "focused papers (papers inspected via get_paper)."
+                            ),
                         },
                         "direction": {
                             "type": "string",
@@ -1521,23 +1538,19 @@ def create_server(_run_self_test: bool = True):
                         "source_bibcode": {
                             "type": "string",
                             "description": (
-                                "Starting paper of the chain "
-                                "(required when mode='chain')"
+                                "Starting paper of the chain " "(required when mode='chain')"
                             ),
                         },
                         "target_bibcode": {
                             "type": "string",
                             "description": (
-                                "Destination paper of the chain "
-                                "(required when mode='chain')"
+                                "Destination paper of the chain " "(required when mode='chain')"
                             ),
                         },
                         "max_depth": {
                             "type": "integer",
                             "default": 5,
-                            "description": (
-                                "Maximum number of hops 1..5 (mode='chain' only)"
-                            ),
+                            "description": ("Maximum number of hops 1..5 (mode='chain' only)"),
                         },
                         "limit": {
                             "type": "integer",
@@ -1613,9 +1626,7 @@ def create_server(_run_self_test: bool = True):
                         },
                         "entity_id": {
                             "type": "integer",
-                            "description": (
-                                "Entity id (from resolve). Used by action='papers'."
-                            ),
+                            "description": ("Entity id (from resolve). Used by action='papers'."),
                         },
                         "entity_type": {
                             "type": "string",
@@ -1810,25 +1821,39 @@ def create_server(_run_self_test: bool = True):
                 name="temporal_evolution",
                 description=(
                     "Show how activity around a topic or paper evolves over time. Given a "
-                    "bibcode, returns citations-per-year for that paper. Given search "
-                    "terms, returns publications-per-year plus per-year 'buckets' with "
-                    "top anchor papers (ranked by PageRank) and dominant communities, so "
-                    "a single call yields a usable temporal narrative instead of raw "
-                    "counts. Useful for tracking rising or fading topics and paper impact "
-                    "trajectories. Use facet_counts instead when you want a single "
-                    "distribution by year without a topic or bibcode anchor."
+                    "single bibcode, returns citations-per-year for that paper. Given "
+                    "bibcodes=[...] (or with the working set populated via prior "
+                    "get_paper calls), returns aggregate citations-per-year across the "
+                    "set. Given search terms, returns publications-per-year plus per-year "
+                    "'buckets' with top anchor papers (ranked by PageRank) and dominant "
+                    "communities, so a single call yields a usable temporal narrative "
+                    "instead of raw counts. Useful for tracking rising or fading topics "
+                    "and paper impact trajectories. Use facet_counts instead when you "
+                    "want a single distribution by year without a topic or bibcode anchor."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "bibcode_or_query": {
                             "type": "string",
-                            "description": "A bibcode (citation trends) or search terms (pub volume)",
+                            "description": (
+                                "A bibcode (citation trends) or search terms "
+                                "(pub volume). Optional when bibcodes=[...] or "
+                                "the session has focused papers."
+                            ),
+                        },
+                        "bibcodes": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Optional list of bibcodes for working-set "
+                                "aggregate citations-per-year. When omitted, "
+                                "falls through to the session's focused papers."
+                            ),
                         },
                         "year_start": {"type": "integer"},
                         "year_end": {"type": "integer"},
                     },
-                    "required": ["bibcode_or_query"],
                 },
             ),
             # --- facet_counts (unchanged) ---
@@ -1838,7 +1863,10 @@ def create_server(_run_self_test: bool = True):
                     "Return a distribution of paper counts grouped by a single metadata "
                     "field: year, doctype, arxiv_class, database, bibgroup, or property. "
                     "Accepts the same filters as search to scope the distribution to a "
-                    "subset. Useful for dataset overviews and filter discovery. Use "
+                    "subset. Pass bibcodes=[...] (or rely on the session's focused "
+                    "papers) to scope the distribution to a working set — useful for "
+                    "characterizing the year/doctype profile of a curated paper set. "
+                    "Useful for dataset overviews and filter discovery. Use "
                     "temporal_evolution instead when you need year-over-year trends tied "
                     "to a specific query or bibcode rather than a flat distribution."
                 ),
@@ -1857,6 +1885,16 @@ def create_server(_run_self_test: bool = True):
                             ],
                         },
                         "filters": _FILTERS_SCHEMA,
+                        "bibcodes": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Optional list of bibcodes to scope the facet "
+                                "distribution. When omitted, falls through to "
+                                "the session's focused papers; when neither is "
+                                "set, runs over the full corpus."
+                            ),
+                        },
                         "limit": {"type": "integer", "default": 50},
                     },
                     "required": ["field"],
@@ -1980,9 +2018,7 @@ def create_server(_run_self_test: bool = True):
                     "properties": {
                         "target_bibcode": {
                             "type": "string",
-                            "description": (
-                                "ADS bibcode whose incoming citations to filter."
-                            ),
+                            "description": ("ADS bibcode whose incoming citations to filter."),
                         },
                         "intent": {
                             "type": "string",
@@ -2071,8 +2107,7 @@ def create_server(_run_self_test: bool = True):
                                 "cited_from_other",
                             ],
                             "description": (
-                                "Optional filter on claim_type. Omit to "
-                                "return all types."
+                                "Optional filter on claim_type. Omit to " "return all types."
                             ),
                         },
                         "limit": {
@@ -2118,8 +2153,7 @@ def create_server(_run_self_test: bool = True):
                                 "cited_from_other",
                             ],
                             "description": (
-                                "Optional filter on claim_type. Omit to "
-                                "return all types."
+                                "Optional filter on claim_type. Omit to " "return all types."
                             ),
                         },
                         "entity_id": {
@@ -2261,8 +2295,7 @@ def create_server(_run_self_test: bool = True):
                                 "type": "integer",
                                 "default": 20,
                                 "description": (
-                                    "Max chunk hits to return; clamped to "
-                                    "[1, 100]."
+                                    "Max chunk hits to return; clamped to " "[1, 100]."
                                 ),
                             },
                         },
@@ -2276,9 +2309,7 @@ def create_server(_run_self_test: bool = True):
         return tool_list
 
     @server.call_tool()
-    async def call_tool_handler(
-        name: str, arguments: dict[str, Any]
-    ) -> list[TextContent]:
+    async def call_tool_handler(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         result_json = call_tool(name, arguments)
         return [TextContent(type="text", text=result_json)]
 
@@ -2506,17 +2537,19 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
 
     # --- find_similar_by_examples retired 2026-04-25 ---
     if name == "find_similar_by_examples":
-        return json.dumps({
-            "error": "tool_removed",
-            "removed_in": "2026-04-25",
-            "message": (
-                "find_similar_by_examples was retired in 2026-04-25 because the "
-                "Qdrant backend is not in active use. There is no replacement; "
-                "use search with semantic mode and entity filters, or "
-                "citation_similarity with method='coupling', for the closest "
-                "behaviour."
-            ),
-        })
+        return json.dumps(
+            {
+                "error": "tool_removed",
+                "removed_in": "2026-04-25",
+                "message": (
+                    "find_similar_by_examples was retired in 2026-04-25 because the "
+                    "Qdrant backend is not in active use. There is no replacement; "
+                    "use search with semantic mode and entity filters, or "
+                    "citation_similarity with method='coupling', for the closest "
+                    "behaviour."
+                ),
+            }
+        )
 
     # --- M1: Unified search ---
     if name == "search":
@@ -2597,27 +2630,11 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
 
     # --- temporal_evolution ---
     if name == "temporal_evolution":
-        year_start = _coerce_year(args.get("year_start"), "year_start")
-        year_end = _coerce_year(args.get("year_end"), "year_end")
-        if year_start is not None and year_end is not None and year_end < year_start:
-            raise ValueError(f"year_end ({year_end}) must be >= year_start ({year_start})")
-        result = search.temporal_evolution(
-            conn,
-            args["bibcode_or_query"],
-            year_start=year_start,
-            year_end=year_end,
-        )
-        return _result_to_json(result)
+        return _handle_temporal_evolution(conn, args)
 
     # --- facet_counts ---
     if name == "facet_counts":
-        try:
-            filters = _parse_filters(args.get("filters"))
-        except ValueError as exc:
-            return json.dumps({"error": str(exc)})
-        limit = args.get("limit", 50)
-        result = search.facet_counts(conn, args["field"], filters=filters, limit=limit)
-        return _result_to_json(result)
+        return _handle_facet_counts(conn, args)
 
     # --- PRD MH-4: claim_blame ---
     if name == "claim_blame":
@@ -2651,17 +2668,20 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
     if name == "add_to_working_set":
         bibcodes = args.get("bibcodes", [])
         source_tool = args.get("source_tool", "unknown")
-        entries = []
-        for bib in bibcodes:
-            entry = _session_state.add_to_working_set(
-                bibcode=bib,
-                source_tool=source_tool,
-                source_context=args.get("source_context", ""),
-                relevance_hint=args.get("relevance_hint", ""),
-                tags=args.get("tags", []),
-            )
-            entries.append(dataclasses.asdict(entry))
-        return json.dumps({"added": len(entries), "entries": entries}, indent=2, default=str)
+        added = _session_state.add_bibcodes_to_working_set(
+            bibcodes,
+            source_tool=source_tool,
+            source_context=args.get("source_context", ""),
+            relevance_hint=args.get("relevance_hint", ""),
+            tags=args.get("tags", []),
+        )
+        # Return the post-cap entries that match the bibcodes we added so
+        # callers can confirm what's in the working set.
+        seen = set(bibcodes)
+        entries = [
+            dataclasses.asdict(e) for e in _session_state.get_working_set() if e.bibcode in seen
+        ]
+        return json.dumps({"added": added, "entries": entries}, indent=2, default=str)
 
     if name == "get_working_set":
         entries = _session_state.get_working_set()
@@ -3060,16 +3080,119 @@ def _handle_read_paper(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     return _inject_coverage_note(_result_to_json(result))
 
 
+def _resolve_working_set_bibcodes(args: dict[str, Any]) -> list[str]:
+    """Return the bibcodes to scope a tool call to.
+
+    Resolution order:
+        1. ``args["bibcodes"]`` if non-empty (explicit caller intent).
+        2. ``_session_state.get_focused_papers()`` (papers inspected via
+           ``get_paper`` during the session).
+        3. ``_session_state.get_working_set()`` as a final fallback for
+           backward compatibility.
+
+    Returns an empty list when no working-set source is available — callers
+    decide whether that's an error (e.g. ``temporal_evolution`` with no
+    ``bibcode_or_query``) or a no-op signaling full-corpus behaviour
+    (e.g. ``facet_counts``).
+
+    This is the canonical pattern referenced by the bead-3uvn working_set
+    abstraction; ``find_gaps`` uses an inline equivalent.
+    """
+    explicit = args.get("bibcodes")
+    if isinstance(explicit, list) and explicit:
+        return [str(b) for b in explicit]
+
+    focused = _session_state.get_focused_papers()
+    if focused:
+        return list(focused)
+
+    return [e.bibcode for e in _session_state.get_working_set()]
+
+
+def _handle_facet_counts(conn: psycopg.Connection, args: dict[str, Any]) -> str:
+    """Facet counts with optional working-set scoping.
+
+    When ``bibcodes`` is omitted, falls through to the session's focused
+    papers (see ``_resolve_working_set_bibcodes``). When neither is set,
+    runs the unscoped corpus-wide facet — preserves the legacy contract.
+    """
+    try:
+        filters = _parse_filters(args.get("filters"))
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
+    limit = args.get("limit", 50)
+    bibcodes = _resolve_working_set_bibcodes(args) or None
+    try:
+        result = search.facet_counts(
+            conn,
+            args["field"],
+            filters=filters,
+            limit=limit,
+            bibcodes=bibcodes,
+        )
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
+    return _result_to_json(result)
+
+
+def _handle_temporal_evolution(conn: psycopg.Connection, args: dict[str, Any]) -> str:
+    """Temporal evolution with optional working-set scoping.
+
+    Resolution order for the bibcode set:
+        1. ``args["bibcodes"]`` if non-empty.
+        2. session focused papers (multi-paper aggregate citations mode).
+        3. ``args["bibcode_or_query"]`` (legacy single-paper / query path).
+
+    Returns a clean JSON error when none of the three sources is provided.
+    """
+    year_start = _coerce_year(args.get("year_start"), "year_start")
+    year_end = _coerce_year(args.get("year_end"), "year_end")
+    if year_start is not None and year_end is not None and year_end < year_start:
+        raise ValueError(f"year_end ({year_end}) must be >= year_start ({year_start})")
+
+    bibcodes = _resolve_working_set_bibcodes(args)
+    bibcode_or_query = args.get("bibcode_or_query")
+
+    if not bibcodes and not bibcode_or_query:
+        return json.dumps(
+            {
+                "error": (
+                    "temporal_evolution requires either bibcode_or_query, an "
+                    "explicit bibcodes=[...] list, or a non-empty working set "
+                    "(call get_paper on one or more papers first)."
+                )
+            }
+        )
+
+    # When working-set bibcodes are present, drive temporal_evolution from
+    # the bibcode list and ignore bibcode_or_query (the per-paper / query
+    # path is mutually exclusive with the multi-paper aggregate path).
+    try:
+        result = search.temporal_evolution(
+            conn,
+            None if bibcodes else bibcode_or_query,
+            year_start=year_start,
+            year_end=year_end,
+            bibcodes=bibcodes or None,
+        )
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
+    return _result_to_json(result)
+
+
 def _handle_citation_traverse(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Unified citation graph traversal.
 
     Dispatches by mode:
-        * mode='graph' (default) — neighborhood walk, requires bibcode and
-          accepts direction (forward/backward/both), include_context, limit.
-          Forwards to the underlying _handle_citation_graph implementation.
+        * mode='graph' (default) — neighborhood walk. Accepts either a
+          single ``bibcode`` (legacy) or a multi-paper ``bibcodes=[...]``
+          list (working-set expansion). When neither is given, falls
+          through to the session's focused papers. Multi-bibcode results
+          are returned under ``by_bibcode`` keyed by source bibcode.
         * mode='chain' — shortest-path search, requires source_bibcode and
           target_bibcode and accepts max_depth (clamped to 1..5). Forwards
-          to scix.search.citation_chain.
+          to scix.search.citation_chain. Single-source-target by definition;
+          working-set scoping does not apply.
 
     Returns a structured JSON ``error`` payload for invalid mode or
     missing required fields rather than raising — keeps the MCP boundary
@@ -3078,20 +3201,34 @@ def _handle_citation_traverse(conn: psycopg.Connection, args: dict[str, Any]) ->
     mode = args.get("mode", "graph")
 
     if mode == "graph":
-        if "bibcode" not in args or not args.get("bibcode"):
-            return json.dumps({"error": "bibcode is required when mode='graph'"})
-        return _handle_citation_graph(conn, args)
+        # Single-bibcode (legacy) takes precedence over working-set mode:
+        # an explicit single bibcode means the agent wants that paper
+        # specifically. Multi-bibcode mode is engaged either when the
+        # caller passes bibcodes=[...] explicitly or, with no single
+        # bibcode given, the session has focused papers to fall through to.
+        single_bibcode = args.get("bibcode")
+        if single_bibcode:
+            return _handle_citation_graph(conn, args)
+        ws_bibcodes = _resolve_working_set_bibcodes(args)
+        if ws_bibcodes:
+            return _handle_citation_traverse_multi(conn, ws_bibcodes, args)
+        return json.dumps(
+            {
+                "error": (
+                    "bibcode is required when mode='graph' (or pass "
+                    "bibcodes=[...] / focus papers via get_paper for "
+                    "working-set mode)."
+                )
+            }
+        )
 
     if mode == "chain":
         source = args.get("source_bibcode")
         target = args.get("target_bibcode")
         if not source or not target:
-            return json.dumps({
-                "error": (
-                    "source_bibcode and target_bibcode are required "
-                    "when mode='chain'"
-                )
-            })
+            return json.dumps(
+                {"error": ("source_bibcode and target_bibcode are required " "when mode='chain'")}
+            )
         max_depth = max(1, min(args.get("max_depth", 5), 5))
         result = search.citation_chain(
             conn,
@@ -3101,9 +3238,48 @@ def _handle_citation_traverse(conn: psycopg.Connection, args: dict[str, Any]) ->
         )
         return _result_to_json(result)
 
-    return json.dumps({
-        "error": f"Invalid mode: {mode!r}. Use 'graph' or 'chain'.",
-    })
+    return json.dumps(
+        {
+            "error": f"Invalid mode: {mode!r}. Use 'graph' or 'chain'.",
+        }
+    )
+
+
+def _handle_citation_traverse_multi(
+    conn: psycopg.Connection,
+    bibcodes: list[str],
+    args: dict[str, Any],
+) -> str:
+    """Walk the citation neighborhood of multiple bibcodes.
+
+    Iterates ``_handle_citation_graph`` per source bibcode and aggregates
+    the results into a ``by_bibcode`` mapping. The per-bibcode ``limit`` is
+    preserved unchanged (so an agent passing ``limit=20`` gets up to 20
+    neighbors per source paper). Bibcodes that error out (missing paper,
+    DB error) are surfaced as ``{"error": "..."}`` entries rather than
+    aborting the whole call — keeps multi-paper exploration robust.
+    """
+    per_bibcode: dict[str, Any] = {}
+    for bib in bibcodes:
+        per_args = dict(args)
+        per_args["bibcode"] = bib
+        per_args.pop("bibcodes", None)
+        try:
+            single_json = _handle_citation_graph(conn, per_args)
+            per_bibcode[bib] = json.loads(single_json)
+        except Exception as exc:  # pragma: no cover — surfaces tool-level error
+            per_bibcode[bib] = {"error": str(exc)}
+
+    return json.dumps(
+        {
+            "mode": "graph",
+            "scope": "working_set",
+            "bibcodes": list(bibcodes),
+            "by_bibcode": per_bibcode,
+        },
+        indent=2,
+        default=str,
+    )
 
 
 def _enrich_citations_with_intent(
@@ -3243,9 +3419,7 @@ _TIER_MIN_TO_ALLOWED: dict[int, list[str]] = {
 #: ``extraction_type`` (the row IS the entity, not a containment payload).
 #: For these the entity tool surfaces the raw extraction payload — the
 #: shape is documented in scix.negative_results / scix.claim_extractor.
-_EXTRACTION_TYPE_ENTITIES: frozenset[str] = frozenset(
-    {"negative_result", "quant_claim"}
-)
+_EXTRACTION_TYPE_ENTITIES: frozenset[str] = frozenset({"negative_result", "quant_claim"})
 
 
 def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
@@ -3261,17 +3435,9 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     # Extraction-row entity types (negative_result, quant_claim) accept an
     # empty query and treat ``entity_name`` as an optional filter.
     # action='papers' accepts entity_id directly, no query needed when given.
-    is_extraction_row = (
-        action == "search" and entity_type in _EXTRACTION_TYPE_ENTITIES
-    )
-    is_papers_with_id = (
-        action == "papers" and args.get("entity_id") is not None
-    )
-    if (
-        not is_extraction_row
-        and not is_papers_with_id
-        and (not query or not query.strip())
-    ):
+    is_extraction_row = action == "search" and entity_type in _EXTRACTION_TYPE_ENTITIES
+    is_papers_with_id = action == "papers" and args.get("entity_id") is not None
+    if not is_extraction_row and not is_papers_with_id and (not query or not query.strip()):
         return json.dumps({"error": "query must be a non-empty string"})
 
     if action == "resolve":
@@ -3287,11 +3453,7 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         # query a denylisted entity by passing its entity_id directly.
         from scix.extract.ner_denylist import is_denylisted as _is_denylisted
 
-        candidates = [
-            c
-            for c in candidates
-            if not _is_denylisted(c.canonical_name, c.entity_type)
-        ]
+        candidates = [c for c in candidates if not _is_denylisted(c.canonical_name, c.entity_type)]
         result_json = json.dumps(
             {
                 "query": query.strip(),
@@ -3426,15 +3588,9 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             # denylisted entity can pass entity_id directly.
             from scix.extract.ner_denylist import is_denylisted as _is_denylisted
 
-            cands = [
-                c
-                for c in cands
-                if not _is_denylisted(c.canonical_name, c.entity_type)
-            ]
+            cands = [c for c in cands if not _is_denylisted(c.canonical_name, c.entity_type)]
             if not cands:
-                return json.dumps(
-                    {"query": query, "entity_id": None, "papers": [], "total": 0}
-                )
+                return json.dumps({"query": query, "entity_id": None, "papers": [], "total": 0})
             entity_id = cands[0].entity_id
 
         try:
@@ -3479,6 +3635,7 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             precision_band,
             precision_estimate,
         )
+
         entity_type_val: str | None = None
         for p in papers:
             ev = p.get("evidence") or {}
@@ -3519,9 +3676,7 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             default=str,
         )
 
-    return json.dumps(
-        {"error": f"Invalid action: {action}. Use 'search', 'resolve', or 'papers'."}
-    )
+    return json.dumps({"error": f"Invalid action: {action}. Use 'search', 'resolve', or 'papers'."})
 
 
 def _handle_entity_extraction_search(
@@ -3617,8 +3772,7 @@ def _handle_entity_extraction_search(
                 claims = [
                     c
                     for c in claims
-                    if isinstance(c, dict)
-                    and str(c.get("quantity", "")) == needle
+                    if isinstance(c, dict) and str(c.get("quantity", "")) == needle
                 ]
                 if not claims:
                     continue
@@ -3687,6 +3841,14 @@ def _handle_graph_context(conn: psycopg.Connection, args: dict[str, Any]) -> str
 def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Find gaps using implicit session state (focused papers).
 
+    Canonical reference for the working-set fall-through pattern (bead
+    scix_experiments-3uvn): when the caller doesn't pass an explicit list
+    of bibcodes, the tool consults ``_session_state.get_focused_papers()``
+    (papers inspected via ``get_paper``) and falls back to the broader
+    working set. The same shape is used by ``facet_counts``,
+    ``temporal_evolution``, and ``citation_traverse`` (mode='graph') —
+    see ``_resolve_working_set_bibcodes``.
+
     The citation partition (``community_id_{coarse,medium,fine}``) is
     populated by a two-phase pipeline: Phase A marks non-giant-component
     papers with the sentinel ``-1``; Phase B overwrites giant-component
@@ -3714,8 +3876,7 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         return json.dumps(
             {
                 "error": (
-                    f"Invalid signal: {signal}. "
-                    f"Must be one of {sorted(_SIGNAL_COLUMN_PREFIX)}"
+                    f"Invalid signal: {signal}. " f"Must be one of {sorted(_SIGNAL_COLUMN_PREFIX)}"
                 )
             }
         )
@@ -3779,12 +3940,8 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
 
     # For the citation signal, filter out the Phase-A sentinel (-1) which
     # marks non-giant-component papers rather than a real community.
-    sentinel_filter = (
-        f"AND pm.{community_col} <> -1" if signal == "citation" else ""
-    )
-    seed_sentinel_filter = (
-        f"AND pm2.{community_col} <> -1" if signal == "citation" else ""
-    )
+    sentinel_filter = f"AND pm.{community_col} <> -1" if signal == "citation" else ""
+    seed_sentinel_filter = f"AND pm2.{community_col} <> -1" if signal == "citation" else ""
 
     # LEFT JOIN communities so every result carries the community's human
     # label + top_keywords when they've been generated
@@ -3994,9 +4151,7 @@ def _handle_chunk_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         from scix import embed as _embed
 
         model, tokenizer = _get_indus_embedder()
-        vectors = _embed.embed_batch(
-            model, tokenizer, [query], batch_size=1, pooling="mean"
-        )
+        vectors = _embed.embed_batch(model, tokenizer, [query], batch_size=1, pooling="mean")
     except Exception as exc:  # noqa: BLE001 — boundary
         logger.exception("chunk_search: INDUS encode failed")
         return json.dumps({"error": f"encode_failed: {exc}"}, indent=2)
@@ -4074,13 +4229,14 @@ def _handle_find_similar_by_examples(args: dict[str, Any]) -> str:
     backend is not yet wired up. Callers should check the ``error`` field.
     """
     if not _qdrant_enabled():
-        return json.dumps({
-            "error": "qdrant_not_configured",
-            "message": (
-                "find_similar_by_examples requires the Qdrant backend "
-                "(QDRANT_URL env var)."
-            ),
-        })
+        return json.dumps(
+            {
+                "error": "qdrant_not_configured",
+                "message": (
+                    "find_similar_by_examples requires the Qdrant backend " "(QDRANT_URL env var)."
+                ),
+            }
+        )
 
     positives = args.get("positive_bibcodes") or []
     if not positives:
@@ -4101,11 +4257,13 @@ def _handle_find_similar_by_examples(args: dict[str, Any]) -> str:
         logger.exception("find_similar_by_examples failed")
         return json.dumps({"error": str(exc)})
 
-    return json.dumps({
-        "backend": "qdrant",
-        "collection": _qdrant_tools.COLLECTION,
-        "results": [dataclasses.asdict(h) for h in hits],
-    })
+    return json.dumps(
+        {
+            "backend": "qdrant",
+            "collection": _qdrant_tools.COLLECTION,
+            "results": [dataclasses.asdict(h) for h in hits],
+        }
+    )
 
 
 def _handle_health_check(conn: psycopg.Connection) -> str:
@@ -4163,9 +4321,7 @@ def _handle_find_replications(conn: psycopg.Connection, args: dict[str, Any]) ->
 
     relation = args.get("relation")
     if relation is not None and relation not in VALID_RELATIONS:
-        return json.dumps(
-            {"error": f"relation must be one of {sorted(VALID_RELATIONS)} or null"}
-        )
+        return json.dumps({"error": f"relation must be one of {sorted(VALID_RELATIONS)} or null"})
 
     scope_arg = args.get("scope")
     try:
@@ -4189,9 +4345,7 @@ def _handle_find_replications(conn: psycopg.Connection, args: dict[str, Any]) ->
 # cited_by_intent handler — exploits citation_contexts.intent classification
 # ---------------------------------------------------------------------------
 
-_VALID_CITATION_INTENTS: frozenset[str] = frozenset(
-    {"method", "background", "result_comparison"}
-)
+_VALID_CITATION_INTENTS: frozenset[str] = frozenset({"method", "background", "result_comparison"})
 
 
 def _handle_cited_by_intent(conn: psycopg.Connection, args: dict[str, Any]) -> str:
@@ -4217,8 +4371,7 @@ def _handle_cited_by_intent(conn: psycopg.Connection, args: dict[str, Any]) -> s
         return json.dumps(
             {
                 "error": (
-                    f"intent must be one of {sorted(_VALID_CITATION_INTENTS)} "
-                    f"or null (any)"
+                    f"intent must be one of {sorted(_VALID_CITATION_INTENTS)} " f"or null (any)"
                 )
             }
         )
@@ -4562,18 +4715,14 @@ def _handle_section_retrieval(conn: psycopg.Connection, args: dict[str, Any]) ->
 
     # Dense leg — explicit txn so SET LOCAL settings apply.
     try:
-        dense_rows = _section_dense_retrieve(
-            conn, query_vector, filter_sql, filter_params, fanout
-        )
+        dense_rows = _section_dense_retrieve(conn, query_vector, filter_sql, filter_params, fanout)
     except Exception as exc:  # noqa: BLE001 — boundary
         logger.exception("section_retrieval dense leg failed")
         return json.dumps({"error": f"dense_retrieve_failed: {exc}"})
 
     # BM25 leg.
     try:
-        bm25_rows = _section_bm25_retrieve(
-            conn, query, filter_sql, filter_params, fanout
-        )
+        bm25_rows = _section_bm25_retrieve(conn, query, filter_sql, filter_params, fanout)
     except Exception as exc:  # noqa: BLE001 — boundary
         logger.exception("section_retrieval bm25 leg failed")
         return json.dumps({"error": f"bm25_retrieve_failed: {exc}"})
@@ -4614,9 +4763,7 @@ def _handle_section_retrieval(conn: psycopg.Connection, args: dict[str, Any]) ->
 # ---------------------------------------------------------------------------
 
 
-def _handle_read_paper_claims(
-    conn: psycopg.Connection, args: dict[str, Any]
-) -> str:
+def _handle_read_paper_claims(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Dispatch handler for the ``read_paper_claims`` MCP tool.
 
     Thin wrapper over :func:`scix.claims.retrieval.read_paper_claims` that
@@ -4657,9 +4804,7 @@ def _handle_read_paper_claims(
     )
 
 
-def _handle_find_claims(
-    conn: psycopg.Connection, args: dict[str, Any]
-) -> str:
+def _handle_find_claims(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Dispatch handler for the ``find_claims`` MCP tool.
 
     Thin wrapper over :func:`scix.claims.retrieval.find_claims`. Coerces

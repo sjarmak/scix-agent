@@ -1538,30 +1538,31 @@ def _fetch_query_mode_buckets(
 
 def temporal_evolution(
     conn: psycopg.Connection,
-    bibcode_or_query: str,
+    bibcode_or_query: str | None = None,
     *,
     year_start: int | None = None,
     year_end: int | None = None,
     ts_config: str = "scix_english",
     anchors_per_bucket: int = ANCHORS_PER_BUCKET,
+    bibcodes: list[str] | None = None,
 ) -> SearchResult:
     """Show temporal trends: citations received by a paper, or publication volume for a query.
 
     Mode detection:
-    - If bibcode_or_query matches an existing paper bibcode, shows citations per year.
-    - Otherwise, treats it as a search query and shows publications per year
-      plus per-year "buckets" with anchor papers (ranked by PageRank) and
-      dominant communities — so a single call yields a usable temporal
-      narrative instead of raw counts.
+    - If ``bibcodes`` is non-empty, shows aggregate citations-per-year across
+      all papers in the list (working-set mode). Mutually overrides
+      ``bibcode_or_query``.
+    - Otherwise, if ``bibcode_or_query`` matches an existing paper bibcode,
+      shows citations per year for that single paper.
+    - Otherwise, treats ``bibcode_or_query`` as a search query and shows
+      publications per year plus per-year "buckets" with anchor papers
+      (ranked by PageRank) and dominant communities — so a single call
+      yields a usable temporal narrative instead of raw counts.
 
     Query-mode bucket generation is capped at the ``MAX_BUCKET_YEARS`` most
     recent years to bound work regardless of the matched year span.
     """
     t0 = time.perf_counter()
-
-    with conn.cursor() as cur:
-        cur.execute("SELECT 1 FROM papers WHERE bibcode = %s", (bibcode_or_query,))
-        is_bibcode = cur.fetchone() is not None
 
     year_clause = ""
     year_params: list[Any] = []
@@ -1571,6 +1572,51 @@ def temporal_evolution(
     if year_end is not None:
         year_clause += " AND p.year <= %s"
         year_params.append(year_end)
+
+    # Working-set mode: aggregate citations across multiple papers.
+    if bibcodes:
+        sql = f"""
+            SELECT p.year, COUNT(*) AS count
+            FROM citation_edges ce
+            JOIN papers p ON p.bibcode = ce.source_bibcode
+            WHERE ce.target_bibcode = ANY(%s)
+            {year_clause}
+            GROUP BY p.year
+            ORDER BY p.year
+        """
+        params: list[Any] = [list(bibcodes)] + year_params
+        mode = "citations"
+        is_bibcode = True
+
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+
+        query_ms = _elapsed_ms(t0)
+
+        yearly_counts = [
+            {"year": row["year"], "count": row["count"]} for row in rows if row["year"] is not None
+        ]
+
+        return SearchResult(
+            papers=[],
+            total=len(yearly_counts),
+            timing_ms={"query_ms": query_ms},
+            metadata={
+                "mode": mode,
+                "bibcode_found": is_bibcode,
+                "bibcodes": list(bibcodes),
+                "yearly_counts": yearly_counts,
+            },
+        )
+
+    # Single-paper / query mode requires bibcode_or_query.
+    if not bibcode_or_query:
+        raise ValueError("temporal_evolution requires either bibcode_or_query or bibcodes")
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM papers WHERE bibcode = %s", (bibcode_or_query,))
+        is_bibcode = cur.fetchone() is not None
 
     if is_bibcode:
         sql = f"""
@@ -1582,7 +1628,7 @@ def temporal_evolution(
             GROUP BY p.year
             ORDER BY p.year
         """
-        params: list[Any] = [bibcode_or_query] + year_params
+        params = [bibcode_or_query] + year_params
         mode = "citations"
     else:
         sql = f"""
@@ -1644,10 +1690,16 @@ def facet_counts(
     *,
     filters: SearchFilters | None = None,
     limit: int = 50,
+    bibcodes: list[str] | None = None,
 ) -> SearchResult:
     """Get distribution counts for a facet field.
 
     Supported fields: year, doctype, arxiv_class, database, bibgroup, property.
+
+    When ``bibcodes`` is non-empty, the facet distribution is scoped to the
+    given papers via ``AND p.bibcode = ANY(%s)``. This supports the
+    working-set pattern where an agent has narrowed to a focused set of
+    papers and wants to characterize only that subset.
     """
     t0 = time.perf_counter()
 
@@ -1659,6 +1711,12 @@ def facet_counts(
     filter_clause, filter_params = effective.to_where_clause("p")
     entity_clause, entity_params = effective.to_entity_filter_clause("p")
 
+    bibcode_clause = ""
+    bibcode_params: list[Any] = []
+    if bibcodes:
+        bibcode_clause = " AND p.bibcode = ANY(%s)"
+        bibcode_params = [list(bibcodes)]
+
     if facet_field in allowed_simple:
         sql = f"""
             SELECT p.{facet_field}::text AS val, count(*) AS cnt
@@ -1666,11 +1724,12 @@ def facet_counts(
             WHERE p.{facet_field} IS NOT NULL
             {filter_clause}
             {entity_clause}
+            {bibcode_clause}
             GROUP BY p.{facet_field}
             ORDER BY cnt DESC
             LIMIT %s
         """
-        params: list[Any] = filter_params + entity_params + [limit]
+        params: list[Any] = filter_params + entity_params + bibcode_params + [limit]
     elif facet_field in allowed_array:
         sql = f"""
             SELECT elem AS val, count(*) AS cnt
@@ -1678,11 +1737,12 @@ def facet_counts(
             WHERE TRUE
             {filter_clause}
             {entity_clause}
+            {bibcode_clause}
             GROUP BY elem
             ORDER BY cnt DESC
             LIMIT %s
         """
-        params = filter_params + entity_params + [limit]
+        params = filter_params + entity_params + bibcode_params + [limit]
     else:
         raise ValueError(
             f"Unsupported facet field: {facet_field}. "
@@ -3481,13 +3541,8 @@ def search_within_paper(
     ]
 
     if candidate_sections:
-        scores = _score_sections_ts_rank(
-            conn, [text for _name, text in candidate_sections], query
-        )
-        scored = [
-            (name, text, score)
-            for (name, text), score in zip(candidate_sections, scores)
-        ]
+        scores = _score_sections_ts_rank(conn, [text for _name, text in candidate_sections], query)
+        scored = [(name, text, score) for (name, text), score in zip(candidate_sections, scores)]
     else:
         scored = []
 

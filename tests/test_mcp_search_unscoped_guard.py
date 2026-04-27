@@ -18,6 +18,7 @@ both the heuristic and the early-return ordering.
 from __future__ import annotations
 
 import json
+from collections.abc import Generator
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -33,14 +34,14 @@ from scix.search import SearchResult
 
 
 @pytest.fixture(autouse=True)
-def _disable_disambiguator() -> None:
+def _disable_disambiguator() -> Generator[None, None, None]:
     """Patch the disambiguator so the search path never short-circuits."""
     with patch("scix.mcp_server.disambiguate_query", return_value=[]):
         yield
 
 
 @pytest.fixture(autouse=True)
-def _disable_hnsw() -> None:
+def _disable_hnsw() -> Generator[None, None, None]:
     """Force the lexical-only path inside _handle_search — no embedding load."""
     with patch("scix.mcp_server._hnsw_index_exists", return_value=False):
         yield
@@ -511,4 +512,135 @@ def test_log_query_does_not_surface_tag_for_normal_results() -> None:
     )
 
     # error_msg stays None when no unscoped marker is present.
+    assert captured["error_msg"] is None
+
+
+# ---------------------------------------------------------------------------
+# Telemetry convention pinning — bead scix_experiments-3qun
+#
+# These tests pin the documented query_log convention for structured-error
+# responses so that any future change to _log_query / call_tool semantics
+# breaks visibly (signaling a breaking change for operator dashboards).
+#
+# Convention (see docs/mcp_tool_audit_2026-04.md "Telemetry conventions for
+# query_log"):
+#   1. Exceptions raised in _dispatch_tool       -> success=False, error_msg=str(exc)
+#   2. Structured errors WITH a lifted tag       -> success=True,  error_msg=<stable tag>
+#                                                  (currently only "unscoped_broad_query")
+#   3. Structured errors WITHOUT a lifted tag    -> success=True,  error_msg=NULL
+#                                                  (e.g. missing_required_params,
+#                                                   entity legacy-type rejection,
+#                                                   invalid mode/action/method)
+#
+# Recommended operator dashboard query for blocked + failed requests:
+#   SELECT * FROM query_log WHERE success = FALSE OR error_msg IS NOT NULL;
+# This catches cases (1) + (2). Case (3) remains hidden until a follow-up
+# bead extends the _log_query lift list with additional stable tags.
+# ---------------------------------------------------------------------------
+
+
+class _CaptureCursor:
+    """Test double that captures the params tuple from a single execute()."""
+
+    def __init__(self, captured: dict[str, Any]) -> None:
+        self._captured = captured
+
+    def __enter__(self) -> "_CaptureCursor":
+        return self
+
+    def __exit__(self, *_a: Any) -> None:
+        pass
+
+    def execute(self, _sql: str, params: tuple) -> None:
+        # _log_query positional order:
+        #   tool_name, params_json, latency_ms, success, error_msg,
+        #   tool_name (dup), query, result_count, session_id, is_test
+        self._captured["success"] = params[3]
+        self._captured["error_msg"] = params[4]
+
+
+class _CaptureConn:
+    def __init__(self, captured: dict[str, Any]) -> None:
+        self._captured = captured
+
+    def cursor(self) -> _CaptureCursor:
+        return _CaptureCursor(self._captured)
+
+    def commit(self) -> None:
+        pass
+
+
+def test_telemetry_convention_lifted_structured_error_logs_success_true_and_tag() -> None:
+    """Convention (case 2): lifted structured-error responses log success=True
+    AND error_msg=<stable tag>. Pins the unscoped_broad_query case as the
+    reference example. If this assertion ever flips to success=False, that's
+    a breaking change for any dashboard built against the documented contract
+    in docs/mcp_tool_audit_2026-04.md.
+    """
+    captured: dict[str, Any] = {}
+
+    payload = json.dumps(
+        {
+            "error": "unscoped_broad_query",
+            "hint": "...",
+            "query": "x",
+            "unscoped_broad_blocked": True,
+        }
+    )
+
+    mcp_server._log_query(
+        _CaptureConn(captured),
+        "search",
+        {"query": "x"},
+        12.3,
+        True,  # call_tool sets success=True because no exception fired
+        None,  # _log_query lifts the tag from result_json
+        result_json=payload,
+    )
+
+    # Pinned convention: structured-error + lifted tag => (True, <tag>).
+    assert captured["success"] is True
+    assert captured["error_msg"] == "unscoped_broad_query"
+
+
+def test_telemetry_convention_unlifted_structured_error_logs_success_true_and_null() -> None:
+    """Convention (case 3): structured-error responses WITHOUT a lifted tag
+    log success=True AND error_msg=NULL. Covers missing_required_params,
+    entity legacy-type rejection, invalid-mode errors, etc.
+
+    Documents a known dashboard blind spot: these blocked requests are NOT
+    surfaced by `WHERE success=False OR error_msg IS NOT NULL`. The fix is
+    a follow-up bead that extends _log_query's lift list with additional
+    stable tags — NOT a silent semantics flip in _log_query.
+    """
+    captured: dict[str, Any] = {}
+
+    # missing_required_params is one of the unlifted structured errors.
+    payload = json.dumps(
+        {
+            "error": "bibcode is required when mode='graph'",
+            "error_code": "missing_required_params",
+            "mode": "graph",
+            "required": ["bibcode"],
+            "got": [],
+        }
+    )
+
+    mcp_server._log_query(
+        _CaptureConn(captured),
+        "citation_traverse",
+        {"mode": "graph"},
+        4.5,
+        True,  # call_tool sets success=True because no exception fired
+        None,
+    # No result_json kwarg: simulates the lift-skipped case for an unlifted
+    # structured-error payload. Even if result_json were passed, the
+    # current lift list (only unscoped_broad_blocked) would not match.
+        result_json=payload,
+    )
+
+    # Pinned convention: structured-error WITHOUT lifted tag => (True, None).
+    # If a future change adds an error_code-based lift, this test breaks
+    # and the convention doc + operator dashboards must be updated together.
+    assert captured["success"] is True
     assert captured["error_msg"] is None

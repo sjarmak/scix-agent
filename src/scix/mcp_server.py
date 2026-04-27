@@ -187,11 +187,15 @@ TOOL_TIMEOUTS: dict[str, float] = {
 #   * section_retrieval  — section_embeddings table not yet populated
 #   * read_paper_claims, find_claims — paper_claims table empty (no extraction
 #     run yet); table itself exists per migration 062
+#   * claim_search       — extractions table has 0 rows for negative_result /
+#     quant_claim on prod (bead c996); unhide once an M3/M4 extraction run
+#     populates them. Tool is registered + tested unconditionally; only the
+#     tools/list visibility is gated.
 _HIDDEN_TOOLS: frozenset[str] = frozenset(
     t.strip()
     for t in os.environ.get(
         "SCIX_HIDDEN_TOOLS",
-        "chunk_search,section_retrieval,read_paper_claims,find_claims",
+        "chunk_search,section_retrieval,read_paper_claims,find_claims,claim_search",
     ).split(",")
     if t.strip()
 )
@@ -1132,6 +1136,11 @@ EXPECTED_TOOLS: tuple[str, ...] = (
     # Structural-citation lookup — exploits citation_contexts.intent
     # (method / background / result_comparison) classification.
     "cited_by_intent",
+    # Claim/finding extraction surface (bead c996) — split out from the
+    # entity tool's entity_type enum under bead mh14. Default-hidden
+    # because the extractions table has 0 rows for negative_result /
+    # quant_claim on prod.
+    "claim_search",
     # Terminal step — bin a working set into a section outline (bead cfh9).
     "synthesize_findings",
 )
@@ -2278,6 +2287,70 @@ def create_server(_run_self_test: bool = True):
                     "required": ["target_bibcode"],
                 },
             ),
+            # --- Claim/finding extraction surface (bead c996) ---
+            #
+            # NOTE (scix_experiments-c996, 2026-04-27): split out from the
+            # entity tool's ``entity_type`` enum under bead mh14, where
+            # ``negative_result`` and ``quant_claim`` were misfiled as
+            # entities. They are claim/finding extraction kinds with their
+            # own payload shapes (``spans[].evidence_span`` for
+            # negative_result; ``claims[].{quantity, value, uncertainty,
+            # unit}`` for quant_claim). This tool is the dedicated home.
+            # Default-hidden in deployments where the extractions table has
+            # no rows of these types — see ``_HIDDEN_TOOLS``.
+            Tool(
+                name="claim_search",
+                description=(
+                    "Search the extractions table for claim/finding rows. "
+                    "Two action kinds: action='negative_result' surfaces "
+                    "spans of explicit negative findings (no detection, "
+                    "no significant excess, upper limits) — each row "
+                    "carries a top-level ``evidence_span`` with the "
+                    "matching sentence plus the full ``spans`` list; "
+                    "action='quant_claim' surfaces measured-quantity "
+                    "claims — the first claim is promoted to a top-level "
+                    "``payload`` of {quantity, value, uncertainty, unit} "
+                    "and the full ``claims`` list is preserved. The "
+                    "optional ``query`` parameter narrows the result "
+                    "set: for negative_result it is a free-text needle "
+                    "matched against ``evidence_span`` / ``match_text``; "
+                    "for quant_claim it is an exact match on the "
+                    "canonical ``quantity`` value (e.g. 'H0'). Use the "
+                    "entity tool for named-entity lookups; this tool is "
+                    "for paper-level findings."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["negative_result", "quant_claim"],
+                            "description": (
+                                "Which extraction kind to search. "
+                                "negative_result = explicit negative "
+                                "findings; quant_claim = measured "
+                                "quantities."
+                            ),
+                        },
+                        "query": {
+                            "type": "string",
+                            "description": (
+                                "Optional filter. negative_result: "
+                                "free-text needle matched against "
+                                "evidence_span / match_text. "
+                                "quant_claim: exact match on the "
+                                "canonical 'quantity' value."
+                            ),
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "default": 20,
+                            "description": "Max papers to return (1..200).",
+                        },
+                    },
+                    "required": ["action"],
+                },
+            ),
             # --- Terminal synthesis (bead cfh9) ---
             Tool(
                 name="synthesize_findings",
@@ -3030,6 +3103,10 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
     # --- Structural-citation lookup (intent-aware) ---
     if name == "cited_by_intent":
         return _handle_cited_by_intent(conn, args)
+
+    # --- Claim/finding extraction surface (bead c996) ---
+    if name == "claim_search":
+        return _handle_claim_search(conn, args)
 
     # --- Terminal synthesis (bead cfh9) ---
     if name == "synthesize_findings":
@@ -3879,10 +3956,15 @@ _TIER_MIN_TO_ALLOWED: dict[int, list[str]] = {
 #: error so a client that rediscovers the old contract gets a clear,
 #: actionable response instead of falling through to a different code path.
 #:
-#: A dedicated tool to surface these extractions is tracked under follow-up
-#: bead ``scix_experiments-c996``. ``_handle_entity_extraction_search``
-#: below is retained as the implementation that follow-up tool will reuse.
-_LEGACY_EXTRACTION_TYPES: frozenset[str] = frozenset({"negative_result", "quant_claim"})
+#: The dedicated home for these extractions is the ``claim_search`` MCP
+#: tool added under bead ``scix_experiments-c996``; the rejection error
+#: points callers there. ``_handle_entity_extraction_search`` below is
+#: the shared implementation called by ``_handle_claim_search``.
+#:
+#: Canonical list lives at ``_CLAIM_SEARCH_ACTIONS`` below — the
+#: ``claim_search`` tool accepts exactly these as ``action`` values. The
+#: entity tool reuses that frozenset for its rejection guard so the two
+#: surfaces stay in sync if a third extraction kind is added.
 
 #: The four entity-containment types that the entity tool's
 #: ``action='search'`` path still supports. These map to
@@ -3905,16 +3987,16 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     # one turn. These used to be valid entity_type values but they're
     # claim/finding extractions, not entities — a follow-up bead (c996)
     # will surface them under a dedicated tool.
-    if entity_type in _LEGACY_EXTRACTION_TYPES:
+    if entity_type in _CLAIM_SEARCH_ACTIONS:
         return json.dumps(
             {
                 "error": (
                     f"entity_type='{entity_type}' is no longer accepted by the "
                     f"entity tool — it is a claim/finding extraction, not an "
                     f"entity. Valid entity_type values are: "
-                    f"{sorted(_VALID_ENTITY_TYPES)}. Surfacing "
-                    f"negative_result / quant_claim is tracked under bead "
-                    f"scix_experiments-c996; see "
+                    f"{sorted(_VALID_ENTITY_TYPES)}. Use "
+                    f"claim_search(action='{entity_type}') instead "
+                    f"(bead scix_experiments-c996); see "
                     f"docs/mcp_tool_audit_2026-04.md for the rationale."
                 )
             }
@@ -4154,6 +4236,55 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     return json.dumps({"error": f"Invalid action: {action}. Use 'search', 'resolve', or 'papers'."})
 
 
+#: Action values accepted by the ``claim_search`` MCP tool. Mirrors the
+#: ``staging.extractions.extraction_type`` values that ``_handle_entity_
+#: extraction_search`` knows how to flatten. Adding a new action here
+#: requires teaching the helper the new payload shape.
+_CLAIM_SEARCH_ACTIONS: frozenset[str] = frozenset({"negative_result", "quant_claim"})
+
+
+def _handle_claim_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
+    """Dispatch ``claim_search`` to the shared extraction-search helper.
+
+    Validates the public input contract (action enum, limit cap), then
+    delegates to :func:`_handle_entity_extraction_search` which owns the
+    SQL and the per-extraction-type payload flattening. Coverage note is
+    injected at the top level for parity with the entity tool surface
+    (both read from the ``extractions`` table).
+    """
+    action = args.get("action")
+    if not isinstance(action, str) or action not in _CLAIM_SEARCH_ACTIONS:
+        return json.dumps(
+            {
+                "error": (
+                    f"Invalid action: {action!r}. Must be one of "
+                    f"{sorted(_CLAIM_SEARCH_ACTIONS)}."
+                )
+            }
+        )
+
+    query = args.get("query")
+    name_filter = query.strip() if isinstance(query, str) and query.strip() else None
+
+    raw_limit = args.get("limit", 20)
+    try:
+        limit = min(int(raw_limit), 200)
+    except (TypeError, ValueError):
+        return json.dumps(
+            {"error": f"limit must be an integer, got {raw_limit!r}"}
+        )
+    if limit < 1:
+        limit = 20
+
+    result_json = _handle_entity_extraction_search(
+        conn,
+        extraction_type=action,
+        name_filter=name_filter,
+        limit=limit,
+    )
+    return _inject_coverage_note(result_json)
+
+
 def _handle_entity_extraction_search(
     conn: psycopg.Connection,
     *,
@@ -4165,12 +4296,13 @@ def _handle_entity_extraction_search(
 
     .. note::
 
-       Unreachable from the ``entity`` MCP tool as of 2026-04 (bead
-       ``scix_experiments-mh14``). The entity tool's ``entity_type`` enum
-       no longer accepts ``negative_result`` / ``quant_claim`` because
-       those are claim/finding extractions, not entities. This helper is
-       retained as the implementation that the follow-up tool (bead
-       ``scix_experiments-c996``) will reuse when claim_search lands.
+       The ``entity`` MCP tool's ``entity_type`` enum no longer routes
+       through this helper — under bead ``scix_experiments-mh14`` the
+       legacy ``negative_result`` / ``quant_claim`` values were rejected
+       at the front door because they are claim/finding extractions, not
+       entities. The dedicated home is the ``claim_search`` tool added
+       under bead ``scix_experiments-c996``, which calls this helper
+       directly via :func:`_handle_claim_search`.
 
     Currently supports:
 
@@ -4391,7 +4523,6 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     # can run gap analysis in one shot. Pure convenience — same downstream
     # logic, just bootstrapped.
     seed_query = args.get("query")
-    auto_seeded = False
     if not ws_bibcodes and isinstance(seed_query, str) and seed_query.strip():
         try:
             from scix.search import concept_search as _concept_search
@@ -4404,7 +4535,6 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                 for p in (seed_result.papers or [])
                 if isinstance(p, dict) and p.get("bibcode")
             ]
-            auto_seeded = bool(ws_bibcodes)
         except Exception:
             # Best-effort: fall through to the no-papers branch below.
             ws_bibcodes = []

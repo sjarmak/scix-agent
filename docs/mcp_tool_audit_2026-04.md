@@ -10,9 +10,63 @@ tool, and record deprecation notes for the aliased legacy tools.
 
 | Target | Status |
 |---|---|
-| Collapse MCP tools to `≤ 15` | **Met.** 15 agent-visible tools as of 2026-04-26 (added `cited_by_intent`, expanded `entity` with `action='papers'`). 4 additional tools (`chunk_search`, `section_retrieval`, `read_paper_claims`, `find_claims`) are env-hidden (`_HIDDEN_TOOLS`) because their backing data isn't yet populated; restore via `SCIX_HIDDEN_TOOLS=`. |
+| Collapse MCP tools to `≤ 15` | **Met.** 15 agent-visible tools as of 2026-04-27 (added `cited_by_intent`, expanded `entity` with `action='papers'`). 5 additional tools (`chunk_search`, `section_retrieval`, `read_paper_claims`, `find_claims`, `claim_search`) are env-hidden (`_HIDDEN_TOOLS`) because their backing data isn't yet populated; restore via `SCIX_HIDDEN_TOOLS=`. |
 | Deprecation notes per removed tool | **Met.** Aliases map to the new tools via `src/scix/mcp_server.py::_DEPRECATED_ALIASES`; schema transforms in `_transform_deprecated_args`; responses wrapped with `{deprecated: true, use_instead, original_tool}` by `_wrap_deprecated`. |
 | `SKILL.md` tool table reflects the new set | Stale — needs update to reflect 15-tool surface and the 4 env-hidden tools. |
+
+## 2026-04-27 — `claim_search` MCP tool added (bead `scix_experiments-c996`)
+
+**Change:** added a new MCP tool `claim_search` that surfaces
+`staging.extractions` rows for the two claim/finding extraction kinds
+that were ejected from the `entity` tool's `entity_type` enum under
+bead `scix_experiments-mh14`. Schema:
+
+```jsonc
+{
+  "action": { "enum": ["negative_result", "quant_claim"] },  // required
+  "query":  "string",  // optional name_filter
+  "limit":  20         // capped at 200
+}
+```
+
+Implementation is a thin wrapper (`_handle_claim_search`) over the
+existing `_handle_entity_extraction_search` helper — no SQL is
+duplicated. Per-extraction-type payload flattening (top-level
+`evidence_span` for `negative_result`; promoted `payload` block for
+`quant_claim`) is unchanged. The wrapper validates the public input
+contract (action enum, limit cap) and injects the standard
+`coverage_note` at the top level.
+
+**Why a dedicated tool, not a third action on `entity`:** the
+`entity` tool's three actions (`resolve`, `papers`, `search`) all
+share a coherent agent-mental model — "the named-entity lookup tool".
+Claim/finding extractions don't fit that model: their parameter shapes
+are different (`spans[].evidence_span`, `claims[].quantity`), they
+read different rows, and they are not entities by definition. Putting
+them on a separate tool makes the action enum self-documenting (each
+action describes a paper-level finding kind, not an entity kind) and
+keeps the entity tool's contract narrow.
+
+**Tool count:** 16 tools registered, but `claim_search` is added to
+`_HIDDEN_TOOLS` by default because the prod `extractions` table has 0
+rows for both `negative_result` and `quant_claim` — same pattern as
+`read_paper_claims` / `find_claims`. Agent-visible surface remains 15
+until an M3/M4 extraction run populates the table; restore via
+`SCIX_HIDDEN_TOOLS=` (empty).
+
+**Entity tool error message updated:** the existing front-door
+rejection of `entity_type='negative_result'` / `'quant_claim'` now
+points callers at `claim_search(action=...)` by name (not just the
+bead id), so an agent rediscovering the old contract can recover in
+one turn.
+
+**Tests:** `tests/test_mcp_claim_search.py` covers the schema enum,
+both happy paths, the invalid-action and missing-action error paths,
+empty-result behaviour, the `query → name_filter` forwarding, and
+the updated entity-tool rejection message.
+
+**Landed in:** bead `scix_experiments-c996` worktree commit (current
+branch).
 
 ## 2026-04-27 — entity tool: drop claim/finding extractions from entity_type enum (bead `scix_experiments-mh14`)
 
@@ -176,7 +230,7 @@ names and legacy aliases into `_dispatch_consolidated` (line 1520).
 | 5 | `citation_traverse` | **consolidated** (citation_graph, citation_chain, get_citations, get_references, get_citation_context) | Citation graph traversal: neighbourhood walk OR shortest-path chain, selected by `mode`. | `mode ∈ {graph, chain}`; per-mode required-param sets are validated in the handler with a structured `missing_required_params` payload (bead `zjt9`) since JSON Schema can't express the disjoint sets. |
 | 6 | `citation_similarity` | **consolidated** (co_citation_analysis, bibliographic_coupling) | Structural similarity via shared citations. | `method ∈ {co_citation, coupling}` replaces 2 legacy tools. |
 | 7 | _(slot folded into `citation_traverse` row 5)_ | — | — | The original `citation_chain` "keep separate" recommendation was reversed on 2026-04-25; see Recommendation §3 below. |
-| 8 | `entity` | **consolidated** (entity_search, resolve_entity) | `action ∈ {search, resolve, papers}`. | Added entity-type / confidence-tier / provenance-source filters in later builds. mh14 (2026-04-27): dropped `negative_result` / `quant_claim` from the `entity_type` enum — they are claim/finding extractions, not entities; surfacing tracked under bead c996. |
+| 8 | `entity` | **consolidated** (entity_search, resolve_entity) | `action ∈ {search, resolve, papers}`. | Added entity-type / confidence-tier / provenance-source filters in later builds. mh14 (2026-04-27): dropped `negative_result` / `quant_claim` from the `entity_type` enum — they are claim/finding extractions, not entities; c996 (2026-04-27) adds the dedicated `claim_search` tool (env-hidden until extraction is run). |
 | 9 | `entity_context` | keep | Full entity profile by `entity_id`. | Separate from `entity` because the input is a numeric id, not text. |
 | 10 | `graph_context` | **consolidated** (get_paper_metrics, explore_community) | PageRank/HITS + community membership (citation / semantic / taxonomic) for a bibcode. | `include_community=true` replaces `explore_community`. |
 | 11 | `find_gaps` | **consolidated** (get_working_set, get_session_summary, clear_working_set) | Cross-community gap detection over implicit session. | Replaces three explicit session tools with one action-oriented tool + implicit session tracking. |
@@ -306,6 +360,61 @@ lists the correct 13 tools and their categories. The alias map is large
 surface area — it should not live in the skill prompt (cost: tokens; value
 to a forward-looking agent: near zero). Keeping the alias map in
 `src/scix/mcp_server.py` + this audit doc is the right split.
+
+## Telemetry conventions for `query_log`
+
+**Bead:** `scix_experiments-3qun`. Pinned by
+`tests/test_mcp_search_unscoped_guard.py::test_telemetry_convention_*`.
+
+`call_tool` in `src/scix/mcp_server.py` writes one row to `query_log` per
+tool invocation. The `success` and `error_msg` columns follow this
+convention:
+
+| Outcome | `success` | `error_msg` | Examples |
+|---|---|---|---|
+| Tool raised an exception | `FALSE` | `str(exc)` | DB error, internal bug, timeout escalated to exception |
+| Structured error + lifted stable tag | `TRUE` | stable tag string | `unscoped_broad_query` (lifted from `unscoped_broad_blocked: true` marker by `_log_query`) |
+| Structured error WITHOUT a lifted tag | `TRUE` | `NULL` | `missing_required_params` (citation_traverse), entity legacy-type rejection (`negative_result` / `quant_claim`), `Invalid mode` / `Invalid action` / `Invalid direction` / `Invalid method`, `query must be a non-empty string`, `Unknown tool`, `entity_id is required`, etc. |
+
+The middle case — `success=TRUE` even though the tool returned an error
+payload — is intentional: `_dispatch_tool` returns the error JSON without
+raising, so `call_tool`'s exception handler doesn't fire. `_log_query`
+performs a post-hoc lift of stable telemetry markers (currently only
+`unscoped_broad_blocked`) into `error_msg` so operators can track block
+rate via a single column without scanning result payloads.
+
+### Recommended dashboard query
+
+```sql
+SELECT * FROM query_log
+WHERE success = FALSE OR error_msg IS NOT NULL;
+```
+
+This catches exceptions (case 1) plus lifted structured errors (case 2).
+The intuitive query `WHERE success = FALSE AND error_msg IS NOT NULL`
+silently drops every blocked-by-guard request and is the trap that
+motivated bead `scix_experiments-3qun`.
+
+### Known blind spot
+
+Case 3 (unlifted structured errors) is not surfaced by the recommended
+query. Operators who need full coverage of blocked requests today must
+inspect `params_json` or pre-filter on `tool_name` and inspect the
+result payload offline. The forward-looking fix is to extend the lift
+list in `_log_query` with additional stable tags (e.g. an
+`error_code`-based detector) so each new structured-error class lands
+with both a payload marker AND a `query_log` tag in the same change.
+
+### Stable lifted tags (current)
+
+| Tag | Source detector | Originating bead |
+|---|---|---|
+| `unscoped_broad_query` | `_detect_unscoped_broad_block` (matches `unscoped_broad_blocked: true` in result JSON) | `scix_experiments-uerc` |
+
+Add new entries here when a future bead extends `_log_query`'s lift
+list. The pinned-convention tests in `test_mcp_search_unscoped_guard.py`
+must be updated in the same change so any flip in semantics breaks
+visibly.
 
 ## Acceptance checklist
 

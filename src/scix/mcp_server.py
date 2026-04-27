@@ -693,6 +693,9 @@ def _filters_are_scoped(filters: dict[str, Any] | None) -> bool:
         # Empty list/string normalizes to "no filter".
         if isinstance(value, (list, str)) and len(value) == 0:
             continue
+        # Non-positive year bounds don't constrain anything in practice.
+        if field in ("year_min", "year_max") and isinstance(value, int) and value <= 0:
+            continue
         return True
     return False
 
@@ -745,7 +748,6 @@ def _unscoped_broad_response(query: str) -> str:
         "query": query,
         "suggestions": {
             "filters.year_min": 2020,
-            "filters.arxiv_class": "astro-ph",
         },
         "bypass": (
             "Pass bypass_unscoped_guard=true to run the unscoped query anyway "
@@ -1977,8 +1979,8 @@ def create_server(_run_self_test: bool = True):
                     "(implicit session state); (b) pass query='<topic>' to auto-seed via "
                     "concept_search in a single call. Use citation_traverse(mode='graph') "
                     "instead when you want direct citations of a single paper rather than "
-                    "cross-community gap detection. The 'signal' parameter picks which community partition "
-                    "to traverse: 'semantic' (default, INDUS k-means, full 32M-paper "
+                    "cross-community gap detection. The 'signal' parameter picks which "
+                    "community partition to traverse: 'semantic' (default, INDUS k-means, full 32M-paper "
                     "coverage) or 'citation' (currently offline — Leiden Phase B has not "
                     "completed, so this path returns empty)."
                 ),
@@ -3775,9 +3777,7 @@ _LEGACY_EXTRACTION_TYPES: frozenset[str] = frozenset({"negative_result", "quant_
 #: ``action='search'`` path still supports. These map to
 #: ``staging.extractions`` rows whose ``payload`` is a JSONB object keyed by
 #: type name ({"methods": ["JWST", ...]}).
-_VALID_ENTITY_TYPES: frozenset[str] = frozenset(
-    {"methods", "datasets", "instruments", "materials"}
-)
+_VALID_ENTITY_TYPES: frozenset[str] = frozenset({"methods", "datasets", "instruments", "materials"})
 
 
 def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:

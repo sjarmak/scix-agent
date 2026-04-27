@@ -122,6 +122,25 @@ def _lexical_stub() -> MagicMock:
             False,
             True,
         ),
+        # year_min=0 (or any non-positive) doesn't constrain anything → still unscoped.
+        (
+            "quantum gravity loop integration",
+            {"year_min": 0},
+            False,
+            True,
+        ),
+        (
+            "quantum gravity loop integration",
+            {"year_max": 0},
+            False,
+            True,
+        ),
+        (
+            "quantum gravity loop integration",
+            {"year_min": -1, "year_max": 0},
+            False,
+            True,
+        ),
         # Bypass set → never blocked even if unscoped + broad.
         ("quantum gravity loop integration", None, True, False),
         ("quantum gravity loop integration", {}, True, False),

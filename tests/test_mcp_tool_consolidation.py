@@ -226,6 +226,128 @@ class TestCitationTraverseInvalidMode:
 
 
 # ---------------------------------------------------------------------------
+# AC3b (bead zjt9): structured validation errors for missing required params.
+#
+# The bead pushed back on the original "all params optional" schema, which
+# hid the per-mode required-param differences from agents. Because mode
+# overloads (graph vs chain) have disjoint required sets, JSON Schema
+# can't express the constraint, so we enforce it in the handler and
+# return a structured payload that agents can reason over.
+# ---------------------------------------------------------------------------
+
+
+class TestCitationTraverseStructuredValidation:
+    """Validation errors carry mode + required + got fields, not just a string.
+
+    The error_code is a stable token agents can branch on; the human
+    'error' message is preserved for backwards-compat with callers that
+    only display it.
+    """
+
+    def test_graph_mode_no_inputs_returns_structured_payload(
+        self,
+        mock_conn: MagicMock,
+    ) -> None:
+        out = _dispatch_consolidated(
+            mock_conn,
+            "citation_traverse",
+            {"mode": "graph"},
+        )
+        data = json.loads(out)
+        assert data.get("error_code") == "missing_required_params"
+        assert data.get("mode") == "graph"
+        # Either bibcode or bibcodes (or session focus) satisfies graph mode.
+        assert "bibcode" in data.get("required", [])
+        assert data.get("got") == []
+        # Human-readable error message preserved (existing callers parse this).
+        assert "bibcode" in data["error"]
+
+    def test_chain_mode_no_inputs_returns_structured_payload(
+        self,
+        mock_conn: MagicMock,
+    ) -> None:
+        out = _dispatch_consolidated(
+            mock_conn,
+            "citation_traverse",
+            {"mode": "chain"},
+        )
+        data = json.loads(out)
+        assert data.get("error_code") == "missing_required_params"
+        assert data.get("mode") == "chain"
+        required = set(data.get("required", []))
+        assert {"source_bibcode", "target_bibcode"}.issubset(required)
+        assert data.get("got") == []
+        assert "source_bibcode" in data["error"]
+        assert "target_bibcode" in data["error"]
+
+    def test_chain_mode_partial_inputs_lists_what_was_provided(
+        self,
+        mock_conn: MagicMock,
+    ) -> None:
+        """When source is given but target is missing, got=['source_bibcode']."""
+        out = _dispatch_consolidated(
+            mock_conn,
+            "citation_traverse",
+            {"mode": "chain", "source_bibcode": "A"},
+        )
+        data = json.loads(out)
+        assert data.get("error_code") == "missing_required_params"
+        assert data.get("mode") == "chain"
+        assert data.get("got") == ["source_bibcode"]
+        assert "target_bibcode" in data.get("required", [])
+
+    def test_chain_mode_target_only_lists_target_in_got(
+        self,
+        mock_conn: MagicMock,
+    ) -> None:
+        out = _dispatch_consolidated(
+            mock_conn,
+            "citation_traverse",
+            {"mode": "chain", "target_bibcode": "B"},
+        )
+        data = json.loads(out)
+        assert data.get("error_code") == "missing_required_params"
+        assert data.get("got") == ["target_bibcode"]
+
+    @patch("scix.mcp_server._log_query")
+    @patch("scix.search.citation_chain")
+    def test_chain_mode_does_not_hit_db_on_missing_params(
+        self,
+        mock_cc: MagicMock,
+        _mock_log: MagicMock,
+        mock_conn: MagicMock,
+    ) -> None:
+        """Validation runs BEFORE search.citation_chain — the DB stays untouched."""
+        _dispatch_consolidated(
+            mock_conn,
+            "citation_traverse",
+            {"mode": "chain"},
+        )
+        mock_cc.assert_not_called()
+        # And no cursor / DB call was made on the connection mock.
+        mock_conn.cursor.assert_not_called()
+
+    @patch("scix.mcp_server._log_query")
+    @patch("scix.search.get_citations")
+    @patch("scix.search.get_references")
+    def test_graph_mode_does_not_hit_db_on_missing_params(
+        self,
+        mock_ref: MagicMock,
+        mock_cit: MagicMock,
+        _mock_log: MagicMock,
+        mock_conn: MagicMock,
+    ) -> None:
+        _dispatch_consolidated(
+            mock_conn,
+            "citation_traverse",
+            {"mode": "graph"},
+        )
+        mock_cit.assert_not_called()
+        mock_ref.assert_not_called()
+        mock_conn.cursor.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # AC4: deprecated aliases shim correctly through to citation_traverse
 # ---------------------------------------------------------------------------
 

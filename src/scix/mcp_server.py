@@ -1504,15 +1504,19 @@ def create_server(_run_self_test: bool = True):
                 description=(
                     "Traverse the citation graph. mode='graph' walks the neighborhood of a "
                     "single paper (citing or cited papers); mode='chain' traces the shortest "
-                    "citation path between a source and a target paper. mode='graph' "
-                    "(default) requires bibcode OR bibcodes=[...] for working-set "
-                    "expansion (multi-paper neighborhoods returned under by_bibcode); when "
-                    "neither is given, falls through to the session's focused papers. "
-                    "Supports direction (forward=citing, backward=references, both=all) "
-                    "and include_context. mode='chain' requires source_bibcode and "
-                    "target_bibcode and accepts max_depth (working-set scoping does not "
-                    "apply). Use citation_similarity instead when you want papers related "
-                    "via shared citation patterns rather than direct citation links."
+                    "citation path between a source and a target paper. "
+                    "REQUIRED PARAMS DIFFER BY MODE (JSON Schema can't express this): "
+                    "mode='graph' (default) requires ONE of {bibcode, bibcodes=[...], "
+                    "a focused session working set} — multi-paper neighborhoods are "
+                    "returned under by_bibcode; supports direction "
+                    "(forward=citing, backward=references, both=all) and include_context. "
+                    "mode='chain' requires BOTH source_bibcode AND target_bibcode and "
+                    "accepts max_depth (1..5); working-set scoping does not apply. "
+                    "Calls missing the per-mode required params return a structured "
+                    "{error_code:'missing_required_params', mode, required, got} "
+                    "payload before any DB access. "
+                    "Use citation_similarity instead when you want papers related via "
+                    "shared citation patterns rather than direct citation links."
                 ),
                 inputSchema={
                     "type": "object",
@@ -3281,6 +3285,34 @@ def _handle_temporal_evolution(conn: psycopg.Connection, args: dict[str, Any]) -
     return _result_to_json(result)
 
 
+def _missing_required_params_error(
+    *,
+    mode: str,
+    required: list[str],
+    got: list[str],
+    message: str,
+) -> str:
+    """Build the structured validation-error payload for citation_traverse.
+
+    The error envelope addresses bead scix_experiments-zjt9: ``mode``
+    overloads ``citation_traverse`` with disjoint required-param sets that
+    JSON Schema can't express, so validation runs in the handler and
+    returns a machine-readable payload rather than a raw string. Agents
+    branch on ``error_code``; humans read ``error``; ``required`` /
+    ``got`` make the gap explicit so the agent can self-correct without
+    a follow-up round-trip.
+    """
+    return json.dumps(
+        {
+            "error": message,
+            "error_code": "missing_required_params",
+            "mode": mode,
+            "required": required,
+            "got": got,
+        }
+    )
+
+
 def _handle_citation_traverse(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Unified citation graph traversal.
 
@@ -3297,7 +3329,10 @@ def _handle_citation_traverse(conn: psycopg.Connection, args: dict[str, Any]) ->
 
     Returns a structured JSON ``error`` payload for invalid mode or
     missing required fields rather than raising — keeps the MCP boundary
-    contract consistent with the rest of the dispatch layer.
+    contract consistent with the rest of the dispatch layer. Validation
+    runs BEFORE any DB access (bead scix_experiments-zjt9): the payload
+    carries ``error_code='missing_required_params'`` plus ``mode`` /
+    ``required`` / ``got`` so agents can correct without a probe round-trip.
     """
     mode = args.get("mode", "graph")
 
@@ -3313,22 +3348,37 @@ def _handle_citation_traverse(conn: psycopg.Connection, args: dict[str, Any]) ->
         ws_bibcodes = _resolve_working_set_bibcodes(args)
         if ws_bibcodes:
             return _handle_citation_traverse_multi(conn, ws_bibcodes, args)
-        return json.dumps(
-            {
-                "error": (
-                    "bibcode is required when mode='graph' (or pass "
-                    "bibcodes=[...] / focus papers via get_paper for "
-                    "working-set mode)."
-                )
-            }
+        # Nothing to traverse from — neither single bibcode, explicit
+        # bibcodes=[...], nor a focused session working set. Return the
+        # structured validation envelope before touching the DB.
+        return _missing_required_params_error(
+            mode="graph",
+            required=["bibcode"],
+            got=[],
+            message=(
+                "bibcode is required when mode='graph' (or pass "
+                "bibcodes=[...] / focus papers via get_paper for "
+                "working-set mode)."
+            ),
         )
 
     if mode == "chain":
         source = args.get("source_bibcode")
         target = args.get("target_bibcode")
         if not source or not target:
-            return json.dumps(
-                {"error": ("source_bibcode and target_bibcode are required " "when mode='chain'")}
+            got = [
+                name
+                for name, value in (
+                    ("source_bibcode", source),
+                    ("target_bibcode", target),
+                )
+                if value
+            ]
+            return _missing_required_params_error(
+                mode="chain",
+                required=["source_bibcode", "target_bibcode"],
+                got=got,
+                message=("source_bibcode and target_bibcode are required " "when mode='chain'"),
             )
         max_depth = max(1, min(args.get("max_depth", 5), 5))
         result = search.citation_chain(

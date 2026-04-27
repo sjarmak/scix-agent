@@ -72,9 +72,9 @@ names and legacy aliases into `_dispatch_consolidated` (line 1520).
 | 2 | `concept_search` | keep | UAT-concept retrieval (formal taxonomy). | Separate from `search` because the input contract differs (label/URI, not NL). |
 | 3 | `get_paper` | **consolidated** (document_context, get_openalex_topics, add_to_working_set) | Metadata + optional entity links for one bibcode. | `include_entities=true` replaces `document_context` behaviour. Implicit session tracking via `_auto_track_bibcodes`. |
 | 4 | `read_paper` | **consolidated** (read_paper_section, search_within_paper) | Read or search inside one paper's body. | `search_query` toggles read-vs-search. |
-| 5 | `citation_graph` | **consolidated** (get_citations, get_references, get_citation_context) | Direct citation neighbours from one bibcode. | `direction ∈ {forward, backward, both}` replaces 2 legacy tools. |
+| 5 | `citation_traverse` | **consolidated** (citation_graph, citation_chain, get_citations, get_references, get_citation_context) | Citation graph traversal: neighbourhood walk OR shortest-path chain, selected by `mode`. | `mode ∈ {graph, chain}`; per-mode required-param sets are validated in the handler with a structured `missing_required_params` payload (bead `zjt9`) since JSON Schema can't express the disjoint sets. |
 | 6 | `citation_similarity` | **consolidated** (co_citation_analysis, bibliographic_coupling) | Structural similarity via shared citations. | `method ∈ {co_citation, coupling}` replaces 2 legacy tools. |
-| 7 | `citation_chain` | keep | Shortest-path citation trace between two specific bibcodes. | Different contract (two endpoints) from `citation_graph` (one endpoint); keeping separate avoids overloading one tool with two unrelated workflows. |
+| 7 | _(slot folded into `citation_traverse` row 5)_ | — | — | The original `citation_chain` "keep separate" recommendation was reversed on 2026-04-25; see Recommendation §3 below. |
 | 8 | `entity` | **consolidated** (entity_search, resolve_entity) | `action ∈ {search, resolve}`. | Added entity-type / confidence-tier / provenance-source filters in later builds. |
 | 9 | `entity_context` | keep | Full entity profile by `entity_id`. | Separate from `entity` because the input is a numeric id, not text. |
 | 10 | `graph_context` | **consolidated** (get_paper_metrics, explore_community) | PageRank/HITS + community membership (citation / semantic / taxonomic) for a bibcode. | `include_community=true` replaces `explore_community`. |
@@ -94,9 +94,11 @@ All deprecated aliases continue to work; responses carry
 |---|---|---|---|
 | `semantic_search(query, ...)` | `search(query, mode="semantic", ...)` | Adds `mode="semantic"`. | `7fe258d` |
 | `keyword_search(terms, ...)` | `search(query, mode="keyword", ...)` | Renames `terms → query`; adds `mode="keyword"`. | `7fe258d` |
-| `get_citations(bibcode, ...)` | `citation_graph(bibcode, direction="forward", ...)` | Adds `direction="forward"`. | `7fe258d` |
-| `get_references(bibcode, ...)` | `citation_graph(bibcode, direction="backward", ...)` | Adds `direction="backward"`. | `7fe258d` |
-| `get_citation_context(source, target)` | `citation_graph(bibcode, include_context=true)` | Dedicated legacy handler retained in `_dispatch_consolidated` — same args; modern path uses `include_context=true`. | `7fe258d` |
+| `get_citations(bibcode, ...)` | `citation_traverse(bibcode, mode="graph", direction="forward", ...)` | Adds `mode="graph"`, `direction="forward"`. | `7fe258d` (via `citation_graph`); rerouted to `citation_traverse` 2026-04-25 |
+| `get_references(bibcode, ...)` | `citation_traverse(bibcode, mode="graph", direction="backward", ...)` | Adds `mode="graph"`, `direction="backward"`. | `7fe258d` (via `citation_graph`); rerouted to `citation_traverse` 2026-04-25 |
+| `get_citation_context(source, target)` | `citation_traverse(bibcode, mode="graph", include_context=true)` | Dedicated legacy handler retained in `_dispatch_consolidated` — same args; modern path uses `mode="graph"`, `include_context=true`. | `7fe258d` |
+| `citation_graph(bibcode, ...)` | `citation_traverse(bibcode, mode="graph", ...)` | Adds `mode="graph"`. | 2026-04-25 |
+| `citation_chain(source_bibcode, target_bibcode, ...)` | `citation_traverse(source_bibcode, target_bibcode, mode="chain", ...)` | Adds `mode="chain"`. Missing endpoints now return `error_code="missing_required_params"` with `required=["source_bibcode","target_bibcode"]` before any DB access (bead `zjt9`). | 2026-04-25 |
 | `co_citation_analysis(bibcode, ...)` | `citation_similarity(bibcode, method="co_citation", ...)` | Adds `method="co_citation"`. | `7fe258d` |
 | `bibliographic_coupling(bibcode, ...)` | `citation_similarity(bibcode, method="coupling", ...)` | Adds `method="coupling"`. | `7fe258d` |
 | `entity_search(entity_name, ...)` | `entity(action="search", query=entity_name, ...)` | Adds `action="search"`; renames `entity_name → query`. | `7fe258d` |
@@ -138,15 +140,42 @@ recommends keeping all three pairs separate; rationale below.
    **Already done.** Single tool with `method ∈ {co_citation, coupling}`.
 
 3. **`citation_graph` + `citation_chain` → single `citation_traverse`.**
-   **Recommend: keep separate.** The contracts differ:
-   `citation_graph(bibcode)` is a neighbourhood walk from one paper;
-   `citation_chain(source, target)` is a shortest-path query between two
-   endpoints. They share no arguments except maybe a depth cap. Collapsing
-   would require either a disjoint-union schema (two `required` sets,
-   validated at runtime) or a "mode" enum where half the args are
-   meaningless per mode — both worse for agent steering than the current
-   named tools. A `citation_traverse` umbrella name adds no expressive
-   power.
+   **Status: shipped (2026-04-25).** Reversed the original "keep separate"
+   recommendation. The merge happened because the project is actively
+   reducing tool count (28 → 13 → 20 with later additions, with `≤ 15`
+   as the visible-surface target after env-hidden tools), and adding a
+   second top-level citation tool would have spent budget on a name, not
+   on capability. `citation_graph` and `citation_chain` are now
+   deprecated aliases that route through `_dispatch_consolidated` to
+   `citation_traverse(mode=…)` with the appropriate mode injected.
+
+   The known cost — **disjoint required-param sets per mode that JSON
+   Schema can't express** — is paid down by handler-side validation
+   rather than by splitting the tool again (bead
+   `scix_experiments-zjt9`). When required params for the chosen mode are
+   missing, `_handle_citation_traverse` returns a structured payload
+   **before any DB access**:
+
+   ```json
+   {
+     "error": "<human-readable message>",
+     "error_code": "missing_required_params",
+     "mode": "graph" | "chain",
+     "required": ["bibcode"] | ["source_bibcode", "target_bibcode"],
+     "got":      [<names of params actually supplied>]
+   }
+   ```
+
+   Agents branch on `error_code`; humans read `error`; `required` / `got`
+   make the gap concrete so the agent can self-correct in one step
+   without a probe round-trip. The tool description spells the per-mode
+   required sets out explicitly so a well-prompted agent never reaches
+   the validation path. Splitting the tool was reconsidered and rejected
+   on tool-budget grounds; if a future PRD finds that agent selection
+   accuracy degrades on `citation_traverse` despite the explicit
+   description and structured errors, splitting can be revisited under
+   its own bead — but not as part of bead `zjt9`, whose acceptance is
+   met by the schema-enforce path above.
 
 **Net:** 13 is the floor we want. Going to 11 would save 2 tool slots at
 the cost of agent clarity and schema honesty. The PRD target (`≤ 15`) is

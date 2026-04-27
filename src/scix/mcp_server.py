@@ -2321,7 +2321,19 @@ def create_server(_run_self_test: bool = True):
                     "for backwards compat but is deprecated in favor of "
                     "'theme'. Returns unattributed_bibcodes for papers "
                     "with no signal, and a coverage block reporting how "
-                    "many bibcodes had each kind of signal. Falls through "
+                    "many bibcodes had each kind of signal. Each "
+                    "cited_papers row also carries 'first_author' "
+                    "(populated from papers.first_author) so the agent "
+                    "can attribute citations without parsing the "
+                    "abstract. Two opt-in grounding flags expand the "
+                    "payload: include_full_abstracts=true adds an "
+                    "'abstract_full' field with the untruncated abstract "
+                    "alongside 'abstract_snippet'; "
+                    "include_citation_contexts=true adds a "
+                    "'citation_excerpts' field (up to 3 rows from "
+                    "citation_contexts) on intent_modal-bucketed papers "
+                    "so the agent sees at least one actual citing "
+                    "sentence per intent-attributed paper. Falls through "
                     "to the session's focused papers when "
                     "working_set_bibcodes is omitted (mirrors find_gaps). "
                     "Use after lit_review or a retrieval+characterization "
@@ -2375,6 +2387,38 @@ def create_server(_run_self_test: bool = True):
                                 "re-bucket papers based on the signals "
                                 "exposed in a previous synthesize_findings "
                                 "call."
+                            ),
+                        },
+                        "include_full_abstracts": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": (
+                                "When true, every cited_papers row also "
+                                "carries an 'abstract_full' field with the "
+                                "untruncated papers.abstract text alongside "
+                                "the existing 'abstract_snippet'. Use when "
+                                "you need full abstracts for grounded "
+                                "synthesis without round-tripping through "
+                                "read_paper. Default false (preserves the "
+                                "default wire format)."
+                            ),
+                        },
+                        "include_citation_contexts": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": (
+                                "When true, papers attributed via "
+                                "signal_used='intent_modal' carry a "
+                                "'citation_excerpts' field with up to 3 "
+                                "{context_text, intent, citing_bibcode} "
+                                "rows from citation_contexts so the agent "
+                                "can see at least one actual citing "
+                                "sentence per intent-bucketed paper. "
+                                "Papers attributed via community / "
+                                "override / citation-count fallback do "
+                                "NOT receive excerpts (their bucket "
+                                "assignment did not come from a "
+                                "citation_contexts row). Default false."
                             ),
                         },
                     },
@@ -4938,12 +4982,21 @@ def _handle_synthesize_findings(conn: psycopg.Connection, args: dict[str, Any]) 
             {"error": "section_overrides must be an object {bibcode: section_name}"},
         )
 
+    # Bead tq0t: two boolean opt-ins for additive grounding fields. Both
+    # default False to preserve the default wire format. ``bool()`` is
+    # the conventional truthy coercion (matches MCP JSON-Schema's
+    # boolean type).
+    include_full_abstracts = bool(args.get("include_full_abstracts", False))
+    include_citation_contexts = bool(args.get("include_citation_contexts", False))
+
     result = _synthesize_findings(
         conn,
         working_set_bibcodes=bibcodes,
         sections=sections,
         max_papers_per_section=max_papers,
         section_overrides=raw_overrides,
+        include_full_abstracts=include_full_abstracts,
+        include_citation_contexts=include_citation_contexts,
     )
     return json.dumps(result.to_dict(), indent=2, default=str)
 

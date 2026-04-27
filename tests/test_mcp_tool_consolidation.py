@@ -366,22 +366,31 @@ class TestListToolsCount:
         assert "find_similar_by_examples" not in EXPECTED_TOOLS
 
     def test_list_tools_returns_20_via_self_test(self) -> None:
-        """Round-trip through startup_self_test: registers exactly 20 tools."""
+        """Round-trip through startup_self_test: registers exactly 20 tools.
+
+        EXPECTED_TOOLS has 20 entries, but list_tools() drops the
+        ``_HIDDEN_TOOLS`` set (default: section_retrieval, read_paper_claims,
+        find_claims — backing data not yet populated). The visible tool count
+        equals ``len(_expected_tool_set())``, which collapses to 17 with the
+        defaults above. Test against that derived expectation rather than a
+        hardcoded number so future hide/unhide changes don't churn this test.
+        """
         try:
             import mcp.types  # noqa: F401
         except ImportError:
             pytest.skip("mcp SDK not installed")
 
-        from scix.mcp_server import startup_self_test
+        from scix.mcp_server import _expected_tool_set, startup_self_test
 
+        expected_visible = _expected_tool_set()
         with patch("scix.mcp_server._init_model_impl"):
             status = startup_self_test()
         assert status["ok"] is True
-        assert status["tool_count"] == 20
+        assert status["tool_count"] == len(expected_visible)
         assert "citation_traverse" in status["tool_names"]
         assert "citation_graph" not in status["tool_names"]
         assert "citation_chain" not in status["tool_names"]
         assert "find_similar_by_examples" not in status["tool_names"]
-        # PRD nanopub-claim-extraction registrations are present.
-        assert "read_paper_claims" in status["tool_names"]
-        assert "find_claims" in status["tool_names"]
+        # PRD bead cfh9: synthesize_findings is not env-hidden, so it must
+        # appear in the visible self-test surface.
+        assert "synthesize_findings" in status["tool_names"]

@@ -58,6 +58,18 @@
     return 'community ' + cid
   }
 
+  // Returns true iff the community has a real term-derived label. Used by
+  // the centroid-label layer to skip communities that would otherwise
+  // render as 'community 3' / 'community 12' etc. — those IDs exist in
+  // umap.medium.json (200 of them) but the medium label bundle covers
+  // only 187, so 13 small communities have no terms. Filtering them out
+  // keeps the canvas clean instead of showing meaningless labels.
+  function _hasRealLabel(cid) {
+    if (cid == null) return false
+    const entry = _communityLabels[cid]
+    return Boolean(entry && entry.terms && entry.terms.length)
+  }
+
   function _loadCommunityLabels() {
     // Use the shared resolution config when available so switching to
     // medium/fine picks the matching label bundle; fall back to the
@@ -462,7 +474,10 @@
     }
     const out = []
     acc.forEach(function (e, cid) {
-      if (e.n > 0) {
+      // Skip communities without a real term-derived label so the canvas
+      // doesn't render meaningless 'community 3' / 'community 12' chips
+      // for the 13 medium-resolution IDs that aren't in the label bundle.
+      if (e.n > 0 && _hasRealLabel(cid)) {
         out.push({
           community_id: cid,
           x: e.sx / e.n,

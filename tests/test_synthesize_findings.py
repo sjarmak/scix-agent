@@ -164,10 +164,9 @@ class TestCommunityFallThrough:
         """No intent coverage; community signal alone decides section.
 
         Post-37wj: a community is 'core' iff its share of the working set
-        is >= ``_CORE_SHARE_THRESHOLD`` (0.15). With X and Y in community
-        5 and Z alone in community 99, 18 / 20 papers are needed for the
-        share math to put Z below the supporting cut (0.05). Use 18 X/Y
-        papers + 1 Z so:
+        is >= ``_CORE_SHARE_THRESHOLD`` (0.15). With X papers in community
+        5 and Z alone in community 99, the working set is 18 X + 1 Z = 19
+        total, so:
 
         - community 5 has share 18/19 = 0.947 -> core -> background
         - community 99 has share 1/19 = 0.053 -> supporting -> methods
@@ -386,8 +385,13 @@ class TestAcceptanceCoverage:
             ("2024P04", "background", 1),
         ]
         # 25 of the remaining 30 papers have community labels (mixed).
-        # 20 in modal community 1, 5 in minority community 2.
-        # 5 papers have NO community row (-> unattributed).
+        # Under the post-37wj weighted classifier with 30-paper working set:
+        #   community 1: 20/30 = 0.667 share -> core -> background
+        #   community 2: 5/30  = 0.167 share -> core -> background (also)
+        # Both communities are 'core' here, so open_questions stays empty
+        # via Tier-2 — it's only reachable now via override or Tier-3
+        # fallback, which Tier-3 may exercise on the 5 community-less papers.
+        # 5 papers have NO community row (-> unattributed -> Tier-3 candidates).
         community_rows = []
         for i, b in enumerate(bibcodes):
             if i < 20:
@@ -508,12 +512,17 @@ class TestPerPaperSignals:
         assert row_b["signals"]["intent_total_rows"] == 0
         assert row_b["signals"]["is_modal_community"] is True
 
-        # 2024C — community fall-through to 'open_questions' (minority).
+        # 2024C — sole member of community 2; share = 1/3 = 0.333 (core)
+        # under the post-37wj weighted classifier so it routes to
+        # 'background' as a core-tier paper (NOT 'open_questions' as the
+        # pre-37wj binary modal/non-modal rule would have).
         row_c = all_rows["2024C"]
         assert row_c["signal_used"] == "community_fallthrough"
         assert row_c["signals"]["community_id"] == 2
         assert row_c["signals"]["is_modal_community"] is False
         assert row_c["signals"]["modal_community_id"] == 1
+        assert row_c["signals"]["share_tier"] == "core"
+        assert row_c["section_assigned"] == "background"
 
     def test_alternative_sections_includes_other_options(self) -> None:
         """A paper with intent_counts {method, background} should list both
@@ -1066,12 +1075,15 @@ class TestWeightedShareClassifier:
             max_papers_per_section=8,
         )
         # 2024B has highest citation_count (100) -> first to be Tier 3
-        # fallback-pulled into the first empty section ('methods' was empty
-        # since no intent; 'results' was empty; 'open_questions' was empty).
+        # fallback-pulled into the first empty section. Section iteration
+        # order is DEFAULT_SECTIONS = (background, methods, results,
+        # open_questions); background was filled by core community A, so
+        # 'methods' is the first empty section and B lands there.
         all_rows = {p["bibcode"]: p for s in result.sections for p in s.cited_papers}
         assert "2024B" in all_rows
         # Tier 3 (fallback) was used, not Tier 2 (community_fallthrough).
         assert all_rows["2024B"]["signal_used"] == "citation_count_fallback"
+        assert all_rows["2024B"]["section_assigned"] == "methods"
 
     def test_share_tier_in_signals_payload(self) -> None:
         """AC2: each fall-through-assigned paper exposes ``share_tier`` in

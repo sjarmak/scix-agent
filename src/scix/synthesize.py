@@ -60,7 +60,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Sequence
+from typing import Any, Final, Literal, Mapping, Sequence
 
 import psycopg
 
@@ -93,11 +93,13 @@ _MAX_WORKING_SET_BIBCODES = 200
 # A community's share of the working set is ``papers_in_community /
 # working_set_size``. These constants are tunable in one place; the rest of
 # the module derives the share-tier label from them.
-_CORE_SHARE_THRESHOLD: float = 0.15
-_SUPPORTING_SHARE_THRESHOLD: float = 0.05
+_CORE_SHARE_THRESHOLD: Final[float] = 0.15
+_SUPPORTING_SHARE_THRESHOLD: Final[float] = 0.05
+
+ShareTier = Literal["core", "supporting", "peripheral"]
 
 
-def _classify_share_tier(share: float) -> str:
+def _classify_share_tier(share: float) -> ShareTier:
     """Classify a working-set community share into a share-tier label.
 
     Pure arithmetic — no DB, no model. The thresholds live in the
@@ -197,7 +199,10 @@ def synthesize_findings(
         Section names to emit, in order. Defaults to
         :data:`DEFAULT_SECTIONS`. Section names that don't appear in the
         intent map (e.g., ``open_questions``) only receive papers via
-        the community fall-through.
+        explicit ``section_overrides`` or the Tier-3 citation-count
+        fallback — under the weighted community classifier (bead 37wj),
+        Tier-2 routes only to ``background`` (core) or ``methods``
+        (supporting), never to ``open_questions``.
     max_papers_per_section:
         Cap on per-section ``cited_papers`` length (deterministic order:
         first by year desc, then bibcode asc). The Tier-3 citation-count
@@ -447,7 +452,7 @@ def _modal_intent(hist: Counter[str]) -> str | None:
     )[0]
 
 
-def _section_for_share_tier(tier: str, section_set: set[str]) -> str | None:
+def _section_for_share_tier(tier: ShareTier, section_set: set[str]) -> str | None:
     """Map a share-tier label to a section name (or None for peripheral).
 
     Explicit ladder per bead 37wj AC1:
@@ -467,7 +472,7 @@ def _section_for_share_tier(tier: str, section_set: set[str]) -> str | None:
         if "background" in section_set:
             return "background"
         return None
-    # 'peripheral' (or any unknown label, defensively)
+    # tier == "peripheral"
     return None
 
 

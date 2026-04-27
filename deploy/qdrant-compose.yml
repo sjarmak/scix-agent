@@ -1,0 +1,41 @@
+# Qdrant runtime for scix vector search.
+#
+# Per docs/prd/qdrant_nas_migration.md MH-1: Qdrant runs in Docker with
+# storage on local NVMe, binds to 127.0.0.1 only, and is never exposed
+# to LAN or the public internet. The Cloudflare Tunnel is intentionally
+# NOT extended to Qdrant — vector search is a backend-only concern.
+#
+# Why a compose file instead of the bare `docker run` we used before:
+# the bare command can drift back to 0.0.0.0 on a sloppy restart (this
+# already happened once — bead s1a). Codifying it here is the single
+# source of truth, and `scripts/preflight_qdrant_security.sh` enforces
+# the binding policy on every start.
+#
+# Snapshots path (`/mnt/qdrant_snapshots:/qdrant/snapshots`) is commented
+# out below; uncomment once the NAS mount is provisioned per the
+# qdrant-on-NAS migration plan.
+
+services:
+  scix-qdrant:
+    image: qdrant/qdrant:latest
+    container_name: scix-qdrant
+    restart: unless-stopped
+    # Bind ONLY to host loopback. Empty `HostIp` (the docker default
+    # when you write `6333:6333`) maps to 0.0.0.0 and exposes the API to
+    # the LAN. The 127.0.0.1 prefix is load-bearing security policy —
+    # do not remove it without updating MH-1 in the PRD.
+    ports:
+      - "127.0.0.1:6333:6333"  # REST API
+      - "127.0.0.1:6334:6334"  # gRPC API
+    volumes:
+      # Storage on local NVMe per MH-1. NFS is unsafe for live writes —
+      # see docs/storage_tiering_policy or memory storage_tiering_policy.
+      - ../.qdrant_storage:/qdrant/storage
+      # Snapshots on NAS (separate from live storage). Enable once the
+      # NAS path is provisioned.
+      # - /mnt/qdrant_snapshots:/qdrant/snapshots
+    environment:
+      RUN_MODE: production
+      # Qdrant API key gating goes here once we have an MCP-side client
+      # that sets it; matches the MCP_AUTH_TOKEN rotation pattern.
+      # QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?set QDRANT_API_KEY in deploy/.env}

@@ -173,7 +173,16 @@ class SynthesisResult:
                     "name": s.name,
                     "cited_papers": list(s.cited_papers),
                     "theme_summary": s.theme_summary,
-                    "theme": dict(s.theme),
+                    # Explicit reconstruction (not dict(s.theme)) so the
+                    # nested communities / top_papers_by_citation lists
+                    # are independent copies — protects the frozen
+                    # SectionBucket from accidental downstream mutation.
+                    "theme": {
+                        "communities": list(s.theme.get("communities", [])),
+                        "top_papers_by_citation": list(
+                            s.theme.get("top_papers_by_citation", [])
+                        ),
+                    },
                 }
                 for s in self.sections
             ],
@@ -395,9 +404,13 @@ def _fetch_paper_metadata(
 
     ``arxiv_class`` and ``keywords`` are ``text[]`` arrays — partial
     coverage on prod (~8% / ~49% per spot-check 2026-04-27) — used by
-    the bead-4la8 ``theme`` aggregation. Defensively defaults to ``[]``
-    when the row's tuple is shorter than expected (mock cursors in tests
-    may return only the legacy 5-tuple shape).
+    the bead-4la8 ``theme`` aggregation. Production rows always return
+    7 columns from the SELECT below; the ``len(row) > 5/6`` guards
+    exist *only* to keep pre-4la8 5-tuple test fixtures working (~20
+    fixtures across ``tests/test_synthesize_findings.py``). Migrating
+    those fixtures to 7-tuples is tracked as a follow-up; once done,
+    drop the guards. Do NOT take inspiration from this guard for new
+    code — the SELECT contract guarantees the column count.
     """
     sql = """
         SELECT bibcode, title, year, abstract, COALESCE(citation_count, 0),
@@ -412,9 +425,9 @@ def _fetch_paper_metadata(
             bibcode = row[0]
             abstract = row[3] or ""
             citation_count = int(row[4])  # COALESCE in SQL guarantees non-NULL
-            # Defensive read for arxiv_class / keywords so legacy 5-tuple
-            # test fixtures and any short rows from older callers don't
-            # crash this loop.
+            # Fixture-compat guards: see docstring above. Production rows
+            # always return 7 columns; remove these once the legacy 5-tuple
+            # test fixtures are migrated.
             arxiv_class: list[str] = list(row[5]) if len(row) > 5 and row[5] else []
             keywords: list[str] = list(row[6]) if len(row) > 6 and row[6] else []
             out[bibcode] = {
@@ -590,7 +603,7 @@ _THEME_MAX_ARXIV_CLASSES_PER_COMMUNITY: Final[int] = 5
 # Rough English/scientific stopword list for the title-token keyword
 # fallback (per CLAUDE.md memory ``community_labels_pipeline.md`` —
 # ``papers.keywords`` is NULL on ~52% of rows so we need a fallback).
-_TITLE_TOKEN_STOPWORDS: frozenset[str] = frozenset(
+_TITLE_TOKEN_STOPWORDS: Final[frozenset[str]] = frozenset(
     {
         "a",
         "an",
@@ -722,6 +735,14 @@ def _theme_for(
         # Title-token fallback when no keyword data is available across
         # the community's section papers (papers.keywords is NULL on
         # ~52% of prod rows per the labels-pipeline note in CLAUDE.md).
+        #
+        # Known limitation: this fires only when *all* members have empty
+        # `keywords`. Mixed-coverage communities (some papers have
+        # keywords, others don't) skip the fallback entirely — the
+        # `top_keywords` then reflect only the keyword-bearing minority.
+        # That asymmetry is acceptable for now (the keyword signal is
+        # advisory metadata, not load-bearing for routing) but worth
+        # revisiting if `papers.keywords` coverage changes materially.
         if not keyword_counter:
             for member in members:
                 meta = paper_meta.get(member, {})

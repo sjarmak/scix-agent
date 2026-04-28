@@ -424,3 +424,220 @@ def test_parse_stream_json_handles_malformed_lines() -> None:
     )
     parsed = _parse_stream_json(stream)
     assert parsed["final_answer"] == "ok"
+
+
+# --------------------------------------------------------------------------
+# bench_runner: pickers, materialization, verdict policy
+# --------------------------------------------------------------------------
+
+
+def _bench_graph() -> ig.Graph:
+    """Larger toy graph for bench_runner tests.
+
+    8 nodes with varied citation counts/years to exercise picker filters.
+    Triangle A-B-C used by t2_ppr_relevance.
+    """
+    g = ig.Graph(directed=True)
+    g.add_vertices(8)
+    g.vs["name"] = ["A", "B", "C", "D", "E", "F", "G", "H"]
+    g.vs["title"] = [
+        "core method paper",
+        "applied algorithm",
+        "exoplanet survey technique",
+        "review of dark matter",
+        "old result",
+        "recent finding",
+        "obscure note",
+        "mid-cited paper",
+    ]
+    g.vs["year"] = [2015, 2018, 2021, 2010, 2012, 2024, 2019, 2022]
+    g.vs["citation_count"] = [500, 250, 150, 120, 80, 30, 5, 60]
+    # triangle A-B-C, plus assorted edges
+    g.add_edges(
+        [(0, 1), (1, 2), (2, 0), (0, 3), (1, 4), (5, 0), (7, 5), (6, 7)]
+    )
+    return g
+
+
+def test_pick_top_cited_orders_and_filters() -> None:
+    from scix.graph_experiment.bench_runner import pick_top_cited
+
+    g = _bench_graph()
+    ids = pick_top_cited(g, min_count=100)
+    counts = [g.vs[i]["citation_count"] for i in ids]
+    assert counts == sorted(counts, reverse=True)
+    assert all(c >= 100 for c in counts)
+
+
+def test_pick_top_cited_year_window() -> None:
+    from scix.graph_experiment.bench_runner import pick_top_cited
+
+    g = _bench_graph()
+    ids = pick_top_cited(g, min_count=50, max_year=2018)
+    names = {g.vs[i]["name"] for i in ids}
+    # A(2015,500), B(2018,250), D(2010,120), E(2012,80) all qualify
+    assert names == {"A", "B", "D", "E"}
+
+
+def test_pick_top_cited_title_contains() -> None:
+    from scix.graph_experiment.bench_runner import pick_top_cited
+
+    g = _bench_graph()
+    ids = pick_top_cited(
+        g, min_count=100, title_contains=("method", "algorithm", "technique")
+    )
+    names = {g.vs[i]["name"] for i in ids}
+    # A(method), B(algorithm), C(technique) — D's title has no match
+    assert names == {"A", "B", "C"}
+
+
+def test_pick_top_cited_handles_missing_attrs() -> None:
+    from scix.graph_experiment.bench_runner import pick_top_cited
+
+    g = _bench_graph()
+    g.vs[3]["year"] = None
+    g.vs[2]["citation_count"] = None
+    ids = pick_top_cited(g, min_year=2000, min_count=10)
+    names = {g.vs[i]["name"] for i in ids}
+    assert "C" not in names  # citation_count is None
+    assert "D" not in names  # year is None when min_year is set
+
+
+def test_materialize_questions_resolves_against_real_graph() -> None:
+    from scix.graph_experiment.bench_runner import materialize_questions
+
+    g = _bench_graph()
+    questions = materialize_questions(g)
+    ids = {q.id for q in questions}
+    # Tier-1 templates that need any cited paper should always resolve.
+    assert "t1_direct_citations" in ids
+    assert "t1_topical_search" in ids  # seed_count == 0
+    # All resolved seeds must be names actually present in the graph.
+    valid_names = set(g.vs["name"])
+    for q in questions:
+        for bib in q.seed_bibcodes:
+            assert bib in valid_names
+
+
+def test_materialize_questions_finds_triangle_for_ppr() -> None:
+    from scix.graph_experiment.bench_runner import materialize_questions
+
+    g = _bench_graph()
+    questions = {q.id: q for q in materialize_questions(g)}
+    ppr = questions.get("t2_ppr_relevance")
+    assert ppr is not None
+    assert len(ppr.seed_bibcodes) == 3
+    # Graph has triangle A-B-C; picker should locate it.
+    assert set(ppr.seed_bibcodes) == {"A", "B", "C"}
+
+
+def test_go_no_go_recommends_go_when_depth_lifts_and_freeform_fires() -> None:
+    from scix.graph_experiment.bench_runner import go_no_go
+
+    verdict, rationale = go_no_go(
+        {
+            "depth_shift_max": 3,
+            "depth_shift_median": 1.5,
+            "freeform_query_emergence": 4,
+            "new_tool_usage": {"shortest_path": 5, "multi_hop_neighbors": 2},
+        }
+    )
+    assert verdict == "GO"
+    assert "Apache AGE" in rationale
+
+
+def test_go_no_go_inconclusive_when_freeform_is_zero() -> None:
+    from scix.graph_experiment.bench_runner import go_no_go
+
+    verdict, _ = go_no_go(
+        {
+            "depth_shift_max": 1,
+            "depth_shift_median": 0.5,
+            "freeform_query_emergence": 0,
+            "new_tool_usage": {},
+        }
+    )
+    assert verdict == "INCONCLUSIVE"
+
+
+def test_go_no_go_no_go_when_depth_does_not_lift() -> None:
+    from scix.graph_experiment.bench_runner import go_no_go
+
+    verdict, rationale = go_no_go(
+        {
+            "depth_shift_max": 0,
+            "depth_shift_median": 0.0,
+            "freeform_query_emergence": 0,
+            "new_tool_usage": {},
+        }
+    )
+    assert verdict == "NO-GO"
+    assert "not justified" in rationale
+
+
+def test_render_markdown_includes_verdict_and_per_question_rows() -> None:
+    from scix.graph_experiment.bench_runner import render_markdown
+    from scix.graph_experiment.benchmark import Question
+    from scix.graph_experiment.harness import RunResult
+
+    questions = [
+        Question(
+            id="q1",
+            tier="one_hop_control",
+            prompt="?",
+            expected_hop_depth=1,
+            rubric="r",
+            seed_bibcodes=("A",),
+        )
+    ]
+    results = [
+        RunResult(
+            question_id="q1",
+            variant="control",
+            session_id="s1",
+            final_answer="hi",
+            duration_seconds=1.0,
+            cost_usd=0.01,
+            total_tokens=100,
+            trace_path=None,
+            raw_event_count=1,
+        ),
+        RunResult(
+            question_id="q1",
+            variant="treatment",
+            session_id="s2",
+            final_answer="hi",
+            duration_seconds=1.0,
+            cost_usd=0.02,
+            total_tokens=120,
+            trace_path=None,
+            raw_event_count=2,
+        ),
+    ]
+    comparison = {
+        "depth_shift_max": 2,
+        "depth_shift_median": 1.0,
+        "freeform_query_emergence": 1,
+        "new_tool_usage": {"shortest_path": 1},
+        "control_summary": {
+            "event_count": 1,
+            "max_depth": 0,
+            "median_depth": 0.0,
+        },
+        "treatment_summary": {
+            "event_count": 2,
+            "max_depth": 2,
+            "median_depth": 1.0,
+        },
+    }
+    md = render_markdown(
+        verdict="GO",
+        rationale="ok",
+        comparison=comparison,
+        questions=questions,
+        results=results,
+    )
+    assert "**Verdict:** GO" in md
+    assert "`q1`" in md
+    assert "$0.0100" in md
+    assert "$0.0200" in md

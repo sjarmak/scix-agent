@@ -355,6 +355,37 @@ def test_harness_config_control_omits_experimental_server(tmp_path: Path) -> Non
     assert servers["scix"]["headers"]["Authorization"] == "Bearer fake-token-123"
 
 
+def test_harness_config_stdio_production_runs_mcp_server_via_python(
+    tmp_path: Path,
+) -> None:
+    from scix.graph_experiment.harness import HarnessConfig
+
+    cfg = HarnessConfig(
+        snapshot_path=tmp_path / "snap.pkl.gz",
+        trace_dir=tmp_path / "traces",
+        production_mcp_stdio=True,
+    )
+    config = cfg.mcp_config_for("control", "sess-stdio")
+    servers = config["mcpServers"]
+    assert servers["scix"]["type"] == "stdio"
+    assert servers["scix"]["args"] == ["-m", "scix.mcp_server"]
+    # treatment-only server is not present in control variant
+    assert "scix-graph-experiment" not in servers
+
+
+def test_harness_config_url_takes_precedence_over_stdio(tmp_path: Path) -> None:
+    from scix.graph_experiment.harness import HarnessConfig
+
+    cfg = HarnessConfig(
+        snapshot_path=tmp_path / "snap.pkl.gz",
+        trace_dir=tmp_path / "traces",
+        production_mcp_url="https://example.com/mcp/",
+        production_mcp_stdio=True,  # ignored when url is set
+    )
+    servers = cfg.mcp_config_for("control", "sess-x")["mcpServers"]
+    assert servers["scix"]["type"] == "http"
+
+
 def test_harness_config_treatment_includes_experimental_server(tmp_path: Path) -> None:
     from scix.graph_experiment.harness import HarnessConfig
 

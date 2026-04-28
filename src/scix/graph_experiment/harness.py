@@ -41,12 +41,18 @@ class HarnessConfig:
 
     ``snapshot_path`` and ``trace_dir`` are passed to the experimental MCP
     server via env vars at spawn time. ``budget_usd`` caps each agent run.
+
+    Production MCP wiring is mutually exclusive: either
+    ``production_mcp_url`` (HTTP) or ``production_mcp_stdio`` (run
+    ``python -m scix.mcp_server`` as a subprocess). Stdio is the right
+    choice when the Docker container isn't running on this host.
     """
 
     snapshot_path: Path
     trace_dir: Path
     production_mcp_url: str | None = None
     production_mcp_token: str | None = None
+    production_mcp_stdio: bool = False
     budget_usd: float = 0.50
     model: str = "claude-sonnet-4-6"
     max_turns: int = 12
@@ -64,6 +70,12 @@ class HarnessConfig:
                     "Authorization": f"Bearer {self.production_mcp_token}"
                 }
             servers["scix"] = entry
+        elif self.production_mcp_stdio:
+            servers["scix"] = {
+                "type": "stdio",
+                "command": ".venv/bin/python",
+                "args": ["-m", "scix.mcp_server"],
+            }
         if variant == "treatment":
             servers["scix-graph-experiment"] = {
                 "type": "stdio",

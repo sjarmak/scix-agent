@@ -90,6 +90,12 @@ def _parse_args() -> argparse.Namespace:
         help="Skip wiring the production MCP into the harness config",
     )
     parser.add_argument(
+        "--production-stdio",
+        action="store_true",
+        help="Run the production MCP via stdio (python -m scix.mcp_server) "
+        "instead of HTTP. Useful when the Docker container isn't running.",
+    )
+    parser.add_argument(
         "--questions-out",
         type=Path,
         default=Path("data/graph_experiment/benchmark_questions.jsonl"),
@@ -131,18 +137,25 @@ def main() -> int:
     write_jsonl(args.questions_out, questions)
     logger.info("questions written to %s", args.questions_out)
 
-    production_url = (
-        None if args.no_production_mcp else os.environ.get("SCIX_MCP_URL")
-    )
-    production_token = (
-        None if args.no_production_mcp else os.environ.get("SCIX_MCP_TOKEN")
-    )
+    if args.no_production_mcp:
+        production_url = None
+        production_token = None
+        production_stdio = False
+    elif args.production_stdio:
+        production_url = None
+        production_token = None
+        production_stdio = True
+    else:
+        production_url = os.environ.get("SCIX_MCP_URL")
+        production_token = os.environ.get("SCIX_MCP_TOKEN")
+        production_stdio = False
 
     config = HarnessConfig(
         snapshot_path=args.snapshot,
         trace_dir=args.trace_dir,
         production_mcp_url=production_url,
         production_mcp_token=production_token,
+        production_mcp_stdio=production_stdio,
         budget_usd=args.budget_per_run,
         model=args.model,
     )
@@ -171,6 +184,7 @@ def main() -> int:
             "model": args.model,
             "budget_per_run_usd": args.budget_per_run,
             "production_mcp_url": production_url,
+            "production_mcp_stdio": production_stdio,
         },
     }
     json_path.write_text(json.dumps(json_payload, indent=2, default=str) + "\n")

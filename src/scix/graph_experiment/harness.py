@@ -144,6 +144,7 @@ def run_question(
         str(mcp_config_path),
         "--output-format",
         "stream-json",
+        "--verbose",  # required by --output-format=stream-json under -p
         "--include-partial-messages",
         "--max-budget-usd",
         f"{config.budget_usd:.2f}",

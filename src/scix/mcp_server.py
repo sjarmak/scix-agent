@@ -308,10 +308,16 @@ def _detect_unscoped_broad_block(result_json: str | None) -> bool:
     """Return True when ``result_json`` carries the unscoped-broad-block marker.
 
     The ``search`` tool's unscoped-broad-query guard emits a structured
-    response with ``{"unscoped_broad_blocked": true, "error":
-    "unscoped_broad_query", ...}``. ``_log_query`` lifts this marker into
-    ``query_log.error_msg`` so operators can track block rate via a single
-    SELECT — see bead ``scix_experiments-uerc``.
+    response with ``{"unscoped_broad_blocked": true, "error_code":
+    "unscoped_broad_query", "error": "<human-readable message>", ...}``.
+    ``_log_query`` lifts this marker into ``query_log.error_msg`` so
+    operators can track block rate via a single SELECT — see bead
+    ``scix_experiments-uerc`` (telemetry contract) and
+    ``scix_experiments-x5jg`` (error_code envelope convention).
+
+    Detection keys on the ``unscoped_broad_blocked`` flag, NOT on the
+    ``error`` or ``error_code`` field, so the lift mechanism is stable
+    even if the human/machine error fields change.
     """
     if not result_json:
         return False
@@ -765,9 +771,18 @@ def _unscoped_broad_response(query: str) -> str:
 
     The response carries the stable ``unscoped_broad_blocked: true`` flag so
     ``_log_query`` can lift it into ``query_log.error_msg`` for telemetry.
+
+    Per bead ``scix_experiments-x5jg`` the stable machine identifier lives
+    in ``error_code``; ``error`` is a human-readable message. Telemetry
+    detection (``_detect_unscoped_broad_block``) keys on the
+    ``unscoped_broad_blocked`` flag, not on either ``error`` field.
     """
     payload = {
-        "error": _UNSCOPED_BROAD_TAG,
+        "error": (
+            "Unscoped broad query rejected — "
+            "would scan all 32M papers and likely hit statement timeout."
+        ),
+        "error_code": _UNSCOPED_BROAD_TAG,
         "hint": (
             "Unscoped broad queries scan all 32M papers and frequently hit the "
             "statement timeout. Add filters.arxiv_class (e.g. 'astro-ph') or "
@@ -1398,9 +1413,10 @@ def create_server(_run_self_test: bool = True):
                     "(e.g. 'cs.SE') or a filters.year_min — unscoped queries run a full-text "
                     "scan over all 32M papers and may hit the statement timeout. "
                     "Unscoped + broad queries (no filters AND >=3 tokens or >=30 chars) are "
-                    "blocked up-front with a structured {error: 'unscoped_broad_query', hint, "
-                    "suggestions, ...} response — read the hint and retry with filters, or "
-                    "pass bypass_unscoped_guard=true to run the unscoped query anyway. "
+                    "blocked up-front with a structured {error_code: 'unscoped_broad_query', "
+                    "error: '<human msg>', hint, suggestions, ...} response — branch on "
+                    "error_code, read the hint, and retry with filters, or pass "
+                    "bypass_unscoped_guard=true to run the unscoped query anyway. "
                     "Use concept_search instead when the query is a "
                     "formal astronomy taxonomy term (e.g., 'Exoplanets'). Use entity with "
                     "action='search' when looking up a named method, dataset, or instrument. "
@@ -1457,10 +1473,10 @@ def create_server(_run_self_test: bool = True):
                                 "search even when no filters are set and the query is broad "
                                 "(>=3 tokens or >=30 chars). The default is false: such "
                                 "queries are blocked up-front with a structured "
-                                "{error: 'unscoped_broad_query', ...} response so the agent "
-                                "can retry with scoping filters instead of waiting for the "
-                                "statement timeout. Use only when you genuinely need an "
-                                "unscoped scan (tests, power-user exploration)."
+                                "{error_code: 'unscoped_broad_query', error: '<human msg>', ...} "
+                                "response so the agent can retry with scoping filters instead "
+                                "of waiting for the statement timeout. Use only when you "
+                                "genuinely need an unscoped scan (tests, power-user exploration)."
                             ),
                         },
                     },
@@ -3774,6 +3790,7 @@ def _handle_citation_traverse(conn: psycopg.Connection, args: dict[str, Any]) ->
     return json.dumps(
         {
             "error": f"Invalid mode: {mode!r}. Use 'graph' or 'chain'.",
+            "error_code": "invalid_mode",
         }
     )
 
@@ -3913,7 +3930,12 @@ def _handle_citation_graph(conn: psycopg.Connection, args: dict[str, Any]) -> st
     if direction == "both":
         return json.dumps({"bibcode": bibcode, "directions": results}, indent=2, default=str)
 
-    return json.dumps({"error": f"Invalid direction: {direction}"})
+    return json.dumps(
+        {
+            "error": f"Invalid direction: {direction}. Use 'forward', 'backward', or 'both'.",
+            "error_code": "invalid_direction",
+        }
+    )
 
 
 def _handle_citation_similarity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
@@ -3928,7 +3950,12 @@ def _handle_citation_similarity(conn: psycopg.Connection, args: dict[str, Any]) 
     elif method == "coupling":
         result = search.bibliographic_coupling(conn, bibcode, min_overlap=min_overlap, limit=limit)
     else:
-        return json.dumps({"error": f"Invalid method: {method}. Use co_citation or coupling."})
+        return json.dumps(
+            {
+                "error": f"Invalid method: {method}. Use co_citation or coupling.",
+                "error_code": "invalid_method",
+            }
+        )
 
     return _result_to_json(result)
 
@@ -3998,7 +4025,8 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                     f"claim_search(action='{entity_type}') instead "
                     f"(bead scix_experiments-c996); see "
                     f"docs/mcp_tool_audit_2026-04.md for the rationale."
-                )
+                ),
+                "error_code": "entity_legacy_extraction_type",
             }
         )
 
@@ -4233,7 +4261,12 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             default=str,
         )
 
-    return json.dumps({"error": f"Invalid action: {action}. Use 'search', 'resolve', or 'papers'."})
+    return json.dumps(
+        {
+            "error": f"Invalid action: {action}. Use 'search', 'resolve', or 'papers'.",
+            "error_code": "invalid_action",
+        }
+    )
 
 
 #: Action values accepted by the ``claim_search`` MCP tool. Mirrors the
@@ -4259,7 +4292,8 @@ def _handle_claim_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                 "error": (
                     f"Invalid action: {action!r}. Must be one of "
                     f"{sorted(_CLAIM_SEARCH_ACTIONS)}."
-                )
+                ),
+                "error_code": "invalid_action",
             }
         )
 
@@ -4271,7 +4305,10 @@ def _handle_claim_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         limit = min(int(raw_limit), 200)
     except (TypeError, ValueError):
         return json.dumps(
-            {"error": f"limit must be an integer, got {raw_limit!r}"}
+            {
+                "error": f"limit must be an integer, got {raw_limit!r}",
+                "error_code": "invalid_limit",
+            }
         )
     if limit < 1:
         limit = 20
@@ -4758,7 +4795,10 @@ def _handle_chunk_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         section_heading = _normalize_str_list(filters_raw.get("section_heading"))
         bibcode = _normalize_str_list(filters_raw.get("bibcode"))
     except (TypeError, ValueError) as exc:
-        return json.dumps({"error": f"invalid filters: {exc}"}, indent=2)
+        return json.dumps(
+            {"error": f"invalid filters: {exc}", "error_code": "invalid_filters"},
+            indent=2,
+        )
 
     # --- encode query via INDUS (mean pooling, 768-dim) ---
     try:
@@ -4911,7 +4951,9 @@ def _handle_claim_blame(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     try:
         scope = scope_from_dict(scope_arg) if scope_arg else None
     except (TypeError, ValueError) as exc:
-        return json.dumps({"error": f"invalid scope: {exc}"})
+        return json.dumps(
+            {"error": f"invalid scope: {exc}", "error_code": "invalid_scope"}
+        )
 
     candidate_limit = int(args.get("candidate_limit", 20))
     lineage_limit = int(args.get("lineage_limit", 10))
@@ -4943,7 +4985,9 @@ def _handle_find_replications(conn: psycopg.Connection, args: dict[str, Any]) ->
     try:
         scope = scope_from_dict(scope_arg) if scope_arg else None
     except (TypeError, ValueError) as exc:
-        return json.dumps({"error": f"invalid scope: {exc}"})
+        return json.dumps(
+            {"error": f"invalid scope: {exc}", "error_code": "invalid_scope"}
+        )
 
     limit = int(args.get("limit", 50))
 

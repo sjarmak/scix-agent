@@ -416,6 +416,55 @@ list. The pinned-convention tests in `test_mcp_search_unscoped_guard.py`
 must be updated in the same change so any flip in semantics breaks
 visibly.
 
+## Structured-error envelope convention (bead `scix_experiments-x5jg`)
+
+Every named structured-error response from an MCP tool returns JSON of
+the shape:
+
+```json
+{
+  "error": "<human-readable message — explains the problem and may quote the bad input>",
+  "error_code": "<stable machine identifier from the registry below>",
+  "<optional structured fields specific to the error class>": "..."
+}
+```
+
+Agents branch on `error_code`. Humans read `error`. Generic exception
+wrappers (`{"error": "<exc str>"}` returned from `call_tool` and
+lazy-import paths) are deliberately **out of scope** — they are
+last-resort surfaces and agents are expected to retry or escalate, not
+branch on them.
+
+### Stable error_code registry
+
+| `error_code` | Returned by | Triggered when |
+|---|---|---|
+| `missing_required_params` | `citation_traverse` | mode-specific required params missing (e.g., `mode=chain` without `source_bibcode`/`target_bibcode`) |
+| `unscoped_broad_query` | `search` | unscoped broad query blocked by the upfront guard (also flagged via `unscoped_broad_blocked: true` for telemetry lift) |
+| `entity_legacy_extraction_type` | `entity` | caller passes `entity_type='negative_result'` or `'quant_claim'` — these moved to `claim_search` under bead mh14/c996 |
+| `invalid_action` | `entity`, `claim_search` | `action` value is not in the enum |
+| `invalid_mode` | `citation_traverse` | `mode` value is not `'graph'` / `'chain'` |
+| `invalid_direction` | `citation_traverse` (graph mode) | `direction` value is not `'forward'` / `'backward'` / `'both'` |
+| `invalid_method` | `citation_similarity` | `method` value is not `'co_citation'` / `'coupling'` |
+| `invalid_filters` | `chunk_search` | `filters` cannot be normalized (typo, wrong type) |
+| `invalid_scope` | `claim_blame`, `find_replications` | `scope` payload fails `scope_from_dict` validation |
+| `invalid_limit` | `claim_search` | `limit` parameter is not coercible to `int` |
+
+The pinning tests in `tests/test_mcp_error_envelopes.py` enforce this
+table — adding a new error_code requires both a row above AND an
+assertion in that test file. The test asserts both presence of the row
+above and the assertion in lockstep.
+
+### Why error_code is a separate field from error
+
+Before this convention, some tools used `error` as a stable tag
+(`{"error": "unscoped_broad_query"}`) and some used it as a free-form
+human message. An agent that tried to branch on `error` would either
+get a stable tag (lucky) or a free-form sentence (unhandled). Splitting
+the two is the standard contract used by HTTP / gRPC error responses
+and matches the pre-existing `missing_required_params` shape introduced
+under bead `scix_experiments-zjt9`.
+
 ## Acceptance checklist
 
 - [x] Tool count ≤ 15 (current: 13 core + 1 optional Qdrant).

@@ -183,7 +183,8 @@ def test_unscoped_broad_query_returns_structured_error() -> None:
     stub_lexical.assert_not_called()
 
     data = json.loads(result_json)
-    assert data["error"] == "unscoped_broad_query"
+    assert data["error_code"] == "unscoped_broad_query"
+    assert isinstance(data["error"], str) and data["error"].strip()
     assert "hint" in data and data["hint"]
     assert data["query"] == "supernova remnant magnetic field evolution"
     assert "suggestions" in data
@@ -210,7 +211,8 @@ def test_long_query_returns_structured_error() -> None:
 
     stub_hybrid.assert_not_called()
     data = json.loads(result_json)
-    assert data["error"] == "unscoped_broad_query"
+    assert data["error_code"] == "unscoped_broad_query"
+    assert isinstance(data["error"], str) and data["error"].strip()
 
 
 def test_scoped_query_runs_normal_flow() -> None:
@@ -324,7 +326,8 @@ def test_keyword_mode_blocks_unscoped_broad() -> None:
 
     stub_lexical.assert_not_called()
     data = json.loads(result_json)
-    assert data["error"] == "unscoped_broad_query"
+    assert data["error_code"] == "unscoped_broad_query"
+    assert isinstance(data["error"], str) and data["error"].strip()
 
 
 def test_semantic_mode_blocks_unscoped_broad() -> None:
@@ -342,7 +345,8 @@ def test_semantic_mode_blocks_unscoped_broad() -> None:
     )
 
     data = json.loads(result_json)
-    assert data["error"] == "unscoped_broad_query"
+    assert data["error_code"] == "unscoped_broad_query"
+    assert isinstance(data["error"], str) and data["error"].strip()
 
 
 def test_guard_fires_before_disambiguation() -> None:
@@ -360,7 +364,8 @@ def test_guard_fires_before_disambiguation() -> None:
         mock_disamb.assert_not_called()
 
     data = json.loads(result_json)
-    assert data["error"] == "unscoped_broad_query"
+    assert data["error_code"] == "unscoped_broad_query"
+    assert isinstance(data["error"], str) and data["error"].strip()
 
 
 # ---------------------------------------------------------------------------
@@ -456,7 +461,8 @@ def test_log_query_surfaces_unscoped_broad_tag() -> None:
 
     payload = json.dumps(
         {
-            "error": "unscoped_broad_query",
+            "error": "Unscoped broad query rejected.",
+            "error_code": "unscoped_broad_query",
             "hint": "...",
             "query": "x",
             "unscoped_broad_blocked": True,
@@ -581,7 +587,8 @@ def test_telemetry_convention_lifted_structured_error_logs_success_true_and_tag(
 
     payload = json.dumps(
         {
-            "error": "unscoped_broad_query",
+            "error": "Unscoped broad query rejected.",
+            "error_code": "unscoped_broad_query",
             "hint": "...",
             "query": "x",
             "unscoped_broad_blocked": True,

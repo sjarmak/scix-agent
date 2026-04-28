@@ -24,6 +24,7 @@ from scix.graph_experiment.slice_config import SliceConfig
 _SLICES = {
     "astronomy_1hop": SliceConfig.astronomy_1hop,
     "astronomy_recent_1hop": SliceConfig.astronomy_recent_1hop,
+    "astronomy_recent_seedonly": SliceConfig.astronomy_recent_seedonly,
 }
 
 

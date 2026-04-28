@@ -1,14 +1,19 @@
 """Slice configuration: defines which subset of the corpus to materialize.
 
-Two slices are registered for the vdtd spike:
+Three slices are registered for the vdtd spike:
 
   * ``astronomy_1hop`` — full astronomy database (~3M seeds) + 1-hop
     expansion. The originally-spec'd slice; on this host it expanded to
     14.1M nodes / 235M edges and triggered systemd-oomd at >30 GB RSS.
     Use only on hosts with ≥48 GB free RAM.
   * ``astronomy_recent_1hop`` — astronomy + ``year >= 2018`` seeds
-    (~554K) + 1-hop expansion. Expected ~3-5M nodes, ~30-60M edges,
-    well under 20 GB RSS. Default for benchmarking on this host.
+    (~554K) + 1-hop expansion. Backward expansion still pulls in
+    ~9M citers across all domains, yielding 10.8M nodes / 205M edges
+    and the same swap-thrashing failure mode as the full slice.
+  * ``astronomy_recent_seedonly`` — astronomy + ``year >= 2018`` seeds
+    (~554K) with ``hop_depth=0``. Closed subgraph of recent astronomy
+    papers citing each other; expected <2M edges and <5 GB peak RSS.
+    Default for benchmarking on this host.
 """
 
 from __future__ import annotations
@@ -56,5 +61,18 @@ class SliceConfig:
             include_document_entities=True,
             snapshot_path=Path(
                 "data/graph_experiment/astronomy_recent_1hop.pkl.gz"
+            ),
+        )
+
+    @classmethod
+    def astronomy_recent_seedonly(cls) -> "SliceConfig":
+        return cls(
+            name="astronomy_recent_seedonly",
+            seed_filter_sql="'astronomy' = ANY(database) AND year >= 2018",
+            seed_filter_params=(),
+            hop_depth=0,
+            include_document_entities=True,
+            snapshot_path=Path(
+                "data/graph_experiment/astronomy_recent_seedonly.pkl.gz"
             ),
         )

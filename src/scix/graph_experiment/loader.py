@@ -14,6 +14,7 @@ CLAUDE.md storage/memory guidance.
 
 from __future__ import annotations
 
+import gc
 import gzip
 import logging
 import pickle
@@ -22,6 +23,7 @@ from array import array
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import psycopg
 
 from scix.db import DEFAULT_DSN, get_connection
@@ -86,10 +88,28 @@ def build_slice(
         )
 
         graph_build_start = time.time()
-        edges = list(zip(sources.tolist(), targets.tolist()))
-        graph = ig.Graph(n=len(id_to_bibcode), edges=edges, directed=True)
+        # Build numpy edge matrix in-place from the array.array buffers; this
+        # avoids materialising 235M Python tuples (the original OOM cause —
+        # peak 30+ GB at this step). column_stack copies once into a single
+        # 2-column int32 array (~2 GB for 235M edges) which igraph then
+        # ingests directly.
+        edge_array = np.column_stack(
+            [
+                np.frombuffer(sources, dtype=np.int32),
+                np.frombuffer(targets, dtype=np.int32),
+            ]
+        )
+        node_count_local = len(id_to_bibcode)
+        # Free the source/target arrays + bibcode→id dict before graph
+        # construction — igraph's internal copy adds ~4 GB and we don't need
+        # the lookup dict any more (id_to_bibcode is enough for vertex names).
+        del sources, targets, bibcode_to_id
+        gc.collect()
+        graph = ig.Graph(n=node_count_local, edges=edge_array, directed=True)
+        del edge_array
+        gc.collect()
         graph.vs["name"] = id_to_bibcode
-        _attach_paper_attrs(conn, graph, bibcode_to_id)
+        _attach_paper_attrs_by_name(conn, graph)
         graph_build_seconds = time.time() - graph_build_start
         logger.info("graph built in %.1fs", graph_build_seconds)
 
@@ -223,13 +243,19 @@ def _fetch_edges(
     return bibcode_to_id, id_to_bibcode, sources, targets
 
 
-def _attach_paper_attrs(
-    conn: psycopg.Connection, graph, bibcode_to_id: dict[str, int]
-) -> None:
-    """Attach title, year, citation_count to vertices for papers we have data on."""
+def _attach_paper_attrs_by_name(conn: psycopg.Connection, graph) -> None:
+    """Attach title, year, citation_count to vertices for papers we have data on.
+
+    Uses the graph's built-in name index (``graph.vs.find(name=...)`` is O(1)
+    after the first lookup builds the index) rather than holding a separate
+    ``bibcode_to_id`` dict in Python — the dict is ~1.5 GB at full slice
+    size, and we already freed it before reaching this step.
+    """
     titles: list[str | None] = [None] * graph.vcount()
     years: list[int | None] = [None] * graph.vcount()
     citation_counts: list[int | None] = [None] * graph.vcount()
+
+    name_index = {name: i for i, name in enumerate(graph.vs["name"])}
 
     with conn.cursor(name="attr_stream") as cur:
         cur.itersize = 50_000
@@ -238,12 +264,15 @@ def _attach_paper_attrs(
             "FROM papers p JOIN tmp_slice_nodes n ON n.bibcode = p.bibcode"
         )
         for bibcode, title, year, cc in cur:
-            idx = bibcode_to_id.get(bibcode)
+            idx = name_index.get(bibcode)
             if idx is None:
                 continue
             titles[idx] = title
             years[idx] = year
             citation_counts[idx] = cc
+
+    del name_index
+    gc.collect()
 
     graph.vs["title"] = titles
     graph.vs["year"] = years

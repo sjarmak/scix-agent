@@ -1,0 +1,108 @@
+# Discipline-gated planetary cohort definition (xz4.p2v).
+#
+# Used by scripts/link_targets_discipline_gated.py to scope the SsODNet
+# minor-body Aho-Corasick scan to papers where short asteroid/comet/moon
+# names are unlikely to be false positives.
+#
+# Cohort membership: a paper is in-cohort if ANY of the following holds.
+
+# arXiv subject classes that are dominantly planetary or space-physics.
+# Restrict to truly planetary classes — broad astro-ph classes (.GA, .HE,
+# .SR, .CO, .IM) admit too much non-planetary noise for a relaxed match.
+arxiv_classes:
+  - astro-ph.EP
+  - physics.space-ph
+
+# Planetary-science journal/proceedings bibstems. ApJ/MNRAS/A&A are
+# deliberately omitted — they would balloon the cohort to ~1M papers and
+# include many non-planetary records that would re-trigger the original
+# false-positive problem the discipline gate is meant to prevent.
+bibstems:
+  - Icar       # Icarus
+  - M&PS       # Meteoritics & Planetary Science
+  - M&PSA      # M&PS abstracts
+  - P&SS       # Planetary and Space Science
+  - JGRE       # JGR: Planets
+  - LPI        # LPI Contributions
+  - LPSC       # LPSC
+  - LPICo      # LPI Contributions (alt)
+  - EM&P       # Earth, Moon, and Planets
+  - SoSyR      # Solar System Research
+  - AsBio      # Astrobiology
+  - EPSC       # European Planetary Science Congress
+  - DPS        # AAS Division for Planetary Sciences
+  - SSRv       # Space Science Reviews
+  - JGRA       # JGR: Space Physics
+
+# Optional: keyword sentinels (papers whose `keywords` array contains any
+# of these are admitted to the cohort even outside the arxiv/bibstem
+# above). Lower-case matched. Conservative list — common planetary
+# science vocabulary that rarely appears outside-domain.
+keyword_sentinels:
+  - asteroid
+  - asteroids
+  - comet
+  - comets
+  - meteorite
+  - meteorites
+  - meteor
+  - kuiper belt
+  - kuiper-belt
+  - oort cloud
+  - trans-neptunian
+  - trans-neptunian object
+  - kbo
+  - tno
+  - near-earth object
+  - near-earth asteroid
+  - nea
+  - neo
+  - jupiter trojan
+  - hilda asteroid
+  - main-belt
+  - main belt asteroid
+  - centaur
+  - planetary surface
+  - planetary atmosphere
+  - regolith
+
+# Linker safety knobs — surfaces shorter than this are required to
+# co-occur with at least one of the disambiguator tokens below in the
+# title or abstract. Otherwise the candidate is dropped.
+min_surface_length_unconditional: 6
+
+# Tokens that, when co-present with a short minor-body name, raise the
+# match to acceptable. Lower-cased, whole-word match.
+short_name_disambiguators:
+  - asteroid
+  - asteroids
+  - comet
+  - comets
+  - meteorite
+  - moon
+  - moons
+  - planet
+  - planets
+  - planetary
+  - satellite
+  - satellites
+  - orbit
+  - orbital
+  - spacecraft
+  - mission
+  - flyby
+  - sample-return
+  - regolith
+  - crater
+  - craters
+  - minor body
+  - minor-body
+  - solar system
+  - dwarf planet
+  - trojan
+  - kuiper
+  - oort
+  - tno
+  - kbo
+  - neo
+  - nea

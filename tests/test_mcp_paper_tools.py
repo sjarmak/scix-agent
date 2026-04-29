@@ -799,7 +799,10 @@ class TestDispatchResolveEntity:
         assert result["candidates"][0]["canonical_name"] == "OSIRIS-REx"
         assert result["candidates"][0]["confidence"] == 1.0
         assert result["candidates"][0]["match_method"] == "exact_canonical"
-        mock_instance.resolve.assert_called_once_with("OSIRIS-REx", discipline=None, fuzzy=False)
+        # dbl.8: resolve defaults to fuzzy=True so the cascade auto-falls
+        # through canonical -> alias -> identifier -> fuzzy. Callers
+        # (including legacy resolve_entity) inherit this default.
+        mock_instance.resolve.assert_called_once_with("OSIRIS-REx", discipline=None, fuzzy=True)
 
     @patch("scix.mcp_server.EntityResolver")
     def test_dispatch_with_discipline(self, MockResolver: MagicMock) -> None:

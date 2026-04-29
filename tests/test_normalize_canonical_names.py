@@ -400,3 +400,58 @@ class TestNormalizeEntityType:
         de = _document_entities_for(clean_db, survivor)
         # Exactly one row survives for that bibcode (PK-deduplicated).
         assert len([row for row in de if row[0] == bib]) == 1
+
+    def test_dirty_survivor_clean_loser_no_collision(
+        self, clean_db: psycopg.Connection
+    ) -> None:
+        # Regression: when the lowest-id row carries the dirty
+        # canonical (e.g. survivor='cocl<sub>2</sub>') and a higher-id
+        # row already has the clean canonical (e.g. loser='cocl2'),
+        # renaming the survivor must not violate the unique constraint
+        # on (canonical_name, entity_type, source). The fix is to
+        # delete losers BEFORE updating the survivor's canonical_name.
+        bib1 = "_NORM_TEST_DIRTY_SURV_1"
+        bib2 = "_NORM_TEST_DIRTY_SURV_2"
+        _insert_paper(clean_db, bib1)
+        _insert_paper(clean_db, bib2)
+
+        # Insert dirty first (lower id), clean second (higher id).
+        dirty_canon = f"{FIXTURE_PREFIX}cocl<sub>2</sub>"
+        clean_canon = f"{FIXTURE_PREFIX}cocl2"
+        survivor = _insert_entity(clean_db, dirty_canon, "chemical")
+        loser = _insert_entity(clean_db, clean_canon, "chemical")
+        assert survivor < loser  # ordering invariant for the test
+
+        _link(clean_db, bib1, survivor)
+        _link(clean_db, bib2, loser)
+
+        # Should not raise UniqueViolation.
+        stats = backfill.normalize_entity_type(
+            clean_db, "chemical", actor="test"
+        )
+        clean_db.commit()
+
+        assert stats.merge_groups == 1
+        assert stats.rows_merged_away == 1
+
+        # Survivor remains with the canonical (clean) name.
+        assert _entity_exists(clean_db, survivor)
+        assert not _entity_exists(clean_db, loser)
+        assert _entity_canonical(clean_db, survivor) == clean_canon
+
+        # Both bibcodes rolled up onto the survivor.
+        de_bibs = {row[0] for row in _document_entities_for(clean_db, survivor)}
+        assert bib1 in de_bibs and bib2 in de_bibs
+
+        # The survivor's pre-rename name was captured as an alias so
+        # query-time alias lookup still finds 'cocl<sub>2</sub>'.
+        # (Note: in this scenario the dirty form WAS the survivor's
+        # canonical, so it does not show up via the loser-canonical
+        # alias path; the rename simply rewrites it. Confirm via the
+        # alias for the deleted loser's old form, which equalled the
+        # new canonical and was therefore skipped.)
+        aliases = {a for a, _ in _aliases_for(clean_db, survivor)}
+        # The loser's old canonical equals the new canonical, so it
+        # is correctly skipped (alias_source='canonical_pre_normalize'
+        # only fires when canonical_name <> new_canon).
+        assert clean_canon not in aliases

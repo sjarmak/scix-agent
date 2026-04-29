@@ -345,21 +345,10 @@ def _merge_one_group(
             {"surv": survivor_id, "losers": loser_ids},
         )
 
-        # 8. Update the survivor's canonical_name to the new value.
-        #    Safe because all other gliner rows that would have
-        #    collided are in `loser_ids` and are about to be deleted.
-        cur.execute(
-            """
-            UPDATE entities
-            SET canonical_name = %(new_canon)s,
-                updated_at = NOW()
-            WHERE id = %(surv)s
-              AND canonical_name <> %(new_canon)s
-            """,
-            {"surv": survivor_id, "new_canon": new_canon},
-        )
-
-        # 9. Record audit rows for each loser -> survivor merge.
+        # 8. Record audit rows for each loser -> survivor merge BEFORE
+        #    deleting the losers (entity_merge_log only has an FK on
+        #    new_entity_id, so old_entity_id can outlive the deleted row;
+        #    we record first to keep the order obvious in the log).
         for loser_id in loser_ids:
             record_merge(
                 conn,
@@ -369,11 +358,29 @@ def _merge_one_group(
                 merged_by=actor,
             )
 
-        # 10. Delete losers. CASCADE on the FK cleans up any bridge
-        #     rows we did not explicitly move.
+        # 9. Delete losers BEFORE renaming the survivor. The unique
+        #    constraint on (canonical_name, entity_type, source) means
+        #    that if a loser's existing canonical_name already equals
+        #    `new_canon` (e.g. survivor='cocl<sub>2</sub>',
+        #    loser='cocl2' both map to 'cocl2'), the survivor UPDATE in
+        #    step 10 would collide with the still-present loser row.
+        #    Removing losers first frees the constraint.
         cur.execute(
             "DELETE FROM entities WHERE id = ANY(%s)",
             (loser_ids,),
+        )
+
+        # 10. Update the survivor's canonical_name to the new value.
+        #     Safe now that all colliding losers have been deleted.
+        cur.execute(
+            """
+            UPDATE entities
+            SET canonical_name = %(new_canon)s,
+                updated_at = NOW()
+            WHERE id = %(surv)s
+              AND canonical_name <> %(new_canon)s
+            """,
+            {"surv": survivor_id, "new_canon": new_canon},
         )
 
     return de_repointed, aliases_added

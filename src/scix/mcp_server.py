@@ -73,6 +73,16 @@ logger = logging.getLogger(__name__)
 # small. SSE consumers typically only need a handful of bibcodes for linkage.
 _MAX_TRACE_BIBCODES: int = 20
 
+# Hard cap on agent-supplied bibcode lists at the MCP boundary. Mirrors the
+# existing find_gaps `[:200]` slice and synthesize_findings docstring contract;
+# bounds the size of the bound SQL parameter array under adversarial input.
+_MAX_WORKING_SET_BIBCODES: int = 200
+
+# Hard cap on the synthesize_findings `sections` list. Keeps per-section
+# fan-out bounded — the canonical default is 4 sections; 20 leaves headroom
+# for custom outlines without letting an agent request 1000s of sections.
+_MAX_SYNTH_SECTIONS: int = 20
+
 # ---------------------------------------------------------------------------
 # Server-level session identity (stable for the lifetime of the process)
 # ---------------------------------------------------------------------------
@@ -3608,8 +3618,8 @@ def _resolve_working_set_bibcodes(args: dict[str, Any]) -> list[str]:
     """
     explicit = args.get("bibcodes")
     if isinstance(explicit, list) and explicit:
-        return [str(b) for b in explicit]
-    return _session_fallthrough_bibcodes()
+        return [str(b) for b in explicit[:_MAX_WORKING_SET_BIBCODES]]
+    return _session_fallthrough_bibcodes()[:_MAX_WORKING_SET_BIBCODES]
 
 
 def _handle_facet_counts(conn: psycopg.Connection, args: dict[str, Any]) -> str:
@@ -5135,10 +5145,13 @@ def _handle_synthesize_findings(conn: psycopg.Connection, args: dict[str, Any]) 
         return json.dumps(
             {"error": "working_set_bibcodes must be a list of strings"},
         )
+    bibcodes = bibcodes[:_MAX_WORKING_SET_BIBCODES]
 
     sections = args.get("sections")
     if sections is not None and not isinstance(sections, list):
         return json.dumps({"error": "sections must be a list of strings"})
+    if isinstance(sections, list):
+        sections = sections[:_MAX_SYNTH_SECTIONS]
 
     raw_cap = args.get("max_papers_per_section", 8)
     try:

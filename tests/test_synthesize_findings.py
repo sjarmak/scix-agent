@@ -365,6 +365,94 @@ class TestMCPDispatch:
         assert "message" in result.get("metadata", {})
 
 
+class TestMCPDispatchBoundsCaps:
+    """Bead 2qwj: agent-supplied list arguments are capped at the boundary so
+    an unbounded request can't stress the DB or the synthesis aggregator."""
+
+    def test_working_set_bibcodes_capped_at_200(self) -> None:
+        from scix import mcp_server
+
+        captured: dict[str, object] = {}
+
+        def fake_synth(conn: object, **kwargs: object) -> SynthesisResult:
+            captured.update(kwargs)
+            return SynthesisResult(
+                sections=[],
+                unattributed_bibcodes=[],
+                coverage={},
+                metadata={},
+            )
+
+        original = mcp_server._synthesize_findings
+        mcp_server._synthesize_findings = fake_synth  # type: ignore[assignment]
+        try:
+            _dispatch_tool(
+                MagicMock(),
+                "synthesize_findings",
+                {"working_set_bibcodes": [f"b{i}" for i in range(5000)]},
+            )
+        finally:
+            mcp_server._synthesize_findings = original  # type: ignore[assignment]
+
+        assert len(captured["working_set_bibcodes"]) == 200  # type: ignore[arg-type]
+
+    def test_sections_capped_at_20(self) -> None:
+        from scix import mcp_server
+
+        captured: dict[str, object] = {}
+
+        def fake_synth(conn: object, **kwargs: object) -> SynthesisResult:
+            captured.update(kwargs)
+            return SynthesisResult(
+                sections=[],
+                unattributed_bibcodes=[],
+                coverage={},
+                metadata={},
+            )
+
+        original = mcp_server._synthesize_findings
+        mcp_server._synthesize_findings = fake_synth  # type: ignore[assignment]
+        try:
+            _dispatch_tool(
+                MagicMock(),
+                "synthesize_findings",
+                {
+                    "working_set_bibcodes": ["2024A"],
+                    "sections": [f"s{i}" for i in range(1000)],
+                },
+            )
+        finally:
+            mcp_server._synthesize_findings = original  # type: ignore[assignment]
+
+        assert len(captured["sections"]) == 20  # type: ignore[arg-type]
+
+
+class TestResolveWorkingSetCap:
+    """Bead 2qwj: _resolve_working_set_bibcodes itself caps explicit input."""
+
+    def test_explicit_bibcodes_capped(self) -> None:
+        from scix.mcp_server import _resolve_working_set_bibcodes
+
+        result = _resolve_working_set_bibcodes(
+            {"bibcodes": [f"b{i}" for i in range(5000)]}
+        )
+        assert len(result) == 200
+        # Order preserved — caller-provided ordering survives the slice.
+        assert result[0] == "b0"
+        assert result[-1] == "b199"
+
+    def test_session_fallthrough_capped(self) -> None:
+        from scix.mcp_server import (
+            _resolve_working_set_bibcodes,
+            _session_state,
+        )
+
+        for i in range(500):
+            _session_state.track_focused(f"2024F{i:04d}")
+        result = _resolve_working_set_bibcodes({})
+        assert len(result) == 200
+
+
 # ---------------------------------------------------------------------------
 # Acceptance-criterion 5 mirror: 30-paper working set splits across sections
 # ---------------------------------------------------------------------------

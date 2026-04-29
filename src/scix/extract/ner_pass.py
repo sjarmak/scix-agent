@@ -43,6 +43,8 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from scix.extract.surface_normalize import normalize_surface
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -154,11 +156,15 @@ _TRAILING_PAREN_RE = __import__("re").compile(r"\s*\([^)]*\)\s*$")
 def canonicalize(surface: str) -> str:
     """Normalize a GLiNER surface form for entity-table dedup.
 
-    Lower-case, strip outer whitespace, drop a trailing parenthetical, and
-    collapse internal whitespace runs. We deliberately do NOT remove
+    Pre-normalizes via ``normalize_surface`` (strips ``<sub>``/``<sup>``
+    tags, decodes HTML entities, applies NFKC, folds Unicode dash and
+    quote families) so that ``co<sub>2</sub>`` and ``iron–59`` collapse
+    into the same canonical as their plain counterparts. Then
+    lower-cases, strips outer whitespace, drops a trailing parenthetical,
+    and collapses internal whitespace runs. We deliberately do NOT remove
     punctuation — "CRISPR-Cas9" and "p53" carry meaning in the punctuation.
     """
-    s = surface.strip()
+    s = normalize_surface(surface).strip()
     s = _TRAILING_PAREN_RE.sub("", s).strip()
     s = " ".join(s.split())
     return s.lower()

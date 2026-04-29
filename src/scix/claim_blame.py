@@ -73,24 +73,10 @@ from typing import Any, Callable
 import psycopg
 
 from scix.citation_contexts_coverage import compute_coverage, empty_coverage
+from scix.citation_intent import DEFAULT_INTENT_WEIGHT, INTENT_WEIGHTS
 from scix.research_scope import ResearchScope, scope_to_sql_clauses
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-INTENT_WEIGHTS: dict[str, float] = {
-    "result_comparison": 1.0,
-    "method": 0.6,
-    "background": 0.3,
-}
-
-# Weight applied when ``intent`` is NULL (the SciCite backfill has not been
-# run on a row, or the row predates intent classification). We choose the
-# floor (background's weight) so unlabeled hops do not get inflated credit.
-DEFAULT_INTENT_WEIGHT: float = 0.3
 
 
 # ---------------------------------------------------------------------------

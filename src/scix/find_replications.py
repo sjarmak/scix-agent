@@ -62,20 +62,10 @@ from typing import Any, Literal
 import psycopg
 
 from scix.citation_contexts_coverage import compute_coverage, empty_coverage
+from scix.citation_intent import DEFAULT_INTENT_WEIGHT, INTENT_WEIGHTS
 from scix.research_scope import ResearchScope, scope_to_sql_clauses
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Constants — kept in sync with scix.claim_blame
-# ---------------------------------------------------------------------------
-
-INTENT_WEIGHTS: dict[str, float] = {
-    "result_comparison": 1.0,
-    "method": 0.6,
-    "background": 0.3,
-}
-DEFAULT_INTENT_WEIGHT: float = 0.3
 
 Relation = Literal["replicates", "refutes", "qualifies", "partial"]
 

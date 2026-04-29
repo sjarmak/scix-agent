@@ -30,6 +30,23 @@ _pipeline_cache: dict[str, Any] = {}
 
 VALID_INTENTS: frozenset[str] = frozenset({"background", "method", "result_comparison"})
 
+# Weights applied to citation-intent labels for ranking citations in
+# downstream consumers (``scix.claim_blame``, ``scix.find_replications``).
+# Higher weight = stronger evidence signal. Tuning these here changes the
+# ranking behaviour of every consumer at once, which is the whole point of
+# centralising the table.
+INTENT_WEIGHTS: dict[str, float] = {
+    "result_comparison": 1.0,
+    "method": 0.6,
+    "background": 0.3,
+}
+
+# Weight applied when ``citation_contexts.intent`` is NULL (the SciCite
+# backfill has not been run on a row, or the row predates intent
+# classification). Set to the floor (background's weight) so unlabeled
+# hops do not get inflated credit.
+DEFAULT_INTENT_WEIGHT: float = 0.3
+
 # SciCite dataset uses integer labels: 0=background, 1=method, 2=result
 # We map "result" -> "result_comparison" for our schema.
 SCICITE_LABEL_MAP: dict[int, str] = {

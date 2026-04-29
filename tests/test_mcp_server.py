@@ -351,7 +351,7 @@ class TestEntityTool:
         mock_candidate.source = "metadata"
         mock_candidate.discipline = "astronomy"
         mock_candidate.confidence = 0.95
-        mock_candidate.match_method = "exact"
+        mock_candidate.match_method = "exact_canonical"
         mock_resolver.resolve.return_value = [mock_candidate]
         mock_resolver_cls.return_value = mock_resolver
 
@@ -361,6 +361,91 @@ class TestEntityTool:
         )
         assert result["total"] == 1
         assert result["candidates"][0]["canonical_name"] == "James Webb Space Telescope"
+        # dbl.8: match_status mirrors the top-candidate match_method so the
+        # caller sees which stage of the cascade produced the answer.
+        assert result["match_status"] == "exact_canonical"
+        assert "suggestion" not in result
+
+    @patch("scix.mcp_server.EntityResolver")
+    def test_entity_resolve_defaults_fuzzy_on(
+        self, mock_resolver_cls: MagicMock
+    ) -> None:
+        """dbl.8: the MCP entity tool defaults action='resolve' to fuzzy=True
+        so non-canonical mentions do not silently return empty."""
+        mock_resolver = MagicMock()
+        mock_resolver.resolve.return_value = []
+        mock_resolver_cls.return_value = mock_resolver
+
+        conn = MagicMock()
+        _dispatch_tool(conn, "entity", {"action": "resolve", "query": "alpha-fold"})
+
+        # The dispatch layer never passes fuzzy=False unless the caller
+        # explicitly asked for it, so the resolver call should see the
+        # default-on flag.
+        _, kwargs = mock_resolver.resolve.call_args
+        assert kwargs.get("fuzzy") is True
+
+    @patch("scix.mcp_server.EntityResolver")
+    def test_entity_resolve_no_match_suggests_registration(
+        self, mock_resolver_cls: MagicMock
+    ) -> None:
+        """dbl.8: surface a clear no-match signal when the cascade returns
+        empty so callers can act on the gap instead of silently dropping
+        the query."""
+        mock_resolver = MagicMock()
+        mock_resolver.resolve.return_value = []
+        mock_resolver_cls.return_value = mock_resolver
+
+        conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(
+                conn,
+                "entity",
+                {"action": "resolve", "query": "TotallyMadeUpEntity12345"},
+            )
+        )
+        assert result["total"] == 0
+        assert result["candidates"] == []
+        assert result["match_status"] == "no_match"
+        # The suggestion text mentions the cascade so an agent can recover
+        # in one turn (e.g. file an entity-registration request).
+        assert "suggestion" in result
+        suggestion = result["suggestion"].lower()
+        assert "register" in suggestion or "registration" in suggestion
+        assert "TotallyMadeUpEntity12345" in result["suggestion"]
+
+    @patch("scix.mcp_server.EntityResolver")
+    def test_entity_resolve_match_status_reflects_top_candidate(
+        self, mock_resolver_cls: MagicMock
+    ) -> None:
+        """dbl.8: match_status surfaces which stage of the cascade resolved
+        the top candidate so callers can tell a confident exact match
+        apart from a low-confidence fuzzy fallback without inspecting
+        every candidate."""
+        from scix.entity_resolver import EntityCandidate
+
+        mock_resolver = MagicMock()
+        mock_resolver.resolve.return_value = [
+            EntityCandidate(
+                entity_id=10,
+                canonical_name="Bennu",
+                entity_type="target",
+                source="physh",
+                discipline="planetary",
+                confidence=0.65,
+                match_method="fuzzy",
+            )
+        ]
+        mock_resolver_cls.return_value = mock_resolver
+
+        conn = MagicMock()
+        result = json.loads(
+            _dispatch_tool(conn, "entity", {"action": "resolve", "query": "Benu"})
+        )
+        assert result["match_status"] == "fuzzy"
+        # discipline is preserved on the candidate so cross-discipline
+        # filtering works without a follow-up call.
+        assert result["candidates"][0]["discipline"] == "planetary"
 
 
 # ---------------------------------------------------------------------------

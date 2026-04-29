@@ -267,7 +267,7 @@ class TestIdentifierMatch:
 
 
 class TestFuzzyMatch:
-    """resolve() with fuzzy=True falls back to pg_trgm similarity."""
+    """resolve() falls back to pg_trgm similarity by default (bead dbl.8)."""
 
     def test_fuzzy_fallback(self) -> None:
         conn = _make_mock_conn(
@@ -316,8 +316,10 @@ class TestFuzzyMatch:
         # Should only have the exact match, fuzzy not triggered
         assert all(r.match_method == "exact_canonical" for r in results)
 
-    def test_fuzzy_disabled_by_default(self) -> None:
-        """Without fuzzy=True, no fuzzy results even if no other matches."""
+    def test_fuzzy_enabled_by_default(self) -> None:
+        """Without an explicit flag, fuzzy fires automatically when nothing
+        else matches (bead dbl.8: stop returning silent empties for
+        non-canonical mentions)."""
         conn = _make_mock_conn(
             {
                 "lower(canonical_name) = lower": [],
@@ -330,7 +332,71 @@ class TestFuzzyMatch:
         )
         resolver = EntityResolver(conn)
         results = resolver.resolve("Benu")
+        assert len(results) == 1
+        assert results[0].match_method == "fuzzy"
+        assert results[0].canonical_name == "Bennu"
+
+    def test_fuzzy_can_be_explicitly_disabled(self) -> None:
+        """Callers that want exact-only matching pass fuzzy=False."""
+        conn = _make_mock_conn(
+            {
+                "lower(canonical_name) = lower": [],
+                "FROM entity_aliases": [],
+                "FROM entity_identifiers": [],
+                "similarity": [
+                    _entity_row(id=10, canonical_name="Bennu", sim=0.65),
+                ],
+            }
+        )
+        resolver = EntityResolver(conn)
+        results = resolver.resolve("Benu", fuzzy=False)
         assert results == []
+
+    def test_fuzzy_uses_index_friendly_operator(self) -> None:
+        """The fuzzy SQL uses the `%` operator so the planner can hit
+        idx_entities_canonical_trgm (migration 063) instead of the
+        Seq-Scan-only similarity()-in-WHERE pattern."""
+        conn = _make_mock_conn(
+            {
+                "similarity": [
+                    _entity_row(id=10, canonical_name="Bennu", sim=0.65),
+                ],
+            }
+        )
+        resolver = EntityResolver(conn)
+        resolver.resolve("Benu")
+        cursor = conn.cursor.return_value
+        last_sql = getattr(cursor, "_last_sql", "")
+        # The canonical_name % $1 predicate is what makes the GIN trigram
+        # index usable; without it we regress to the 19M-row Seq Scan.
+        assert "%" in last_sql
+        assert "LIMIT" in last_sql
+
+    def test_fuzzy_returns_discipline(self) -> None:
+        """Fuzzy candidates carry their discipline tag so callers can
+        filter cross-discipline results without an extra round-trip."""
+        conn = _make_mock_conn(
+            {
+                "lower(canonical_name) = lower": [],
+                "FROM entity_aliases": [],
+                "FROM entity_identifiers": [],
+                "similarity": [
+                    _entity_row(
+                        id=10, canonical_name="SciBERT",
+                        discipline="cs", sim=0.95,
+                    ),
+                    _entity_row(
+                        id=20, canonical_name="MatSciBERT",
+                        discipline="materials", sim=0.55,
+                    ),
+                ],
+            }
+        )
+        resolver = EntityResolver(conn)
+        results = resolver.resolve("SciBert")
+        assert len(results) == 2
+        disciplines = {r.discipline for r in results}
+        assert disciplines == {"cs", "materials"}
 
 
 # ---------------------------------------------------------------------------

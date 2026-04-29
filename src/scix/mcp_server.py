@@ -1871,7 +1871,20 @@ def create_server(_run_self_test: bool = True):
                             "enum": ["search", "resolve", "papers"],
                             "description": (
                                 "resolve: text mention -> canonical entity records "
-                                "(cross-discipline disambiguation). "
+                                "(cross-discipline disambiguation). Walks a four-stage "
+                                "fallback chain so a non-canonical mention does not "
+                                "silently return empty: "
+                                "(1) exact canonical name match, "
+                                "(2) alias lookup if (1) is empty, "
+                                "(3) external identifier match (always tried — Q-IDs, "
+                                "DOIs, etc.), "
+                                "(4) fuzzy pg_trgm similarity if (1)-(3) are all empty. "
+                                "When even fuzzy matches nothing the response includes "
+                                "match_status='no_match' and a suggestion that the "
+                                "entity be registered, so callers can act on the gap "
+                                "instead of silently dropping it. Each candidate carries "
+                                "its discipline so the caller can filter cross-discipline "
+                                "results without an extra round-trip. "
                                 "papers: entity_id (or auto-resolved query) -> "
                                 "papers tagged with that entity via "
                                 "document_entities. "
@@ -1915,8 +1928,15 @@ def create_server(_run_self_test: bool = True):
                         },
                         "fuzzy": {
                             "type": "boolean",
-                            "default": False,
-                            "description": "Enable fuzzy matching (resolve only)",
+                            "default": True,
+                            "description": (
+                                "Enable fuzzy pg_trgm fallback for action='resolve' "
+                                "when canonical/alias/identifier all miss. Default "
+                                "True (auto-fallback chain — bead "
+                                "scix_experiments-dbl.8). Pass False to suppress "
+                                "the fuzzy stage and keep responses to exact "
+                                "matches only."
+                            ),
                         },
                         "limit": {"type": "integer", "default": 20},
                         "min_confidence_tier": {
@@ -4037,10 +4057,13 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
 
     if action == "resolve":
         resolver = EntityResolver(conn)
+        # dbl.8: fuzzy defaults to True so the resolver auto-falls-through
+        # canonical -> alias -> identifier -> fuzzy. Callers that want only
+        # exact matches can opt out with fuzzy=False.
         candidates = resolver.resolve(
             query.strip(),
             discipline=args.get("discipline"),
-            fuzzy=args.get("fuzzy", False),
+            fuzzy=args.get("fuzzy", True),
         )
         # eq95: drop denylisted (canonical_name, entity_type) pairs so
         # noisy generic-word entities ('data'/'dataset', 'method'/'method',
@@ -4049,27 +4072,38 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         from scix.extract.ner_denylist import is_denylisted as _is_denylisted
 
         candidates = [c for c in candidates if not _is_denylisted(c.canonical_name, c.entity_type)]
-        result_json = json.dumps(
-            {
-                "query": query.strip(),
-                "candidates": [
-                    {
-                        "entity_id": c.entity_id,
-                        "canonical_name": c.canonical_name,
-                        "entity_type": c.entity_type,
-                        "source": c.source,
-                        "discipline": c.discipline,
-                        "confidence": c.confidence,
-                        "match_method": c.match_method,
-                    }
-                    for c in candidates
-                ],
-                "total": len(candidates),
-            },
-            indent=2,
-            default=str,
-        )
-        return _inject_coverage_note(result_json)
+        # dbl.8: surface a clear no-match signal instead of returning a
+        # silent empty list. Empty `candidates` after the full cascade
+        # means the entity is genuinely unknown to SciX — agents need
+        # this distinction to decide whether to give up or trigger an
+        # entity-registration follow-up.
+        match_status = candidates[0].match_method if candidates else "no_match"
+        payload: dict[str, Any] = {
+            "query": query.strip(),
+            "candidates": [
+                {
+                    "entity_id": c.entity_id,
+                    "canonical_name": c.canonical_name,
+                    "entity_type": c.entity_type,
+                    "source": c.source,
+                    "discipline": c.discipline,
+                    "confidence": c.confidence,
+                    "match_method": c.match_method,
+                }
+                for c in candidates
+            ],
+            "total": len(candidates),
+            "match_status": match_status,
+        }
+        if not candidates:
+            payload["suggestion"] = (
+                f"No match for {query.strip()!r} in the entity registry "
+                f"after canonical/alias/identifier/fuzzy fallback. "
+                f"Either the mention is a typo or the entity has not been "
+                f"harvested yet — consider filing a registration request "
+                f"(see docs/mcp_tool_audit_2026-04.md §entity-registration)."
+            )
+        return _inject_coverage_note(json.dumps(payload, indent=2, default=str))
 
     if action == "search":
         # mh14: legacy extraction-row kinds (negative_result, quant_claim)

@@ -1,9 +1,25 @@
 # 50-Query Retrieval Evaluation — 2026-04
 
-> Status: **template** — populated once `section_embeddings` is filled by the
-> upstream encode pipeline (PRD `embedding-pipeline`). Until then, the
-> baseline numbers stand alone and section/fused rows show the
-> `section_embeddings_empty` skip marker.
+> Status: **template, gated on three upstream beads** (verified
+> `2026-04-29` from worker `wqr.9.5`). All three must clear before the live
+> three-mode run produces meaningful numbers:
+>
+> 1. **`l1t3` — INDUS HNSW index halfvec rebuild.** `paper_embeddings`
+>    currently has `idx_embed_hnsw_indus_hv INVALID` (per `\d
+>    paper_embeddings`); the partial HNSW index on `embedding_hv` did not
+>    finish building, so baseline INDUS queries fall back to a sequential
+>    scan of ~32M rows (~3-4 min/query observed). Until the index is
+>    `VALID`, even the baseline mode is non-runnable on production.
+> 2. **`wqr.9.3` — section embedding pipeline.** `section_embeddings`
+>    table exists at production after migration `061_section_embeddings.sql`,
+>    but row count probes show it empty (driver auto-skips `section` and
+>    `fused` modes with `skipped_reason: section_embeddings_empty`).
+> 3. **`wqr.9.4` — `section_retrieval` MCP tool.** Wired in
+>    `src/scix/mcp_server.py` (handler `_handle_section_retrieval`); E2E
+>    smoke is gated on (2).
+>
+> The gold set, driver, tests, and dry-run output schema are all in place
+> and stable — see "Pre-flight audit (2026-04-29)" below.
 
 ## Overview
 
@@ -70,6 +86,42 @@ Local-only encoding is enforced: the baseline uses NASA INDUS via
 `scix.embed.load_model("indus")`, and `section_retrieval` uses
 `nomic-embed-text-v1.5` via `scix.embeddings.section_pipeline._load_model`.
 No paid-API SDKs are imported.
+
+## Pre-flight audit (2026-04-29)
+
+Worker `wqr.9.5` (session `scix-worker-gc-68092`) ran a pre-flight audit
+of the eval harness and gold set. All scaffolding checks pass; all three
+live modes are upstream-blocked per the gating beads listed above.
+
+**Gold set composition (`eval/retrieval_50q.jsonl`)**
+
+| dimension          | distribution                                          |
+|--------------------|-------------------------------------------------------|
+| total queries      | 50                                                    |
+| with `gold_bibcodes` | 48 (2 sentinel-empty, excluded from per-mode averages) |
+| bucket             | title_matchable=12, concept=13, method=13, author_specific=12 |
+| discipline         | astrophysics=15, planetary=12, heliophysics=10, earth=13 |
+| schema keys        | `query`, `bucket`, `discipline`, `gold_bibcodes`, `notes` |
+
+**Driver / scaffolding**
+
+- `scripts/eval_retrieval_50q.py --dry-run` succeeds (writes shape-correct
+  zero-stub JSON to `docs/eval/retrieval_50q_2026-04.json`).
+- `pytest tests/test_eval_retrieval_50q.py` — 29/29 pass (binary-relevance
+  metrics, RRF fusion, query loader, output writer all covered).
+- Driver self-fixes `sys.path` to include `src/`, so it runs without a
+  prior `pip install -e`.
+
+**Production state of upstream dependencies**
+
+| dependency                       | state on prod scix              | notes |
+|----------------------------------|---------------------------------|-------|
+| `paper_embeddings.embedding_hv` populated | partial (l1t3 backfill in flight) | required for fast INDUS dense lane |
+| `idx_embed_hnsw_indus_hv`        | **INVALID**                     | sequential scan ~3-4 min/query — blocking |
+| migration `061_section_embeddings.sql` | applied                   | `section_embeddings` table exists |
+| `section_embeddings` rows        | 0                               | upstream `wqr.9.3` populates |
+| `_handle_section_retrieval` MCP handler | wired                  | smoke gated on rows |
+| INDUS encoder (`scix.embed.load_model("indus")`) | loadable on .venv | torch 2.11.0+cu130, transformers 5.1.0 |
 
 ## Results
 
@@ -145,8 +197,16 @@ sensible noise floor for n=50 (paired-bootstrap CI suggested).
 
 ## Limitations
 
+- **INDUS HNSW rebuild (l1t3) blocks even baseline.** Migration 053/054
+  cutover dropped the original `idx_embed_hnsw_indus`, added the halfvec
+  shadow column, and is partway through rebuilding
+  `idx_embed_hnsw_indus_hv` (currently `INVALID`). Until that index goes
+  `VALID`, `hybrid_search` falls back to sequential scan over ~32M rows
+  per query — the wall-clock makes a full 50-query baseline run
+  impractical (≥3 hours under current load). Re-run after `l1t3` closes.
 - **Full-corpus section encode is upstream-blocked.** The full-corpus pass
-  over `section_embeddings` depends on the parser PRD shipping. Until then,
+  over `section_embeddings` depends on `wqr.9.3` (section embedding
+  pipeline) and indirectly on the parser PRD shipping. Until then,
   `section_retrieval` runs against an empty (or partial) table and the
   driver script emits the `skipped_reason: section_embeddings_empty`
   marker on `section` and `fused` modes. Re-run the script after the

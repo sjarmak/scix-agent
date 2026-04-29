@@ -4099,9 +4099,10 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             payload["suggestion"] = (
                 f"No match for {query.strip()!r} in the entity registry "
                 f"after canonical/alias/identifier/fuzzy fallback. "
-                f"Either the mention is a typo or the entity has not been "
-                f"harvested yet — consider filing a registration request "
-                f"(see docs/mcp_tool_audit_2026-04.md §entity-registration)."
+                f"The mention is either a typo or the entity has not been "
+                f"harvested yet — consider filing an entity-registration "
+                f"request (bead epic scix_experiments-dbl) so the gap is "
+                f"tracked rather than silently swallowed."
             )
         return _inject_coverage_note(json.dumps(payload, indent=2, default=str))
 

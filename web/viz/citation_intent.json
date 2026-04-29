@@ -1,0 +1,717 @@
+{
+  "totals": {
+    "method": 623599,
+    "background": 141427,
+    "result_comparison": 60089
+  },
+  "coverage": {
+    "classified_edges": 825115,
+    "total_edges": 299397468,
+    "pct_classified": 0.002756
+  },
+  "top_method": [
+    {
+      "bibcode": "1985PhLB..162..121C",
+      "title": "Consistent superstrings as solutions of the D = 26 bosonic string theory",
+      "year": 1985,
+      "n": 587
+    },
+    {
+      "bibcode": "1998AdTMP...2..253W",
+      "title": "Anti-de Sitter space and holography",
+      "year": 1998,
+      "n": 561
+    },
+    {
+      "bibcode": "1998AdTMP...2..231M",
+      "title": "The Large N Limit of Superconformal Field Theories and Supergravity",
+      "year": 1998,
+      "n": 527
+    },
+    {
+      "bibcode": "1962JMP.....3.1191D",
+      "title": "A Brownian-Motion Model for the Eigenvalues of a Random Matrix",
+      "year": 1962,
+      "n": 439
+    },
+    {
+      "bibcode": "1999PhRvL..83.3370R",
+      "title": "Large Mass Hierarchy from a Small Extra Dimension",
+      "year": 1999,
+      "n": 376
+    },
+    {
+      "bibcode": "1998PhLB..428..105G",
+      "title": "Gauge theory correlators from non-critical string theory",
+      "year": 1998,
+      "n": 363
+    },
+    {
+      "bibcode": "1999JHEP...09..032S",
+      "title": "String theory and noncommutative geometry",
+      "year": 1999,
+      "n": 321
+    },
+    {
+      "bibcode": "1999PhRvL..83.4690R",
+      "title": "An Alternative to Compactification",
+      "year": 1999,
+      "n": 316
+    },
+    {
+      "bibcode": "1997IAUS..189..119M",
+      "title": "Empirical surface gravities (from spectra and from binaries).",
+      "year": 1997,
+      "n": 312
+    },
+    {
+      "bibcode": "1986Ap&SS.121...21A",
+      "title": "A new approach to the possibilities of \u03a3(D)-dependence and distances of the supernova remnants",
+      "year": 1986,
+      "n": 301
+    },
+    {
+      "bibcode": "1969InMat...7..269W",
+      "title": "Non-Additivity of the Signature.",
+      "year": 1969,
+      "n": 278
+    },
+    {
+      "bibcode": "1998PhLB..429..263A",
+      "title": "The hierarchy problem and new dimensions at a millimeter",
+      "year": 1998,
+      "n": 275
+    },
+    {
+      "bibcode": "1995fcgt.book.....M",
+      "title": "Foundations of Quantum Group Theory",
+      "year": 1995,
+      "n": 264
+    },
+    {
+      "bibcode": "1998math......2029B",
+      "title": "Categorification",
+      "year": 1998,
+      "n": 262
+    },
+    {
+      "bibcode": "2000ApJ...537..875B",
+      "title": "OH Zeeman Magnetic Field Detections toward Five Supernova Remnants Using the VLA",
+      "year": 2000,
+      "n": 244
+    },
+    {
+      "bibcode": "1972PhRvA...5.1372S",
+      "title": "Exact Results for a Quantum Many-Body Problem in One Dimension. II",
+      "year": 1972,
+      "n": 223
+    },
+    {
+      "bibcode": "1989MNRAS.238..737G",
+      "title": "Sensitive OH observations towards 16 supernova remnants.",
+      "year": 1989,
+      "n": 217
+    },
+    {
+      "bibcode": "1998PhLB..436..257A",
+      "title": "New dimensions at a millimeter to a fermi and superstrings at a TeV",
+      "year": 1998,
+      "n": 213
+    },
+    {
+      "bibcode": "2000PhR...323..183A",
+      "title": "Large N field theories, string theory and gravity",
+      "year": 2000,
+      "n": 193
+    },
+    {
+      "bibcode": "1971aitp.book.....F",
+      "title": "An introduction to probability theory and its applications",
+      "year": 1971,
+      "n": 189
+    },
+    {
+      "bibcode": "2002JHEP...04..013B",
+      "title": "Strings in flat space and pp waves from Script N = 4 Super Yang Mills",
+      "year": 2002,
+      "n": 188
+    },
+    {
+      "bibcode": "2001Natur.410...63N",
+      "title": "Superconductivity at 39K in magnesium diboride",
+      "year": 2001,
+      "n": 181
+    },
+    {
+      "bibcode": "1996NuPhB.460..506H",
+      "title": "Heterotic and Type I string dynamics from eleven dimensions",
+      "year": 1996,
+      "n": 175
+    },
+    {
+      "bibcode": "1999ApJ...517..565P",
+      "title": "Measurements of \u03a9 and \u039b from 42 High-Redshift Supernovae",
+      "year": 1999,
+      "n": 172
+    },
+    {
+      "bibcode": "1926NW.....14..664S",
+      "title": "Der stetige \u00dcbergang von der Mikro- zur Makromechanik",
+      "year": 1926,
+      "n": 166
+    }
+  ],
+  "top_background": [
+    {
+      "bibcode": "1994CoPhC..82...74S",
+      "title": "High-energy-physics event generation with PYTHIA 5.7 and JETSET 7.4",
+      "year": 1994,
+      "n": 65
+    },
+    {
+      "bibcode": "2002PhRvD..66a0001H",
+      "title": "Review of Particle Properties",
+      "year": 2002,
+      "n": 45
+    },
+    {
+      "bibcode": "1996PhRvL..77.3865P",
+      "title": "Generalized Gradient Approximation Made Simple",
+      "year": 1996,
+      "n": 44
+    },
+    {
+      "bibcode": "1953JChPh..21.1087M",
+      "title": "Equation of State Calculations by Fast Computing Machines",
+      "year": 1953,
+      "n": 43
+    },
+    {
+      "bibcode": "1992nrfa.book.....P",
+      "title": "Numerical recipes in FORTRAN. The art of scientific computing",
+      "year": 1992,
+      "n": 42
+    },
+    {
+      "bibcode": "1980SSASJ..44..892V",
+      "title": "A Closed-form Equation for Predicting the Hydraulic Conductivity of Unsaturated Soils",
+      "year": 1980,
+      "n": 41
+    },
+    {
+      "bibcode": "1998AdTMP...2..231M",
+      "title": "The Large N Limit of Superconformal Field Theories and Supergravity",
+      "year": 1998,
+      "n": 37
+    },
+    {
+      "bibcode": "1965PhRv..140.1133K",
+      "title": "Self-Consistent Equations Including Exchange and Correlation Effects",
+      "year": 1965,
+      "n": 36
+    },
+    {
+      "bibcode": "1992PhRvB..46.6671P",
+      "title": "Atoms, molecules, solids, and surfaces: Applications of the generalized gradient approximation for exchange and correlation",
+      "year": 1992,
+      "n": 35
+    },
+    {
+      "bibcode": "1980WRR....16..574T",
+      "title": "Electromagnetic Determination of Soil Water Content: Measurements in Coaxial Transmission Lines",
+      "year": 1980,
+      "n": 34
+    },
+    {
+      "bibcode": "1991PhLB..269..432C",
+      "title": "New clustering algorithm for multijet cross sections in e<SUP>+</SUP>e<SUP>-</SUP> annihilation",
+      "year": 1991,
+      "n": 34
+    },
+    {
+      "bibcode": "2001Natur.410...63N",
+      "title": "Superconductivity at 39K in magnesium diboride",
+      "year": 2001,
+      "n": 34
+    },
+    {
+      "bibcode": "1977NuPhB.126..298A",
+      "title": "Asymptotic freedom in parton language",
+      "year": 1977,
+      "n": 31
+    },
+    {
+      "bibcode": "1988PhRvA..38.3098B",
+      "title": "Density-functional exchange-energy approximation with correct asymptotic behavior",
+      "year": 1988,
+      "n": 31
+    },
+    {
+      "bibcode": "1988PhRvB..37..785L",
+      "title": "Development of the Colle-Salvetti correlation-energy formula into a functional of the electron density",
+      "year": 1988,
+      "n": 31
+    },
+    {
+      "bibcode": "1993JChPh..98.5648B",
+      "title": "Density-functional thermochemistry. III. The role of exact exchange",
+      "year": 1993,
+      "n": 31
+    },
+    {
+      "bibcode": "1994SigPr..36..287C",
+      "title": "Independent component analysis, A new concept?",
+      "year": 1994,
+      "n": 31
+    },
+    {
+      "bibcode": "1964PhRv..136..864H",
+      "title": "Inhomogeneous Electron Gas",
+      "year": 1964,
+      "n": 30
+    },
+    {
+      "bibcode": "1997PhRvD..55.1280L",
+      "title": "Improved parton distributions from global analysis of recent deep inelastic scattering and inclusive jet data",
+      "year": 1997,
+      "n": 30
+    },
+    {
+      "bibcode": "1983NuPhA.401...59C",
+      "title": "Three-nucleon interaction in 3-, 4- and \u221e-body systems",
+      "year": 1983,
+      "n": 29
+    },
+    {
+      "bibcode": "1998AdTMP...2..253W",
+      "title": "Anti-de Sitter space and holography",
+      "year": 1998,
+      "n": 29
+    },
+    {
+      "bibcode": "1999JHEP...09..032S",
+      "title": "String theory and noncommutative geometry",
+      "year": 1999,
+      "n": 29
+    },
+    {
+      "bibcode": "1996PhRvB..5411169K",
+      "title": "Efficient iterative schemes for ab initio total-energy calculations using a plane-wave basis set",
+      "year": 1996,
+      "n": 28
+    },
+    {
+      "bibcode": "1996StaUN..41.....A",
+      "title": "IRCAMDR -- IRCAM3 Data Reduction Software",
+      "year": 1996,
+      "n": 28
+    },
+    {
+      "bibcode": "1998PhRvL..81.1562F",
+      "title": "Evidence for Oscillation of Atmospheric Neutrinos",
+      "year": 1998,
+      "n": 28
+    }
+  ],
+  "by_year": [
+    {
+      "year": 2001,
+      "method": 51392,
+      "background": 9286,
+      "result_comparison": 4754,
+      "total": 65432
+    },
+    {
+      "year": 2002,
+      "method": 145202,
+      "background": 35887,
+      "result_comparison": 16038,
+      "total": 197127
+    },
+    {
+      "year": 2003,
+      "method": 199208,
+      "background": 44787,
+      "result_comparison": 19009,
+      "total": 263004
+    },
+    {
+      "year": 2004,
+      "method": 226115,
+      "background": 51086,
+      "result_comparison": 20236,
+      "total": 297437
+    },
+    {
+      "year": 2014,
+      "method": 1682,
+      "background": 381,
+      "result_comparison": 52,
+      "total": 2115
+    }
+  ],
+  "communities_method": [
+    {
+      "community_id": 11,
+      "method": 6533,
+      "background": 209,
+      "result_comparison": 42,
+      "total": 6784,
+      "method_ratio": 0.963001,
+      "terms": [
+        "groups",
+        "algebras",
+        "graphs",
+        "group",
+        "finite",
+        "spaces",
+        "theorem",
+        "theory"
+      ]
+    },
+    {
+      "community_id": 91,
+      "method": 337,
+      "background": 18,
+      "result_comparison": 1,
+      "total": 356,
+      "method_ratio": 0.946629,
+      "terms": [
+        "science",
+        "education",
+        "students",
+        "learning",
+        "research",
+        "teaching",
+        "physics",
+        "engineering"
+      ]
+    },
+    {
+      "community_id": 99,
+      "method": 1014,
+      "background": 36,
+      "result_comparison": 35,
+      "total": 1085,
+      "method_ratio": 0.934562,
+      "terms": [
+        "plant",
+        "gene",
+        "plants",
+        "regulation",
+        "expression",
+        "development",
+        "protein",
+        "rice"
+      ]
+    },
+    {
+      "community_id": 178,
+      "method": 4352,
+      "background": 168,
+      "result_comparison": 184,
+      "total": 4704,
+      "method_ratio": 0.92517,
+      "terms": [
+        "message",
+        "preface",
+        "science",
+        "scientific",
+        "review",
+        "research",
+        "conference",
+        "chairs"
+      ]
+    },
+    {
+      "community_id": 75,
+      "method": 42883,
+      "background": 2942,
+      "result_comparison": 968,
+      "total": 46793,
+      "method_ratio": 0.91644,
+      "terms": [
+        "quantum",
+        "theory",
+        "field",
+        "manifolds",
+        "geometry",
+        "algebras",
+        "lie",
+        "symmetry"
+      ]
+    },
+    {
+      "community_id": 125,
+      "method": 11226,
+      "background": 781,
+      "result_comparison": 326,
+      "total": 12333,
+      "method_ratio": 0.910241,
+      "terms": [
+        "gravitational",
+        "black",
+        "stars",
+        "gravity",
+        "relativistic",
+        "holes",
+        "theory",
+        "general"
+      ]
+    },
+    {
+      "community_id": 193,
+      "method": 77856,
+      "background": 5151,
+      "result_comparison": 2801,
+      "total": 85808,
+      "method_ratio": 0.907328,
+      "terms": [
+        "black",
+        "theory",
+        "quantum",
+        "gravity",
+        "holes",
+        "string",
+        "field",
+        "theories"
+      ]
+    },
+    {
+      "community_id": 157,
+      "method": 293,
+      "background": 9,
+      "result_comparison": 21,
+      "total": 323,
+      "method_ratio": 0.907121,
+      "terms": [
+        "species",
+        "genus",
+        "late",
+        "early",
+        "china",
+        "sea",
+        "middle",
+        "fossil"
+      ]
+    },
+    {
+      "community_id": 152,
+      "method": 228,
+      "background": 20,
+      "result_comparison": 5,
+      "total": 253,
+      "method_ratio": 0.901186,
+      "terms": [
+        "genome",
+        "gene",
+        "evolution",
+        "genetic",
+        "sequencing",
+        "genomic",
+        "sequence",
+        "dna"
+      ]
+    },
+    {
+      "community_id": 136,
+      "method": 17790,
+      "background": 1743,
+      "result_comparison": 262,
+      "total": 19795,
+      "method_ratio": 0.898712,
+      "terms": [
+        "quantum",
+        "entanglement",
+        "states",
+        "state",
+        "qubits",
+        "qubit",
+        "information",
+        "control"
+      ]
+    },
+    {
+      "community_id": 195,
+      "method": 390,
+      "background": 28,
+      "result_comparison": 21,
+      "total": 439,
+      "method_ratio": 0.888383,
+      "terms": [
+        "arabidopsis",
+        "thaliana",
+        "protein",
+        "gene",
+        "expression",
+        "plant",
+        "root",
+        "genes"
+      ]
+    },
+    {
+      "community_id": 128,
+      "method": 340,
+      "background": 17,
+      "result_comparison": 27,
+      "total": 384,
+      "method_ratio": 0.885417,
+      "terms": [
+        "resistance",
+        "plant",
+        "control",
+        "against",
+        "plants",
+        "virus",
+        "expression",
+        "host"
+      ]
+    },
+    {
+      "community_id": 107,
+      "method": 1271,
+      "background": 112,
+      "result_comparison": 80,
+      "total": 1463,
+      "method_ratio": 0.868763,
+      "terms": [
+        "grb",
+        "detection",
+        "optical",
+        "catalog",
+        "online",
+        "vizier",
+        "swift",
+        "x-ray"
+      ]
+    },
+    {
+      "community_id": 33,
+      "method": 4725,
+      "background": 663,
+      "result_comparison": 96,
+      "total": 5484,
+      "method_ratio": 0.861597,
+      "terms": [
+        "equations",
+        "solutions",
+        "equation",
+        "nonlinear",
+        "spaces",
+        "problem",
+        "differential",
+        "stability"
+      ]
+    },
+    {
+      "community_id": 172,
+      "method": 1002,
+      "background": 105,
+      "result_comparison": 68,
+      "total": 1175,
+      "method_ratio": 0.852766,
+      "terms": [
+        "species",
+        "fish",
+        "marine",
+        "distribution",
+        "sea",
+        "population",
+        "habitat",
+        "environmental"
+      ]
+    },
+    {
+      "community_id": 101,
+      "method": 3480,
+      "background": 412,
+      "result_comparison": 197,
+      "total": 4089,
+      "method_ratio": 0.851064,
+      "terms": [
+        "liquid",
+        "optical",
+        "crystals",
+        "dynamics",
+        "crystal",
+        "nematic",
+        "active",
+        "structures"
+      ]
+    },
+    {
+      "community_id": 130,
+      "method": 607,
+      "background": 51,
+      "result_comparison": 58,
+      "total": 716,
+      "method_ratio": 0.847765,
+      "terms": [
+        "notes",
+        "book",
+        "news",
+        "cover",
+        "reviews",
+        "planet",
+        "water",
+        "science"
+      ]
+    },
+    {
+      "community_id": 6,
+      "method": 603,
+      "background": 97,
+      "result_comparison": 13,
+      "total": 713,
+      "method_ratio": 0.845722,
+      "terms": [
+        "privacy",
+        "secure",
+        "security",
+        "scheme",
+        "networks",
+        "blockchain",
+        "cloud",
+        "key"
+      ]
+    },
+    {
+      "community_id": 145,
+      "method": 554,
+      "background": 68,
+      "result_comparison": 37,
+      "total": 659,
+      "method_ratio": 0.840668,
+      "terms": [
+        "removal",
+        "adsorption",
+        "aqueous",
+        "carbon",
+        "water",
+        "synthesis",
+        "solution",
+        "preparation"
+      ]
+    },
+    {
+      "community_id": 43,
+      "method": 878,
+      "background": 89,
+      "result_comparison": 82,
+      "total": 1049,
+      "method_ratio": 0.836988,
+      "terms": [
+        "forest",
+        "plant",
+        "species",
+        "soil",
+        "carbon",
+        "tree",
+        "diversity",
+        "climate"
+      ]
+    }
+  ],
+  "resolution": "medium",
+  "min_community_volume": 200
+}

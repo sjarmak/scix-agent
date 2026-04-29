@@ -244,6 +244,7 @@
       { href: './heatmap.html', label: 'V5 Topology' },
       { href: './ego.html', label: 'V6 Ego' },
       { href: './streamgraph.html', label: 'V7 Streams' },
+      { href: './intent.html', label: 'V9 Intent' },
     ]
     pages.forEach(function (p) {
       var a = document.createElement('a')

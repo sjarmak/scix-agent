@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SciX — Citation Intent Breakdown (V9)</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      main.viz-container {
+        max-width: 1500px;
+        margin: 0 auto;
+        padding: 18px 20px 32px;
+      }
+      .viz-sub {
+        color: #555;
+        margin: 0 0 14px;
+      }
+      #intent-coverage-banner {
+        background: #fff8e6;
+        border: 1px solid #f0d27a;
+        color: #6c4c00;
+        border-radius: 6px;
+        padding: 10px 14px;
+        font-size: 13px;
+        line-height: 1.45;
+        margin: 0 0 16px;
+      }
+      #intent-grid {
+        display: grid;
+        grid-template-columns: 1.05fr 1.5fr;
+        gap: 16px;
+        align-items: start;
+      }
+      .intent-panel {
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        padding: 14px 16px 18px;
+      }
+      .intent-panel h2 {
+        margin: 0 0 8px;
+        font-size: 15px;
+      }
+      .panel-sub {
+        color: #666;
+        font-size: 12px;
+        margin: -4px 0 8px;
+      }
+      .donut-row {
+        display: flex;
+        gap: 14px;
+        align-items: center;
+      }
+      .donut-row svg {
+        flex: 0 0 220px;
+      }
+      .donut-legend {
+        font-size: 13px;
+        color: #333;
+        line-height: 1.6;
+      }
+      .donut-legend .swatch {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+        margin-right: 6px;
+        vertical-align: middle;
+      }
+      .donut-legend .pct {
+        color: #666;
+        margin-left: 6px;
+        font-variant-numeric: tabular-nums;
+      }
+      .bar-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        font-size: 12px;
+      }
+      .bar-list li {
+        display: grid;
+        grid-template-columns: 70px 1fr 60px;
+        gap: 8px;
+        align-items: center;
+        padding: 4px 0;
+        border-bottom: 1px solid #f4f4f4;
+      }
+      .bar-list li:last-child {
+        border-bottom: none;
+      }
+      .bar-list .bib {
+        font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+        font-size: 11px;
+        color: #555;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .bar-list .title {
+        color: #222;
+        line-height: 1.3;
+      }
+      .bar-list .title .year {
+        color: #888;
+        font-size: 11px;
+        margin-left: 4px;
+      }
+      .bar-list .barwrap {
+        position: relative;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        font-size: 11px;
+        color: #444;
+      }
+      .bar-list .barwrap .bar {
+        position: absolute;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        background: linear-gradient(to right, #cfe3f4, #4292c6);
+        border-radius: 2px;
+        z-index: 0;
+      }
+      .bar-list .barwrap .n {
+        position: relative;
+        z-index: 1;
+        padding: 1px 4px;
+      }
+      .stacked-svg {
+        width: 100%;
+        height: 260px;
+      }
+      .stacked-svg text {
+        font-size: 11px;
+        fill: #444;
+      }
+      .stacked-axis line,
+      .stacked-axis path {
+        stroke: #ccc;
+        shape-rendering: crispEdges;
+      }
+      .community-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        font-size: 12px;
+      }
+      .community-list li {
+        display: grid;
+        grid-template-columns: 28px 1fr 110px 70px;
+        gap: 6px;
+        align-items: center;
+        padding: 6px 0;
+        border-bottom: 1px solid #f4f4f4;
+      }
+      .community-list .cid {
+        font-weight: 600;
+        color: #555;
+        text-align: right;
+      }
+      .community-list .terms {
+        color: #444;
+        font-size: 12px;
+        line-height: 1.3;
+      }
+      .community-list .ratio-bar {
+        position: relative;
+        height: 14px;
+        background: #f0f0f0;
+        border-radius: 2px;
+      }
+      .community-list .ratio-bar .fill {
+        position: absolute;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        background: #4292c6;
+        border-radius: 2px;
+      }
+      .community-list .meta {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        font-size: 11px;
+        color: #444;
+      }
+      #intent-status {
+        font-size: 12px;
+        color: #888;
+        margin-top: 4px;
+      }
+      .intent-method {
+        background: #4292c6;
+      }
+      .intent-background {
+        background: #f4a582;
+      }
+      .intent-result_comparison {
+        background: #91bfdb;
+      }
+      @media (max-width: 1100px) {
+        #intent-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  </head>
+  <body>
+    <main class="viz-container">
+      <h1 style="margin: 0 0 4px">Citation Intent — Method, Background, Result Comparison</h1>
+      <p class="viz-sub">
+        Most citation graphs are binary: paper A cites paper B. SciX classifies a subset of edges by
+        <em>rhetorical function</em>: cited as a <strong>method</strong>, as
+        <strong>background</strong>, or for <strong>result comparison</strong>. This page surfaces
+        the four lenses on that classified slice.
+      </p>
+      <div id="intent-coverage-banner" role="note">Loading coverage…</div>
+      <div id="intent-grid">
+        <section class="intent-panel" aria-labelledby="intent-totals-heading">
+          <h2 id="intent-totals-heading">Overall Intent Split</h2>
+          <p class="panel-sub">All classified edges, three rhetorical buckets.</p>
+          <div class="donut-row">
+            <svg id="intent-donut" viewBox="0 0 220 220" aria-label="Intent donut chart"></svg>
+            <div id="intent-donut-legend" class="donut-legend"></div>
+          </div>
+        </section>
+        <section class="intent-panel" aria-labelledby="intent-by-year-heading">
+          <h2 id="intent-by-year-heading">Intent Mix by Citing-Paper Year</h2>
+          <p class="panel-sub">
+            Stacked bars (one per source-publication year) of
+            method/background/result_comparison shares. Discrete bars rather than a connected area
+            because the classified slice has gaps; per-year is the honest unit (a per-decade
+            roll-up collapses to one or two buckets).
+          </p>
+          <svg id="intent-stacked" class="stacked-svg" aria-label="Intent mix per year"></svg>
+        </section>
+        <section class="intent-panel" aria-labelledby="intent-top-method-heading">
+          <h2 id="intent-top-method-heading">Top Method-Cited Papers</h2>
+          <p class="panel-sub">Targets most often cited as a method (count of method-tagged citations).</p>
+          <ol id="intent-top-method" class="bar-list"></ol>
+        </section>
+        <section class="intent-panel" aria-labelledby="intent-top-background-heading">
+          <h2 id="intent-top-background-heading">Top Background-Cited Papers</h2>
+          <p class="panel-sub">Targets most often cited as background (foundational context).</p>
+          <ol id="intent-top-background" class="bar-list"></ol>
+        </section>
+        <section
+          class="intent-panel"
+          style="grid-column: 1 / -1"
+          aria-labelledby="intent-community-heading"
+        >
+          <h2 id="intent-community-heading">Communities Ranked by Method-Cite Ratio</h2>
+          <p class="panel-sub" id="intent-community-sub">
+            Medium-resolution semantic communities, ranked by share of citations cast as method.
+          </p>
+          <ol id="intent-community-list" class="community-list"></ol>
+        </section>
+      </div>
+      <div id="intent-status" aria-live="polite">loading…</div>
+    </main>
+    <script src="./shared.js"></script>
+    <script src="./intent.js"></script>
+  </body>
+</html>

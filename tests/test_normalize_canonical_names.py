@@ -455,3 +455,41 @@ class TestNormalizeEntityType:
         # is correctly skipped (alias_source='canonical_pre_normalize'
         # only fires when canonical_name <> new_canon).
         assert clean_canon not in aliases
+
+    def test_merge_atomicity_on_rollback(
+        self, clean_db: psycopg.Connection
+    ) -> None:
+        # Regression: record_merge() previously called conn.commit()
+        # internally, which broke atomicity for _merge_one_group. If the
+        # caller rolls back the transaction (e.g. survivor rename fails
+        # mid-loop), the merge log row would survive while losers stayed
+        # in entities. With record_merge no longer auto-committing, a
+        # rollback must wipe both sides.
+        bib = "_NORM_TEST_ATOMIC"
+        _insert_paper(clean_db, bib)
+
+        survivor_canon = f"{FIXTURE_PREFIX}atomic2"
+        loser_canon = f"{FIXTURE_PREFIX}atomic<sub>2</sub>"
+        survivor = _insert_entity(clean_db, survivor_canon, "chemical")
+        loser = _insert_entity(clean_db, loser_canon, "chemical")
+        _link(clean_db, bib, loser)
+        clean_db.commit()
+
+        # Run the merge body but roll back instead of committing.
+        backfill.normalize_entity_type(clean_db, "chemical", actor="test")
+        clean_db.rollback()
+
+        # Both entities must still exist (rollback restored the loser).
+        assert _entity_exists(clean_db, survivor)
+        assert _entity_exists(clean_db, loser)
+        # No audit row should be visible after rollback.
+        with clean_db.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM entity_merge_log "
+                "WHERE old_entity_id = %s AND new_entity_id = %s",
+                (loser, survivor),
+            )
+            assert cur.fetchone() is None
+        # Loser's document_entities row also rolled back to the loser.
+        de = _document_entities_for(clean_db, loser)
+        assert any(row[0] == bib for row in de)

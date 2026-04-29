@@ -50,6 +50,12 @@ def record_merge(
 ) -> MergeEntry:
     """Record an entity merge in the audit log.
 
+    Does not commit — callers manage the surrounding transaction. Auto-committing
+    here would break atomicity for batch routines like
+    ``normalize_canonical_names._merge_one_group`` which interleave the audit
+    write with bridge-row repointing and DELETEs that must roll back together
+    on error.
+
     Args:
         conn: Database connection.
         old_entity_id: The entity being retired (merged away).
@@ -75,7 +81,6 @@ def record_merge(
             },
         )
         row = cur.fetchone()
-    conn.commit()
     logger.info(
         "Recorded merge: entity %d -> %d (reason: %s)",
         old_entity_id,
@@ -102,6 +107,9 @@ def record_split(
 ) -> SplitEntry:
     """Record an entity split in the audit log.
 
+    Does not commit — callers manage the surrounding transaction. Same
+    rationale as :func:`record_merge`.
+
     Args:
         conn: Database connection.
         parent_entity_id: The entity being split (may be retired).
@@ -127,7 +135,6 @@ def record_split(
             },
         )
         row = cur.fetchone()
-    conn.commit()
     logger.info(
         "Recorded split: entity %d -> %s (reason: %s)",
         parent_entity_id,

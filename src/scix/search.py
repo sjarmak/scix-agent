@@ -258,6 +258,34 @@ def lexical_search(
 # tsvector limit are not indexed and the expression cannot be evaluated.
 _BODY_TSVECTOR_MAX_BYTES = 1_048_575
 
+# Candidate-pool cap for body lexical search. Without a cap, common single-token
+# queries (e.g. 'galaxy' → ~424K body matches) blow past the 30s statement
+# timeout at the DB level, before ts_rank_cd ever runs. Cap defaults chosen
+# empirically: pool=2000 + truncate=8KB completes a 'galaxy' worst-case in
+# ~3s with 82% of candidates retaining a non-zero body rank. Operators can
+# override via SCIX_BODY_LEXICAL_POOL / SCIX_BODY_RANK_TRUNC_BYTES.
+_BODY_LEXICAL_POOL_DEFAULT = 2000
+_BODY_RANK_TRUNC_BYTES_DEFAULT = 8192
+
+
+def _resolve_positive_int_env(var: str, default: int) -> int:
+    """Read *var* as a positive int; warn and fall back to *default* on misconfig.
+
+    Read on every call so operators can tune the MCP container without restart.
+    """
+    raw = os.environ.get(var)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not an integer; falling back to %d", var, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("%s=%d must be positive; falling back to %d", var, value, default)
+        return default
+    return value
+
 
 def lexical_search_body(
     conn: psycopg.Connection,
@@ -272,11 +300,28 @@ def lexical_search_body(
     migration 039). Rows with NULL or oversized bodies are skipped to match
     the partial-index predicate, ensuring the planner uses the GIN index.
 
-    Ranking uses the title+abstract tsvector (papers.tsv) rather than
-    recomputing to_tsvector on the full body text — the body expression
-    index handles the match filter, but ts_rank_cd on 65KB bodies is
-    prohibitively slow (~400s per query). Since body results are fused
-    via RRF with other signals, approximate ordering is sufficient.
+    Query shape (sibling of the lexical_search candidate-pool fix in 3t37):
+      1. ``q`` CTE materializes plainto_tsquery once.
+      2. ``cand`` CTE caps the body-matched candidate set at
+         SCIX_BODY_LEXICAL_POOL rows (default 2000) — bounds ts_rank_cd cost
+         which would otherwise time out on common terms (~424K matches for
+         'galaxy').
+      3. Outer SELECT computes ts_rank_cd against ``to_tsvector('english',
+         left(body, SCIX_BODY_RANK_TRUNC_BYTES))`` (default 8KB). Truncation
+         keeps per-row TOAST-read cost bounded; ranking against the body
+         (rather than papers.tsv) is the architecturally important change —
+         papers that mention the term only in body would otherwise rank=0
+         under title+abstract tsv and sort arbitrarily, defeating the
+         value-prop of body search.
+
+    Trade-offs (documented for callers):
+      - Recall: only the first ~POOL bitmap-heap rows are ranked; ordering
+        is unstable across runs (TID order). Acceptable for RRF fusion in
+        hybrid_search; eval harnesses can raise the cap.
+      - Truncation: ~18% of candidates whose only term occurrence is past
+        the truncation byte revert to rank=0. Biased toward early-mention
+        papers, which correlates with relevance for scientific text
+        (intro/abstract repetition).
     """
     t0 = time.perf_counter()
 
@@ -284,19 +329,40 @@ def lexical_search_body(
     filter_clause, filter_params = effective.to_where_clause("p")
     entity_clause, entity_params = effective.to_entity_filter_clause("p")
 
+    pool_size = _resolve_positive_int_env("SCIX_BODY_LEXICAL_POOL", _BODY_LEXICAL_POOL_DEFAULT)
+    trunc_bytes = min(
+        _resolve_positive_int_env("SCIX_BODY_RANK_TRUNC_BYTES", _BODY_RANK_TRUNC_BYTES_DEFAULT),
+        _BODY_TSVECTOR_MAX_BYTES,
+    )
+    cand_columns = STUB_COLUMNS.replace("p.", "cand.")
+
     query = f"""
-        SELECT {STUB_COLUMNS},
-               ts_rank_cd(p.tsv, plainto_tsquery('english', %s), 32) AS rank
-        FROM papers p
-        WHERE p.body IS NOT NULL
-          AND length(p.body) <= {_BODY_TSVECTOR_MAX_BYTES}
-          AND to_tsvector('english', p.body) @@ plainto_tsquery('english', %s)
-        {filter_clause}
-        {entity_clause}
+        WITH q AS (
+            SELECT plainto_tsquery('english', %s) AS tsq
+        ),
+        cand AS (
+            SELECT {STUB_COLUMNS}, p.body
+            FROM papers p, q
+            WHERE p.body IS NOT NULL
+              AND length(p.body) <= {_BODY_TSVECTOR_MAX_BYTES}
+              AND to_tsvector('english', p.body) @@ q.tsq
+            {filter_clause}
+            {entity_clause}
+            LIMIT %s
+        )
+        SELECT {cand_columns},
+               ts_rank_cd(
+                   to_tsvector('english', left(cand.body, %s)),
+                   q.tsq,
+                   32
+               ) AS rank
+        FROM cand, q
         ORDER BY rank DESC
         LIMIT %s
     """
-    params: list[Any] = [query_text, query_text] + filter_params + entity_params + [limit]
+    params: list[Any] = (
+        [query_text] + filter_params + entity_params + [pool_size, trunc_bytes, limit]
+    )
 
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(query, params)

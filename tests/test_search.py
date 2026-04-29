@@ -18,6 +18,8 @@ from helpers import (
 )
 
 from scix.search import (
+    _BODY_LEXICAL_POOL_DEFAULT,
+    _BODY_RANK_TRUNC_BYTES_DEFAULT,
     SELECTIVITY_THRESHOLD,
     SearchFilters,
     SearchResult,
@@ -25,6 +27,7 @@ from scix.search import (
     _estimate_filter_selectivity,
     _filter_first_vector_search,
     _model_has_embeddings,
+    _resolve_positive_int_env,
     bibliographic_coupling,
     citation_chain,
     co_citation_analysis,
@@ -32,6 +35,7 @@ from scix.search import (
     get_paper,
     hybrid_search,
     lexical_search,
+    lexical_search_body,
     rrf_fuse,
     temporal_evolution,
     vector_search,
@@ -565,6 +569,125 @@ class TestOpenAISignalSkipped:
             assert result.timing_ms["openai_vector_ms"] == 0.0
 
 
+class TestResolvePositiveIntEnv:
+    """The shared env-resolver helper used by lexical_search_body knobs."""
+
+    def test_uses_default_when_unset(self, monkeypatch) -> None:
+        monkeypatch.delenv("SCIX_TEST_POOL", raising=False)
+        assert _resolve_positive_int_env("SCIX_TEST_POOL", 2000) == 2000
+
+    def test_reads_per_call_not_at_import(self, monkeypatch) -> None:
+        # If the resolver cached the env at import time, this test would
+        # silently get the original value. Set two different values back-to-back
+        # to verify each call re-reads os.environ.
+        monkeypatch.setenv("SCIX_TEST_POOL", "1234")
+        assert _resolve_positive_int_env("SCIX_TEST_POOL", 2000) == 1234
+        monkeypatch.setenv("SCIX_TEST_POOL", "9999")
+        assert _resolve_positive_int_env("SCIX_TEST_POOL", 2000) == 9999
+
+    def test_falls_back_on_non_integer(self, monkeypatch, caplog) -> None:
+        import logging
+
+        monkeypatch.setenv("SCIX_TEST_POOL", "not_a_number")
+        with caplog.at_level(logging.WARNING, logger="scix.search"):
+            assert _resolve_positive_int_env("SCIX_TEST_POOL", 2000) == 2000
+        assert any("not an integer" in r.message for r in caplog.records)
+
+    def test_falls_back_on_non_positive(self, monkeypatch, caplog) -> None:
+        import logging
+
+        monkeypatch.setenv("SCIX_TEST_POOL", "-5")
+        with caplog.at_level(logging.WARNING, logger="scix.search"):
+            assert _resolve_positive_int_env("SCIX_TEST_POOL", 2000) == 2000
+        assert any("must be positive" in r.message for r in caplog.records)
+
+
+class TestLexicalSearchBodyCandidatePool:
+    """Unit tests for the body-search candidate-pool + truncated-rank shape."""
+
+    def _mock_conn(self):
+        from unittest.mock import MagicMock
+
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.__enter__ = MagicMock(return_value=cursor)
+        cursor.__exit__ = MagicMock(return_value=False)
+        cursor.fetchall.return_value = []
+        conn.cursor.return_value = cursor
+        return conn, cursor
+
+    def test_query_uses_candidate_pool_cte(self, monkeypatch) -> None:
+        """SQL must contain WITH q AS / cand AS, ORDER BY rank DESC, and a
+        LIMIT on the cand CTE — not just the outer SELECT.
+        """
+        monkeypatch.delenv("SCIX_BODY_LEXICAL_POOL", raising=False)
+        monkeypatch.delenv("SCIX_BODY_RANK_TRUNC_BYTES", raising=False)
+        conn, cursor = self._mock_conn()
+
+        lexical_search_body(conn, "galaxy", limit=20)
+
+        sql, params = cursor.execute.call_args.args
+        # Both CTEs must be present.
+        assert "WITH q AS" in sql
+        assert "cand AS" in sql
+        # Rank computation must reference the truncated body, not p.tsv.
+        assert "to_tsvector('english', left(cand.body" in sql
+        assert "p.tsv" not in sql, (
+            "lexical_search_body must rank against truncated body, not the "
+            "title+abstract tsvector — see bead scix_experiments-lvqs."
+        )
+        assert "ORDER BY rank DESC" in sql
+
+    def test_default_pool_and_truncation_in_params(self, monkeypatch) -> None:
+        """With no env overrides, params must end with [pool_default, trunc_default, limit]."""
+        monkeypatch.delenv("SCIX_BODY_LEXICAL_POOL", raising=False)
+        monkeypatch.delenv("SCIX_BODY_RANK_TRUNC_BYTES", raising=False)
+        conn, cursor = self._mock_conn()
+
+        lexical_search_body(conn, "galaxy", limit=15)
+
+        _sql, params = cursor.execute.call_args.args
+        assert params[-3] == _BODY_LEXICAL_POOL_DEFAULT
+        assert params[-2] == _BODY_RANK_TRUNC_BYTES_DEFAULT
+        assert params[-1] == 15
+
+    def test_env_overrides_pool_and_trunc(self, monkeypatch) -> None:
+        """SCIX_BODY_LEXICAL_POOL and SCIX_BODY_RANK_TRUNC_BYTES are read per-call."""
+        monkeypatch.setenv("SCIX_BODY_LEXICAL_POOL", "500")
+        monkeypatch.setenv("SCIX_BODY_RANK_TRUNC_BYTES", "4096")
+        conn, cursor = self._mock_conn()
+
+        lexical_search_body(conn, "galaxy", limit=20)
+
+        _sql, params = cursor.execute.call_args.args
+        assert params[-3] == 500
+        assert params[-2] == 4096
+
+    def test_trunc_capped_at_max_body_bytes(self, monkeypatch) -> None:
+        """Operators can't accidentally make the rank scan glacial by setting
+        SCIX_BODY_RANK_TRUNC_BYTES above the indexed body size limit."""
+        monkeypatch.setenv("SCIX_BODY_RANK_TRUNC_BYTES", "5000000")
+        conn, cursor = self._mock_conn()
+
+        lexical_search_body(conn, "galaxy", limit=20)
+
+        _sql, params = cursor.execute.call_args.args
+        # 1_048_575 == _BODY_TSVECTOR_MAX_BYTES
+        assert params[-2] == 1_048_575
+
+    def test_query_text_passed_once(self, monkeypatch) -> None:
+        """plainto_tsquery is materialized once in the q CTE, so query_text
+        is bound exactly once — not twice as in the previous implementation."""
+        monkeypatch.delenv("SCIX_BODY_LEXICAL_POOL", raising=False)
+        monkeypatch.delenv("SCIX_BODY_RANK_TRUNC_BYTES", raising=False)
+        conn, cursor = self._mock_conn()
+
+        lexical_search_body(conn, "neutron_star_xyz", limit=20)
+
+        _sql, params = cursor.execute.call_args.args
+        assert params.count("neutron_star_xyz") == 1
+
+
 # ---------------------------------------------------------------------------
 # Integration tests (require running scix database with data)
 # ---------------------------------------------------------------------------
@@ -615,6 +738,44 @@ class TestLexicalSearchIntegration:
             paper = result.papers[0]
             assert "bibcode" in paper
             assert "score" in paper
+
+
+def _has_papers_body(conn: psycopg.Connection) -> bool:
+    """Check whether papers.body has any non-NULL rows (migration 037+)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT EXISTS(SELECT 1 FROM papers WHERE body IS NOT NULL LIMIT 1)")
+        return cur.fetchone()[0]
+
+
+@pytest.mark.integration
+class TestLexicalSearchBodyIntegration:
+    def test_common_term_completes_under_25s(self, conn) -> None:
+        """Pre-fix this query timed out at 30s+ for common single-token terms.
+        Post-fix should complete well under the timeout even cold."""
+        if not _has_papers_body(conn):
+            pytest.skip("papers.body not populated")
+        # Use a savepoint-friendly statement_timeout to fail loudly if the cap
+        # regresses.
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '25s'")
+        result = lexical_search_body(conn, "galaxy", limit=20)
+        assert isinstance(result, SearchResult)
+        assert "body_lexical_ms" in result.timing_ms
+
+    def test_body_only_matches_get_nonzero_rank(self, conn) -> None:
+        """Architectural property: ranking on truncated body (not p.tsv) means
+        papers that only mention the term in body still get scored. With a
+        sufficiently common term, expect at least some non-zero ranks in top-20.
+        """
+        if not _has_papers_body(conn):
+            pytest.skip("papers.body not populated")
+        result = lexical_search_body(conn, "galaxy", limit=20)
+        if result.total > 0:
+            scores = [p["score"] for p in result.papers]
+            assert any(s > 0 for s in scores), (
+                "All top-20 ranks are zero — the truncated-body ranker may not "
+                "be wired up correctly (regression of bead scix_experiments-lvqs)."
+            )
 
 
 @pytest.mark.integration

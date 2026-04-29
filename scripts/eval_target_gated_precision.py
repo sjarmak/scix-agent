@@ -87,18 +87,22 @@ _SAMPLE_SQL = """
       FROM document_entities de
       JOIN entities e ON e.id = de.entity_id
       JOIN papers   p ON p.bibcode = de.bibcode
-     WHERE de.link_type = 'target_gated_match'
+     WHERE de.link_type = %s
        AND de.tier = 3
      ORDER BY random()
      LIMIT %s
 """
 
 
-def sample_judgment_rows(conn: psycopg.Connection, n: int) -> list[JudgmentRow]:
+def sample_judgment_rows(
+    conn: psycopg.Connection,
+    n: int,
+    link_type: str = "target_gated_match",
+) -> list[JudgmentRow]:
     """Pull ``n`` random tier-3 links with paper context."""
     rows: list[JudgmentRow] = []
     with conn.cursor() as cur:
-        cur.execute(_SAMPLE_SQL, (n,))
+        cur.execute(_SAMPLE_SQL, (link_type, n))
         for r in cur.fetchall():
             (
                 bibcode,
@@ -284,6 +288,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_OUT_DIR,
         help=f"Output directory (default {DEFAULT_OUT_DIR})",
     )
+    p.add_argument(
+        "--link-type",
+        type=str,
+        default="target_gated_match",
+        help=(
+            "document_entities.link_type to sample (default 'target_gated_match'; "
+            "use 'target_designation_anchored' for xz4.9 evaluation)"
+        ),
+    )
     p.add_argument("--verbose", "-v", action="store_true")
     return p
 
@@ -320,20 +333,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     dsn = args.db_url or os.environ.get("SCIX_TEST_DSN") or DEFAULT_DSN
     conn = get_connection(dsn)
     try:
-        rows = sample_judgment_rows(conn, args.size)
+        rows = sample_judgment_rows(conn, args.size, link_type=args.link_type)
     finally:
         conn.close()
 
     if not rows:
         print(
-            "no tier-3 target_gated_match rows found — "
-            "run scripts/link_targets_discipline_gated.py first",
+            f"no tier-3 {args.link_type!r} rows found — "
+            "run the appropriate linker first",
             file=sys.stderr,
         )
         return 2
 
-    tsv_path = args.out_dir / f"tier3_target_gated_eval_{args.size}.tsv"
-    md_path = args.out_dir / f"tier3_target_gated_eval_{args.size}.md"
+    slug = args.link_type.replace("_", "-")
+    tsv_path = args.out_dir / f"tier3_{slug}_eval_{args.size}.tsv"
+    md_path = args.out_dir / f"tier3_{slug}_eval_{args.size}.md"
     write_tsv(rows, tsv_path)
     write_cards(rows, md_path)
     print(f"sampled {len(rows)} rows; annotate {tsv_path} then re-run with --score")

@@ -138,12 +138,28 @@ class ResilientClient:
             time.sleep(sleep_time)
         state.last_request_time = time.monotonic()
 
-    def _cache_key(self, url: str, params: dict[str, str] | None) -> str:
-        """Generate a deterministic cache key from URL and params."""
+    def _cache_key(
+        self,
+        url: str,
+        params: dict[str, str] | None,
+        headers: dict[str, str] | None = None,
+    ) -> str:
+        """Generate a deterministic cache key from URL, params, and headers.
+
+        Headers are included so that header-driven pagination (e.g. CMR's
+        ``Search-After``) yields a distinct cache entry per page. The
+        ``User-Agent`` header is excluded because it doesn't affect response
+        semantics for the APIs we harvest.
+        """
         parts = [url]
         if params:
             sorted_params = sorted(params.items())
             parts.append(json.dumps(sorted_params, sort_keys=True))
+        if headers:
+            meaningful = {k: v for k, v in headers.items() if k.lower() != "user-agent"}
+            if meaningful:
+                sorted_headers = sorted(meaningful.items())
+                parts.append(json.dumps(sorted_headers, sort_keys=True))
         raw = "|".join(parts)
         return hashlib.sha256(raw.encode()).hexdigest()
 
@@ -214,19 +230,21 @@ class ResilientClient:
         # Circuit breaker check
         self._check_circuit_breaker(host)
 
-        # Cache check
-        cache_key = self._cache_key(url, params)
+        # Set User-Agent header (extracted before cache key so cache differentiates
+        # by request-shaping headers like Accept and Search-After).
+        headers = kwargs.pop("headers", {}) or {}
+        headers.setdefault("User-Agent", self.user_agent)
+        timeout = kwargs.pop("timeout", self.timeout)
+
+        # Cache check (key incorporates non-User-Agent headers so header-driven
+        # pagination yields distinct cache entries per page).
+        cache_key = self._cache_key(url, params, headers)
         cached = self._read_cache(cache_key)
         if cached is not None:
             return cached
 
         # Rate limiting
         self._apply_rate_limit(host)
-
-        # Set User-Agent header
-        headers = kwargs.pop("headers", {}) or {}
-        headers.setdefault("User-Agent", self.user_agent)
-        timeout = kwargs.pop("timeout", self.timeout)
 
         last_exc: Exception | None = None
         for attempt in range(1, self.max_retries + 1):

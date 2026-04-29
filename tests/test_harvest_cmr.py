@@ -160,10 +160,12 @@ class TestSearchAfterPagination:
         assert len(items) == 2
         assert page_count == 2
 
-        # Second call should have Search-After header
+        # Second call should have CMR-Search-After header (CMR's mandated
+        # request header — the bare "Search-After" form is ignored).
         second_call = client.get.call_args_list[1]
         headers = second_call.kwargs.get("headers", second_call[1].get("headers", {}))
-        assert headers.get("Search-After") == "token-abc"
+        assert headers.get("CMR-Search-After") == "token-abc"
+        assert "Search-After" not in headers
 
     def test_stops_when_no_search_after_header(self) -> None:
         """Pagination stops if CMR-Search-After header is missing."""

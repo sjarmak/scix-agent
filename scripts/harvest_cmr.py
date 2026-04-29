@@ -91,7 +91,10 @@ def fetch_collections(
     while True:
         headers: dict[str, str] = {"Accept": UMM_JSON_ACCEPT}
         if search_after is not None:
-            headers["Search-After"] = search_after
+            # CMR's request header for paging is CMR-Search-After (mirrors
+            # the response header). Plain "Search-After" is silently ignored
+            # and yields the first page on every request.
+            headers["CMR-Search-After"] = search_after
 
         resp = client.get(
             CMR_BASE_URL,

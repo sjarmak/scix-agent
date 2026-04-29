@@ -25,6 +25,14 @@ from scix.db import get_connection
 
 logger = logging.getLogger(__name__)
 
+# Halfvec cutover gate. Mirrors src/scix/search.py — migrations 053/054 add
+# paper_embeddings.embedding_hv + idx_embed_hnsw_indus_hv but were not applied
+# to prod scix as of 2026-04-22 (bead scix_experiments-d0a). When False
+# (default), INDUS writes go to the legacy vector(768) `embedding` column so
+# the daily cron pipeline does not crash on missing `embedding_hv`. Flip to
+# "1" only after migrations + scripts/backfill_halfvec.py finish.
+_HALFVEC_ENABLED = os.environ.get("SCIX_USE_HALFVEC", "0") == "1"
+
 # Module-level model cache: (model_name, device) -> (model, tokenizer)
 _model_cache: dict[tuple[str, str], tuple[Any, Any]] = {}
 
@@ -187,11 +195,12 @@ def store_embeddings_copy(
         return 0
 
     # INDUS writes land in the halfvec(768) shadow column populated by
-    # the storage/halfvec-migration cutover (bead scix_experiments-0vy).
-    # Pilot models keep using the legacy vector column. The staging table
-    # carries both columns so we only need one COPY path; the INSERT
-    # picks the right target.
-    use_halfvec = model_name == "indus"
+    # the storage/halfvec-migration cutover (bead scix_experiments-0vy),
+    # but only after migrations 053/054 are applied to prod scix. Until
+    # then, _HALFVEC_ENABLED stays False and INDUS writes the same
+    # legacy vector(768) column as the pilot models — see bead
+    # scix_experiments-d0a for context.
+    use_halfvec = _HALFVEC_ENABLED and model_name == "indus"
 
     with conn.cursor() as cur:
         cur.execute(
@@ -221,17 +230,29 @@ def store_embeddings_copy(
                     )
                 )
 
-        cur.execute(
-            "INSERT INTO paper_embeddings "
-            "  (bibcode, model_name, embedding, embedding_hv, input_type, source_hash) "
-            "SELECT bibcode, model_name, embedding, embedding_hv, input_type, source_hash "
-            "FROM _embed_staging "
-            "ON CONFLICT (bibcode, model_name) DO UPDATE SET "
-            "  embedding    = EXCLUDED.embedding, "
-            "  embedding_hv = EXCLUDED.embedding_hv, "
-            "  input_type   = EXCLUDED.input_type, "
-            "  source_hash  = EXCLUDED.source_hash"
-        )
+        if use_halfvec:
+            cur.execute(
+                "INSERT INTO paper_embeddings "
+                "  (bibcode, model_name, embedding, embedding_hv, input_type, source_hash) "
+                "SELECT bibcode, model_name, embedding, embedding_hv, input_type, source_hash "
+                "FROM _embed_staging "
+                "ON CONFLICT (bibcode, model_name) DO UPDATE SET "
+                "  embedding    = EXCLUDED.embedding, "
+                "  embedding_hv = EXCLUDED.embedding_hv, "
+                "  input_type   = EXCLUDED.input_type, "
+                "  source_hash  = EXCLUDED.source_hash"
+            )
+        else:
+            cur.execute(
+                "INSERT INTO paper_embeddings "
+                "  (bibcode, model_name, embedding, input_type, source_hash) "
+                "SELECT bibcode, model_name, embedding, input_type, source_hash "
+                "FROM _embed_staging "
+                "ON CONFLICT (bibcode, model_name) DO UPDATE SET "
+                "  embedding   = EXCLUDED.embedding, "
+                "  input_type  = EXCLUDED.input_type, "
+                "  source_hash = EXCLUDED.source_hash"
+            )
         count = cur.rowcount
 
     conn.commit()
@@ -252,7 +273,7 @@ def store_embeddings(
         return 0
 
     with conn.cursor() as cur:
-        use_halfvec = model_name == "indus"
+        use_halfvec = _HALFVEC_ENABLED and model_name == "indus"
         for inp, vec in zip(inputs, vectors):
             literal = _vec_to_pgvector(vec)
             if use_halfvec:

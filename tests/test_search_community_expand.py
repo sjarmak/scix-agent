@@ -100,7 +100,8 @@ _NEIGHBOR_ROWS: list[dict[str, Any]] = [
     {"entity_id": 103, "canonical_name": "ACS", "cooccur_count": 9},
 ]
 
-# Five candidate papers, ranked by best_cooccur DESC, pagerank DESC NULLS LAST.
+# Three candidate papers, ranked by neighbor_coverage DESC, coverage_score DESC,
+# pagerank DESC NULLS LAST.
 _PAPER_ROWS: list[dict[str, Any]] = [
     {
         "bibcode": "2024ApJ...001A",
@@ -109,9 +110,10 @@ _PAPER_ROWS: list[dict[str, Any]] = [
         "year": 2024,
         "citation_count": 42,
         "abstract": "WFC3 + STIS observations of HST targets.",
+        "neighbor_coverage": 3,
+        "coverage_score": 52,
         "best_cooccur": 25,
         "pagerank": 0.012,
-        "best_neighbor_id": 101,
     },
     {
         "bibcode": "2023ApJ...002B",
@@ -120,9 +122,10 @@ _PAPER_ROWS: list[dict[str, Any]] = [
         "year": 2023,
         "citation_count": 30,
         "abstract": "STIS calibration revisions.",
+        "neighbor_coverage": 2,
+        "coverage_score": 27,
         "best_cooccur": 18,
         "pagerank": 0.008,
-        "best_neighbor_id": 102,
     },
     {
         "bibcode": "2022ApJ...003C",
@@ -131,9 +134,10 @@ _PAPER_ROWS: list[dict[str, Any]] = [
         "year": 2022,
         "citation_count": 12,
         "abstract": "ACS imaging program.",
+        "neighbor_coverage": 1,
+        "coverage_score": 9,
         "best_cooccur": 9,
         "pagerank": None,
-        "best_neighbor_id": 103,
     },
 ]
 
@@ -202,7 +206,10 @@ class TestCommunityExpandSearch:
         # The seed entity_id must show up in the params list of the same query.
         assert 999 in _captured_params(papers_cur)
 
-    # 3. Tiebreak rule: equal cooccur → pagerank DESC NULLS LAST.
+    # 3. Tiebreak rule: papers ranked by neighbor_coverage DESC,
+    #    coverage_score DESC, pagerank DESC NULLS LAST. The tertiary
+    #    pagerank tiebreak preserves "NULLS LAST" so missing pagerank
+    #    rows always sort last on equal coverage.
     def test_pagerank_tiebreak(self) -> None:
         seed_count_cur = _make_cursor([{"fetchone": (5,)}])
         neighbors_cur = _make_cursor([{"fetchall": _NEIGHBOR_ROWS}])
@@ -212,8 +219,9 @@ class TestCommunityExpandSearch:
         community_expand_search(conn, seed_entity_id=999)
 
         captured = _captured_sql(papers_cur)
-        # ORDER BY ... pagerank DESC NULLS LAST must appear in the candidate query.
-        assert "pagerank desc nulls last" in captured
+        # Coverage-first ranking with pagerank as the deepest tiebreak.
+        assert "neighbor_coverage desc" in captured
+        assert "pagerank" in captured and "desc nulls last" in captured
 
     # 4. Empty neighborhood → empty SearchResult, NOT a fallback to hybrid.
     def test_empty_neighborhood_returns_empty_result(self) -> None:

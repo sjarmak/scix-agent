@@ -1065,10 +1065,19 @@ def community_expand_search(
     neighbor_ids = [int(r["entity_id"]) for r in neighbor_rows]
     cooccur_counts = [int(r["cooccur_count"]) for r in neighbor_rows]
 
-    # Use a top-K candidate CTE so we never sort the full candidate set
-    # (which can be hundreds of thousands of rows for popular neighbors).
-    # We pre-rank by best_cooccur DESC inside the CTE with a generous LIMIT,
-    # then JOIN papers/paper_metrics only for those candidates.
+    # Stage-3 ranking: papers covering MORE of the seed's neighbors win
+    # over papers covering ONE strong neighbor (= the original PRD §6
+    # "best_cooccur" rule). The original PRD ranking surfaces papers
+    # tagged with the single most-co-occurring neighbor regardless of
+    # whether the paper itself relates to the seed — e.g. for a Chandra
+    # seed, generic HST-instrument papers (STIS solo) drown out
+    # multi-instrument joint observation papers. PRD §6 R7 said
+    # "explainability" was the open concern; in practice the bigger
+    # problem was selectivity. Updated ranking:
+    #   1. neighbor_coverage DESC  — how many of the seed's top-50
+    #      neighbors does this paper cover? More = stronger signal.
+    #   2. coverage_score   DESC  — sum(cooccur_count) tiebreak.
+    #   3. pagerank         DESC NULLS LAST — quality tiebreak.
     candidate_pool = max(top_k * 5, 200)
 
     t_papers = time.perf_counter()
@@ -1079,7 +1088,9 @@ def community_expand_search(
         candidate_papers AS (
             SELECT
                 dec.bibcode,
-                MAX(nc.cooccur_count)::int AS best_cooccur
+                COUNT(DISTINCT dec.entity_id)::int AS neighbor_coverage,
+                SUM(nc.cooccur_count)::int        AS coverage_score,
+                MAX(nc.cooccur_count)::int        AS best_cooccur
             FROM document_entities_canonical dec
             JOIN neighbor_cooccur nc ON nc.entity_id = dec.entity_id
             WHERE NOT EXISTS (
@@ -1088,10 +1099,12 @@ def community_expand_search(
                    AND dec_seed.entity_id = %s
             )
             GROUP BY dec.bibcode
-            ORDER BY best_cooccur DESC
+            ORDER BY neighbor_coverage DESC, coverage_score DESC
             LIMIT %s
         )
         SELECT {STUB_COLUMNS},
+               cp.neighbor_coverage,
+               cp.coverage_score,
                cp.best_cooccur,
                pm.pagerank
         FROM candidate_papers cp
@@ -1100,7 +1113,10 @@ def community_expand_search(
         WHERE 1=1
         {filter_clause}
         {entity_clause}
-        ORDER BY cp.best_cooccur DESC, pm.pagerank DESC NULLS LAST, p.bibcode
+        ORDER BY cp.neighbor_coverage DESC,
+                 cp.coverage_score    DESC,
+                 pm.pagerank          DESC NULLS LAST,
+                 p.bibcode
         LIMIT %s
     """
     params: list[Any] = (
@@ -1131,6 +1147,12 @@ def community_expand_search(
         # agents and reviewers can explain the ranking.
         best_cooccur = int(row["best_cooccur"]) if row.get("best_cooccur") is not None else 0
         stub["cooccur_count"] = best_cooccur
+        stub["neighbor_coverage"] = (
+            int(row["neighbor_coverage"]) if row.get("neighbor_coverage") is not None else 0
+        )
+        stub["coverage_score"] = (
+            int(row["coverage_score"]) if row.get("coverage_score") is not None else 0
+        )
         if best_cooccur in cooccur_to_neighbor:
             stub["best_neighbor_id"] = cooccur_to_neighbor[best_cooccur]
         papers.append(stub)

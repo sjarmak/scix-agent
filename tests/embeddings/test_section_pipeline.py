@@ -5,14 +5,22 @@ section_pipeline module is designed for that — model loading is lazy and DB
 access is parameterized on a duck-typed connection. Here we substitute a tiny
 fake connection / cursor / model and exercise the pure helpers and the
 batch-orchestration glue.
+
+Integration tests (marked ``@pytest.mark.integration``) at the bottom of this
+file exercise the real pipeline end-to-end against a non-production Postgres
+DSN provided via ``SCIX_TEST_DSN``. They are skipped when the env var is
+unset or points at a production database, and they use a fake encoder to keep
+the test fast without burning model-load time.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
+import psycopg
 import pytest
 
 from scix.embeddings.section_pipeline import (
@@ -459,3 +467,159 @@ def test_no_paid_api_imports():
     )
     for fragment in forbidden:
         assert fragment not in src, f"Forbidden import found: {fragment!r}"
+
+
+# ---------------------------------------------------------------------------
+# Integration tests against a real Postgres (scix_test). Skipped if
+# SCIX_TEST_DSN is unset or points at the production database.
+# ---------------------------------------------------------------------------
+
+_PRODUCTION_DB_NAMES = {"scix"}
+
+
+def _is_production_dsn(dsn: str) -> bool:
+    for token in dsn.split():
+        if "=" in token:
+            key, _, value = token.partition("=")
+            if key.strip() == "dbname" and value.strip() in _PRODUCTION_DB_NAMES:
+                return True
+    return False
+
+
+_TEST_DSN = os.environ.get("SCIX_TEST_DSN")
+_skip_no_test_db = pytest.mark.skipif(
+    _TEST_DSN is None or _is_production_dsn(_TEST_DSN or ""),
+    reason=(
+        "Integration test requires SCIX_TEST_DSN pointing to a non-production "
+        "database with section_embeddings + papers_fulltext schema."
+    ),
+)
+
+
+@pytest.fixture()
+def _scix_test_conn():
+    """Yield a psycopg connection to scix_test and clean up after the test."""
+    assert _TEST_DSN is not None  # guarded by _skip_no_test_db
+    conn = psycopg.connect(_TEST_DSN)
+    yield conn
+    conn.close()
+
+
+@pytest.mark.integration
+@_skip_no_test_db
+def test_section_pipeline_writes_to_scix_test(_scix_test_conn) -> None:
+    """End-to-end smoke: insert sample papers + papers_fulltext rows, run
+    ``_process_batch`` with the deterministic ``_FakeModel``, and verify
+    section_embeddings rows land with the expected sha + halfvec(1024)
+    payload. Cleans up its own rows on success and on failure.
+    """
+    from scix.embeddings.section_pipeline import (
+        DEFAULT_DIMENSIONS,
+        _process_batch,
+        compute_section_sha,
+        iter_sections,
+    )
+
+    bib_a = "9999TEST..001..001A"
+    bib_b = "9999TEST..001..002B"
+
+    sections_a = [
+        {"heading": "Intro", "level": 1, "text": "Introduction body alpha."},
+        {"heading": "Methods", "level": 1, "text": "We measured X via Y."},
+    ]
+    sections_b = [
+        {"heading": "Results", "level": 1, "text": "Result text beta."},
+    ]
+
+    cur = _scix_test_conn.cursor()
+    try:
+        # Insert minimal papers + papers_fulltext rows.
+        cur.execute(
+            "INSERT INTO papers (bibcode, title) VALUES (%s, %s), (%s, %s) "
+            "ON CONFLICT (bibcode) DO NOTHING",
+            (bib_a, "Test paper A", bib_b, "Test paper B"),
+        )
+        cur.execute(
+            "INSERT INTO papers_fulltext (bibcode, source, sections, inline_cites, "
+            "                              parser_version) "
+            "VALUES (%s, %s, %s::jsonb, '[]'::jsonb, %s), "
+            "       (%s, %s, %s::jsonb, '[]'::jsonb, %s) "
+            "ON CONFLICT (bibcode) DO UPDATE SET "
+            "  sections = EXCLUDED.sections, "
+            "  source   = EXCLUDED.source",
+            (
+                bib_a, "test", json.dumps(sections_a), "test-v1",
+                bib_b, "test", json.dumps(sections_b), "test-v1",
+            ),
+        )
+        _scix_test_conn.commit()
+
+        # Read back via iter_sections and run a single _process_batch.
+        rows = list(
+            iter_sections(
+                _scix_test_conn,
+                start_bibcode=bib_a,
+                end_bibcode=bib_b,
+            )
+        )
+        assert len(rows) == 3  # 2 sections in a + 1 in b
+
+        model = _FakeModel(dim=DEFAULT_DIMENSIONS)
+        written = _process_batch(
+            _scix_test_conn,
+            model,
+            rows,
+            dimensions=DEFAULT_DIMENSIONS,
+        )
+        assert written == 3
+
+        # Verify the rows landed with the right shape.
+        cur.execute(
+            "SELECT bibcode, section_index, section_heading, section_text_sha256 "
+            "FROM section_embeddings "
+            "WHERE bibcode IN (%s, %s) "
+            "ORDER BY bibcode, section_index",
+            (bib_a, bib_b),
+        )
+        out = list(cur)
+        assert out == [
+            (bib_a, 0, "Intro", compute_section_sha("Intro", "Introduction body alpha.")),
+            (bib_a, 1, "Methods", compute_section_sha("Methods", "We measured X via Y.")),
+            (bib_b, 0, "Results", compute_section_sha("Results", "Result text beta.")),
+        ]
+
+        # Verify halfvec dimensionality is 1024.
+        cur.execute(
+            "SELECT vector_dims(embedding::vector) FROM section_embeddings "
+            "WHERE bibcode = %s LIMIT 1",
+            (bib_a,),
+        )
+        (dims,) = cur.fetchone()
+        assert dims == DEFAULT_DIMENSIONS
+
+        # Idempotency: re-running _process_batch on the same input must not
+        # write anything (sha matches stored sha).
+        written_again = _process_batch(
+            _scix_test_conn,
+            model,
+            rows,
+            dimensions=DEFAULT_DIMENSIONS,
+        )
+        assert written_again == 0
+
+    finally:
+        # Clean up regardless of test outcome.
+        cur.execute(
+            "DELETE FROM section_embeddings WHERE bibcode IN (%s, %s)",
+            (bib_a, bib_b),
+        )
+        cur.execute(
+            "DELETE FROM papers_fulltext WHERE bibcode IN (%s, %s)",
+            (bib_a, bib_b),
+        )
+        cur.execute(
+            "DELETE FROM papers WHERE bibcode IN (%s, %s)",
+            (bib_a, bib_b),
+        )
+        _scix_test_conn.commit()
+        cur.close()

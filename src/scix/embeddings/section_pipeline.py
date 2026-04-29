@@ -147,10 +147,14 @@ def iter_sections(
         start_bibcode / end_bibcode: optional half-open range filter,
             ``[start, end]`` inclusive on both ends. Either may be None.
     """
+    # Explicit ::text casts on the bound parameters because Postgres cannot
+    # infer the parameter type from a bare ``%(p)s IS NULL`` expression and
+    # raises ``AmbiguousParameter``. The casts are no-ops at runtime when a
+    # non-NULL string is supplied.
     sql = (
         "SELECT bibcode, sections FROM papers_fulltext "
-        "WHERE (%(start)s IS NULL OR bibcode >= %(start)s) "
-        "  AND (%(end)s   IS NULL OR bibcode <= %(end)s) "
+        "WHERE (%(start)s::text IS NULL OR bibcode >= %(start)s::text) "
+        "  AND (%(end)s::text   IS NULL OR bibcode <= %(end)s::text) "
         "ORDER BY bibcode"
     )
     params = {"start": start_bibcode, "end": end_bibcode}

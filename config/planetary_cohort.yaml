@@ -89,6 +89,15 @@ min_surface_length_unconditional: 7
 # a warning.
 stop_words_files:
   - /etc/dictionaries-common/words
+  # Pre-computed list of SsODNet canonical names that ALSO appear as
+  # author surnames (≥50 occurrences in papers.authors). Generated via
+  # the surname/SsODNet intersection query — the file is a plain
+  # newline-separated lowercase list. Astronomer-named asteroids
+  # (Yarkovsky, Tremaine, Wetherill, Lyapunov, Spitzer, ...) collide
+  # with citations of those astronomers throughout the cohort, so we
+  # drop them entirely. ~7,700 names — see
+  # config/ssodnet_author_surname_overlap.txt.
+  - config/ssodnet_author_surname_overlap.txt
 
 # Hand-curated additions on top of the dictionary list — scientific
 # acronyms, observatory names, common surnames not in the dictionary,

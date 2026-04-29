@@ -108,6 +108,14 @@ VERY_LONG_NAME_LEN: int = 12
 
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
 
+# Designation-pattern surfaces (e.g. "2014 TO", "1999 AP10") collide with
+# date phrases at lowercase ("from 2014 to 2020" matches "2014 TO"
+# because link_abstract is case-insensitive). When the surface is one of
+# these designations, we re-check the original-case text at the match
+# span and require the letter portion to be ALL UPPERCASE — real
+# asteroid designations are upper-case in the literature.
+_DESIGNATION_PATTERN = re.compile(r"^\d{4}\s+[A-Z]{1,3}\d{0,3}$")
+
 
 # ---------------------------------------------------------------------------
 # Config loading
@@ -474,6 +482,25 @@ def link_paper(
 
     text_lower = text.lower()
     has_disambig = _has_disambiguator(text_lower, cfg.short_name_disambiguators)
+
+    # Designation-pattern case filter: AC scan is case-insensitive, so a
+    # match against asteroid surface "2014 TO" also fires inside the
+    # English phrase "from 2014 to 2020". Real designations are upper-
+    # case in the literature, so for designation-shaped surfaces re-check
+    # the original-case text at the match span and require the letter
+    # portion to be all upper-case.
+    raw_filtered: list[LinkCandidate] = []
+    for cand in raw:
+        if _DESIGNATION_PATTERN.match(cand.matched_surface):
+            original = text[cand.start:cand.end]
+            # Strip leading digits + whitespace, the rest must be upper.
+            letters = "".join(ch for ch in original if ch.isalpha())
+            if not letters or not letters.isupper():
+                continue
+        raw_filtered.append(cand)
+    if not raw_filtered:
+        return []
+    raw = raw_filtered
 
     # Group hits by entity so we can count repeats per paper and pick the
     # highest-confidence surface form.

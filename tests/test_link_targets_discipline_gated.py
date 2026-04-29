@@ -46,6 +46,9 @@ def test_load_cohort_config_default_file_parses() -> None:
     # All sentinel/disambiguator tokens must be lower-case post-load.
     assert all(tok == tok.lower() for tok in cfg.keyword_sentinels)
     assert all(tok == tok.lower() for tok in cfg.short_name_disambiguators)
+    # extra_stop_words from YAML are merged into stop_words.
+    assert "nasa" in cfg.stop_words
+    assert "ccd" in cfg.stop_words
 
 
 def test_load_cohort_config_custom_file(tmp_path: pathlib.Path) -> None:
@@ -63,6 +66,9 @@ def test_load_cohort_config_custom_file(tmp_path: pathlib.Path) -> None:
             short_name_disambiguators:
               - asteroid
               - comet
+            stop_words_extra:
+              - nasa
+              - ccd
             """
         ).strip()
     )
@@ -72,6 +78,55 @@ def test_load_cohort_config_custom_file(tmp_path: pathlib.Path) -> None:
     assert cfg.keyword_sentinels == ("asteroid",)
     assert cfg.min_surface_length_unconditional == 7
     assert cfg.short_name_disambiguators == ("asteroid", "comet")
+    assert "nasa" in cfg.stop_words
+    assert "ccd" in cfg.stop_words
+
+
+def test_is_excluded_surface_drops_stop_words() -> None:
+    stop = frozenset({"the", "not", "may", "field"})
+    assert gated._is_excluded_surface("The", stop_words=stop, min_canonical_len=5)
+    assert gated._is_excluded_surface("NOT", stop_words=stop, min_canonical_len=5)
+    assert gated._is_excluded_surface("Field", stop_words=stop, min_canonical_len=5)
+    # Stop-word filter wins even if the surface would otherwise pass length.
+    assert gated._is_excluded_surface("field", stop_words=stop, min_canonical_len=4)
+
+
+def test_is_excluded_surface_min_length() -> None:
+    # 4-char single-token name: dropped at min_len=7
+    assert gated._is_excluded_surface("Eros", stop_words=frozenset(), min_canonical_len=7)
+    # 7-char single-token name: kept at min_len=7
+    assert not gated._is_excluded_surface(
+        "Itokawa", stop_words=frozenset(), min_canonical_len=7
+    )
+    # Multi-token short name: kept regardless of length
+    assert not gated._is_excluded_surface(
+        "Comet 67P", stop_words=frozenset(), min_canonical_len=7
+    )
+    # Designation (digits): kept regardless of length
+    assert not gated._is_excluded_surface(
+        "2005 VA", stop_words=frozenset(), min_canonical_len=7
+    )
+
+
+def test_fetch_target_entity_rows_excludes_stop_words(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Pure-library check on the helper logic. Build a synthetic entity
+    # set and verify the filter wires through.
+    stop = frozenset({"the", "field", "nasa"})
+
+    cases = [
+        ("The", 7, frozenset({"the"}), True),
+        ("Itokawa", 7, frozenset(), False),
+        ("Bennu", 7, frozenset(), True),  # 5 chars → dropped
+        ("Bennu", 5, frozenset(), False),  # 5 chars at min=5 → kept
+        ("NASA", 7, stop, True),
+    ]
+    for surface, min_len, sw, expected in cases:
+        got = gated._is_excluded_surface(
+            surface, stop_words=sw, min_canonical_len=min_len
+        )
+        assert got is expected, f"surface={surface!r} min={min_len} sw={sw} expected={expected}"
 
 
 def test_build_cohort_sql_includes_arxiv_bibstem_keywords() -> None:
@@ -81,6 +136,8 @@ def test_build_cohort_sql_includes_arxiv_bibstem_keywords() -> None:
         keyword_sentinels=("asteroid",),
         min_surface_length_unconditional=6,
         short_name_disambiguators=("asteroid",),
+        stop_words=frozenset(),
+        extra_stop_words=(),
     )
     sql, params = gated._build_cohort_sql(cfg, bibcode_prefix=None)
     assert "arxiv_class && %s" in sql
@@ -98,6 +155,8 @@ def test_build_cohort_sql_with_bibcode_prefix() -> None:
         keyword_sentinels=(),
         min_surface_length_unconditional=6,
         short_name_disambiguators=(),
+        stop_words=frozenset(),
+        extra_stop_words=(),
     )
     sql, params = gated._build_cohort_sql(cfg, bibcode_prefix="test_p2v_")
     assert "bibcode LIKE %s" in sql
@@ -111,6 +170,8 @@ def test_build_cohort_sql_rejects_empty_filter() -> None:
         keyword_sentinels=(),
         min_surface_length_unconditional=6,
         short_name_disambiguators=(),
+        stop_words=frozenset(),
+        extra_stop_words=(),
     )
     with pytest.raises(ValueError):
         gated._build_cohort_sql(cfg, bibcode_prefix=None)
@@ -121,13 +182,19 @@ def test_build_cohort_sql_rejects_empty_filter() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _planetary_cfg() -> gated.CohortConfig:
+def _planetary_cfg(
+    *,
+    min_len: int = 6,
+    stop_words: frozenset[str] = frozenset(),
+) -> gated.CohortConfig:
     return gated.CohortConfig(
         arxiv_classes=("astro-ph.EP",),
         bibstems=("Icar",),
         keyword_sentinels=("asteroid",),
-        min_surface_length_unconditional=6,
+        min_surface_length_unconditional=min_len,
         short_name_disambiguators=("asteroid", "comet", "moon", "spacecraft"),
+        stop_words=stop_words,
+        extra_stop_words=(),
     )
 
 
@@ -436,7 +503,12 @@ def seeded_conn(dsn: str) -> Iterator[tuple[psycopg.Connection, dict[str, int]]]
 # ---------------------------------------------------------------------------
 
 
-def _fetch_test_target_rows(conn: psycopg.Connection) -> list[EntityRow]:
+def _fetch_test_target_rows(
+    conn: psycopg.Connection,
+    *,
+    stop_words: frozenset[str] = frozenset(),
+    min_canonical_len: int = 0,
+) -> list[EntityRow]:
     """Same shape as gated.fetch_target_entity_rows but scoped to the
     test fixture source so the integration test does not depend on a
     pristine entities table."""

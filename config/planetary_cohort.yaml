@@ -66,10 +66,62 @@ keyword_sentinels:
   - planetary atmosphere
   - regolith
 
-# Linker safety knobs — surfaces shorter than this are required to
-# co-occur with at least one of the disambiguator tokens below in the
-# title or abstract. Otherwise the candidate is dropped.
-min_surface_length_unconditional: 6
+# Linker safety knobs.
+#
+# `min_surface_length_unconditional` is the floor for SINGLE-TOKEN names
+# without digits — surfaces shorter than this are dropped at automaton-
+# build time. Multi-token names ("Comet Hale-Bopp") and designations
+# ("2005 VA") bypass the length check; the digit pattern and multi-word
+# structure are themselves disambiguating.
+#
+# An initial production run with `min_surface_length_unconditional: 6`
+# produced 531K candidate links but the 100-row precision sample showed
+# precision ≪ 0.90 — the false positives were dominated by minor-body
+# names that collide with common English words (asteroid 115880 "The",
+# 106088 "NOT", 119371 "Srivastava" surname collision). Bumped to 7 and
+# layered on the stop-word filter below.
+min_surface_length_unconditional: 7
+
+# Stop-word filter. Any SsODNet canonical name or alias whose lowercase
+# form is in this set is excluded from the AC automaton. The English
+# dictionary alone removes ~2,500 minor-body names (~0.17 % of the SsODNet
+# pool) and dramatically lifts precision. Missing files are skipped with
+# a warning.
+stop_words_files:
+  - /etc/dictionaries-common/words
+
+# Hand-curated additions on top of the dictionary list — scientific
+# acronyms, observatory names, common surnames not in the dictionary,
+# and false positives observed in the first precision sample.
+stop_words_extra:
+  # Scientific acronyms / instruments
+  - nasa
+  - jpl
+  - esa
+  - ccd
+  - linear
+  - lonos
+  - imap
+  - icme
+  # Mission / spacecraft names commonly cited in planetary papers
+  - cassini
+  - apollo
+  - opportunity
+  - spirit
+  - kaguya
+  - selene
+  - discovery
+  - psyche  # the spacecraft, not the asteroid
+  # Common-word minor-body names that the dictionary may miss
+  - doppler
+  - chang
+  # Common surnames frequently cited in planetary literature that
+  # collide with asteroid namesakes
+  - tomasko
+  - srivastava
+  - scheeres
+  - edgeworth
+  - castillo
 
 # Tokens that, when co-present with a short minor-body name, raise the
 # match to acceptable. Lower-cased, whole-word match.

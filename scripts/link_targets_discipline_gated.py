@@ -123,12 +123,49 @@ class CohortConfig:
     keyword_sentinels: tuple[str, ...]
     min_surface_length_unconditional: int
     short_name_disambiguators: tuple[str, ...]
+    stop_words: frozenset[str]
+    extra_stop_words: tuple[str, ...]
+
+
+def _load_stop_words(
+    paths: Sequence[str], extras: Sequence[str]
+) -> frozenset[str]:
+    """Build a lowercase stop-word set from external word-list files plus
+    operator-supplied extras.
+
+    Each path is read line-by-line; lines that look like English words
+    (alphabetic, ≥2 chars) are added. Possessive suffixes (``'s``) are
+    stripped. Missing files are silently skipped — a missing system
+    dictionary should not break tier-3, only weaken precision.
+    """
+    out: set[str] = set()
+    for raw in paths:
+        path = pathlib.Path(raw)
+        if not path.exists():
+            logger.warning("stop-words file not found: %s — skipping", path)
+            continue
+        try:
+            with path.open("r", encoding="utf-8", errors="ignore") as fh:
+                for line in fh:
+                    word = line.strip().split("'", 1)[0]
+                    if len(word) >= 2 and word.isalpha():
+                        out.add(word.lower())
+        except OSError as exc:
+            logger.warning("could not read stop-words file %s: %s", path, exc)
+    for extra in extras:
+        if extra:
+            out.add(extra.strip().lower())
+    return frozenset(out)
 
 
 def load_cohort_config(path: pathlib.Path = DEFAULT_CONFIG_PATH) -> CohortConfig:
     """Parse ``planetary_cohort.yaml`` into a :class:`CohortConfig`."""
     with path.open("r", encoding="utf-8") as fh:
         data: dict[str, Any] = yaml.safe_load(fh) or {}
+
+    stop_paths = data.get("stop_words_files", []) or []
+    extras = data.get("stop_words_extra", []) or []
+    stop_words = _load_stop_words(stop_paths, extras)
 
     return CohortConfig(
         arxiv_classes=tuple(data.get("arxiv_classes", []) or []),
@@ -140,6 +177,8 @@ def load_cohort_config(path: pathlib.Path = DEFAULT_CONFIG_PATH) -> CohortConfig
         short_name_disambiguators=tuple(
             (tok or "").lower() for tok in (data.get("short_name_disambiguators", []) or [])
         ),
+        stop_words=stop_words,
+        extra_stop_words=tuple((s or "").lower() for s in extras),
     )
 
 
@@ -174,7 +213,47 @@ _ALIAS_SQL = """
 """
 
 
-def fetch_target_entity_rows(conn: psycopg.Connection) -> list[EntityRow]:
+def _is_excluded_surface(
+    surface: str,
+    *,
+    stop_words: frozenset[str],
+    min_canonical_len: int,
+) -> bool:
+    """Return True if ``surface`` should be excluded from the automaton.
+
+    Filters in priority order:
+
+    1. Stop-words: if the lower-case surface is in the curated stop-word
+       set (English dictionary + scientific acronyms), drop it. This is
+       what kills "The", "NOT", "May", "Field", "Apollo", etc. — words
+       with legitimate asteroid namesakes that drown the signal in
+       English-text false positives.
+    2. Minimum length: short single-token surfaces (less than
+       ``min_canonical_len`` chars) are dropped unconditionally because
+       they collide with too many surnames, abbreviations, and
+       designations even within the planetary cohort. Multi-token names
+       (``"Comet Hale-Bopp"``) and designations containing digits
+       (``"2005 VA"``) bypass the length check — the digit pattern is
+       distinctive enough on its own.
+    """
+    s = surface.strip()
+    if not s:
+        return True
+    if s.lower() in stop_words:
+        return True
+    has_digit = any(ch.isdigit() for ch in s)
+    multi_token = (" " in s) or ("-" in s) or ("/" in s)
+    if not has_digit and not multi_token and len(s) < min_canonical_len:
+        return True
+    return False
+
+
+def fetch_target_entity_rows(
+    conn: psycopg.Connection,
+    *,
+    stop_words: frozenset[str] = frozenset(),
+    min_canonical_len: int = 7,
+) -> list[EntityRow]:
     """Pull canonical + alias surfaces for every SsODNet target entity.
 
     Unlike Tier-2's ``fetch_entity_rows``, this includes entities with
@@ -182,15 +261,31 @@ def fetch_target_entity_rows(conn: psycopg.Connection) -> list[EntityRow]:
     Banned entities and entities demoted to ``link_policy='llm_only'``
     are excluded.
 
-    Every row is emitted with ``ambiguity_class='unique'`` so that the
-    upstream :func:`scix.aho_corasick.link_abstract` does not apply its
-    homograph long-form gate, which would re-introduce the suppression
-    this tier is meant to relax.
+    The ``stop_words`` set drops every surface (canonical or alias) that
+    matches a common English word. The ``min_canonical_len`` floor drops
+    short single-token names that collide with surnames, abbreviations,
+    and designations. Multi-token names (``"Comet Hale-Bopp"``) and
+    designations with digits (``"2005 VA"``) bypass the length check.
+
+    Every kept row is emitted with ``ambiguity_class='unique'`` so that
+    the upstream :func:`scix.aho_corasick.link_abstract` does not apply
+    its homograph long-form gate.
     """
     rows: list[EntityRow] = []
+    excluded_canonical = 0
+    excluded_alias = 0
+    kept_entities: set[int] = set()
+
     with conn.cursor() as cur:
         cur.execute(_CANONICAL_SQL)
         for entity_id, surface, canonical, _ambig in cur.fetchall():
+            if _is_excluded_surface(
+                surface,
+                stop_words=stop_words,
+                min_canonical_len=min_canonical_len,
+            ):
+                excluded_canonical += 1
+                continue
             rows.append(
                 EntityRow(
                     entity_id=int(entity_id),
@@ -200,8 +295,23 @@ def fetch_target_entity_rows(conn: psycopg.Connection) -> list[EntityRow]:
                     is_alias=False,
                 )
             )
+            kept_entities.add(int(entity_id))
+
         cur.execute(_ALIAS_SQL)
         for entity_id, surface, canonical, _ambig in cur.fetchall():
+            # An alias is only useful if its parent entity survived the
+            # canonical filter — otherwise we'd inject a false positive
+            # via a stop-word alias of an already-suppressed entity.
+            if int(entity_id) not in kept_entities:
+                excluded_alias += 1
+                continue
+            if _is_excluded_surface(
+                surface,
+                stop_words=stop_words,
+                min_canonical_len=min_canonical_len,
+            ):
+                excluded_alias += 1
+                continue
             rows.append(
                 EntityRow(
                     entity_id=int(entity_id),
@@ -211,6 +321,15 @@ def fetch_target_entity_rows(conn: psycopg.Connection) -> list[EntityRow]:
                     is_alias=True,
                 )
             )
+
+    logger.info(
+        "entity filter: kept %d surfaces (%d entities); "
+        "dropped %d canonical + %d alias surfaces",
+        len(rows),
+        len(kept_entities),
+        excluded_canonical,
+        excluded_alias,
+    )
     return rows
 
 
@@ -588,8 +707,13 @@ def run(
     commit_interval_batches
         Commit every N paper batches (0 = end of run only).
     """
-    logger.info("Fetching SsODNet target entities...")
-    rows = fetch_target_entity_rows(conn)
+    logger.info("Fetching SsODNet target entities (stop-words: %d, min_len: %d)...",
+                len(cfg.stop_words), cfg.min_surface_length_unconditional)
+    rows = fetch_target_entity_rows(
+        conn,
+        stop_words=cfg.stop_words,
+        min_canonical_len=cfg.min_surface_length_unconditional,
+    )
     logger.info("  -> %d surface forms across %d entities",
                 len(rows), len({r.entity_id for r in rows}))
     if not rows:

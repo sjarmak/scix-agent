@@ -1942,13 +1942,17 @@ def create_server(_run_self_test: bool = True):
                     "required": ["action"],
                 },
             ),
-            # --- entity_context (unchanged) ---
+            # --- entity_context (extended 2026-04-29 with co_mentions) ---
             Tool(
                 name="entity_context",
                 description=(
                     "Fetch the full profile of a known entity by its entity_id: canonical "
                     "name, type, discipline, external identifiers, aliases, related "
-                    "entities, and the count of papers that mention it. Use entity with "
+                    "entities, the count of papers that mention it, and the top-k "
+                    "co-mentioned partner entities (entities that most often appear in "
+                    "the same paper as this one). Use co_mentions to explore "
+                    "associations like 'what software is used with this dataset' or "
+                    "'what methods co-occur with this instrument'. Use entity with "
                     "action='resolve' instead when you only have a text mention and need "
                     "to find the entity_id first. Requires a numeric entity_id as input."
                 ),
@@ -1958,6 +1962,16 @@ def create_server(_run_self_test: bool = True):
                         "entity_id": {
                             "type": "integer",
                             "description": "Entity ID (from entity search/resolve or document_context)",
+                        },
+                        "co_mentions_limit": {
+                            "type": "integer",
+                            "default": 10,
+                            "minimum": 0,
+                            "maximum": 100,
+                            "description": (
+                                "Number of co-mentioned partners to return in the "
+                                "co_mentions field (0 disables, 100 max)."
+                            ),
                         },
                     },
                     "required": ["entity_id"],
@@ -3089,7 +3103,24 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
             entity_id = int(entity_id)
         except (TypeError, ValueError):
             return json.dumps({"error": "entity_id must be an integer"})
-        result = search.get_entity_context(conn, entity_id)
+        co_mentions_limit_arg = args.get("co_mentions_limit")
+        try:
+            co_mentions_limit = (
+                int(co_mentions_limit_arg)
+                if co_mentions_limit_arg is not None
+                else search.DEFAULT_CO_MENTIONS_LIMIT
+            )
+        except (TypeError, ValueError):
+            return json.dumps(
+                {"error": "co_mentions_limit must be an integer"}
+            )
+        if co_mentions_limit < 0:
+            return json.dumps(
+                {"error": "co_mentions_limit must be >= 0"}
+            )
+        result = search.get_entity_context(
+            conn, entity_id, co_mentions_limit=co_mentions_limit
+        )
         return _result_to_json(result)
 
     # --- S2: graph_context ---

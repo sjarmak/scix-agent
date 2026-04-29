@@ -2769,16 +2769,23 @@ def get_document_context(
     )
 
 
+DEFAULT_CO_MENTIONS_LIMIT = 10
+MAX_CO_MENTIONS_LIMIT = 100
+
+
 def get_entity_context(
     conn: psycopg.Connection,
     entity_id: int,
+    co_mentions_limit: int = DEFAULT_CO_MENTIONS_LIMIT,
 ) -> SearchResult:
     """Get full entity context for a single entity.
 
     Returns an entity card: entity_id, canonical_name, entity_type, discipline,
     source, identifiers, aliases, properties (raw JSONB from
     ``public.entities``), relationships (each enriched with the object
-    entity's name, type, and properties), and citing_paper_count.
+    entity's name, type, and properties), citing_paper_count, and
+    ``co_mentions`` — the top-k entities that most often co-occur with this
+    one in document_entities (see migration 063).
 
     The ``agent_entity_context`` matview supplies the aggregates
     (identifiers, aliases, citing_paper_count). ``properties`` and the
@@ -2786,7 +2793,9 @@ def get_entity_context(
     agents get the full structural context without waiting for a matview
     schema change (xz4.5 tracks that). Relationships join through
     ``entity_relationships`` and surface ``(predicate, object_entity,
-    properties_of_object)`` for one-hop navigation.
+    properties_of_object)`` for one-hop navigation. Co-mentions read from
+    ``co_mentions`` (n_papers >= 2; rebuilt by
+    scripts/populate_co_mentions.py).
 
     Returns an empty SearchResult with an error in metadata when the
     entity_id is not found, rather than raising an exception.
@@ -2880,6 +2889,8 @@ def get_entity_context(
         cur.execute(relationships_sql, (entity_id, entity_id))
         rel_rows = cur.fetchall()
 
+        co_mentions = _fetch_top_co_mentions(cur, entity_id, co_mentions_limit)
+
     query_ms = _elapsed_ms(t0)
 
     result["relationships"] = [
@@ -2895,10 +2906,116 @@ def get_entity_context(
         }
         for rel in rel_rows
     ]
+    result["co_mentions"] = co_mentions
 
     return SearchResult(
         papers=[result],
         total=1,
+        timing_ms={"query_ms": query_ms},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Co-mention queries (migration 063)
+# ---------------------------------------------------------------------------
+
+# Top-k partner SQL. Two arms: one where the queried entity is on the "a"
+# (smaller-id) side of the pair, one where it is on the "b" (larger-id)
+# side. Each arm is a single index range scan on (entity_X, n_papers DESC).
+# The outer LIMIT is applied after the UNION so we never return more rows
+# than requested even if both arms saturate.
+_TOP_CO_MENTIONS_SQL = """
+    WITH partners AS (
+        SELECT entity_b_id AS partner_id, n_papers, first_year, last_year
+        FROM co_mentions
+        WHERE entity_a_id = %(eid)s
+        UNION ALL
+        SELECT entity_a_id AS partner_id, n_papers, first_year, last_year
+        FROM co_mentions
+        WHERE entity_b_id = %(eid)s
+    )
+    SELECT
+        p.partner_id,
+        e.canonical_name AS partner_name,
+        e.entity_type    AS partner_entity_type,
+        e.discipline     AS partner_discipline,
+        p.n_papers,
+        p.first_year,
+        p.last_year
+    FROM partners p
+    LEFT JOIN entities e ON e.id = p.partner_id
+    ORDER BY p.n_papers DESC, p.partner_id ASC
+    LIMIT %(lim)s
+"""
+
+
+def _fetch_top_co_mentions(
+    cur: psycopg.Cursor,
+    entity_id: int,
+    limit: int,
+) -> list[dict]:
+    """Return the top-k partner entities by co-mention support.
+
+    Empty list when no co-mentions exist (e.g. the table has not been
+    populated, or the entity has no qualifying partners). Never raises.
+
+    The cursor is expected to have ``row_factory=dict_row``; this is the
+    contract used by ``get_entity_context`` and ``get_top_co_mentions``.
+    Limit is clamped to ``[1, MAX_CO_MENTIONS_LIMIT]``.
+    """
+    if limit <= 0:
+        return []
+    limit = min(limit, MAX_CO_MENTIONS_LIMIT)
+
+    try:
+        cur.execute(_TOP_CO_MENTIONS_SQL, {"eid": entity_id, "lim": limit})
+        rows = cur.fetchall()
+    except psycopg.errors.UndefinedTable:
+        # co_mentions migration not applied → degrade gracefully so older
+        # databases keep returning entity_context.
+        cur.connection.rollback()
+        return []
+
+    return [
+        {
+            "partner_id": row["partner_id"],
+            "partner_name": row["partner_name"],
+            "partner_entity_type": row["partner_entity_type"],
+            "partner_discipline": row["partner_discipline"],
+            "n_papers": row["n_papers"],
+            "first_year": row["first_year"],
+            "last_year": row["last_year"],
+        }
+        for row in rows
+    ]
+
+
+def get_top_co_mentions(
+    conn: psycopg.Connection,
+    entity_id: int,
+    limit: int = DEFAULT_CO_MENTIONS_LIMIT,
+) -> SearchResult:
+    """Standalone query for the top-k co-mention partners of an entity.
+
+    Returns the same payload shape as the ``co_mentions`` field on
+    ``get_entity_context``: each row carries partner_id, partner_name,
+    partner_entity_type, partner_discipline, n_papers, first_year,
+    last_year. Use this when an agent only needs the partner list and
+    not the full identifier/alias/relationship card.
+
+    The limit is clamped to ``[1, MAX_CO_MENTIONS_LIMIT]``. Returns an
+    empty SearchResult (not an error) when the entity has no qualifying
+    partners or when the ``co_mentions`` table has not yet been
+    populated.
+    """
+    t0 = time.perf_counter()
+    with conn.cursor(row_factory=dict_row) as cur:
+        rows = _fetch_top_co_mentions(cur, entity_id, limit)
+    query_ms = _elapsed_ms(t0)
+
+    return SearchResult(
+        papers=rows,
+        total=len(rows),
         timing_ms={"query_ms": query_ms},
     )
 

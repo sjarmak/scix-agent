@@ -17,6 +17,37 @@ abstract that would OOM at default settings):
             --inference-batch 8 \\
             --max-text-chars 3500
 
+Phase 2 (body_sections — pre-parsed methods + introduction sections from
+``papers_fulltext.sections`` for ~14.94M papers, ~3-5 days at 5090
+GLiNER speeds):
+
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \\
+        scix-batch --mem-high 24G --mem-max 32G \\
+        python scripts/run_ner_pass.py \\
+            --target body_sections \\
+            --batch-size 200 \\
+            --inference-batch 4 \\
+            --max-text-chars 8000 \\
+            --source-version gliner_large-v2.5/v1_body_sections
+
+Why those flags differ from Phase 1: methods + introduction concatenated
+text is several KB per paper (vs. ~1 KB for an abstract). Smaller batch
++ larger char cap keeps VRAM comfortable while still benefiting from
+GLiNER-large's longer truncation window per section paragraph. Pass a
+distinct ``--source-version`` so ``entities.source_version`` records
+which pass produced each row — abstract vs. body_sections.
+
+Section role filter: ``body_sections`` keeps headings classified as
+``method`` (methods/observations/data-reduction/...) or ``background``
+(introduction/motivation/related-work/...) by ``scix.section_role``.
+Bibliography, results, discussion, conclusion, acknowledgments, and
+appendix sections are dropped — they flood the entity table with author
+surnames mis-typed as location/organism, or contain prose that looks
+like named entities without actually introducing software/datasets/
+methods. Operators can override the role filter at the library layer
+via ``run(..., section_roles=...)`` but the CLI exposes only the bead-
+spec default (``method`` + ``background``).
+
 Why those flags:
   - inference-batch 8 (not 16): activation memory scales O(seq_len^2);
     a single ~768-token abstract at batch=16 spikes ~4 GB and OOMs the
@@ -69,9 +100,13 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     p.add_argument(
         "--target",
-        choices=("abstract", "body"),
+        choices=("abstract", "body", "body_sections"),
         default="abstract",
-        help="Which papers column to extract from (default: abstract).",
+        help=(
+            "Source of input text. 'abstract' / 'body' read papers.<col>; "
+            "'body_sections' reads pre-parsed methods + introduction sections "
+            "from papers_fulltext.sections (default: abstract)."
+        ),
     )
     p.add_argument("--batch-size", type=int, default=1000, help="Papers per checkpointed batch.")
     p.add_argument(

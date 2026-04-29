@@ -34,6 +34,7 @@ CLI is wrapped instead so that ``scix-batch python scripts/run_ner_pass.py
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Iterable, Iterator
@@ -44,6 +45,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from scix.extract.surface_normalize import normalize_surface
+from scix.section_role import ROLE_BACKGROUND, ROLE_METHOD, classify_section_role
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +106,17 @@ DEFAULT_INFERENCE_BATCH = 8
 #: pasted-in tables. The text-pass-through threshold for v1 covers ~99%
 #: of real ADS abstracts.
 DEFAULT_MAX_TEXT_CHARS = 5000
+
+#: Section roles kept by the ``body_sections`` target. Maps to the bead's
+#: "methods/intro" rule via :mod:`scix.section_role` — ``method`` covers
+#: methods/observations/data-reduction headers, ``background`` covers
+#: introduction/motivation/related-work headers. Bibliography, results,
+#: discussion, conclusion, acknowledgments, and appendices are dropped:
+#: they either flood the entity table with author surnames mis-typed as
+#: location/organism (refs/biblio) or contain prose that resembles named
+#: entities to GLiNER without actually introducing software/datasets/
+#: methods (results/discussion).
+KEPT_BODY_SECTION_ROLES: frozenset[str] = frozenset({ROLE_METHOD, ROLE_BACKGROUND})
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +413,48 @@ def _record_checkpoint(
         )
 
 
+def concat_filtered_section_text(
+    sections: Any,
+    roles: frozenset[str] = KEPT_BODY_SECTION_ROLES,
+) -> str:
+    """Concatenate the ``text`` of sections whose heading classifies into ``roles``.
+
+    ``sections`` is the JSONB payload from ``papers_fulltext.sections`` —
+    either a list already (psycopg returns ``jsonb`` as Python objects via
+    the json adapter) or a JSON string (defensive: some callers pass the
+    raw bytes). Each element should look like::
+
+        {"heading": str, "level": int, "text": str, "offset": int}
+
+    Sections are joined in document order with a blank-line separator so
+    GLiNER sees each section as a distinct paragraph. Empty / missing
+    headings classify to ``other`` and are skipped. Empty section text is
+    dropped before concatenation.
+    """
+    if sections is None:
+        return ""
+    if isinstance(sections, (str, bytes, bytearray)):
+        try:
+            sections = json.loads(sections)
+        except (TypeError, ValueError):
+            return ""
+    if not isinstance(sections, list):
+        return ""
+
+    kept: list[str] = []
+    for sec in sections:
+        if not isinstance(sec, dict):
+            continue
+        heading = sec.get("heading") or ""
+        text = sec.get("text") or ""
+        if not text.strip():
+            continue
+        if classify_section_role(heading) not in roles:
+            continue
+        kept.append(text.strip())
+    return "\n\n".join(kept)
+
+
 def iter_paper_batches(
     conn: psycopg.Connection,
     *,
@@ -407,13 +462,24 @@ def iter_paper_batches(
     batch_size: int = 1000,
     since_bibcode: str | None = None,
     max_papers: int | None = None,
+    section_roles: frozenset[str] = KEPT_BODY_SECTION_ROLES,
 ) -> Iterator[list[PaperInput]]:
     """Stream papers in deterministic ``bibcode`` order via keyset pagination.
 
-    ``target`` is the column name (``abstract`` or ``body``); rows where
-    the column is NULL or empty are skipped. ``since_bibcode`` sets a
-    watermark for resumability and ``max_papers`` caps total yield
-    (sample runs).
+    ``target`` selects the data source:
+
+    * ``"abstract"`` / ``"body"`` — read the column from ``papers``; rows
+      where the column is NULL or empty are skipped at the SQL level.
+    * ``"body_sections"`` — read pre-parsed sections from
+      ``papers_fulltext.sections`` (JSONB), filter to ``section_roles``
+      (default: methods + background/introduction), and concatenate the
+      kept section text into a single string per paper. Papers whose
+      kept-section concatenation is empty are still yielded (with empty
+      text) so the watermark advances correctly across keyset pages — the
+      extractor silently produces zero mentions for them.
+
+    ``since_bibcode`` sets a watermark for resumability and ``max_papers``
+    caps total yield (sample runs).
 
     Keyset pagination (``WHERE bibcode > $watermark ORDER BY bibcode
     LIMIT N``) is used instead of a server-side named cursor because the
@@ -421,17 +487,27 @@ def iter_paper_batches(
     Each iteration is a fresh single-shot query that survives commits and
     resumes correctly across process restarts.
     """
-    if target not in ("abstract", "body"):
-        raise ValueError(f"target must be 'abstract' or 'body', got {target!r}")
+    if target not in ("abstract", "body", "body_sections"):
+        raise ValueError(
+            f"target must be 'abstract', 'body', or 'body_sections', got {target!r}"
+        )
 
-    sql = (
-        f"SELECT bibcode, {target} AS text FROM papers "  # noqa: S608 — column whitelisted above
-        f"WHERE bibcode > %s "
-        f"  AND {target} IS NOT NULL "
-        f"  AND ({target}) <> '' "
-        f"ORDER BY bibcode ASC "
-        f"LIMIT %s "
-    )
+    if target == "body_sections":
+        sql = (
+            "SELECT bibcode, sections FROM papers_fulltext "
+            "WHERE bibcode > %s "
+            "ORDER BY bibcode ASC "
+            "LIMIT %s "
+        )
+    else:
+        sql = (
+            f"SELECT bibcode, {target} AS text FROM papers "  # noqa: S608 — column whitelisted above
+            f"WHERE bibcode > %s "
+            f"  AND {target} IS NOT NULL "
+            f"  AND ({target}) <> '' "
+            f"ORDER BY bibcode ASC "
+            f"LIMIT %s "
+        )
 
     watermark = since_bibcode or ""
     remaining = max_papers
@@ -444,7 +520,18 @@ def iter_paper_batches(
             rows = cur.fetchall()
         if not rows:
             return
-        yield [PaperInput(bibcode=r["bibcode"], text=r["text"] or "") for r in rows]
+
+        if target == "body_sections":
+            yield [
+                PaperInput(
+                    bibcode=r["bibcode"],
+                    text=concat_filtered_section_text(r["sections"], section_roles),
+                )
+                for r in rows
+            ]
+        else:
+            yield [PaperInput(bibcode=r["bibcode"], text=r["text"] or "") for r in rows]
+
         watermark = rows[-1]["bibcode"]
         if remaining is not None:
             remaining -= len(rows)
@@ -498,6 +585,7 @@ def run(
     max_papers: int | None = None,
     source_version: str = NER_SOURCE_VERSION,
     log_every: int = 1,
+    section_roles: frozenset[str] = KEPT_BODY_SECTION_ROLES,
 ) -> BatchStats:
     """Top-level driver: stream batches, run inference, write, checkpoint.
 
@@ -505,6 +593,9 @@ def run(
     ``status='complete'`` in ``ingest_log``. The first bibcode in each
     batch is the checkpoint key — deterministic because batches are
     pulled in bibcode order.
+
+    ``section_roles`` only applies when ``target='body_sections'``; for
+    abstract/body it is ignored.
     """
     totals = BatchStats()
     n_batches = 0
@@ -515,6 +606,7 @@ def run(
         batch_size=batch_size,
         since_bibcode=since_bibcode,
         max_papers=max_papers,
+        section_roles=section_roles,
     ):
         key = _checkpoint_key(target, batch[0].bibcode)
         if _is_batch_done(conn, key):

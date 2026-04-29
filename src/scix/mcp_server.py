@@ -4049,6 +4049,23 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         from scix.extract.ner_denylist import is_denylisted as _is_denylisted
 
         candidates = [c for c in candidates if not _is_denylisted(c.canonical_name, c.entity_type)]
+
+        # 3lw4.1: fold a small mini-summary (top co-occurring entities +
+        # most-recent paper examples) into each candidate so callers can
+        # triage without an immediate ``entity_context`` follow-up.
+        # Single batched query keyed on the resolved entity_ids; absent-
+        # data fields surface as ``null`` (not ``[]``).
+        from scix.entity_eager_summary import fetch_entity_mini_summaries
+
+        candidate_ids = [c.entity_id for c in candidates]
+        try:
+            mini_summaries = fetch_entity_mini_summaries(conn, candidate_ids)
+        except Exception:
+            # Mini-summary is best-effort; never break the resolve
+            # response if the auxiliary query fails (e.g. matview
+            # unavailable mid-refresh).
+            mini_summaries = {}
+
         result_json = json.dumps(
             {
                 "query": query.strip(),
@@ -4061,6 +4078,12 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                         "discipline": c.discipline,
                         "confidence": c.confidence,
                         "match_method": c.match_method,
+                        "co_occurring": mini_summaries.get(c.entity_id, {}).get(
+                            "co_occurring"
+                        ),
+                        "recent_examples": mini_summaries.get(c.entity_id, {}).get(
+                            "recent_examples"
+                        ),
                     }
                     for c in candidates
                 ],

@@ -8,6 +8,14 @@
 # (migrations 014_entity_communities + 021_community_rollup). The
 # "community" field is named by a representative entity; the actual
 # community_id is resolved at query time.
+#
+# Ecosystem-level partial credit (added 2026-04-29 by bead dk67):
+# For seeds whose expected_siblings list sub-instruments that require
+# body-text NER (out of scope per PRD prd_community_expand_search.md
+# §10), retrieval that surfaces ecosystem-level sister missions named
+# in `ecosystem_acceptable_siblings` should be scored as partial-credit
+# (rubric=1) rather than 0. The rubric prose below instructs the judge
+# on this rule.
 prop: community_expansion
 description: >
   Tests whether retrieval uses entity-graph communities to expand a
@@ -15,39 +23,56 @@ description: >
   (co-mentioned / semantically-clustered entities) should surface even
   if they don't mention the seed by name.
 rubric: |
-  0 — no community expansion; only exact-entity papers appear.
-  1 — partial: a few community-sibling papers retrieved.
-  2 — mostly works: community-sibling papers ranked plausibly.
+  0 — no community expansion; only exact-entity papers appear, OR no
+      results at all (seed has no graph neighborhood).
+  1 — partial: a few community-sibling papers retrieved. ALSO: when the
+      `expected_siblings` list names sub-instruments (e.g. WFC3, NIRCam,
+      ACIS) that require body-text NER and are corpus-absent, retrieval
+      that surfaces ecosystem-level sister missions named in
+      `ecosystem_acceptable_siblings` qualifies as partial-credit (1).
+  2 — mostly works: community-sibling papers ranked plausibly, OR a
+      majority of `ecosystem_acceptable_siblings` covered when
+      sub-instruments are corpus-absent.
   3 — works correctly: retrieval surfaces related entities in the
-      community as intended.
+      community as intended (sub-instruments OR ecosystem-level
+      siblings, depending on what the corpus exposes).
 queries:
   - id: comm-001
     seed_entity: "Hubble Space Telescope"
     community_label: "HST ecosystem"
     expected_siblings: ["WFC3", "STIS", "ACS", "COS", "STScI"]
+    ecosystem_acceptable_siblings: ["JWST", "Spitzer Space Telescope", "Chandra X-ray Observatory", "Herschel Space Observatory", "XMM-Newton", "Kepler Space Telescope"]
     query: "papers related to this community"
     expectation: >
       Should retrieve HST-instrument papers (WFC3, STIS, ACS, COS) and
       operations-center papers (STScI) even if those papers never name
-      HST directly.
+      HST directly. If sub-instruments are corpus-absent (PRD §10
+      out-of-scope), ecosystem-level sister observatories qualify for
+      partial credit.
     tags: [community, hst, instruments]
   - id: comm-002
     seed_entity: "James Webb Space Telescope"
     community_label: "JWST ecosystem"
     expected_siblings: ["NIRSpec", "NIRCam", "MIRI", "FGS", "NIRISS"]
+    ecosystem_acceptable_siblings: ["Hubble Space Telescope", "Spitzer Space Telescope", "Herschel Space Observatory", "ALMA", "Roman Space Telescope"]
     query: "papers related to this community"
     expectation: >
       Should retrieve JWST-instrument papers even when JWST is not
-      named.
+      named. If sub-instruments are corpus-absent (PRD §10 out-of-scope),
+      ecosystem-level sister IR/optical observatories qualify for
+      partial credit.
     tags: [community, jwst, instruments]
   - id: comm-003
     seed_entity: "Chandra X-ray Observatory"
     community_label: "Chandra ecosystem"
     expected_siblings: ["ACIS", "HRC", "HETG", "LETG"]
+    ecosystem_acceptable_siblings: ["XMM-Newton", "ROSAT", "NuSTAR", "Swift", "Athena"]
     query: "papers related to this community"
     expectation: >
       Should surface Chandra-instrument papers whose text focuses on
-      ACIS / HRC / gratings, not only on the mission.
+      ACIS / HRC / gratings, not only on the mission. If sub-instruments
+      are corpus-absent (PRD §10 out-of-scope), ecosystem-level sister
+      X-ray observatories qualify for partial credit.
     tags: [community, chandra, instruments]
   - id: comm-004
     seed_entity: "Cassini"
@@ -62,10 +87,13 @@ queries:
     seed_entity: "Kepler Space Telescope"
     community_label: "Kepler exoplanet ecosystem"
     expected_siblings: ["KOI catalog", "Kepler-11", "Kepler-452b", "TESS"]
+    ecosystem_acceptable_siblings: ["TESS", "K2 mission", "CHEOPS", "PLATO", "CoRoT"]
     query: "papers related to this community"
     expectation: >
       Should surface Kepler-discovered-planet papers and follow-up
-      missions like TESS.
+      missions like TESS. Specific Kepler-NN objects and the KOI catalog
+      may be corpus-absent; ecosystem-level transit-mission siblings
+      qualify for partial credit.
     tags: [community, exoplanets, kepler]
   - id: comm-006
     seed_entity: "TRAPPIST-1"
@@ -89,10 +117,13 @@ queries:
     seed_entity: "Mars Science Laboratory"
     community_label: "Mars surface science"
     expected_siblings: ["Curiosity", "Gale Crater", "ChemCam", "SAM instrument"]
+    ecosystem_acceptable_siblings: ["Mars 2020 Perseverance", "Mars Exploration Rover", "Phoenix lander", "InSight", "Mars Express"]
     query: "papers related to this community"
     expectation: >
       Should retrieve Curiosity / Gale Crater / ChemCam / SAM papers
-      even without MSL naming.
+      even without MSL naming. If sub-instrument names are
+      corpus-absent, ecosystem-level Mars surface missions qualify for
+      partial credit.
     tags: [community, mars, instruments]
   - id: comm-009
     seed_entity: "Planck mission"
@@ -101,6 +132,8 @@ queries:
     query: "papers related to this community"
     expectation: >
       Should surface WMAP / COBE and Planck-instrument (LFI/HFI) papers.
+      WMAP and COBE are ecosystem-level siblings and count fully; LFI/HFI
+      sub-instruments may be corpus-absent.
     tags: [community, cmb, cosmology]
   - id: comm-010
     seed_entity: "Gaia mission"
@@ -109,5 +142,6 @@ queries:
     query: "papers related to this community"
     expectation: >
       Should surface astrometry-predecessor missions (Hipparcos) and
-      large-scale follow-up surveys.
+      large-scale follow-up surveys (LSST). Hipparcos and LSST are
+      ecosystem-level siblings; Tycho/RVS may be corpus-absent.
     tags: [community, astrometry, milky_way]

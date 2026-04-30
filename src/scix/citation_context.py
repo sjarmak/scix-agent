@@ -16,7 +16,7 @@ from typing import Any
 
 import psycopg
 
-from scix.db import get_connection
+from scix.db import IngestLog, get_connection
 from scix.section_parser import parse_sections
 
 logger = logging.getLogger(__name__)
@@ -294,15 +294,11 @@ _YEAR = r"(\d{4})"
 # The optional second author after "and" / "&" is captured but not strictly
 # required. We anchor with a word boundary so we don't match within tokens.
 _AY_NARRATIVE = re.compile(
-    rf"\b({_SURNAME})"
-    rf"(?:\s+(?:and|&)\s+(?:{_SURNAME}))?"
-    rf"\s*\(\s*{_YEAR}\s*\)"
+    rf"\b({_SURNAME})" rf"(?:\s+(?:and|&)\s+(?:{_SURNAME}))?" rf"\s*\(\s*{_YEAR}\s*\)"
 )
 
 # Pattern B — "Surname et al. YYYY" / "Surname et al., YYYY".
-_AY_ET_AL = re.compile(
-    rf"\b({_SURNAME})\s+et\s+al\.?,?\s*\(?\s*{_YEAR}\s*\)?"
-)
+_AY_ET_AL = re.compile(rf"\b({_SURNAME})\s+et\s+al\.?,?\s*\(?\s*{_YEAR}\s*\)?")
 
 # Pattern C — fully parenthetical: "(Surname, YYYY)" / "(Surname & Other, YYYY)"
 # / "(Surname et al., YYYY)" / "(Surname, Other, & Third, YYYY)".
@@ -586,7 +582,7 @@ def process_paper(
 # cap, full ~250-word windows averaged ~1900 bytes (1.45 GB at 825K rows).
 _CONTEXT_TEXT_MAX_CHARS = 1000
 
-_SELECT_PAPERS = """
+_SELECT_PAPERS_BASE = """
     SELECT p.bibcode, p.body, p.raw
     FROM papers p
     WHERE p.body IS NOT NULL
@@ -597,6 +593,36 @@ _SELECT_PAPERS = """
           WHERE cc.source_bibcode = p.bibcode
       )
 """
+
+
+def _build_papers_select(
+    shard: tuple[int, int] | None,
+    limit: int | None,
+) -> tuple[str, list[Any]]:
+    """Compose the streaming SELECT for the extraction pipeline.
+
+    Optionally appends a ``mod(hashtext(p.bibcode), n) = i`` predicate so
+    multiple worker processes can carve up the eligible-paper population
+    without locking. Validates ``shard`` defensively even though the CLI
+    parses it: callers that bypass the CLI (tests, future schedulers)
+    must still get an error on bad input rather than a silently-empty
+    result set.
+    """
+    sql = _SELECT_PAPERS_BASE
+    params: list[Any] = []
+    if shard is not None:
+        index, total = shard
+        if total <= 0 or index < 0 or index >= total:
+            raise ValueError(
+                f"invalid shard spec ({index}/{total}); require 0 <= index < total and total > 0"
+            )
+        sql = sql + "      AND mod(hashtext(p.bibcode), %s) = %s\n"
+        params.extend([total, index])
+    if limit is not None:
+        sql = sql + " LIMIT %s"
+        params.append(limit)
+    return sql, params
+
 
 _CITCTX_STAGING_DDL = (
     "CREATE TEMP TABLE IF NOT EXISTS _citctx_staging "
@@ -641,6 +667,9 @@ def run_pipeline(
     dsn: str | None = None,
     batch_size: int = 1000,
     limit: int | None = None,
+    *,
+    shard: tuple[int, int] | None = None,
+    ingest_log_filename: str | None = None,
 ) -> int:
     """Process papers from DB, extracting citation contexts in batches.
 
@@ -652,6 +681,15 @@ def run_pipeline(
         Number of context rows to accumulate before flushing via COPY.
     limit : int | None
         Maximum number of papers to process (None = all).
+    shard : tuple[int, int] | None
+        ``(index, total)`` shard spec. Restricts the SELECT to papers
+        where ``mod(hashtext(bibcode), total) = index`` so independent
+        worker processes can run in parallel without locking.
+    ingest_log_filename : str | None
+        Logical filename to record progress under in ``ingest_log``. When
+        set, the pipeline writes a ``status='in_progress'`` row at start,
+        updates counts at each checkpoint, and writes ``status='complete'``
+        on success or ``status='failed'`` if the pipeline raises.
 
     Returns
     -------
@@ -664,12 +702,15 @@ def run_pipeline(
     papers_processed = 0
     t_start = time.monotonic()
 
+    log: IngestLog | None = None
+    if ingest_log_filename is not None:
+        log = IngestLog(write_conn)
+        log.start(ingest_log_filename)
+
+    pipeline_failed = False
+
     try:
-        query = _SELECT_PAPERS
-        params: list[Any] = []
-        if limit is not None:
-            query += " LIMIT %s"
-            params.append(limit)
+        query, params = _build_papers_select(shard=shard, limit=limit)
 
         with read_conn.cursor(name="citctx_papers") as cur:
             cur.execute(query, params)
@@ -720,6 +761,13 @@ def run_pipeline(
                         total_inserted,
                         rate,
                     )
+                    if log is not None and ingest_log_filename is not None:
+                        log.update_counts(
+                            ingest_log_filename,
+                            records=papers_processed,
+                            errors=0,
+                            edges=total_inserted,
+                        )
 
             # Flush remaining
             if batch:
@@ -734,7 +782,24 @@ def run_pipeline(
             elapsed,
         )
 
+    except BaseException:
+        pipeline_failed = True
+        raise
     finally:
+        if log is not None and ingest_log_filename is not None:
+            try:
+                log.update_counts(
+                    ingest_log_filename,
+                    records=papers_processed,
+                    errors=0,
+                    edges=total_inserted,
+                )
+                if pipeline_failed:
+                    log.mark_failed(ingest_log_filename)
+                else:
+                    log.finish(ingest_log_filename)
+            except Exception:  # noqa: BLE001 — bookkeeping must never mask the real error
+                logger.exception("ingest_log finalize for %s failed", ingest_log_filename)
         read_conn.close()
         write_conn.close()
 

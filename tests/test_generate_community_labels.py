@@ -17,6 +17,7 @@ from __future__ import annotations
 import importlib.util
 import pathlib
 import sys
+from collections import Counter
 
 import psycopg
 import pytest
@@ -26,6 +27,7 @@ SRC_DIR = REPO_ROOT / "src"
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 MIGRATION_051_PATH = REPO_ROOT / "migrations" / "051_community_semantic_columns.sql"
 MIGRATION_052_PATH = REPO_ROOT / "migrations" / "052_communities_signal.sql"
+MIGRATION_056_PATH = REPO_ROOT / "migrations" / "056_concepts_vocabularies.sql"
 
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -77,8 +79,8 @@ def dsn() -> str:
 
 @pytest.fixture(scope="module")
 def applied_migrations(dsn: str) -> None:
-    """Apply migrations 051 + 052 to the test DB (idempotent)."""
-    for path in (MIGRATION_051_PATH, MIGRATION_052_PATH):
+    """Apply migrations 051 + 052 + 056 to the test DB (idempotent)."""
+    for path in (MIGRATION_051_PATH, MIGRATION_052_PATH, MIGRATION_056_PATH):
         sql = path.read_text()
         with psycopg.connect(dsn) as c:
             c.autocommit = True
@@ -326,6 +328,318 @@ def test_tokenize_title_drops_stopwords_and_dedups() -> None:
     # LaTeX artifacts filtered
     assert "mml" not in mod._tokenize_title("A result using mml:math notation")
     assert "sub" not in mod._tokenize_title("sub-kpc imaging")
+
+
+# ---------------------------------------------------------------------------
+# Test — phrase extraction and vocab term normalization
+# ---------------------------------------------------------------------------
+
+
+def test_extract_phrases_yields_consecutive_ngrams() -> None:
+    mod = _load_script_module()
+    phrases = mod._extract_phrases("Cell Cycle Regulation in Drosophila")
+    # Bigrams from consecutive non-stopword tokens; "in" is a stopword and
+    # is dropped before n-gram construction so "regulation" and "drosophila"
+    # become consecutive.
+    assert "cell cycle" in phrases
+    assert "cycle regulation" in phrases
+    assert "regulation drosophila" in phrases
+    # Trigrams up to PHRASE_MAX_N (default 3)
+    assert "cell cycle regulation" in phrases
+    # Empty / None gracefully
+    assert mod._extract_phrases(None) == []
+    assert mod._extract_phrases("") == []
+    # Single-token title yields no n-grams
+    assert mod._extract_phrases("apoptosis") == []
+
+
+def test_normalize_vocab_term_filters_unmatchable() -> None:
+    mod = _load_script_module()
+    # Clean multi-word vocab term passes through unchanged (lowercased)
+    assert mod._normalize_vocab_term("Cell Cycle") == "cell cycle"
+    # Hyphenated compound word is fine
+    assert mod._normalize_vocab_term("Beta-Catenin") == "beta-catenin"
+    # Symbols / parentheses → unmatchable in titles
+    assert mod._normalize_vocab_term("(11Z,14Z)-foo") is None
+    # Leading digit → unmatchable (titles tokens always start with a letter)
+    assert mod._normalize_vocab_term("3-aminobutanoate") is None
+    # Stopwords aren't useful as single-token boost candidates
+    assert mod._normalize_vocab_term("the") is None
+    # Too long / too many words filtered
+    assert mod._normalize_vocab_term("alpha beta gamma delta") is None
+    # Empty / None
+    assert mod._normalize_vocab_term(None) is None
+    assert mod._normalize_vocab_term("") is None
+
+
+# ---------------------------------------------------------------------------
+# Test — TF-IDF vocab boost
+# ---------------------------------------------------------------------------
+
+
+def test_compute_tfidf_vocab_boost_promotes_known_terms() -> None:
+    """A vocab-matched term beats a non-vocab term with the same TF/IDF."""
+    mod = _load_script_module()
+    # Two communities, each with two distinct terms (so both terms have the
+    # same TF=1 and the same DF=1, hence identical raw TF-IDF scores).
+    counts = {
+        1: Counter(["apoptosis", "vmsd1212"]),
+        2: Counter(["other_one", "other_two"]),
+    }
+    # Without boost: deterministic alpha-tiebreaker means "apoptosis" sorts
+    # ahead of "vmsd1212" already (a < v).
+    raw = mod.compute_tfidf(counts, top_n=2, vocab_terms=frozenset())
+    assert [t for t, _ in raw[1]] == ["apoptosis", "vmsd1212"]
+
+    # With vocab boost: "apoptosis" gets its score doubled, so the ranking
+    # is now driven by score, not the alpha tiebreaker. Verify the score
+    # gap actually widened.
+    boosted = mod.compute_tfidf(
+        counts,
+        top_n=2,
+        vocab_terms=frozenset({"apoptosis"}),
+        vocab_boost=2.0,
+    )
+    boosted_scores = dict(boosted[1])
+    assert boosted_scores["apoptosis"] == pytest.approx(
+        raw[1][0][1] * 2.0
+    )
+    assert boosted_scores["vmsd1212"] == pytest.approx(raw[1][1][1])
+
+
+def test_compute_tfidf_vocab_boost_overrides_alpha_tiebreaker() -> None:
+    """Vocab boost re-orders terms whose raw scores differed slightly.
+
+    Three communities so IDF is non-zero. Counts are crafted so the
+    non-vocab term ``alpha_jargon`` outranks the vocab term ``zenith`` on
+    raw TF-IDF, but the 2x boost flips the order.
+    """
+    mod = _load_script_module()
+    counts = {
+        1: Counter({"alpha_jargon": 3, "zenith": 2}),
+        2: Counter(["foo"]),
+        3: Counter(["bar"]),
+    }
+    raw = mod.compute_tfidf(counts, top_n=2)
+    assert [t for t, _ in raw[1]][0] == "alpha_jargon"
+
+    boosted = mod.compute_tfidf(
+        counts,
+        top_n=2,
+        vocab_terms=frozenset({"zenith"}),
+        vocab_boost=2.0,
+    )
+    assert [t for t, _ in boosted[1]][0] == "zenith"
+
+
+# ---------------------------------------------------------------------------
+# Test — vocabulary boost end-to-end (titles + concepts)
+# ---------------------------------------------------------------------------
+
+
+VOCAB_FIXTURE_PREFIX = "VOCAB_LABEL_TEST."
+VOCAB_TEST_VOCAB = "vocab_label_test"
+
+
+@pytest.fixture
+def vocab_fixture(dsn: str, applied_migrations: None):
+    """Insert a corpus where all titles share a generic high-IDF jargon term
+    (``zzz_unique_to_each``) and only one community's titles also contain a
+    real vocabulary phrase.
+
+    Without the vocab boost, the rare jargon dominates because it has the
+    same TF/IDF in its community as the vocab phrase but sorts earlier on
+    the alpha tiebreaker. With the boost, the vocab term jumps the
+    ranking. This test covers the full ingestion → aggregation → TF-IDF
+    → upsert pipeline.
+    """
+    bibcodes: list[str] = []
+
+    # 3 communities, 5 papers each. Each community owns one rare
+    # alpha-prefixed jargon token (sorts BEFORE "cell cycle" on the alpha
+    # tiebreaker) so that without the vocab boost, the jargon would win
+    # the top-1 slot in community 101.
+    spec: list[tuple[int, str, list[str]]] = [
+        (
+            101,
+            "q-bio.QM",
+            [
+                "study of cell cycle alphajargon protein",
+                "regulation of cell cycle alphajargon protein",
+                "cell cycle dynamics alphajargon protein",
+                "control of cell cycle alphajargon protein",
+                "imaging cell cycle alphajargon protein",
+            ],
+        ),
+        (
+            102,
+            "cs.AI",
+            [
+                "betajargon networks for image classification",
+                "betajargon networks deep image classification",
+                "betajargon networks paper image classification",
+                "betajargon networks framework image classification",
+                "betajargon networks training image classification",
+            ],
+        ),
+        (
+            103,
+            "physics.flu-dyn",
+            [
+                "gammajargon shedding turbulent flow",
+                "gammajargon dynamics turbulent flow",
+                "gammajargon theory turbulent flow",
+                "gammajargon flow turbulent regime",
+                "gammajargon stability turbulent regime",
+            ],
+        ),
+    ]
+
+    with psycopg.connect(dsn) as c:
+        c.autocommit = False
+        with c.cursor() as cur:
+            # Clean slate
+            cur.execute(
+                "DELETE FROM paper_metrics WHERE bibcode LIKE %s",
+                (VOCAB_FIXTURE_PREFIX + "%",),
+            )
+            cur.execute(
+                "DELETE FROM papers WHERE bibcode LIKE %s",
+                (VOCAB_FIXTURE_PREFIX + "%",),
+            )
+            cur.execute(
+                "DELETE FROM communities WHERE signal = 'citation' "
+                "AND community_id IN (101, 102, 103)"
+            )
+            cur.execute(
+                "DELETE FROM concepts WHERE vocabulary = %s",
+                (VOCAB_TEST_VOCAB,),
+            )
+            cur.execute(
+                "DELETE FROM vocabularies WHERE vocabulary = %s",
+                (VOCAB_TEST_VOCAB,),
+            )
+
+            # Vocab fixture: register a vocabulary and a single concept
+            # ("Cell Cycle") so the test does not depend on whatever real
+            # vocabulary data is in the test DB.
+            cur.execute(
+                "INSERT INTO vocabularies "
+                "  (vocabulary, name, license, source_url, record_count) "
+                "VALUES (%s, %s, %s, %s, %s) "
+                "ON CONFLICT (vocabulary) DO UPDATE SET "
+                "  record_count = EXCLUDED.record_count",
+                (VOCAB_TEST_VOCAB, "Vocab Label Test", "test", "test://", 1),
+            )
+            cur.execute(
+                "INSERT INTO concepts "
+                "  (vocabulary, concept_id, preferred_label, alternate_labels) "
+                "VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (vocabulary, concept_id) DO UPDATE SET "
+                "  preferred_label = EXCLUDED.preferred_label, "
+                "  alternate_labels = EXCLUDED.alternate_labels",
+                (VOCAB_TEST_VOCAB, "VLT.0001", "Cell Cycle", []),
+            )
+
+            for cid, arxiv, titles in spec:
+                for i, title in enumerate(titles):
+                    bib = f"{VOCAB_FIXTURE_PREFIX}{cid}.{i:03d}"
+                    bibcodes.append(bib)
+                    cur.execute(
+                        "INSERT INTO papers "
+                        "  (bibcode, title, arxiv_class, citation_count) "
+                        "VALUES (%s, %s, %s, %s) "
+                        "ON CONFLICT (bibcode) DO UPDATE SET "
+                        "  title       = EXCLUDED.title, "
+                        "  arxiv_class = EXCLUDED.arxiv_class",
+                        (bib, title, [arxiv], 100 - i),
+                    )
+                    cur.execute(
+                        "INSERT INTO paper_metrics "
+                        "  (bibcode, community_id_coarse, "
+                        "   community_id_medium, community_id_fine) "
+                        "VALUES (%s, %s, %s, %s) "
+                        "ON CONFLICT (bibcode) DO UPDATE SET "
+                        "  community_id_coarse = EXCLUDED.community_id_coarse, "
+                        "  community_id_medium = EXCLUDED.community_id_medium, "
+                        "  community_id_fine   = EXCLUDED.community_id_fine",
+                        (bib, cid, cid, cid),
+                    )
+        c.commit()
+
+    try:
+        yield bibcodes
+    finally:
+        with psycopg.connect(dsn) as c:
+            c.autocommit = True
+            with c.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM paper_metrics WHERE bibcode LIKE %s",
+                    (VOCAB_FIXTURE_PREFIX + "%",),
+                )
+                cur.execute(
+                    "DELETE FROM papers WHERE bibcode LIKE %s",
+                    (VOCAB_FIXTURE_PREFIX + "%",),
+                )
+                cur.execute(
+                    "DELETE FROM communities WHERE signal = 'citation' "
+                    "AND community_id IN (101, 102, 103)"
+                )
+                cur.execute(
+                    "DELETE FROM concepts WHERE vocabulary = %s",
+                    (VOCAB_TEST_VOCAB,),
+                )
+                cur.execute(
+                    "DELETE FROM vocabularies WHERE vocabulary = %s",
+                    (VOCAB_TEST_VOCAB,),
+                )
+
+
+def test_vocab_boost_promotes_concept_phrase(
+    dsn: str,
+    vocab_fixture: list[str],
+    tmp_path: pathlib.Path,
+) -> None:
+    mod = _load_script_module()
+    rc = mod.main([
+        "--dsn", dsn,
+        "--signal", "citation",
+        "--seed", str(SEED),
+        "--spotcheck-n", "3",
+        "--spotcheck-path", str(tmp_path / "spotcheck.md"),
+        "--spotcheck-sample-path", str(tmp_path / "spotcheck_sample.md"),
+    ])
+    assert rc == 0, f"script returned non-zero exit code {rc}"
+
+    with psycopg.connect(dsn) as c, c.cursor() as cur:
+        cur.execute(
+            "SELECT community_id, top_keywords "
+            "FROM communities "
+            "WHERE signal = 'citation' AND resolution = 'coarse' "
+            "  AND community_id IN (101, 102, 103) "
+            "ORDER BY community_id"
+        )
+        rows = {cid: list(top or []) for cid, top in cur.fetchall()}
+
+    # Community 101 carries "cell cycle" as a known vocab term. The boost
+    # must lift it above the rare title jargon ("alphajargon"), which on a
+    # raw TF-IDF basis ties on score and would otherwise win the alpha
+    # tiebreaker (a < c).
+    c101 = rows[101]
+    assert "cell cycle" in c101, (
+        f"vocab phrase 'cell cycle' missing from community 101 top_keywords: {c101!r}"
+    )
+    assert "alphajargon" in c101, (
+        f"baseline 'alphajargon' missing from community 101 top_keywords: {c101!r}"
+    )
+    assert c101.index("cell cycle") < c101.index("alphajargon"), (
+        f"'cell cycle' should outrank 'alphajargon' under vocab boost; got {c101!r}"
+    )
+
+    # Communities 102 and 103 have no vocab-matching phrases — the script
+    # should still produce labels without crashing on them.
+    assert len(rows[102]) > 0
+    assert len(rows[103]) > 0
 
 
 # ---------------------------------------------------------------------------

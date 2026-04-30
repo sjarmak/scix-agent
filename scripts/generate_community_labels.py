@@ -82,6 +82,20 @@ TOP_KEYWORDS_N = 10
 LABEL_ARXIV_N = 2  # embedded in the label string
 LABEL_KEYWORDS_N = 3
 
+# Multiplicative TF-IDF score boost applied to terms that match a known
+# concept in the ``concepts`` table (MeSH, ACM CCS, MSC, Gene Ontology,
+# ChEBI, PhySH, GCMD, OpenAlex Topics, NCBI Taxonomy). Tuned empirically
+# on the semantic/medium partition: 2.0 lifts MeSH/GO terms above
+# title-jargon for q-bio communities without dropping the rare-but-
+# meaningful jargon entirely.
+VOCAB_BOOST = 2.0
+
+# Cap on phrase n-gram length for vocabulary matching. Trigrams are still
+# common in MeSH/Gene Ontology ("DNA Repair Genes", "Cell Cycle Arrest")
+# but 4+ word terms are dominated by chemistry/taxonomy entries that
+# almost never appear verbatim in titles.
+PHRASE_MAX_N = 3
+
 
 # ---------------------------------------------------------------------------
 # Title-token fallback (when keyword_norm is empty)
@@ -135,6 +149,24 @@ STOPWORDS: frozenset[str] = frozenset(
 )
 
 
+def _ordered_title_tokens(title: Optional[str]) -> list[str]:
+    """Lower-case title tokens minus stopwords, in original order.
+
+    Order is preserved so callers can build n-gram phrases over consecutive
+    non-stopword tokens. Duplicates are NOT removed here (callers that want
+    deduplication should wrap with :func:`dict.fromkeys`).
+    """
+    if not title:
+        return []
+    out: list[str] = []
+    for w in _WORD_RE.findall(title):
+        wl = w.lower()
+        if wl in STOPWORDS:
+            continue
+        out.append(wl)
+    return out
+
+
 def _tokenize_title(title: Optional[str]) -> list[str]:
     """Lower-case title tokens minus stopwords, deduplicated per paper.
 
@@ -143,17 +175,117 @@ def _tokenize_title(title: Optional[str]) -> list[str]:
     treats the community as the document, so "paper carries token" is the
     natural unit.
     """
-    if not title:
+    return list(dict.fromkeys(_ordered_title_tokens(title)))
+
+
+def _extract_phrases(title: Optional[str], max_n: int = PHRASE_MAX_N) -> list[str]:
+    """Extract bigrams and trigrams of consecutive non-stopword tokens.
+
+    Used as candidate keys against the vocabulary lookup so multi-word
+    concepts ("Cell Cycle", "DNA Damage") can be matched even when the
+    individual tokens look generic. Phrases are deduplicated per paper.
+    """
+    if max_n < 2:
+        return []
+    tokens = _ordered_title_tokens(title)
+    if len(tokens) < 2:
         return []
     seen: set[str] = set()
     out: list[str] = []
-    for w in _WORD_RE.findall(title):
-        wl = w.lower()
-        if wl in STOPWORDS or wl in seen:
-            continue
-        seen.add(wl)
-        out.append(wl)
+    for n in range(2, max_n + 1):
+        for i in range(len(tokens) - n + 1):
+            phrase = " ".join(tokens[i : i + n])
+            if phrase in seen:
+                continue
+            seen.add(phrase)
+            out.append(phrase)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Vocabulary loading
+# ---------------------------------------------------------------------------
+
+
+# Filter out vocabulary terms that are too short, too long, or contain
+# characters our title tokenizer cannot produce. The same regex shape that
+# :data:`_WORD_RE` accepts must apply here so a vocab term can actually
+# match a title bigram/trigram.
+_VOCAB_TERM_RE = re.compile(r"^[a-z][a-z0-9 \-]+$")
+_VOCAB_TERM_MIN_LEN = 3
+_VOCAB_TERM_MAX_LEN = 60
+_VOCAB_TERM_MIN_WORDS = 1
+_VOCAB_TERM_MAX_WORDS = PHRASE_MAX_N
+
+
+def _normalize_vocab_term(term: Optional[str]) -> Optional[str]:
+    """Return a normalized form of ``term`` if it is suitable for matching.
+
+    Suitable means: ASCII letters/digits/space/hyphen, starts with a letter,
+    1..PHRASE_MAX_N space-separated words, length within bounds, and not in
+    the stopword set when single-word.
+    """
+    if not term:
+        return None
+    norm = term.strip().lower()
+    if len(norm) < _VOCAB_TERM_MIN_LEN or len(norm) > _VOCAB_TERM_MAX_LEN:
+        return None
+    if not _VOCAB_TERM_RE.match(norm):
+        return None
+    parts = norm.split()
+    if not (_VOCAB_TERM_MIN_WORDS <= len(parts) <= _VOCAB_TERM_MAX_WORDS):
+        return None
+    if len(parts) == 1 and parts[0] in STOPWORDS:
+        return None
+    return norm
+
+
+def _load_vocab_terms(
+    conn: psycopg.Connection,
+) -> frozenset[str]:
+    """Load a frozenset of normalized vocabulary terms from ``concepts``.
+
+    Includes both ``preferred_label`` and entries from ``alternate_labels``.
+    Terms are filtered through :func:`_normalize_vocab_term` so the set is
+    directly comparable to title tokens / phrases produced by
+    :func:`_extract_phrases`.
+
+    Returns an empty frozenset if the ``concepts`` table is missing
+    (e.g. on a test DB that has not run migration 056) — callers should
+    treat that as "no vocab boost available".
+    """
+    terms: set[str] = set()
+
+    with conn.cursor() as cur:
+        try:
+            cur.execute(
+                "SELECT to_regclass('public.concepts')::text"
+            )
+            row = cur.fetchone()
+        except psycopg.Error:
+            return frozenset()
+        if not row or row[0] is None:
+            logger.info(
+                "concepts table not present; skipping vocab-boost loading"
+            )
+            return frozenset()
+
+        cur.execute("SELECT preferred_label, alternate_labels FROM concepts")
+        for preferred, alternates in cur:
+            n = _normalize_vocab_term(preferred)
+            if n is not None:
+                terms.add(n)
+            if alternates:
+                for alt in alternates:
+                    n = _normalize_vocab_term(alt)
+                    if n is not None:
+                        terms.add(n)
+
+    logger.info(
+        "loaded %d normalized vocabulary terms for label boost",
+        len(terms),
+    )
+    return frozenset(terms)
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +408,7 @@ def _aggregate(
     conn: psycopg.Connection,
     signal: str,
     resolution: str,
+    vocab_terms: frozenset[str] = frozenset(),
 ) -> tuple[dict[int, _Bucket], dict[int, str]]:
     """Aggregate paper rows into per-community buckets.
 
@@ -283,6 +416,11 @@ def _aggregate(
     populated only for ``signal='taxonomic'`` and records the original
     TEXT label for each hashed id — used later to keep the label
     human-readable.
+
+    When ``vocab_terms`` is non-empty AND a paper falls back to title
+    tokens (because ``keyword_norm`` is empty), multi-word phrases that
+    match the vocabulary are added to the bucket alongside single tokens.
+    Non-matching phrases are dropped to keep the term space clean.
     """
     by_community: dict[int, _Bucket] = {}
     taxonomic_text_by_id: dict[int, str] = {}
@@ -326,6 +464,13 @@ def _aggregate(
                 tokens = _tokenize_title(title)
                 if tokens:
                     bucket.kw_counter.update(tokens)
+                if vocab_terms:
+                    # Add multi-word phrases that exist in the vocabulary
+                    # (single-token vocab matches already enter via tokens
+                    # above and pick up the boost in compute_tfidf).
+                    for phrase in _extract_phrases(title):
+                        if phrase in vocab_terms:
+                            bucket.kw_counter.update([phrase])
 
     return by_community, taxonomic_text_by_id
 
@@ -338,6 +483,8 @@ def _aggregate(
 def compute_tfidf(
     per_community_kw_counts: dict[int, Counter],
     top_n: int = TOP_KEYWORDS_N,
+    vocab_terms: frozenset[str] = frozenset(),
+    vocab_boost: float = VOCAB_BOOST,
 ) -> dict[int, list[tuple[str, float]]]:
     """Compute per-community TF-IDF over keyword_norm terms.
 
@@ -345,7 +492,9 @@ def compute_tfidf(
     - IDF(term)   = log(N / (1 + df(term))), N = #communities, df(term) =
       #communities with TF > 0. +1 smoothing keeps IDF > 0 even for
       terms that appear everywhere.
-    - Score       = TF * IDF.
+    - Score       = TF * IDF, multiplied by ``vocab_boost`` when ``term``
+      is in ``vocab_terms`` (terms that match a known concept in the
+      cross-discipline vocabulary tables).
 
     Returns a dict mapping community_id -> top_n [(term, score)] sorted
     by score DESC, term ASC for deterministic ties.
@@ -368,9 +517,12 @@ def compute_tfidf(
 
     out: dict[int, list[tuple[str, float]]] = {}
     for cid, counts in per_community_kw_counts.items():
-        scored: list[tuple[str, float]] = [
-            (term, tf * idf[term]) for term, tf in counts.items()
-        ]
+        scored: list[tuple[str, float]] = []
+        for term, tf in counts.items():
+            score = tf * idf[term]
+            if vocab_terms and term in vocab_terms:
+                score *= vocab_boost
+            scored.append((term, score))
         # Sort by score DESC, then term ASC for determinism.
         scored.sort(key=lambda pair: (-pair[1], pair[0]))
         out[cid] = scored[:top_n]
@@ -459,9 +611,12 @@ def _label_one(
     conn: psycopg.Connection,
     signal: str,
     resolution: str,
+    vocab_terms: frozenset[str] = frozenset(),
 ) -> int:
     """Compute labels for all communities at (signal, resolution), upsert."""
-    by_community, taxonomic_text_by_id = _aggregate(conn, signal, resolution)
+    by_community, taxonomic_text_by_id = _aggregate(
+        conn, signal, resolution, vocab_terms=vocab_terms
+    )
     if not by_community:
         logger.info(
             "signal=%s resolution=%s: no communities found, skipping",
@@ -473,7 +628,11 @@ def _label_one(
     per_community_kw_counts: dict[int, Counter] = {
         cid: bucket.kw_counter for cid, bucket in by_community.items()
     }
-    tfidf = compute_tfidf(per_community_kw_counts, top_n=TOP_KEYWORDS_N)
+    tfidf = compute_tfidf(
+        per_community_kw_counts,
+        top_n=TOP_KEYWORDS_N,
+        vocab_terms=vocab_terms,
+    )
 
     rows: list[CommunityLabel] = []
     for cid, bucket in by_community.items():
@@ -695,6 +854,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         args.spotcheck_n,
     )
 
+    # Load vocabulary terms once — used as a TF-IDF score boost for
+    # terms that match a known concept across the ingested vocabularies
+    # (MeSH, Gene Ontology, ChEBI, ACM CCS, MSC, PhySH, GCMD, OpenAlex
+    # Topics, NCBI Taxonomy). Loading per-connection would be wasteful
+    # (~3M rows scanned 9 times); loading on a short-lived connection
+    # avoids holding an open transaction during the long aggregation
+    # phase below.
+    with psycopg.connect(dsn) as vocab_conn:
+        vocab_conn.autocommit = True
+        vocab_terms = _load_vocab_terms(vocab_conn)
+
     # Collect taxonomic text-id mapping across the run so the spot-check
     # can resolve bibcodes for taxonomic rows.
     taxonomic_text_by_id: dict[int, str] = {}
@@ -715,12 +885,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 # Need the id->text mapping out of the aggregation pass —
                 # _label_one throws it away internally, so we re-materialize
                 # here. Cheap: taxonomic cardinality is ~200 classes.
-                by_community, tax_map = _aggregate(conn, signal, resolution)
+                by_community, tax_map = _aggregate(
+                    conn, signal, resolution, vocab_terms=vocab_terms
+                )
                 taxonomic_text_by_id.update(tax_map)
                 # Fall through to the real labelling pass (which re-aggregates).
                 _ = by_community  # explicit discard
 
-            n = _label_one(conn, signal, resolution)
+            n = _label_one(conn, signal, resolution, vocab_terms=vocab_terms)
             total_upserted += n
             conn.commit()
 

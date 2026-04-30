@@ -880,6 +880,295 @@ def hybrid_search(
 
 
 # ---------------------------------------------------------------------------
+# Community-expansion lane (entity co-occurrence retrieval — bead xz4.1.40)
+# ---------------------------------------------------------------------------
+
+# Cap on echoed neighbors in SearchResult.metadata. Token-budget guard for
+# super-hub seeds whose top-50 list would otherwise blow the agent's context.
+_COOCCUR_NEIGHBOR_ECHO_CAP: int = 10
+
+# Default seed-paper-count threshold above which the lane refuses to run and
+# returns a structured ``seed_too_broad`` envelope. Premortem rationale: a
+# super-hub seed (Frequency=138k, Robustness=118k) is unlikely to have a
+# meaningful "neighborhood" anyway; degraded results would be more harmful
+# than a polite refusal. See PRD docs/prd/prd_community_expand_search.md §6 R1.
+_COOCCUR_DEFAULT_SUPER_HUB_THRESHOLD: int = 50_000
+
+
+def community_expand_search(
+    conn: psycopg.Connection,
+    seed_entity_id: int,
+    *,
+    top_k: int = 20,
+    min_cooccurrence: int = 2,
+    neighbor_limit: int = 50,
+    seed_paper_cap: int = 5_000,
+    super_hub_threshold: int = _COOCCUR_DEFAULT_SUPER_HUB_THRESHOLD,
+    neighbor_entity_types: tuple[str, ...] | None = None,
+    filters: SearchFilters | None = None,
+) -> SearchResult:
+    """Entity co-occurrence retrieval lane.
+
+    Given a seed entity, return papers ranked by neighbor-entity overlap.
+    A "neighbor" is an entity that co-occurs with the seed on the same
+    paper in ``document_entities_canonical``; the result is the top-K
+    papers that mention those neighbor entities, ordered by how many of
+    them they cover (desc) and then by paper PageRank (desc, NULLS LAST).
+    Papers already linked to the seed itself are excluded so the response
+    is genuinely "siblings" rather than "seed mentions".
+
+    Implements the PRD at ``docs/prd/prd_community_expand_search.md``
+    (bead ``scix_experiments-xz4.1.40``).
+
+    Filters from :class:`SearchFilters` apply only to Stage 3 (output
+    papers); the neighborhood is always computed on the unfiltered graph
+    so a year/discipline filter narrows the *output* set without
+    distorting which entities count as neighbors. See PRD §6 R6.
+
+    ``neighbor_entity_types`` is the opt-in lever for the R4 noise risk
+    (universal-concept neighbors dominating big seeds). When non-None,
+    the Stage-2 neighbor query restricts candidates to those types
+    (e.g. ``('instrument', 'mission', 'observatory')``). Default ``None``
+    matches PRD v1: no neighbor-type filter — the noise problem surfaces
+    in eval and is mitigated by callers (eval harness) rather than the
+    function.
+
+    Returns
+    -------
+    SearchResult
+        On success: ``papers`` ordered by ``best_cooccur DESC, pagerank
+        DESC NULLS LAST``; ``metadata`` carries ``seed_entity_id``,
+        ``seed_paper_count``, ``neighbor_count``, top-10 ``neighbors``,
+        and ``truncated_seed_papers``.
+
+        On super-hub guard fire: empty ``papers``, ``metadata`` with
+        ``error_code='seed_too_broad'`` plus a ``hint``. The MCP layer
+        translates this into the structured-error envelope; eval harness
+        callers see an empty result with the diagnostic metadata.
+
+        On empty neighborhood (long-tail seed): empty ``papers``, no
+        ``error_code`` — this is a normal outcome that the caller is
+        expected to handle (do not fall back to hybrid; agents would
+        learn to trust the lane on inputs where it doesn't apply — see
+        PRD §6 R2).
+    """
+    # Stage 0: count seed papers, both for the super-hub guard and so the
+    # caller can tell whether the Stage-1 cap kicked in. Indexed COUNT(*)
+    # against ``document_entities_canonical(entity_id)`` is fast even for
+    # 138k-paper hubs (the index is BTREE on entity_id).
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM document_entities_canonical WHERE entity_id = %s",
+            (seed_entity_id,),
+        )
+        row = cur.fetchone()
+    seed_paper_count = int(row[0]) if row is not None else 0
+
+    if seed_paper_count > super_hub_threshold:
+        return SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"cooccur_neighbors_ms": 0.0, "cooccur_papers_ms": 0.0},
+            metadata={
+                "seed_entity_id": seed_entity_id,
+                "seed_paper_count": seed_paper_count,
+                "error_code": "seed_too_broad",
+                "error": (
+                    f"seed entity has {seed_paper_count:,} linked papers — "
+                    f"above the super-hub threshold of {super_hub_threshold:,}"
+                ),
+                "hint": (
+                    "Narrow to a more specific entity. Super-hub seeds "
+                    "(generic terms like 'Frequency') do not have a "
+                    "meaningful co-occurrence neighborhood."
+                ),
+            },
+        )
+
+    truncated_seed_papers = seed_paper_count > seed_paper_cap
+
+    # Stage 1+2: cap the seed-paper sample, then rank co-occurring entities.
+    # Joining ``entities`` for canonical_name keeps the metadata payload
+    # self-describing without a follow-up query.
+    t_neighbors = time.perf_counter()
+    type_filter_clause = ""
+    type_filter_params: list[Any] = []
+    if neighbor_entity_types is not None:
+        type_filter_clause = "AND e.entity_type = ANY(%s)"
+        type_filter_params = [list(neighbor_entity_types)]
+    neighbors_sql = f"""
+        WITH seed_papers AS (
+            SELECT bibcode
+            FROM document_entities_canonical
+            WHERE entity_id = %s
+            ORDER BY fused_confidence DESC
+            LIMIT %s
+        )
+        SELECT dec.entity_id,
+               e.canonical_name,
+               COUNT(*)::int AS cooccur_count
+        FROM document_entities_canonical dec
+        JOIN seed_papers sp ON sp.bibcode = dec.bibcode
+        JOIN entities    e  ON e.id       = dec.entity_id
+        WHERE dec.entity_id <> %s
+        {type_filter_clause}
+        GROUP BY dec.entity_id, e.canonical_name
+        HAVING COUNT(*) >= %s
+        ORDER BY cooccur_count DESC, dec.entity_id
+        LIMIT %s
+    """
+    neighbor_params: list[Any] = (
+        [seed_entity_id, seed_paper_cap, seed_entity_id]
+        + type_filter_params
+        + [min_cooccurrence, neighbor_limit]
+    )
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(neighbors_sql, neighbor_params)
+        neighbor_rows = cur.fetchall()
+    cooccur_neighbors_ms = _elapsed_ms(t_neighbors)
+
+    base_metadata: dict[str, Any] = {
+        "seed_entity_id": seed_entity_id,
+        "seed_paper_count": seed_paper_count,
+        "neighbor_count": len(neighbor_rows),
+        "truncated_seed_papers": truncated_seed_papers,
+        "neighbors": [
+            {
+                "entity_id": int(r["entity_id"]),
+                "canonical_name": r["canonical_name"],
+                "cooccur_count": int(r["cooccur_count"]),
+            }
+            for r in neighbor_rows[:_COOCCUR_NEIGHBOR_ECHO_CAP]
+        ],
+    }
+
+    # Empty neighborhood: short-circuit before Stage 3. PRD §6 R2 — do
+    # NOT fall back to hybrid; an empty result is a real signal.
+    if not neighbor_rows:
+        return SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={
+                "cooccur_neighbors_ms": cooccur_neighbors_ms,
+                "cooccur_papers_ms": 0.0,
+            },
+            metadata=base_metadata,
+        )
+
+    # Stage 3: candidate papers mentioning a neighbor entity, excluding
+    # papers already tagged with the seed. Filters apply here (output-
+    # only — see PRD §6 R6).
+    effective = filters or SearchFilters()
+    filter_clause, filter_params = effective.to_where_clause("p")
+    entity_clause, entity_params = effective.to_entity_filter_clause("p")
+
+    neighbor_ids = [int(r["entity_id"]) for r in neighbor_rows]
+    cooccur_counts = [int(r["cooccur_count"]) for r in neighbor_rows]
+
+    # Stage-3 ranking: papers covering MORE of the seed's neighbors win
+    # over papers covering ONE strong neighbor (= the original PRD §6
+    # "best_cooccur" rule). The original PRD ranking surfaces papers
+    # tagged with the single most-co-occurring neighbor regardless of
+    # whether the paper itself relates to the seed — e.g. for a Chandra
+    # seed, generic HST-instrument papers (STIS solo) drown out
+    # multi-instrument joint observation papers. PRD §6 R7 said
+    # "explainability" was the open concern; in practice the bigger
+    # problem was selectivity. Updated ranking:
+    #   1. neighbor_coverage DESC  — how many of the seed's top-50
+    #      neighbors does this paper cover? More = stronger signal.
+    #   2. coverage_score   DESC  — sum(cooccur_count) tiebreak.
+    #   3. pagerank         DESC NULLS LAST — quality tiebreak.
+    candidate_pool = max(top_k * 5, 200)
+
+    t_papers = time.perf_counter()
+    papers_sql = f"""
+        WITH neighbor_cooccur AS (
+            SELECT * FROM unnest(%s::int[], %s::int[]) AS t(entity_id, cooccur_count)
+        ),
+        candidate_papers AS (
+            SELECT
+                dec.bibcode,
+                COUNT(DISTINCT dec.entity_id)::int AS neighbor_coverage,
+                SUM(nc.cooccur_count)::int        AS coverage_score,
+                MAX(nc.cooccur_count)::int        AS best_cooccur
+            FROM document_entities_canonical dec
+            JOIN neighbor_cooccur nc ON nc.entity_id = dec.entity_id
+            WHERE NOT EXISTS (
+                SELECT 1 FROM document_entities_canonical dec_seed
+                 WHERE dec_seed.bibcode  = dec.bibcode
+                   AND dec_seed.entity_id = %s
+            )
+            GROUP BY dec.bibcode
+            ORDER BY neighbor_coverage DESC, coverage_score DESC
+            LIMIT %s
+        )
+        SELECT {STUB_COLUMNS},
+               cp.neighbor_coverage,
+               cp.coverage_score,
+               cp.best_cooccur,
+               pm.pagerank
+        FROM candidate_papers cp
+        JOIN papers p          ON p.bibcode  = cp.bibcode
+        LEFT JOIN paper_metrics pm ON pm.bibcode = cp.bibcode
+        WHERE 1=1
+        {filter_clause}
+        {entity_clause}
+        ORDER BY cp.neighbor_coverage DESC,
+                 cp.coverage_score    DESC,
+                 pm.pagerank          DESC NULLS LAST,
+                 p.bibcode
+        LIMIT %s
+    """
+    params: list[Any] = (
+        [neighbor_ids, cooccur_counts, seed_entity_id, candidate_pool]
+        + filter_params
+        + entity_params
+        + [top_k]
+    )
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(papers_sql, params)
+        paper_rows = cur.fetchall()
+    cooccur_papers_ms = _elapsed_ms(t_papers)
+
+    # Map best_neighbor_id client-side so the SQL stays cheap. For each
+    # paper, the strongest neighbor is the highest-cooccur neighbor that
+    # actually appears in the paper — but we already ranked the SQL by
+    # best_cooccur, so the rank-leading neighbor with that cooccur_count
+    # is a faithful explainer.
+    cooccur_to_neighbor: dict[int, int] = {}
+    for nid, c in zip(neighbor_ids, cooccur_counts):
+        # First-seen wins for a given cooccur (neighbors are sorted DESC).
+        cooccur_to_neighbor.setdefault(int(c), int(nid))
+
+    papers: list[dict[str, Any]] = []
+    for row in paper_rows:
+        stub = PaperStub.from_row(row).to_dict()
+        # R7: per-paper auditability — surface the cooccur signal so
+        # agents and reviewers can explain the ranking.
+        best_cooccur = int(row["best_cooccur"]) if row.get("best_cooccur") is not None else 0
+        stub["cooccur_count"] = best_cooccur
+        stub["neighbor_coverage"] = (
+            int(row["neighbor_coverage"]) if row.get("neighbor_coverage") is not None else 0
+        )
+        stub["coverage_score"] = (
+            int(row["coverage_score"]) if row.get("coverage_score") is not None else 0
+        )
+        if best_cooccur in cooccur_to_neighbor:
+            stub["best_neighbor_id"] = cooccur_to_neighbor[best_cooccur]
+        papers.append(stub)
+
+    return SearchResult(
+        papers=papers,
+        total=len(papers),
+        timing_ms={
+            "cooccur_neighbors_ms": cooccur_neighbors_ms,
+            "cooccur_papers_ms": cooccur_papers_ms,
+        },
+        metadata=base_metadata,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Cross-encoder reranker (lazy-loaded, batched inference)
 # ---------------------------------------------------------------------------
 

@@ -1479,6 +1479,24 @@ def create_server(_run_self_test: bool = True):
                                 "genuinely need an unscoped scan (tests, power-user exploration)."
                             ),
                         },
+                        "community_expand": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": (
+                                "When true, run a community-expansion lane (entity "
+                                "co-occurrence retrieval) instead of standard hybrid "
+                                "retrieval. The seed entity is taken from "
+                                "filters.entity_ids (when it has exactly one entry); "
+                                "otherwise the server resolves the query string to a "
+                                "single unambiguous entity. If neither resolves to a "
+                                "unique entity, the tool returns a structured "
+                                "{error_code: 'community_expand_no_seed', ...} response. "
+                                "Super-hub seeds (>50k linked papers) are blocked with a "
+                                "{error_code: 'seed_too_broad', ...} envelope. Off by "
+                                "default — gated behind this flag until per-prop eval "
+                                "lands. See bead scix_experiments-xz4.1.40."
+                            ),
+                        },
                     },
                     "required": ["query"],
                 },
@@ -3245,6 +3263,150 @@ def _maybe_disambiguate(conn: psycopg.Connection, query: str) -> str | None:
     return json.dumps(payload, indent=2, default=str)
 
 
+def _community_expand_no_seed_response(
+    *,
+    query: str,
+    reason: str,
+    candidates: list[dict[str, Any]] | None = None,
+) -> str:
+    """Build the structured ``community_expand_no_seed`` envelope.
+
+    Mirrors the error-envelope conventions from beads ``uerc`` and ``x5jg``:
+    machine-readable ``error_code`` plus a human-readable ``error`` and a
+    ``hint`` pointing at the recovery path. When ``candidates`` is provided,
+    the agent can pick one and re-issue with ``filters.entity_ids=[<id>]``.
+    """
+    payload: dict[str, Any] = {
+        "error": (
+            "community_expand requires a single seed entity. "
+            f"Could not derive one from the request: {reason}."
+        ),
+        "error_code": "community_expand_no_seed",
+        "hint": (
+            "Either pass exactly one filters.entity_ids=[<id>] or use the "
+            "entity tool with action='resolve' to disambiguate the query "
+            "into a single entity_id, then retry community_expand."
+        ),
+        "query": query,
+    }
+    if candidates is not None:
+        payload["candidates"] = candidates
+    return json.dumps(payload, indent=2, default=str)
+
+
+def _resolve_community_expand_seed(
+    conn: psycopg.Connection,
+    query: str,
+    filters: search.SearchFilters,
+) -> tuple[int | None, str | None]:
+    """Resolve a seed entity_id for the community-expand lane.
+
+    Decision tree (per PRD §4):
+        1. Explicit ``filters.entity_ids`` with exactly one id → use it.
+        2. Free-text resolution to a single unambiguous entity → use it.
+        3. Anything else (zero matches, multiple matches, multi-id explicit
+           filter) → return ``(None, json_envelope)`` so the caller can
+           short-circuit with the structured error.
+
+    Returns
+    -------
+    (seed_entity_id, error_response_json)
+        Exactly one of the two is non-None.
+    """
+    if filters.entity_ids is not None:
+        if len(filters.entity_ids) == 1:
+            return int(filters.entity_ids[0]), None
+        return None, _community_expand_no_seed_response(
+            query=query,
+            reason=(
+                f"filters.entity_ids must contain exactly 1 id, "
+                f"got {len(filters.entity_ids)}"
+            ),
+        )
+
+    resolver = EntityResolver(conn)
+    try:
+        candidates = resolver.resolve(query.strip())
+    except Exception:
+        logger.exception("community_expand: EntityResolver.resolve failed")
+        return None, _community_expand_no_seed_response(
+            query=query,
+            reason="entity resolution failed",
+        )
+
+    if not candidates:
+        return None, _community_expand_no_seed_response(
+            query=query,
+            reason="no entity matches the query",
+        )
+
+    if len(candidates) > 1:
+        candidate_dicts = [
+            {
+                "entity_id": c.entity_id,
+                "canonical_name": c.canonical_name,
+                "entity_type": c.entity_type,
+                "source": getattr(c, "source", None),
+                "confidence": getattr(c, "confidence", None),
+            }
+            for c in candidates[:10]
+        ]
+        return None, _community_expand_no_seed_response(
+            query=query,
+            reason=(
+                f"query resolved to {len(candidates)} entities — pick one "
+                f"via filters.entity_ids and retry"
+            ),
+            candidates=candidate_dicts,
+        )
+
+    return int(candidates[0].entity_id), None
+
+
+def _handle_community_expand(
+    conn: psycopg.Connection,
+    query: str,
+    filters: search.SearchFilters,
+    limit: int,
+) -> str:
+    """Run the community-expand lane and serialise the response.
+
+    Lifts ``metadata.error_code='seed_too_broad'`` from the underlying
+    function up to a top-level structured-error response so agents can
+    branch on ``error_code`` without inspecting nested metadata.
+    """
+    seed_id, error_response = _resolve_community_expand_seed(conn, query, filters)
+    if error_response is not None:
+        return error_response
+    assert seed_id is not None  # for type checker
+
+    result = search.community_expand_search(
+        conn,
+        seed_id,
+        top_k=limit,
+        filters=filters,
+    )
+
+    # Lift seed_too_broad from metadata into a top-level envelope. The MCP
+    # contract is that error_code lives at the response root (see x5jg).
+    if result.metadata.get("error_code") == "seed_too_broad":
+        payload = {
+            "error_code": "seed_too_broad",
+            "error": result.metadata.get("error", "seed entity is too broad"),
+            "hint": result.metadata.get(
+                "hint",
+                "Narrow to a more specific entity.",
+            ),
+            "seed_entity_id": result.metadata.get("seed_entity_id"),
+            "seed_paper_count": result.metadata.get("seed_paper_count"),
+            "query": query,
+            "timing_ms": result.timing_ms,
+        }
+        return json.dumps(payload, indent=2, default=str)
+
+    return _result_to_json(result)
+
+
 def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Unified search: hybrid/semantic/keyword.
 
@@ -3281,6 +3443,12 @@ def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
     limit = args.get("limit", 10)
+
+    # Community-expansion lane (bead xz4.1.40). Off by default; gated behind
+    # the explicit ``community_expand`` flag like alias_expansion / ontology
+    # parser. Replaces hybrid retrieval rather than RRF-fusing — see PRD §4.
+    if bool(args.get("community_expand", False)):
+        return _handle_community_expand(conn, query, filters, limit)
 
     if mode == "keyword":
         result = search.lexical_search(conn, query, filters=filters, limit=limit)

@@ -568,67 +568,117 @@ def test_community_backend_returns_empty_when_seed_unresolvable() -> None:
 
 
 def test_community_backend_resolves_via_alias_when_canonical_miss() -> None:
+    """xz4.1.40: backend resolves seed via alias path then delegates to
+    :func:`scix.search.community_expand_search` with the resolved id.
+    """
+    from unittest.mock import patch
+
+    from scix.search import SearchResult
+
     inner = eevp.StubRetrievalBackend()
     cursor = _FakeCursor(
         handlers=[
             ("FROM entities e", []),  # canonical miss
             ("FROM entity_aliases a", [(42, 100)]),  # alias hit → entity_id=42
-            ("FROM document_entities de", [(99, 500)]),  # modal community_id=99
-            (
-                "FROM papers p",
-                [
-                    ("2024X....42...1A", "Paper 42", "abstract 42"),
-                    ("2024X....42...2B", "Paper 43", ""),
-                ],
-            ),
         ]
     )
     backend = eevp.CommunityExpansionBackend(inner=inner, dsn="dbname=scix_test")
     backend._conn = _FakeConn(cursor)
 
-    docs = backend.retrieve(_community_query_gold(seed="JWST"), top_k=2)
+    fake_result = SearchResult(
+        papers=[
+            {
+                "bibcode": "2024X....42...1A",
+                "title": "Paper 42",
+                "abstract_snippet": "abstract 42",
+            },
+            {
+                "bibcode": "2024X....42...2B",
+                "title": "Paper 43",
+                "abstract_snippet": "",
+            },
+        ],
+        total=2,
+        timing_ms={"cooccur_neighbors_ms": 1.0, "cooccur_papers_ms": 1.0},
+        metadata={"seed_entity_id": 42, "neighbor_count": 5},
+    )
+    with patch(
+        "scix.search.community_expand_search", return_value=fake_result
+    ) as mock_fn:
+        docs = backend.retrieve(_community_query_gold(seed="JWST"), top_k=2)
+
     assert len(docs) == 2
     assert docs[0].bibcode == "2024X....42...1A"
     assert docs[0].title == "Paper 42"
-    # Verify the sibling query excluded the seed entity (param[0]) and used the community id (param[1]).
-    siblings_call = [c for c in cursor.executed if "FROM papers p" in c[0]][0]
-    assert siblings_call[1][0] == 42  # seed_entity_id
-    assert siblings_call[1][1] == 99  # community_id
-    assert siblings_call[1][2] == 2  # top_k
+    # The resolver must have produced entity_id=42 and delegated to the lane.
+    assert mock_fn.called
+    call_args, call_kwargs = mock_fn.call_args.args, mock_fn.call_args.kwargs
+    assert 42 in call_args or call_kwargs.get("seed_entity_id") == 42
+    assert call_kwargs.get("top_k") == 2
 
 
 def test_community_backend_returns_empty_when_no_semantic_community() -> None:
+    """xz4.1.40: empty neighborhood from community_expand_search yields []."""
+    from unittest.mock import patch
+
+    from scix.search import SearchResult
+
     inner = eevp.StubRetrievalBackend()
     cursor = _FakeCursor(
         handlers=[
             ("FROM entities e", [(42, 100)]),  # canonical hit
-            ("FROM document_entities de", []),  # no community assigned
         ]
     )
     backend = eevp.CommunityExpansionBackend(inner=inner, dsn="dbname=scix_test")
     backend._conn = _FakeConn(cursor)
-    assert backend.retrieve(_community_query_gold()) == []
+
+    empty_neighborhood = SearchResult(
+        papers=[],
+        total=0,
+        timing_ms={"cooccur_neighbors_ms": 1.0, "cooccur_papers_ms": 0.0},
+        metadata={"seed_entity_id": 42, "neighbor_count": 0},
+    )
+    with patch("scix.search.community_expand_search", return_value=empty_neighborhood):
+        assert backend.retrieve(_community_query_gold()) == []
 
 
 def test_community_backend_picks_highest_paper_count_on_ambiguous_canonical() -> None:
-    """Two entities named 'LIGO' — prefer the one with more linked papers."""
+    """Two entities named 'LIGO' — resolver picks the one with more linked papers,
+    then xz4.1.40's community_expand_search is invoked with that id.
+    """
+    from unittest.mock import patch
+
+    from scix.search import SearchResult
+
     inner = eevp.StubRetrievalBackend()
     cursor = _FakeCursor(
         handlers=[
             # Canonical-name lookup returns the highest-paper-count row
-            # by virtue of the ORDER BY n DESC LIMIT 1 — so we simulate
-            # just the winning row here.
+            # by virtue of the ORDER BY n DESC LIMIT 1 — simulate just
+            # the winning row here.
             ("FROM entities e", [(1588891, 1036)]),
-            ("FROM document_entities de", [(77, 300)]),
-            ("FROM papers p", [("2024LIGO..1", "GW paper", "ab")]),
         ]
     )
     backend = eevp.CommunityExpansionBackend(inner=inner, dsn="dbname=scix_test")
     backend._conn = _FakeConn(cursor)
-    docs = backend.retrieve(_community_query_gold(seed="LIGO"))
+
+    fake_result = SearchResult(
+        papers=[{"bibcode": "2024LIGO..1", "title": "GW paper", "abstract_snippet": "ab"}],
+        total=1,
+        timing_ms={"cooccur_neighbors_ms": 1.0, "cooccur_papers_ms": 1.0},
+        metadata={"seed_entity_id": 1588891, "neighbor_count": 3},
+    )
+    with patch(
+        "scix.search.community_expand_search", return_value=fake_result
+    ) as mock_fn:
+        docs = backend.retrieve(_community_query_gold(seed="LIGO"))
+
     assert len(docs) == 1
-    # Confirm the SQL carries an ORDER BY n DESC so multi-match rows
-    # are disambiguated by paper-link count.
+    # The winning entity_id flows from the resolver into the lane.
+    call_args, call_kwargs = mock_fn.call_args.args, mock_fn.call_args.kwargs
+    assert 1588891 in call_args or call_kwargs.get("seed_entity_id") == 1588891
+    # Confirm the resolver SQL carries an ORDER BY n DESC so multi-match
+    # rows are disambiguated by paper-link count.
     canonical_sql = [c for c in cursor.executed if "FROM entities e" in c[0]][0][0]
     assert "ORDER BY n DESC" in canonical_sql
 

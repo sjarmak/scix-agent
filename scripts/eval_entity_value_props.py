@@ -330,23 +330,18 @@ class CommunityExpansionBackend:
     1. Resolves ``gold.extra['seed_entity']`` to an ``entities.id`` via
        case-insensitive match against ``entities.canonical_name`` or
        ``entity_aliases.alias``.
-    2. Picks the modal ``paper_metrics.community_semantic_medium`` across
-       all papers currently linked to that entity via
-       ``document_entities`` (ignoring ``NULL`` and the ``-1`` outlier
-       sentinel).
-    3. Returns the top-``top_k`` papers in that community ordered by
-       ``paper_metrics.pagerank DESC NULLS LAST``, excluding papers
-       already linked to the seed entity so the judge sees genuine
-       community *siblings* rather than seed-adjacent papers.
+    2. Delegates retrieval to :func:`scix.search.community_expand_search`,
+       which runs the entity co-occurrence lane: rank neighbor entities
+       co-mentioned on the seed's papers, then return papers that mention
+       those neighbors (excluding seed-linked papers so the judge sees
+       genuine *siblings*).
 
     For every other prop the backend delegates to ``inner``.
 
-    Caveat: this is a narrow fix wired into the eval harness only —
-    ``src/scix/search.py`` is intentionally untouched (see bead
-    scix_experiments-xz4.1.34). Semantic communities are topic-based;
-    if the seed entity's papers span multiple topics, the modal
-    community can be broad (e.g. "observational astronomy") rather than
-    mission-specific.
+    History: the original implementation (xz4.1.34) used a paper-Leiden
+    "modal community" heuristic inline — it was a narrow eval-only fix.
+    xz4.1.40 replaced that with a real product feature in
+    :mod:`scix.search`, and this backend now delegates to it.
     """
 
     inner: RetrievalBackend
@@ -406,61 +401,6 @@ class CommunityExpansionBackend:
             row = cur.fetchone()
         return int(row[0]) if row is not None else None
 
-    def _modal_community(self, entity_id: int) -> int | None:
-        """Return the most-populated ``community_semantic_medium`` for the entity.
-
-        Ignores NULL and ``-1`` (outlier sentinel). Returns ``None`` if
-        no papers linked to the entity have a semantic community assigned.
-        """
-        conn = self._get_conn()
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT pm.community_semantic_medium, COUNT(*) AS n
-                FROM document_entities de
-                JOIN paper_metrics pm ON pm.bibcode = de.bibcode
-                WHERE de.entity_id = %s
-                  AND pm.community_semantic_medium IS NOT NULL
-                  AND pm.community_semantic_medium <> -1
-                GROUP BY pm.community_semantic_medium
-                ORDER BY n DESC
-                LIMIT 1
-                """,
-                (entity_id,),
-            )
-            row = cur.fetchone()
-        return int(row[0]) if row is not None else None
-
-    def _community_siblings(
-        self, community_id: int, seed_entity_id: int, top_k: int
-    ) -> list[RetrievalDoc]:
-        """Return ``top_k`` papers in the community, excluding seed-linked papers."""
-        conn = self._get_conn()
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT p.bibcode, p.title, COALESCE(p.abstract, '')
-                FROM papers p
-                JOIN paper_metrics pm ON pm.bibcode = p.bibcode
-                LEFT JOIN document_entities de_seed
-                  ON de_seed.bibcode = p.bibcode AND de_seed.entity_id = %s
-                WHERE pm.community_semantic_medium = %s
-                  AND de_seed.bibcode IS NULL
-                ORDER BY pm.pagerank DESC NULLS LAST
-                LIMIT %s
-                """,
-                (seed_entity_id, community_id, top_k),
-            )
-            rows = cur.fetchall()
-        return [
-            RetrievalDoc(
-                bibcode=str(bibcode),
-                title=str(title or ""),
-                snippet=str(abstract or "")[:400],
-            )
-            for bibcode, title, abstract in rows
-        ]
-
     def retrieve(self, gold: GoldQuery, *, top_k: int = DEFAULT_TOP_K) -> list[RetrievalDoc]:
         if gold.prop != "community_expansion":
             return self.inner.retrieve(gold, top_k=top_k)
@@ -477,15 +417,40 @@ class CommunityExpansionBackend:
                 gold.query_id,
             )
             return []
-        community_id = self._modal_community(entity_id)
-        if community_id is None:
+
+        from scix.search import community_expand_search
+
+        # The community_expansion gold set frames "ecosystem" as
+        # instrument/mission/observatory siblings (e.g. HST → WFC3, STIS,
+        # ACS, COS, STScI). Restricting the Stage-2 neighbor pool to those
+        # types is the documented R4 mitigation (PRD §6 R4 + §10
+        # follow-up). The function default is still None so the MCP
+        # surface ships PRD-spec'd v1; only the eval harness opts in.
+        result = community_expand_search(
+            self._get_conn(),
+            entity_id,
+            top_k=top_k,
+            neighbor_entity_types=("instrument", "mission", "observatory"),
+        )
+        # seed_too_broad and empty-neighborhood both surface as papers=[]
+        # — let the judge score the empty result rather than crashing.
+        if result.metadata.get("error_code") == "seed_too_broad":
             logger.info(
-                "community_expansion: entity_id=%d (query %r) has no semantic community",
+                "community_expansion: seed_entity_id=%d (query %r) blocked as super-hub",
                 entity_id,
                 gold.query_id,
             )
-            return []
-        return self._community_siblings(community_id, entity_id, top_k=top_k)
+
+        docs: list[RetrievalDoc] = []
+        for paper in result.papers[:top_k]:
+            bibcode = str(paper.get("bibcode", ""))
+            title = str(paper.get("title") or "")
+            # community_expand_search returns abstract_snippet (PaperStub),
+            # not the full abstract. The judge only needs the first ~400
+            # chars anyway, so the snippet is sufficient.
+            snippet = str(paper.get("abstract_snippet") or "")[:400]
+            docs.append(RetrievalDoc(bibcode=bibcode, title=title, snippet=snippet))
+        return docs
 
     def close(self) -> None:
         # The inner backend owns the hybrid_search connection; we only
@@ -510,7 +475,7 @@ class SpecificEntityBackend:
        case-insensitive match against ``entities.canonical_name`` first,
        then ``entity_aliases.alias``. On ambiguity (multiple rows with
        the same surface form), the entity with the most paper links
-       wins — matches :class:`CommunityExpansionBackend` policy.
+       wins — same policy used by :class:`CommunityExpansionBackend`.
     2. Returns the top-``top_k`` papers linked to that entity via
        ``document_entities``, ordered by ``paper_metrics.pagerank
        DESC NULLS LAST``. This guarantees results actually mention the
@@ -518,10 +483,10 @@ class SpecificEntityBackend:
 
     For every other prop the backend delegates to ``inner``.
 
-    Caveat (matches :class:`CommunityExpansionBackend`): this is a
-    narrow fix wired into the eval harness only — ``src/scix/search.py``
-    is intentionally untouched (see bead scix_experiments-xz4.1.39).
-    Adding ``specific_entity`` to MCP ``search`` is a separate decision.
+    Caveat: this is a narrow fix wired into the eval harness only —
+    ``src/scix/search.py`` is intentionally untouched (see bead
+    scix_experiments-xz4.1.39). Adding ``specific_entity`` to MCP
+    ``search`` is a separate decision.
     """
 
     inner: RetrievalBackend

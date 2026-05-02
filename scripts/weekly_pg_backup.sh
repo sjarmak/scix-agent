@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# weekly_pg_backup.sh — Weekly pg_dump of irreplaceable derived tables to NAS.
+# weekly_pg_backup.sh — Weekly pg_dump to NAS of the *irreplaceable subset* of
+# derived tables. Excludes the corpus (papers, papers_fulltext, citation_edges,
+# paper_embeddings) by design — see scope block below for what's excluded and why.
 #
 # Scope (per scix_experiments-9ou): research-project risk model. The corpus
 # itself (papers, papers_fulltext, citation_edges) is reproducible from the

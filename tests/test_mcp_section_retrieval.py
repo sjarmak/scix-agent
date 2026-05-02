@@ -206,7 +206,13 @@ class TestRegistration:
         except ImportError:
             pytest.skip("mcp SDK not installed")
 
-        with patch("scix.mcp_server._init_model_impl"):
+        # Force-show: registration is unconditional, deployment-visibility is
+        # gated via _HIDDEN_TOOLS (see mcp_server.py:188-193 for the same
+        # pattern documented for claim_search). This test asserts the wiring
+        # is correct independent of deployment-time gating.
+        with patch("scix.mcp_server._init_model_impl"), patch(
+            "scix.mcp_server._HIDDEN_TOOLS", frozenset()
+        ):
             status = startup_self_test()
 
         assert status["ok"] is True
@@ -221,13 +227,17 @@ class TestRegistration:
         except ImportError:
             pytest.skip("mcp SDK not installed")
 
-        with patch("scix.mcp_server._init_model_impl"):
+        # See test_section_retrieval_appears_in_list_tools — force-show so
+        # this asserts registration, not deployment visibility.
+        with patch("scix.mcp_server._init_model_impl"), patch(
+            "scix.mcp_server._HIDDEN_TOOLS", frozenset()
+        ):
             from scix.mcp_server import create_server
 
             server = create_server(_run_self_test=False)
 
-        handler = server.request_handlers[ListToolsRequest]
-        result = asyncio.run(handler(ListToolsRequest(method="tools/list")))
+            handler = server.request_handlers[ListToolsRequest]
+            result = asyncio.run(handler(ListToolsRequest(method="tools/list")))
         tools = result.root.tools if hasattr(result, "root") else result.tools
         by_name = {t.name: t for t in tools}
         assert "section_retrieval" in by_name

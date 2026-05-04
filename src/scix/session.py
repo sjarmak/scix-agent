@@ -22,6 +22,19 @@ _WORKING_SET_SOFT_LIMIT = 1000
 #: downstream tools that scope queries to the working set.
 _WORKING_SET_HARD_CAP = 200
 
+#: Soft warning threshold for ``focused_papers``. When the focused-papers set
+#: reaches this size, a single warning is logged per session (the
+#: ``_focused_warned`` flag prevents repeat spam). Mirrors the
+#: ``_WORKING_SET_SOFT_LIMIT`` pattern.
+_FOCUSED_SOFT_WARN = 200
+
+#: Hard cap on ``focused_papers``. Once exceeded, oldest bibcodes (FIFO) are
+#: dropped on each ``track_focused`` call so the set never grows beyond this
+#: bound. Long multi-turn sessions previously sent the full unbounded set into
+#: ANY(%s) clauses in temporal_evolution / facet_counts / synthesize fall-through
+#: paths (security review LOW from wave 3uvn/cfh9/2ixv/7avw, 2026-04-27).
+_FOCUSED_HARD_CAP = 500
+
 
 @dataclass(frozen=True)
 class WorkingSetEntry:
@@ -44,7 +57,15 @@ class _SessionData:
 
     working_set: dict[str, WorkingSetEntry] = field(default_factory=dict)
     seen_papers: set[str] = field(default_factory=set)
-    focused_papers: set[str] = field(default_factory=set)
+    # ``focused_papers`` is dict-as-ordered-set: keys are bibcodes, values are
+    # always None. Backed by ``dict`` (not ``set``) so we can apply FIFO
+    # eviction at ``_FOCUSED_HARD_CAP`` — Python dicts preserve insertion order
+    # since 3.7, which gives O(1) membership + O(1) eviction-of-oldest without
+    # a parallel deque. Public API (``get_focused_papers``) hides this detail.
+    focused_papers: dict[str, None] = field(default_factory=dict)
+    # Per-session flag flipped to True the first time the soft warn fires, so
+    # the warning logs exactly once instead of on every track_focused call.
+    _focused_warned: bool = False
 
 
 class SessionState:
@@ -186,10 +207,39 @@ class SessionState:
         """Record a bibcode as focused (inspected via get_paper).
 
         Also adds to seen and working set for backward compatibility.
+
+        The focused-papers store is bounded: a soft warning is logged once
+        per session at :data:`_FOCUSED_SOFT_WARN`, and a FIFO cap of
+        :data:`_FOCUSED_HARD_CAP` evicts oldest bibcodes on overflow. Re-tracking
+        an existing bibcode preserves its original insertion slot so frequently
+        re-touched papers can't indefinitely escape eviction.
         """
         data = self._get(session_id)
-        data.focused_papers.add(bibcode)
+        if bibcode not in data.focused_papers:
+            data.focused_papers[bibcode] = None
         data.seen_papers.add(bibcode)
+
+        # Soft warning — fire once per session at the threshold.
+        if (
+            not data._focused_warned
+            and len(data.focused_papers) >= _FOCUSED_SOFT_WARN
+        ):
+            logger.warning(
+                "Focused papers for session '%s' reached %d entries (soft "
+                "warn: %d, hard cap: %d). Long multi-turn sessions will "
+                "FIFO-evict oldest entries beyond the cap.",
+                session_id,
+                len(data.focused_papers),
+                _FOCUSED_SOFT_WARN,
+                _FOCUSED_HARD_CAP,
+            )
+            data._focused_warned = True
+
+        # Hard cap — FIFO eviction; mirrors add_bibcodes_to_working_set.
+        while len(data.focused_papers) > _FOCUSED_HARD_CAP:
+            oldest = next(iter(data.focused_papers))
+            del data.focused_papers[oldest]
+
         # Also keep working set in sync so existing find_gaps logic works
         if bibcode not in data.working_set:
             self.add_to_working_set(

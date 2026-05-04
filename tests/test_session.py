@@ -6,7 +6,13 @@ import logging
 
 import pytest
 
-from scix.session import SessionState, WorkingSetEntry, _WORKING_SET_SOFT_LIMIT
+from scix.session import (
+    _FOCUSED_HARD_CAP,
+    _FOCUSED_SOFT_WARN,
+    _WORKING_SET_SOFT_LIMIT,
+    SessionState,
+    WorkingSetEntry,
+)
 
 
 class TestWorkingSetEntry:
@@ -111,3 +117,108 @@ class TestSoftLimit:
         assert any("soft limit" in r.message for r in caplog.records)
         # Entry is still added (soft limit, not hard)
         assert state.is_in_working_set("OVERFLOW") is True
+
+
+class TestFocusedPapersCap:
+    """``focused_papers`` is bounded by a soft warn at 200 and a hard FIFO cap at 500.
+
+    Mirrors the ``_WORKING_SET_HARD_CAP`` pattern so long-running multi-turn
+    sessions don't grow unbounded and degrade downstream tools that scope
+    queries to focused papers (see scix_experiments-u0j1).
+    """
+
+    def test_constants(self) -> None:
+        assert _FOCUSED_SOFT_WARN == 200
+        assert _FOCUSED_HARD_CAP == 500
+
+    def test_below_soft_warn_no_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        state = SessionState()
+        with caplog.at_level(logging.WARNING):
+            for i in range(_FOCUSED_SOFT_WARN - 1):  # 199
+                state.track_focused(f"FOC{i:05d}")
+        assert not any("focused" in r.message.lower() for r in caplog.records)
+        assert len(state.get_focused_papers()) == _FOCUSED_SOFT_WARN - 1
+
+    def test_soft_warn_emitted_once_at_threshold(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        state = SessionState()
+        # Add 199 — no warning yet.
+        for i in range(_FOCUSED_SOFT_WARN - 1):
+            state.track_focused(f"FOC{i:05d}")
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            # 200th entry triggers the warning.
+            state.track_focused("THRESHOLD")
+            # Subsequent entries must NOT re-emit (warn-once per session).
+            for i in range(50):
+                state.track_focused(f"AFTER{i:05d}")
+
+        focused_warnings = [
+            r for r in caplog.records if "focused" in r.message.lower()
+        ]
+        assert len(focused_warnings) == 1
+        assert "soft" in focused_warnings[0].message.lower()
+
+    def test_at_hard_cap_no_eviction(self) -> None:
+        state = SessionState()
+        for i in range(_FOCUSED_HARD_CAP):  # 500
+            state.track_focused(f"FOC{i:05d}")
+        focused = state.get_focused_papers()
+        assert len(focused) == _FOCUSED_HARD_CAP
+        # First-inserted entry is still present.
+        assert "FOC00000" in focused
+        assert f"FOC{_FOCUSED_HARD_CAP - 1:05d}" in focused
+
+    def test_above_hard_cap_evicts_oldest_fifo(self) -> None:
+        state = SessionState()
+        for i in range(_FOCUSED_HARD_CAP):  # 500
+            state.track_focused(f"FOC{i:05d}")
+        # 501st entry must evict the oldest (FIFO).
+        state.track_focused("OVERFLOW")
+
+        focused = set(state.get_focused_papers())
+        assert len(focused) == _FOCUSED_HARD_CAP
+        assert "OVERFLOW" in focused
+        assert "FOC00000" not in focused  # oldest evicted
+        assert "FOC00001" in focused      # second-oldest survives
+
+    def test_eviction_order_strict_fifo(self) -> None:
+        """Adding N papers above the cap evicts exactly the N oldest."""
+        state = SessionState()
+        for i in range(_FOCUSED_HARD_CAP):
+            state.track_focused(f"FOC{i:05d}")
+        for i in range(5):
+            state.track_focused(f"NEW{i:05d}")
+
+        focused = set(state.get_focused_papers())
+        assert len(focused) == _FOCUSED_HARD_CAP
+        # Five oldest evicted.
+        for i in range(5):
+            assert f"FOC{i:05d}" not in focused
+        # Sixth-oldest is now the oldest survivor.
+        assert "FOC00005" in focused
+        for i in range(5):
+            assert f"NEW{i:05d}" in focused
+
+    def test_re_track_does_not_change_eviction_order(self) -> None:
+        """Re-tracking an existing bibcode keeps its original insertion slot.
+
+        This guarantees that "frequently re-touched" papers don't bubble up to
+        the front and protect themselves indefinitely from FIFO eviction —
+        the cap remains a true bound on session age, not a recency heuristic.
+        """
+        state = SessionState()
+        for i in range(_FOCUSED_HARD_CAP):
+            state.track_focused(f"FOC{i:05d}")
+        # Re-track the oldest several times — this must NOT move it to the tail.
+        for _ in range(10):
+            state.track_focused("FOC00000")
+        # One more push past the cap — FOC00000 should still be the one evicted.
+        state.track_focused("OVERFLOW")
+        focused = set(state.get_focused_papers())
+        assert "FOC00000" not in focused
+        assert "OVERFLOW" in focused

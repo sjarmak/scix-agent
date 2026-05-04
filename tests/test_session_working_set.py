@@ -266,6 +266,55 @@ class TestTemporalEvolutionWorkingSet:
         result = json.loads(result_json)
         assert "error" in result
 
+    @patch("scix.search.temporal_evolution")
+    def test_caps_resolved_bibcodes_at_200(self, mock_te: MagicMock) -> None:
+        """Cap the bibcode list passed to search.temporal_evolution at 200.
+
+        Bead scix_experiments-k6w0: focused_papers caps at 500 (FIFO, from
+        bead u0j1) and explicit ``args["bibcodes"]`` is unbounded, so the
+        resolver can hand off up to 500+ bibcodes. The handler must apply
+        the same 200-cap that ``find_gaps`` (mcp_server.py:4732) and
+        ``synthesize_findings`` (``_MAX_WORKING_SET_BIBCODES`` in
+        synthesize.py) use, to keep the ANY(%s) array bounded consistently
+        across tools.
+        """
+        from scix.search import SearchResult
+
+        mock_te.return_value = SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={},
+            metadata={"mode": "citations", "yearly_counts": []},
+        )
+        # Populate focused papers beyond the 200-cap.
+        for i in range(250):
+            mcp_server._session_state.track_focused(f"BIB{i:04d}")
+        conn = _make_conn()
+        mcp_server._dispatch_tool(conn, "temporal_evolution", {})
+        kwargs = mock_te.call_args.kwargs
+        assert kwargs.get("bibcodes") is not None
+        assert len(kwargs["bibcodes"]) == 200
+
+    @patch("scix.search.temporal_evolution")
+    def test_caps_explicit_bibcodes_at_200(self, mock_te: MagicMock) -> None:
+        """Same 200-cap applies when caller passes ``bibcodes=[...]`` explicitly."""
+        from scix.search import SearchResult
+
+        mock_te.return_value = SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={},
+            metadata={"mode": "citations", "yearly_counts": []},
+        )
+        explicit = [f"EX{i:04d}" for i in range(300)]
+        conn = _make_conn()
+        mcp_server._dispatch_tool(conn, "temporal_evolution", {"bibcodes": explicit})
+        kwargs = mock_te.call_args.kwargs
+        assert kwargs.get("bibcodes") is not None
+        assert len(kwargs["bibcodes"]) == 200
+        # FIFO order preserved: first 200 of the explicit list.
+        assert kwargs["bibcodes"] == explicit[:200]
+
 
 # ---------------------------------------------------------------------------
 # citation_traverse multi-bibcode mode

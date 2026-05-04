@@ -3829,7 +3829,11 @@ def _handle_temporal_evolution(conn: psycopg.Connection, args: dict[str, Any]) -
     if year_start is not None and year_end is not None and year_end < year_start:
         raise ValueError(f"year_end ({year_end}) must be >= year_start ({year_start})")
 
-    bibcodes = _resolve_working_set_bibcodes(args)
+    # Cap at 200 to match find_gaps (mcp_server.py:4732) and
+    # synthesize._MAX_WORKING_SET_BIBCODES. focused_papers FIFO at 500
+    # (bead u0j1) and explicit args["bibcodes"] is unbounded — without
+    # this cap the ANY(%s) array could grow past the canonical ceiling.
+    bibcodes = _resolve_working_set_bibcodes(args)[:200]
     bibcode_or_query = args.get("bibcode_or_query")
 
     if not bibcodes and not bibcode_or_query:

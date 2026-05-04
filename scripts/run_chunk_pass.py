@@ -105,6 +105,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Refuse to run unless invoked under systemd-run scope (CLAUDE.md rule).",
     )
     p.add_argument("--dsn", default=None, help="Database DSN; defaults to SCIX_DSN.")
+    p.add_argument(
+        "--include-closed",
+        action="store_true",
+        help=(
+            "Process closed-access papers as well as OA/preprints. Default "
+            "is OA-only (bead 8584 publisher-policy gate). Use only with "
+            "explicit operator approval."
+        ),
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
@@ -149,6 +158,23 @@ def main(argv: list[str] | None = None) -> int:
 
         ensure_collection(qdrant_client, collection_name=args.collection)
 
+    logger.info(
+        "Running INDUS chunk-embedding pass (dry_run=%s, since=%s, max=%s, "
+        "version=%s, oa_only=%s)",
+        args.dry_run,
+        args.since_bibcode,
+        args.max_papers,
+        args.parser_version,
+        not args.include_closed,
+    )
+    if args.include_closed:
+        logger.warning(
+            "--include-closed is ACTIVE: chunk-embedding pass will run on "
+            "closed-access papers as well as OA/preprints. Confirm operator "
+            "approval and publisher-agreement (Wiley/Springer TDM) clearance "
+            "before each run."
+        )
+
     conn = get_connection(args.dsn)
     try:
         if args.dry_run:
@@ -164,6 +190,7 @@ def main(argv: list[str] | None = None) -> int:
             parser_version=args.parser_version,
             dry_run=args.dry_run,
             collection_name=args.collection,
+            oa_only=not args.include_closed,
         )
         logger.info(
             "TOTAL: papers_seen=%d papers_with_chunks=%d chunks_emitted=%d "

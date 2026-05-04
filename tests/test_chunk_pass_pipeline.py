@@ -9,15 +9,14 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
 qdrant_client = pytest.importorskip("qdrant_client")
 
 from scix.extract.chunk_pass import (  # noqa: E402
-    BatchStats,
     CHUNKS_COLLECTION,
+    BatchStats,
     Chunk,
     INDUSEmbedder,
     chunk_point_id,
@@ -28,11 +27,11 @@ from scix.extract.chunk_pass import (  # noqa: E402
 )
 from scix.extract.chunk_pass.pipeline import (  # noqa: E402
     PaperWithMeta,
+    _build_source_sql,
     iter_paper_batches,
     process_batch,
 )
 from scix.extract.chunk_pass.uploader import _checkpoint_key  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Stub infrastructure
@@ -340,6 +339,40 @@ class TestIterPaperBatches:
         conn = StubConn(script=[])
         with pytest.raises(ValueError):
             list(iter_paper_batches(conn, batch_size=0))
+
+    def test_oa_only_default_appends_predicate_to_sql(self) -> None:
+        # Default behaviour gates on papers_is_oa_or_preprint(p)
+        # — bead 8584 / migration 068.
+        conn = StubConn(script=[[_paper_row("2024A.....1A")]])
+        list(iter_paper_batches(conn, batch_size=1, max_papers=1))
+        sql, _params = conn.executed[0]
+        assert "papers_is_oa_or_preprint(p)" in sql
+
+    def test_oa_only_false_drops_predicate_from_sql(self) -> None:
+        # --include-closed flips oa_only=False; the gate predicate must
+        # disappear from the executed SQL.
+        conn = StubConn(script=[[_paper_row("2024A.....1A")]])
+        list(iter_paper_batches(conn, batch_size=1, max_papers=1, oa_only=False))
+        sql, _params = conn.executed[0]
+        assert "papers_is_oa_or_preprint" not in sql
+
+
+class TestBuildSourceSql:
+    def test_oa_only_true_inserts_predicate_before_order_by(self) -> None:
+        sql = _build_source_sql(oa_only=True)
+        assert "papers_is_oa_or_preprint(p)" in sql
+        # Predicate must come before ORDER BY so it acts as a filter.
+        assert sql.index("papers_is_oa_or_preprint(p)") < sql.index("ORDER BY")
+
+    def test_oa_only_false_omits_predicate(self) -> None:
+        sql = _build_source_sql(oa_only=False)
+        assert "papers_is_oa_or_preprint" not in sql
+
+    def test_module_constant_matches_oa_only_true(self) -> None:
+        # _SOURCE_SQL keeps the safe default for any external readers.
+        from scix.extract.chunk_pass.pipeline import _SOURCE_SQL
+
+        assert _SOURCE_SQL == _build_source_sql(oa_only=True)
 
 
 # ---------------------------------------------------------------------------

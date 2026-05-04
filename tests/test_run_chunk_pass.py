@@ -34,6 +34,7 @@ REQUIRED_FLAGS = (
     "--dry-run",
     "--require-batch-scope",
     "--dsn",
+    "--include-closed",
     "--verbose",
 )
 
@@ -93,6 +94,21 @@ def test_missing_qdrant_url_with_dry_run_does_not_trip_gate() -> None:
         f"--dry-run should waive QDRANT_URL gate; got exit 2\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
+
+
+def test_include_closed_help_mentions_publisher_policy() -> None:
+    """The --include-closed flag advertises the publisher-policy gate (bead 8584)."""
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    # Help text must explain that the default is OA-only and that opt-in
+    # requires explicit operator approval.
+    assert "OA-only" in result.stdout or "OA/preprint" in result.stdout
+    assert "operator approval" in result.stdout
 
 
 def test_require_batch_scope_without_systemd_scope_exits_2() -> None:

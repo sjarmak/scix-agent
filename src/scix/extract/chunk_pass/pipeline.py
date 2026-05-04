@@ -119,20 +119,37 @@ class BatchStats:
 # ---------------------------------------------------------------------------
 
 
-_SOURCE_SQL = (
-    "SELECT pf.bibcode, "
-    "       pf.sections, "
-    "       p.year, "
-    "       p.arxiv_class, "
-    "       m.community_id_medium AS community_id_med, "
-    "       p.doctype "
-    "FROM papers_fulltext pf "
-    "JOIN papers p ON p.bibcode = pf.bibcode "
-    "LEFT JOIN paper_metrics m ON m.bibcode = pf.bibcode "
-    "WHERE pf.bibcode > %s "
-    "ORDER BY pf.bibcode ASC "
-    "LIMIT %s"
-)
+def _build_source_sql(oa_only: bool) -> str:
+    """Compose the per-batch source SELECT.
+
+    ``oa_only`` (default True at the call sites) appends
+    ``papers_is_oa_or_preprint(p)`` to the WHERE clause — see migration 068
+    and ``scix.oa_gate`` — so the chunk-embedding pipeline defaults to
+    OA/preprint papers only. Operators wanting closed-access papers must
+    opt in via ``oa_only=False`` (CLI: ``--include-closed``).
+    """
+    oa_clause = "  AND papers_is_oa_or_preprint(p) " if oa_only else ""
+    return (
+        "SELECT pf.bibcode, "
+        "       pf.sections, "
+        "       p.year, "
+        "       p.arxiv_class, "
+        "       m.community_id_medium AS community_id_med, "
+        "       p.doctype "
+        "FROM papers_fulltext pf "
+        "JOIN papers p ON p.bibcode = pf.bibcode "
+        "LEFT JOIN paper_metrics m ON m.bibcode = pf.bibcode "
+        "WHERE pf.bibcode > %s "
+        f"{oa_clause}"
+        "ORDER BY pf.bibcode ASC "
+        "LIMIT %s"
+    )
+
+
+#: Backwards-compatible default SQL (oa_only=True). Kept as a module-level
+#: constant for tests and external callers that imported the symbol; matches
+#: the default behaviour of :func:`iter_paper_batches`.
+_SOURCE_SQL = _build_source_sql(oa_only=True)
 
 
 def _first_or_none(arr: Any) -> str | None:
@@ -169,12 +186,17 @@ def iter_paper_batches(
     batch_size: int = DEFAULT_BATCH_SIZE,
     since_bibcode: str | None = None,
     max_papers: int | None = None,
+    oa_only: bool = True,
 ) -> Iterator[list[PaperWithMeta]]:
     """Stream papers in deterministic ``bibcode`` order via keyset pagination.
 
     ``since_bibcode`` sets a watermark for resumability — only papers strictly
     greater than that bibcode are yielded. ``max_papers`` caps total yield
-    (sample / smoke runs).
+    (sample / smoke runs). ``oa_only`` (default True) gates the query on the
+    ``papers_is_oa_or_preprint(papers)`` SQL function — see migration 068
+    and ``scix.oa_gate`` — so body-AI pipelines default to OA/preprint
+    papers only. Operators wanting closed-access papers must opt in via
+    ``oa_only=False`` (CLI: ``--include-closed``).
 
     Keyset pagination (``WHERE bibcode > $watermark ORDER BY bibcode LIMIT N``)
     is used instead of a server-side named cursor because the caller commits
@@ -185,6 +207,7 @@ def iter_paper_batches(
     if batch_size <= 0:
         raise ValueError(f"batch_size must be positive, got {batch_size}")
 
+    sql = _build_source_sql(oa_only=oa_only)
     watermark = since_bibcode or ""
     remaining = max_papers
     while True:
@@ -192,7 +215,7 @@ def iter_paper_batches(
         if limit <= 0:
             return
         with conn.cursor() as cur:
-            cur.execute(_SOURCE_SQL, (watermark, limit))
+            cur.execute(sql, (watermark, limit))
             rows = cur.fetchall()
         if not rows:
             return
@@ -324,6 +347,7 @@ def run(
     dry_run: bool = False,
     log_every: int = 1,
     collection_name: str = CHUNKS_COLLECTION,
+    oa_only: bool = True,
 ) -> BatchStats:
     """Stream batches, chunk + embed + upsert, checkpoint, return totals.
 
@@ -335,6 +359,10 @@ def run(
     With ``dry_run=True`` the pipeline still chunks + embeds (so we can
     observe volume) but skips both the Qdrant upsert and the
     ``ingest_log`` checkpoint, leaving the source store untouched.
+
+    ``oa_only`` (default True) gates the source SELECT on the
+    ``papers_is_oa_or_preprint`` function so body-AI ingest defaults to
+    OA/preprint papers only — see :func:`iter_paper_batches`.
     """
     papers_seen = 0
     papers_with_chunks = 0
@@ -351,6 +379,7 @@ def run(
         batch_size=batch_size,
         since_bibcode=since_bibcode,
         max_papers=max_papers,
+        oa_only=oa_only,
     ):
         first_bibcode = batch[0].bibcode
         key = _checkpoint_key(first_bibcode)
@@ -417,6 +446,7 @@ __all__ = [
     "DEFAULT_PARSER_VERSION",
     "BatchStats",
     "PaperWithMeta",
+    "_build_source_sql",
     "iter_paper_batches",
     "process_batch",
     "run",

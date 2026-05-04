@@ -83,8 +83,8 @@ Body-AI scripts (gated):
 - `scripts/run_ner_bodies.py`
 - `scripts/extract_citation_contexts.py`
 - `python -m scix.embeddings.section_pipeline`
+- `scripts/run_chunk_pass.py` — INDUS body-chunk → Qdrant pipeline; gated under bead `scix_experiments-6eix` mirroring the same `oa_only=True` default + `--include-closed` opt-in pattern.
 
 Out-of-scope here, gated separately or not body-AI:
 
 - Abstract-only AI pipelines (universally indexable).
-- `src/scix/extract/chunk_pass/pipeline.py` — additional body-AI pipeline (INDUS body-chunk → Qdrant) found during 8584 review; tracked under follow-up bead `scix_experiments-6eix`.

@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import shutil
 import sys
 from collections.abc import Mapping
 
@@ -35,6 +36,12 @@ from scix.db import DEFAULT_DSN, is_production_dsn, redact_dsn
 logger = logging.getLogger(__name__)
 
 INGEST_LOG_BASE_FILENAME = "citctx_full_backfill_2026"
+
+# Free-disk floor for the citation_contexts shard backfill (bead 6hr7 AC d).
+# Full population projection is ~232 GB; a single shard adds ~58 GB. The
+# 50 GB floor leaves headroom for WAL + autovacuum bursts during the run.
+DEFAULT_MIN_FREE_GB = 50
+DEFAULT_FREE_DISK_PATH = "/"
 
 
 def parse_shard(spec: str) -> tuple[int, int]:
@@ -85,6 +92,37 @@ def enforce_prod_guard(
             os.path.basename(sys.argv[0] or __file__),
         )
         raise SystemExit(2)
+
+
+def enforce_free_disk_guard(
+    *,
+    path: str,
+    min_free_gb: int,
+) -> None:
+    """Refuse to run if free disk on *path* is below *min_free_gb*.
+
+    Citation_contexts shard runs add ~58 GB each and the full backfill
+    projects to ~232 GB; a 50 GB floor leaves headroom for WAL +
+    autovacuum bursts. Raises :class:`SystemExit` (code 3) so the script
+    surfaces a non-zero exit distinct from the prod-guard's exit code 2.
+    """
+    usage = shutil.disk_usage(path)
+    free_gb = usage.free / (1024**3)
+    if free_gb < min_free_gb:
+        logger.error(
+            "Refusing to run: free disk on %s is %.1f GB, below the %d GB floor. "
+            "Free space, lower SCIX_MIN_FREE_GB, or pass --min-free-gb to override.",
+            path,
+            free_gb,
+            min_free_gb,
+        )
+        raise SystemExit(3)
+    logger.info(
+        "Free-disk guard: %.1f GB free on %s (floor %d GB).",
+        free_gb,
+        path,
+        min_free_gb,
+    )
 
 
 def ingest_log_filename_for_shard(shard: tuple[int, int] | None) -> str:
@@ -155,6 +193,26 @@ def main(argv: list[str] | None = None) -> int:
             "explicit operator approval."
         ),
     )
+    parser.add_argument(
+        "--min-free-gb",
+        type=int,
+        default=int(os.environ.get("SCIX_MIN_FREE_GB", DEFAULT_MIN_FREE_GB)),
+        help=(
+            "Minimum free disk in GB on --free-disk-path before the run is "
+            f"allowed to start (default: {DEFAULT_MIN_FREE_GB}, env: "
+            "SCIX_MIN_FREE_GB). Enforced regardless of --allow-prod."
+        ),
+    )
+    parser.add_argument(
+        "--free-disk-path",
+        type=str,
+        default=os.environ.get("SCIX_FREE_DISK_PATH", DEFAULT_FREE_DISK_PATH),
+        help=(
+            f"Filesystem path to check for free space (default: "
+            f"{DEFAULT_FREE_DISK_PATH!r}, env: SCIX_FREE_DISK_PATH). "
+            "Should resolve to the partition holding the Postgres data dir."
+        ),
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -171,6 +229,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dsn = args.dsn if args.dsn else DEFAULT_DSN
     enforce_prod_guard(dsn=dsn, allow_prod=args.allow_prod, env=os.environ)
+    enforce_free_disk_guard(path=args.free_disk_path, min_free_gb=args.min_free_gb)
 
     ingest_log_filename = None if args.no_ingest_log else ingest_log_filename_for_shard(shard)
 

@@ -1,0 +1,54 @@
+# scix-citation-contexts-backfill.service — bead scix_experiments-6hr7
+#
+# User-level systemd service that runs one shard of the citation_contexts
+# backfill plus the post-shard chain (intent + v_claim_edges refresh).
+#
+# Shard rotation: $(date +%j) % 4 — day-of-year mod 4. Each daily firing
+# advances to the next shard, so all four shards are touched every 4 days.
+# Manual re-runs invoke scripts/run_citation_contexts_shard.sh directly
+# with an explicit shard index.
+#
+# Install (one time, as user `ds` on the prod host):
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/systemd/scix-citation-contexts-backfill.service ~/.config/systemd/user/
+#   cp deploy/systemd/scix-citation-contexts-backfill.timer ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now scix-citation-contexts-backfill.timer
+#
+# The service is Type=oneshot — exit code propagates to the timer journal.
+# Failure leaves the timer armed for the next day; partial state in
+# citation_contexts and ingest_log is preserved for the next shard run.
+
+[Unit]
+Description=SciX citation_contexts shard backfill (one shard per day, 6hr7)
+Documentation=https://github.com/sjarmak/scix-agent
+Wants=network-online.target postgresql.service
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/scix_experiments
+ExecStart=/usr/bin/env bash -c 'exec %h/projects/scix_experiments/scripts/run_citation_contexts_shard.sh $(( $(date +%%j) %% 4 ))'
+
+# scix-batch puts the run inside a transient systemd scope with
+# MemoryHigh=20G/MemoryMax=30G + ManagedOOMPreference=avoid so oomd kills
+# the job before picking the gascity supervisor. The wrapper itself
+# invokes scix-batch; this unit just provides the plumbing.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+# Keep the service journal independent from the timer journal so failures
+# are easy to read without interleaved firing-time noise.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=scix-citctx
+
+# Citation_contexts processes one shard per run; even worst-case shard
+# runs land within 24h. The timer fires once daily so a 22h timeout is
+# the safe upper bound — beyond that, something is wrong, and a kill is
+# better than overlapping the next firing.
+TimeoutStartSec=22h
+KillMode=mixed
+Restart=no
+
+[Install]
+WantedBy=default.target

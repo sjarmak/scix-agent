@@ -1,0 +1,31 @@
+# scix-citation-contexts-backfill.timer — bead scix_experiments-6hr7
+#
+# Daily timer for the citation_contexts shard backfill. Pairs with
+# scix-citation-contexts-backfill.service (see header there for install
+# steps and the shard-rotation rationale).
+
+[Unit]
+Description=Daily fire for SciX citation_contexts shard backfill (6hr7)
+Documentation=https://github.com/sjarmak/scix-agent
+
+[Timer]
+# Runs at 02:00 local time every day. Persistent=true means a missed
+# firing (host off, suspend, etc.) is caught up on next boot rather than
+# silently skipped — important for a backfill where a missed shard delays
+# completion by 4 days under the day-of-year-mod-4 rotation.
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+
+# Spread the start across a 30-min window so multiple cohabiting timers
+# (daily_sync, etc.) don't all fight for IO + Postgres connections at
+# the same minute.
+RandomizedDelaySec=30min
+
+# Pin to wall-clock UTC where possible to make journal correlation with
+# Postgres logs straightforward. Set to false to fall back to local time.
+AccuracySec=1min
+
+Unit=scix-citation-contexts-backfill.service
+
+[Install]
+WantedBy=timers.target

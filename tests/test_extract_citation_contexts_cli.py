@@ -5,6 +5,8 @@ Covers:
 - ``enforce_prod_guard`` mirrors the pattern in
   ``backfill_part_of_inheritance.py``: refuses prod DSN without
   ``--allow-prod``, refuses ``--allow-prod`` outside a systemd scope.
+- ``enforce_free_disk_guard`` (bead 6hr7 AC d) refuses to run when free
+  disk is below the configured floor.
 - ``ingest_log_filename_for_shard`` derives the canonical filename used
   to track progress in the ``ingest_log`` table.
 """
@@ -13,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from collections import namedtuple
 from pathlib import Path
 
 import pytest
@@ -120,6 +123,107 @@ class TestEnforceProdGuard:
             allow_prod=False,
             env={},
         )
+
+
+# ---------------------------------------------------------------------------
+# enforce_free_disk_guard (bead 6hr7 AC d)
+# ---------------------------------------------------------------------------
+
+
+_FakeDiskUsage = namedtuple("_FakeDiskUsage", ["total", "used", "free"])
+
+
+class TestEnforceFreeDiskGuard:
+    """The free-disk guard runs *after* prod-guard, so its sole job is to
+    refuse to start a shard run when the partition holding the Postgres
+    data dir is below the configured floor.
+    """
+
+    def test_passes_when_free_above_floor(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # 100 GB free, 50 GB floor — should not raise.
+        monkeypatch.setattr(
+            extract_cli.shutil,
+            "disk_usage",
+            lambda path: _FakeDiskUsage(
+                total=200 * 1024**3, used=100 * 1024**3, free=100 * 1024**3
+            ),
+        )
+        extract_cli.enforce_free_disk_guard(path="/", min_free_gb=50)
+
+    def test_passes_at_exact_floor(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Exactly 50 GB free with a 50 GB floor passes (>= comparison).
+        monkeypatch.setattr(
+            extract_cli.shutil,
+            "disk_usage",
+            lambda path: _FakeDiskUsage(
+                total=200 * 1024**3, used=150 * 1024**3, free=50 * 1024**3
+            ),
+        )
+        extract_cli.enforce_free_disk_guard(path="/", min_free_gb=50)
+
+    def test_refuses_when_below_floor(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # 30 GB free, 50 GB floor — should raise SystemExit(3).
+        monkeypatch.setattr(
+            extract_cli.shutil,
+            "disk_usage",
+            lambda path: _FakeDiskUsage(
+                total=200 * 1024**3, used=170 * 1024**3, free=30 * 1024**3
+            ),
+        )
+        with pytest.raises(SystemExit) as exc:
+            extract_cli.enforce_free_disk_guard(path="/", min_free_gb=50)
+        assert exc.value.code == 3
+
+    def test_refuses_when_just_below_floor(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # 49.9 GB free, 50 GB floor — should raise SystemExit(3).
+        monkeypatch.setattr(
+            extract_cli.shutil,
+            "disk_usage",
+            lambda path: _FakeDiskUsage(
+                total=200 * 1024**3,
+                used=200 * 1024**3 - int(49.9 * 1024**3),
+                free=int(49.9 * 1024**3),
+            ),
+        )
+        with pytest.raises(SystemExit) as exc:
+            extract_cli.enforce_free_disk_guard(path="/", min_free_gb=50)
+        assert exc.value.code == 3
+
+    def test_distinct_exit_code_from_prod_guard(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Operators distinguish the failure mode by exit code:
+        # 2 = prod-guard, 3 = free-disk guard.
+        monkeypatch.setattr(
+            extract_cli.shutil,
+            "disk_usage",
+            lambda path: _FakeDiskUsage(
+                total=200 * 1024**3, used=199 * 1024**3, free=1 * 1024**3
+            ),
+        )
+        with pytest.raises(SystemExit) as disk_exc:
+            extract_cli.enforce_free_disk_guard(path="/", min_free_gb=50)
+        with pytest.raises(SystemExit) as prod_exc:
+            extract_cli.enforce_prod_guard(
+                dsn="dbname=scix",
+                allow_prod=False,
+                env={"INVOCATION_ID": "abc"},
+            )
+        assert disk_exc.value.code == 3
+        assert prod_exc.value.code == 2
 
 
 # ---------------------------------------------------------------------------

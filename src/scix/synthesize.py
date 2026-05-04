@@ -626,20 +626,26 @@ def _fetch_citation_excerpts(
                  char_offset ASC NULLS LAST
     """
     out: dict[str, list[dict[str, Any]]] = {}
-    with conn.cursor() as cur:
-        cur.execute(sql, (list(bibcodes),))
-        for row in cur.fetchall():
-            target = row[0]
-            bucket = out.setdefault(target, [])
-            if len(bucket) >= _CITATION_EXCERPTS_MAX_PER_PAPER:
-                continue  # cap reached; skip the rest for this target
-            bucket.append(
-                {
-                    "context_text": row[1],
-                    "intent": row[2],
-                    "citing_bibcode": row[3],
-                }
-            )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (list(bibcodes),))
+            rows = cur.fetchall()
+    except psycopg.Error as exc:
+        # Bead vm1r: see _fetch_paper_metadata for rationale.
+        logger.warning("synthesize.citation_excerpts: query failed: %s", exc)
+        return {}
+    for row in rows:
+        target = row[0]
+        bucket = out.setdefault(target, [])
+        if len(bucket) >= _CITATION_EXCERPTS_MAX_PER_PAPER:
+            continue  # cap reached; skip the rest for this target
+        bucket.append(
+            {
+                "context_text": row[1],
+                "intent": row[2],
+                "citing_bibcode": row[3],
+            }
+        )
     return out
 
 

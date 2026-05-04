@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import bisect
+import time
+
 import pytest
 
 from scix.citation_context import (
@@ -784,9 +787,6 @@ class TestExtractAuthorYearOverlapPerfScaling:
         Mirrors the inner loop of extract_author_year_citations so we
         measure exactly the data structure swap targeted by 3ozn.
         """
-        import bisect
-        import time
-
         spans = self._synth_disjoint_spans(n)
         best = float("inf")
         for _ in range(repeats):
@@ -831,7 +831,13 @@ class TestExtractAuthorYearOverlapPerfScaling:
         """Sanity bound: 10K accepts must finish in <100ms on this host.
 
         Linear-scan implementation needs ~1.1s at this scale; bisect
-        comfortably finishes in single-digit ms.
+        comfortably finishes in single-digit ms. Use ``repeats=3`` and the
+        best-of measurement so a single scheduler stall on a loaded machine
+        doesn't false-positive (e.g. running alongside the gascity
+        supervisor or an embedding pipeline — see CLAUDE.md §Memory
+        isolation).
         """
-        t_10k = self._time_overlap_check_loop(10_000, repeats=1)
+        t_10k = self._time_overlap_check_loop(10_000, repeats=3)
+        if t_10k <= 0:
+            pytest.skip("perf_counter resolution too coarse for this measurement")
         assert t_10k < 0.1, f"10K overlap-check loop took {t_10k:.3f}s (expected <100ms)"

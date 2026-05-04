@@ -8,14 +8,13 @@ Acceptance coverage:
 * (d) intent and intent_weight surfaced on every Hop
 * (e) confidence in [0, 1]
 
-All tests use a fake DB pool (MagicMock cursor with canned fetchall results)
+All tests use a hand-rolled fake DB pool (cursor with canned fetchall results)
 and a fake INDUS embedder so they run fast and offline.
 """
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
 
 import psycopg
 import pytest
@@ -23,13 +22,11 @@ import pytest
 from scix.claim_blame import (
     DEFAULT_INTENT_WEIGHT,
     INTENT_WEIGHTS,
-    Hop,
     _lookup_retractions,
     _walk_reverse_references,
     claim_blame,
 )
 from scix.research_scope import ResearchScope
-
 
 # ---------------------------------------------------------------------------
 # Fake DB plumbing
@@ -61,8 +58,8 @@ class _FakeCursor:
     def __enter__(self) -> _FakeCursor:
         return self
 
-    def __exit__(self, *exc_info: Any) -> bool:
-        return False
+    def __exit__(self, *exc_info: Any) -> None:
+        return None
 
     def execute(self, sql: str, params: Any = None) -> None:
         sql_lower = sql.lower()
@@ -114,8 +111,8 @@ class _PoolCM:
     def __enter__(self) -> _FakeConnection:
         return self._conn
 
-    def __exit__(self, *exc_info: Any) -> bool:
-        return False
+    def __exit__(self, *exc_info: Any) -> None:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -507,8 +504,8 @@ class _RaisingCursor:
     def __enter__(self) -> _RaisingCursor:
         return self
 
-    def __exit__(self, *exc_info: Any) -> bool:
-        return False
+    def __exit__(self, *exc_info: Any) -> None:
+        return None
 
     def execute(self, _sql: str, _params: Any = None) -> None:
         raise psycopg.Error("simulated DB failure")
@@ -522,18 +519,24 @@ class _RaisingConnection:
         return _RaisingCursor()
 
 
-def test_walk_reverse_references_returns_empty_on_psycopg_error() -> None:
+def test_walk_reverse_references_returns_empty_on_psycopg_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """A DB failure during the v_claim_edges scan must degrade to []."""
-    out = _walk_reverse_references(
-        _RaisingConnection(),  # type: ignore[arg-type]
-        "2010ApJ...700..123A",
-        ResearchScope(),
-        limit=10,
-    )
+    with caplog.at_level("WARNING", logger="scix.claim_blame"):
+        out = _walk_reverse_references(
+            _RaisingConnection(),  # type: ignore[arg-type]
+            "2010ApJ...700..123A",
+            ResearchScope(),
+            limit=10,
+        )
     assert out == []
+    assert any("reverse-reference walk" in r.message for r in caplog.records)
 
 
-def test_lookup_retractions_returns_empty_set_on_psycopg_error() -> None:
+def test_lookup_retractions_returns_empty_set_on_psycopg_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """A DB failure during retraction lookup must fail OPEN (empty set).
 
     Failing open means the origin selector treats no candidates as
@@ -541,11 +544,13 @@ def test_lookup_retractions_returns_empty_set_on_psycopg_error() -> None:
     table is briefly unreachable. The bead (scix_experiments-b647) calls
     out fail-open as the required behavior.
     """
-    out = _lookup_retractions(
-        _RaisingConnection(),  # type: ignore[arg-type]
-        ["2010ApJ...700..123A", "2015ApJ...800..222C"],
-    )
+    with caplog.at_level("WARNING", logger="scix.claim_blame"):
+        out = _lookup_retractions(
+            _RaisingConnection(),  # type: ignore[arg-type]
+            ["2010ApJ...700..123A", "2015ApJ...800..222C"],
+        )
     assert out == set()
+    assert any("retraction lookup" in r.message for r in caplog.records)
 
 
 def test_lookup_retractions_short_circuits_empty_input_without_db() -> None:

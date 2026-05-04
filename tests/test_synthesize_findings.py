@@ -18,12 +18,12 @@ import pytest
 
 from scix.mcp_server import _dispatch_tool, _session_state
 from scix.synthesize import (
+    _CORE_SHARE_THRESHOLD,
+    _SUPPORTING_SHARE_THRESHOLD,
     DEFAULT_SECTIONS,
     INTENT_TO_SECTION,
     SectionBucket,
     SynthesisResult,
-    _CORE_SHARE_THRESHOLD,
-    _SUPPORTING_SHARE_THRESHOLD,
     _classify_share_tier,
     synthesize_findings,
 )
@@ -1969,6 +1969,19 @@ class TestDBErrorGuards:
             out = _fetch_community_assignments(conn, ["2024A"])
         assert out == {}
         assert any("community_assignments" in r.message for r in caplog.records)
+
+    def test_fetch_citation_excerpts_returns_empty_on_psycopg_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import psycopg
+
+        from scix.synthesize import _fetch_citation_excerpts
+
+        conn = self._failing_conn(psycopg.OperationalError("simulated DB outage"))
+        with caplog.at_level("WARNING", logger="scix.synthesize"):
+            out = _fetch_citation_excerpts(conn, ["2024A"])
+        assert out == {}
+        assert any("citation_excerpts" in r.message for r in caplog.records)
 
     def test_synthesize_findings_does_not_propagate_db_errors(self) -> None:
         """End-to-end: a DB error in any helper must NOT raise out of

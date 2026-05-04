@@ -35,6 +35,12 @@ _FOCUSED_SOFT_WARN = 200
 #: paths (security review LOW from wave 3uvn/cfh9/2ixv/7avw, 2026-04-27).
 _FOCUSED_HARD_CAP = 500
 
+# WHY enforced at import: if HARD_CAP <= SOFT_WARN, eviction would trim the set
+# below the warn threshold and the once-per-session warning would never fire.
+assert _FOCUSED_SOFT_WARN < _FOCUSED_HARD_CAP, (
+    "_FOCUSED_SOFT_WARN must be strictly less than _FOCUSED_HARD_CAP"
+)
+
 
 @dataclass(frozen=True)
 class WorkingSetEntry:

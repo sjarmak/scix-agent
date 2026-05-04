@@ -22,6 +22,7 @@ import pytest
 from scix.claim_blame import (
     DEFAULT_INTENT_WEIGHT,
     INTENT_WEIGHTS,
+    _intent_weight,
     _lookup_retractions,
     _walk_reverse_references,
     claim_blame,
@@ -427,6 +428,40 @@ def test_confidence_in_unit_interval_for_each_intent(intent: str | None) -> None
 
     assert isinstance(out["confidence"], float)
     assert 0.0 <= out["confidence"] <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# _intent_weight helper: None-safe lookup against INTENT_WEIGHTS
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "intent,expected",
+    [
+        ("result_comparison", 1.0),
+        ("method", 0.6),
+        ("background", 0.3),
+        (None, DEFAULT_INTENT_WEIGHT),
+        ("", DEFAULT_INTENT_WEIGHT),
+        ("unknown_intent_value", DEFAULT_INTENT_WEIGHT),
+    ],
+)
+def test_intent_weight_helper(intent: str | None, expected: float) -> None:
+    """_intent_weight pins the None-safe lookup contract.
+
+    INTENT_WEIGHTS is typed ``dict[str, float]``; passing ``None`` violates
+    that contract. The helper extracts intent and only consults the mapping
+    when intent is a truthy string, otherwise returns DEFAULT_INTENT_WEIGHT.
+    Behavior must match the prior ``INTENT_WEIGHTS.get(hop.get('intent'),
+    DEFAULT_INTENT_WEIGHT)`` pattern for all reachable inputs.
+    """
+    hop: dict[str, Any] = {"intent": intent}
+    assert _intent_weight(hop) == expected
+
+
+def test_intent_weight_helper_missing_intent_key() -> None:
+    """A hop dict missing the 'intent' key entirely also yields DEFAULT."""
+    assert _intent_weight({}) == DEFAULT_INTENT_WEIGHT
 
 
 # ---------------------------------------------------------------------------

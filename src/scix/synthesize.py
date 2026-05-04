@@ -68,12 +68,15 @@ References
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, Mapping, Sequence
 
 import psycopg
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Public constants
@@ -480,29 +483,38 @@ def _fetch_paper_metadata(
         WHERE bibcode = ANY(%s)
     """
     out: dict[str, dict[str, Any]] = {}
-    with conn.cursor() as cur:
-        cur.execute(sql, (list(bibcodes),))
-        for row in cur.fetchall():
-            bibcode = row[0]
-            abstract = row[3] or ""
-            citation_count = int(row[4])  # COALESCE in SQL guarantees non-NULL
-            # Fixture-compat guards: see docstring above. Production rows
-            # always return 8 columns; remove these once the legacy
-            # short-tuple test fixtures are migrated (bead k27h).
-            arxiv_class: list[str] = list(row[5]) if len(row) > 5 and row[5] else []
-            keywords: list[str] = list(row[6]) if len(row) > 6 and row[6] else []
-            first_author: str | None = row[7] if len(row) > 7 else None
-            out[bibcode] = {
-                "bibcode": bibcode,
-                "title": row[1],
-                "year": row[2],
-                "abstract": abstract,
-                "abstract_snippet": _snippet(abstract),
-                "citation_count": citation_count,
-                "arxiv_class": arxiv_class,
-                "keywords": keywords,
-                "first_author": first_author,
-            }
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (list(bibcodes),))
+            rows = cur.fetchall()
+    except psycopg.Error as exc:
+        # Bead vm1r: trap transient DB errors so call_tool's outer
+        # except does not echo str(exc) (and any embedded SQL/table
+        # names) back to the agent. Mirrors the pattern in
+        # ``src/scix/citation_contexts_coverage.py``.
+        logger.warning("synthesize.paper_metadata: query failed: %s", exc)
+        return {}
+    for row in rows:
+        bibcode = row[0]
+        abstract = row[3] or ""
+        citation_count = int(row[4])  # COALESCE in SQL guarantees non-NULL
+        # Fixture-compat guards: see docstring above. Production rows
+        # always return 8 columns; remove these once the legacy
+        # short-tuple test fixtures are migrated (bead k27h).
+        arxiv_class: list[str] = list(row[5]) if len(row) > 5 and row[5] else []
+        keywords: list[str] = list(row[6]) if len(row) > 6 and row[6] else []
+        first_author: str | None = row[7] if len(row) > 7 else None
+        out[bibcode] = {
+            "bibcode": bibcode,
+            "title": row[1],
+            "year": row[2],
+            "abstract": abstract,
+            "abstract_snippet": _snippet(abstract),
+            "citation_count": citation_count,
+            "arxiv_class": arxiv_class,
+            "keywords": keywords,
+            "first_author": first_author,
+        }
     return out
 
 
@@ -522,11 +534,17 @@ def _fetch_intent_histogram(
         GROUP BY target_bibcode, intent
     """
     out: dict[str, Counter[str]] = {}
-    with conn.cursor() as cur:
-        cur.execute(sql, (list(bibcodes),))
-        for row in cur.fetchall():
-            target, intent, n_rows = row[0], row[1], int(row[2])
-            out.setdefault(target, Counter())[intent] = n_rows
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (list(bibcodes),))
+            rows = cur.fetchall()
+    except psycopg.Error as exc:
+        # Bead vm1r: see _fetch_paper_metadata for rationale.
+        logger.warning("synthesize.intent_histogram: query failed: %s", exc)
+        return {}
+    for row in rows:
+        target, intent, n_rows = row[0], row[1], int(row[2])
+        out.setdefault(target, Counter())[intent] = n_rows
     return out
 
 
@@ -555,14 +573,20 @@ def _fetch_community_assignments(
           AND pm.community_semantic_medium <> -1
     """
     out: dict[str, dict[str, Any]] = {}
-    with conn.cursor() as cur:
-        cur.execute(sql, (list(bibcodes),))
-        for row in cur.fetchall():
-            bibcode = row[0]
-            out[bibcode] = {
-                "community_id": int(row[1]),
-                "community_label": row[2],
-            }
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (list(bibcodes),))
+            rows = cur.fetchall()
+    except psycopg.Error as exc:
+        # Bead vm1r: see _fetch_paper_metadata for rationale.
+        logger.warning("synthesize.community_assignments: query failed: %s", exc)
+        return {}
+    for row in rows:
+        bibcode = row[0]
+        out[bibcode] = {
+            "community_id": int(row[1]),
+            "community_label": row[2],
+        }
     return out
 
 

@@ -439,7 +439,7 @@ def _run_index_query(
         cur.execute(
             "SELECT bibcode FROM paper_embeddings "
             "WHERE model_name = %s AND bibcode != %s "
-            "ORDER BY embedding <=> %s::halfvec LIMIT %s",
+            "ORDER BY embedding <=> %s::halfvec(768) LIMIT %s",
             (MODEL_NAME, exclude_bibcode, query_embedding_text, int(limit)),
         )
         rows = cur.fetchall()
@@ -555,6 +555,19 @@ def run_benchmark(
         logger.info("Sampling %d bibcodes for exact baseline (seed=%d)...", sample_size, random_seed)
         sampled = _sample_bibcodes(conn, sample_size, random_seed)
         logger.info("Fetched %d sampled bibcodes", len(sampled))
+
+        # Materialize the sample as a session-scoped temp table so
+        # _fetch_ground_truth_relevant can join against it. TEMP tables in
+        # PostgreSQL persist for the session, not the transaction, so this
+        # survives autocommit-ed statements until the connection closes.
+        with conn.cursor() as cur:
+            cur.execute("CREATE TEMP TABLE _pilot_sample (bibcode text PRIMARY KEY)")
+            cur.executemany(
+                "INSERT INTO _pilot_sample (bibcode) VALUES (%s) ON CONFLICT DO NOTHING",
+                [(b,) for b in sampled],
+            )
+            cur.execute("ANALYZE _pilot_sample")
+        logger.info("Materialized _pilot_sample temp table (%d rows)", len(sampled))
 
         # Fetch sampled embeddings into a numpy matrix.
         sample_set = tuple(sampled)

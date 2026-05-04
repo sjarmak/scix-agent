@@ -105,7 +105,7 @@ def _intent_weight(hop: Mapping[str, Any]) -> float:
     and DRY (bead scix_experiments-u5gz).
     """
     intent = hop.get("intent")
-    if not intent:
+    if intent is None:
         return DEFAULT_INTENT_WEIGHT
     return INTENT_WEIGHTS.get(intent, DEFAULT_INTENT_WEIGHT)
 

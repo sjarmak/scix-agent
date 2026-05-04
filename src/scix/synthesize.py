@@ -141,7 +141,7 @@ INTENT_TO_SECTION: Mapping[str, str] = {
 
 # Maximum number of bibcodes we will accept in a single call. Mirrors
 # find_gaps' implicit cap (200) so behaviour is consistent across tools.
-_MAX_WORKING_SET_BIBCODES = 200
+MAX_WORKING_SET_BIBCODES = 200
 
 # Weighted-share thresholds for the Tier 2 community classifier (bead 37wj).
 # A community's share of the working set is ``papers_in_community /
@@ -223,8 +223,8 @@ class SynthesisResult:
                     # are independent copies — protects the frozen
                     # SectionBucket from accidental downstream mutation.
                     "theme": {
-                        "communities": list(s.theme.get("communities", [])),
-                        "top_papers_by_citation": list(s.theme.get("top_papers_by_citation", [])),
+                        "communities": list(s.theme["communities"]),
+                        "top_papers_by_citation": list(s.theme["top_papers_by_citation"]),
                     },
                 }
                 for s in self.sections
@@ -475,7 +475,7 @@ def _prepare_bibcodes(raw: Sequence[str] | None) -> list[str]:
             continue
         seen.add(bb)
         out.append(bb)
-        if len(out) >= _MAX_WORKING_SET_BIBCODES:
+        if len(out) >= MAX_WORKING_SET_BIBCODES:
             break
     return out
 

@@ -109,7 +109,7 @@ def _word_offsets(text: str) -> tuple[list[int], list[int]]:
     for each whitespace-delimited token, equivalent to ``text.split()`` token
     positions. Computed once per body so callers can resolve word-window
     boundaries via O(log N) bisect rather than re-splitting an O(L) prefix
-    on every match — see scix_experiments-3ozn.1.
+    on every match.
     """
     starts: list[int] = []
     ends: list[int] = []
@@ -391,15 +391,14 @@ def extract_author_year_citations(body: str) -> list[CitationMarker]:
     # Pre-compute word-start/word-end offsets once per body so each
     # _word_boundary_window call is O(log N) via bisect rather than
     # re-splitting an O(L) prefix per match — was ~75% of cumtime on
-    # review-paper-scale bodies. See scix_experiments-3ozn.1.
+    # review-paper-scale bodies.
     word_starts, word_ends = _word_offsets(body)
 
     # Accepted spans form a disjoint, sorted-by-start interval set (the
     # overlap rejection below maintains that invariant). We keep parallel
     # sorted lists so each overlap check is O(log N) via bisect rather than
     # an O(N) linear scan over a tuple list — the linear form was 162ms at
-    # n=3000 spans (security-reviewer benchmark, 2026-04-27) and would blow
-    # up on a degenerate review-paper body. See scix_experiments-3ozn.
+    # n=3000 spans and would blow up on a degenerate review-paper body.
     accepted_starts: list[int] = []
     accepted_ends: list[int] = []
     out: list[CitationMarker] = []

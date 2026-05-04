@@ -274,7 +274,7 @@ class TestTemporalEvolutionWorkingSet:
         bead u0j1) and explicit ``args["bibcodes"]`` is unbounded, so the
         resolver can hand off up to 500+ bibcodes. The handler must apply
         the same 200-cap that ``find_gaps`` (mcp_server.py:4732) and
-        ``synthesize_findings`` (``_MAX_WORKING_SET_BIBCODES`` in
+        ``synthesize_findings`` (``MAX_WORKING_SET_BIBCODES`` in
         synthesize.py) use, to keep the ANY(%s) array bounded consistently
         across tools.
         """

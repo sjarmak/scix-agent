@@ -427,7 +427,70 @@ def test_description_mentions_structured_error_behavior() -> None:
 
 # ---------------------------------------------------------------------------
 # Telemetry — _log_query surfaces the unscoped tag in error_msg
+#
+# Tests below share a single module-level _CaptureCursor/_CaptureConn pair
+# that records the full params tuple from query_log's INSERT. Each test
+# indexes into captured["params"] for the fields it cares about, using the
+# positional order documented on _CaptureCursor.execute.
 # ---------------------------------------------------------------------------
+
+
+class _CaptureCursor:
+    """Test double that captures the params tuple from a single execute().
+
+    Stores the raw tuple under ``captured["params"]`` so each test can pull
+    out only the fields it needs without growing this helper to match every
+    new assertion.
+    """
+
+    # _log_query INSERT positional order — keep in sync with mcp_server._log_query.
+    #   0: tool_name
+    #   1: params_json
+    #   2: latency_ms
+    #   3: success
+    #   4: error_msg
+    #   5: tool_name (dup, for partial-index match)
+    #   6: query
+    #   7: result_count
+    #   8: session_id
+    #   9: is_test
+
+    def __init__(self, captured: dict[str, Any]) -> None:
+        self._captured = captured
+
+    def __enter__(self) -> "_CaptureCursor":
+        return self
+
+    def __exit__(self, *_a: Any) -> None:
+        pass
+
+    def execute(self, _sql: str, params: tuple) -> None:
+        self._captured["params"] = params
+
+
+class _CaptureConn:
+    """Connection double that vends a shared :class:`_CaptureCursor`."""
+
+    def __init__(self, captured: dict[str, Any]) -> None:
+        self._captured = captured
+
+    def cursor(self) -> _CaptureCursor:
+        return _CaptureCursor(self._captured)
+
+    def commit(self) -> None:
+        pass
+
+
+def _expect_logged_params(captured: dict[str, Any]) -> tuple:
+    """Return ``captured["params"]`` with a clear message if execute() was skipped.
+
+    ``_log_query`` is best-effort and silently swallows exceptions on the
+    telemetry path. Using a bare ``captured["params"]`` would surface as
+    ``KeyError: 'params'`` and obscure the real failure (the telemetry call
+    never reached ``cur.execute()``).
+    """
+    assert "params" in captured, "_log_query never reached cur.execute() — telemetry path skipped"
+    return captured["params"]
 
 
 def test_log_query_surfaces_unscoped_broad_tag() -> None:
@@ -436,28 +499,6 @@ def test_log_query_surfaces_unscoped_broad_tag() -> None:
     FROM query_log WHERE error_msg='unscoped_broad_query' to track rate.
     """
     captured: dict[str, Any] = {}
-
-    class _FakeCursor:
-        def __enter__(self) -> "_FakeCursor":
-            return self
-
-        def __exit__(self, *_a: Any) -> None:
-            pass
-
-        def execute(self, _sql: str, params: tuple) -> None:
-            # _log_query positional order:
-            #   tool_name, params_json, latency_ms, success, error_msg,
-            #   tool_name (dup), query, result_count, session_id, is_test
-            captured["error_msg"] = params[4]
-            captured["success"] = params[3]
-            captured["result_count"] = params[7]
-
-    class _FakeConn:
-        def cursor(self) -> _FakeCursor:
-            return _FakeCursor()
-
-        def commit(self) -> None:
-            pass
 
     payload = json.dumps(
         {
@@ -470,7 +511,7 @@ def test_log_query_surfaces_unscoped_broad_tag() -> None:
     )
 
     mcp_server._log_query(
-        _FakeConn(),
+        _CaptureConn(captured),
         "search",
         {"query": "x"},
         12.3,
@@ -479,36 +520,20 @@ def test_log_query_surfaces_unscoped_broad_tag() -> None:
         result_json=payload,
     )
 
-    assert captured["error_msg"] == "unscoped_broad_query"
+    params = _expect_logged_params(captured)
+    assert params[4] == "unscoped_broad_query"  # error_msg
     # Result count is 0 because the response carried an "error" key.
-    assert captured["result_count"] == 0
+    assert params[7] == 0  # result_count
 
 
 def test_log_query_does_not_surface_tag_for_normal_results() -> None:
     """Normal search results don't get the unscoped_broad_query tag."""
     captured: dict[str, Any] = {}
 
-    class _FakeCursor:
-        def __enter__(self) -> "_FakeCursor":
-            return self
-
-        def __exit__(self, *_a: Any) -> None:
-            pass
-
-        def execute(self, _sql: str, params: tuple) -> None:
-            captured["error_msg"] = params[4]
-
-    class _FakeConn:
-        def cursor(self) -> _FakeCursor:
-            return _FakeCursor()
-
-        def commit(self) -> None:
-            pass
-
     payload = json.dumps({"papers": [{"bibcode": "2024ApJ...001A"}], "total": 1})
 
     mcp_server._log_query(
-        _FakeConn(),
+        _CaptureConn(captured),
         "search",
         {"query": "x"},
         12.3,
@@ -518,7 +543,7 @@ def test_log_query_does_not_surface_tag_for_normal_results() -> None:
     )
 
     # error_msg stays None when no unscoped marker is present.
-    assert captured["error_msg"] is None
+    assert _expect_logged_params(captured)[4] is None
 
 
 # ---------------------------------------------------------------------------
@@ -543,37 +568,6 @@ def test_log_query_does_not_surface_tag_for_normal_results() -> None:
 # This catches cases (1) + (2). Case (3) remains hidden until a follow-up
 # bead extends the _log_query lift list with additional stable tags.
 # ---------------------------------------------------------------------------
-
-
-class _CaptureCursor:
-    """Test double that captures the params tuple from a single execute()."""
-
-    def __init__(self, captured: dict[str, Any]) -> None:
-        self._captured = captured
-
-    def __enter__(self) -> "_CaptureCursor":
-        return self
-
-    def __exit__(self, *_a: Any) -> None:
-        pass
-
-    def execute(self, _sql: str, params: tuple) -> None:
-        # _log_query positional order:
-        #   tool_name, params_json, latency_ms, success, error_msg,
-        #   tool_name (dup), query, result_count, session_id, is_test
-        self._captured["success"] = params[3]
-        self._captured["error_msg"] = params[4]
-
-
-class _CaptureConn:
-    def __init__(self, captured: dict[str, Any]) -> None:
-        self._captured = captured
-
-    def cursor(self) -> _CaptureCursor:
-        return _CaptureCursor(self._captured)
-
-    def commit(self) -> None:
-        pass
 
 
 def test_telemetry_convention_lifted_structured_error_logs_success_true_and_tag() -> None:
@@ -606,8 +600,9 @@ def test_telemetry_convention_lifted_structured_error_logs_success_true_and_tag(
     )
 
     # Pinned convention: structured-error + lifted tag => (True, <tag>).
-    assert captured["success"] is True
-    assert captured["error_msg"] == "unscoped_broad_query"
+    params = _expect_logged_params(captured)
+    assert params[3] is True  # success
+    assert params[4] == "unscoped_broad_query"  # error_msg
 
 
 def test_telemetry_convention_unlifted_structured_error_logs_success_true_and_null() -> None:
@@ -640,14 +635,15 @@ def test_telemetry_convention_unlifted_structured_error_logs_success_true_and_nu
         4.5,
         True,  # call_tool sets success=True because no exception fired
         None,
-    # No result_json kwarg: simulates the lift-skipped case for an unlifted
-    # structured-error payload. Even if result_json were passed, the
-    # current lift list (only unscoped_broad_blocked) would not match.
+        # No result_json kwarg: simulates the lift-skipped case for an unlifted
+        # structured-error payload. Even if result_json were passed, the
+        # current lift list (only unscoped_broad_blocked) would not match.
         result_json=payload,
     )
 
     # Pinned convention: structured-error WITHOUT lifted tag => (True, None).
     # If a future change adds an error_code-based lift, this test breaks
     # and the convention doc + operator dashboards must be updated together.
-    assert captured["success"] is True
-    assert captured["error_msg"] is None
+    params = _expect_logged_params(captured)
+    assert params[3] is True  # success
+    assert params[4] is None  # error_msg

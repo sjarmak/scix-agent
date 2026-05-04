@@ -1,17 +1,18 @@
-"""Tests for the migration runner (scripts/setup_db.sh)."""
+"""Tests for migration files and schema_migrations bookkeeping.
+
+The per-migration runner that lived in scripts/setup_db.sh was removed in
+commit 16cc518 ("chore: strip internal docs, consolidate migrations into
+schema.sql"); setup_db.sh now applies schema.sql directly. The TestSetupScript
+class that asserted runner behaviour was deleted with it (scix_experiments-7n2v).
+"""
 
 from __future__ import annotations
 
-import os
 import pathlib
 import re
-import subprocess
-
-import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 MIGRATIONS_DIR = REPO_ROOT / "migrations"
-SETUP_SCRIPT = REPO_ROOT / "scripts" / "setup_db.sh"
 
 
 class TestMigrationFileIntegrity:
@@ -60,52 +61,6 @@ class TestMigrationFileIntegrity:
         assert path.exists()
         content = path.read_text()
         assert "query_log" in content
-
-
-class TestSetupScript:
-    """Verify the setup script structure and behavior."""
-
-    def test_script_exists_and_is_executable_content(self) -> None:
-        assert SETUP_SCRIPT.exists()
-        content = SETUP_SCRIPT.read_text()
-        assert content.startswith("#!/usr/bin/env bash")
-
-    def test_script_creates_schema_migrations_table(self) -> None:
-        content = SETUP_SCRIPT.read_text()
-        assert "schema_migrations" in content
-
-    def test_script_iterates_migration_files(self) -> None:
-        content = SETUP_SCRIPT.read_text()
-        assert "migrations" in content.lower()
-        # Should loop over .sql files
-        assert ".sql" in content
-
-    def test_script_checks_before_applying(self) -> None:
-        """Runner should check schema_migrations before applying each migration."""
-        content = SETUP_SCRIPT.read_text()
-        assert "SELECT" in content
-        assert "schema_migrations" in content
-
-    def test_script_records_applied_migrations(self) -> None:
-        content = SETUP_SCRIPT.read_text()
-        assert "INSERT INTO schema_migrations" in content
-
-    def test_script_handles_on_conflict(self) -> None:
-        """INSERT should use ON CONFLICT DO NOTHING for idempotency."""
-        content = SETUP_SCRIPT.read_text()
-        assert "ON CONFLICT" in content
-
-    def test_script_creates_db_if_not_exists(self) -> None:
-        content = SETUP_SCRIPT.read_text()
-        assert "CREATE DATABASE" in content
-
-    def test_script_ensures_pgvector(self) -> None:
-        content = SETUP_SCRIPT.read_text()
-        assert "CREATE EXTENSION IF NOT EXISTS vector" in content
-
-    def test_script_uses_set_euo_pipefail(self) -> None:
-        content = SETUP_SCRIPT.read_text()
-        assert "set -euo pipefail" in content
 
 
 class TestMigration019Content:

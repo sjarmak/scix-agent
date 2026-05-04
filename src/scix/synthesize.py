@@ -179,9 +179,7 @@ class SynthesisResult:
                     # SectionBucket from accidental downstream mutation.
                     "theme": {
                         "communities": list(s.theme.get("communities", [])),
-                        "top_papers_by_citation": list(
-                            s.theme.get("top_papers_by_citation", [])
-                        ),
+                        "top_papers_by_citation": list(s.theme.get("top_papers_by_citation", [])),
                     },
                 }
                 for s in self.sections
@@ -1059,7 +1057,7 @@ def _assemble_sections(
                     total_bibcodes=total_bibcodes,
                     section_set=section_set,
                 ),
-                include_full_abstract=include_full_abstracts,
+                include_full_abstracts=include_full_abstracts,
                 # Bead tq0t / AC3: forward an excerpt list only when the
                 # caller enabled the kwarg (citation_excerpts is not
                 # None) AND the paper was bucketed via intent_modal.
@@ -1281,7 +1279,7 @@ def _paper_row(
     signals: dict[str, Any] | None = None,
     signal_used: str = "",
     alternative_sections: list[str] | None = None,
-    include_full_abstract: bool = False,
+    include_full_abstracts: bool = False,
     citation_excerpts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the per-paper dict for a section's ``cited_papers`` list.
@@ -1295,7 +1293,7 @@ def _paper_row(
     be ``None`` for legacy fixtures or rows where the column is NULL.
 
     ``abstract_full`` (bead tq0t / AC2) is added only when
-    ``include_full_abstract`` is True. Coexists with ``abstract_snippet``
+    ``include_full_abstracts`` is True. Coexists with ``abstract_snippet``
     (additive, not replacement) so wave-1+ wire format remains stable.
 
     ``citation_excerpts`` (bead tq0t / AC3) is added only when the
@@ -1317,7 +1315,7 @@ def _paper_row(
         "signals": signals if signals is not None else {},
         "alternative_sections": list(alternative_sections or []),
     }
-    if include_full_abstract:
+    if include_full_abstracts:
         row["abstract_full"] = meta.get("abstract", "")
     if citation_excerpts is not None:
         row["citation_excerpts"] = list(citation_excerpts)

@@ -17,12 +17,15 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
+import psycopg
 import pytest
 
 from scix.claim_blame import (
     DEFAULT_INTENT_WEIGHT,
     INTENT_WEIGHTS,
     Hop,
+    _lookup_retractions,
+    _walk_reverse_references,
     claim_blame,
 )
 from scix.research_scope import ResearchScope
@@ -487,3 +490,68 @@ def test_all_candidates_retracted_returns_empty_origin_with_warnings() -> None:
 
     assert out["origin"] == ""
     assert cand in out["retraction_warnings"]
+
+
+# ---------------------------------------------------------------------------
+# psycopg.Error degradation (bead scix_experiments-b647)
+# ---------------------------------------------------------------------------
+
+
+class _RaisingCursor:
+    """Cursor that raises ``psycopg.Error`` on ``execute``.
+
+    Used to verify the helper functions degrade gracefully — matching the
+    pattern already in :func:`_seed_candidates_default`.
+    """
+
+    def __enter__(self) -> _RaisingCursor:
+        return self
+
+    def __exit__(self, *exc_info: Any) -> bool:
+        return False
+
+    def execute(self, _sql: str, _params: Any = None) -> None:
+        raise psycopg.Error("simulated DB failure")
+
+    def fetchall(self) -> list[tuple[Any, ...]]:  # pragma: no cover — never reached
+        return []
+
+
+class _RaisingConnection:
+    def cursor(self) -> _RaisingCursor:
+        return _RaisingCursor()
+
+
+def test_walk_reverse_references_returns_empty_on_psycopg_error() -> None:
+    """A DB failure during the v_claim_edges scan must degrade to []."""
+    out = _walk_reverse_references(
+        _RaisingConnection(),  # type: ignore[arg-type]
+        "2010ApJ...700..123A",
+        ResearchScope(),
+        limit=10,
+    )
+    assert out == []
+
+
+def test_lookup_retractions_returns_empty_set_on_psycopg_error() -> None:
+    """A DB failure during retraction lookup must fail OPEN (empty set).
+
+    Failing open means the origin selector treats no candidates as
+    retracted, so origin selection still produces an answer when the papers
+    table is briefly unreachable. The bead (scix_experiments-b647) calls
+    out fail-open as the required behavior.
+    """
+    out = _lookup_retractions(
+        _RaisingConnection(),  # type: ignore[arg-type]
+        ["2010ApJ...700..123A", "2015ApJ...800..222C"],
+    )
+    assert out == set()
+
+
+def test_lookup_retractions_short_circuits_empty_input_without_db() -> None:
+    """Empty input must return empty set without touching the DB."""
+    out = _lookup_retractions(
+        _RaisingConnection(),  # type: ignore[arg-type]
+        [],
+    )
+    assert out == set()

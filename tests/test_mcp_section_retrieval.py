@@ -148,11 +148,6 @@ class TestSectionFilterClauses:
         assert sql == ""
         assert params == []
 
-    def test_discipline_filter(self) -> None:
-        sql, params = _section_filter_clauses({"discipline": "astrophysics"})
-        assert "p.discipline = %s" in sql
-        assert params == ["astrophysics"]
-
     def test_year_min_filter(self) -> None:
         sql, params = _section_filter_clauses({"year_min": 2020})
         assert "p.year >= %s" in sql
@@ -171,15 +166,13 @@ class TestSectionFilterClauses:
     def test_all_filters_combined(self) -> None:
         sql, params = _section_filter_clauses(
             {
-                "discipline": "astrophysics",
                 "year_min": 2020,
                 "year_max": 2024,
                 "bibcode_prefix": "2024ApJ",
             }
         )
-        # Order is fixed in the implementation: discipline, year_min, year_max, bibcode_prefix.
-        assert params == ["astrophysics", 2020, 2024, "2024ApJ%"]
-        assert "p.discipline = %s" in sql
+        # Order is fixed in the implementation: year_min, year_max, bibcode_prefix.
+        assert params == [2020, 2024, "2024ApJ%"]
         assert "p.year >= %s" in sql
         assert "p.year <= %s" in sql
         assert "p.bibcode LIKE %s" in sql
@@ -187,6 +180,27 @@ class TestSectionFilterClauses:
     def test_invalid_year_raises(self) -> None:
         with pytest.raises(ValueError):
             _section_filter_clauses({"year_min": "not-a-year"})
+
+    def test_discipline_filter_dropped(self) -> None:
+        """Regression: papers has no ``discipline`` column, so passing it
+        through filters must NOT emit any SQL — earlier code emitted
+        ``AND p.discipline = %s`` and crashed at execute() time.
+
+        See scix_experiments-9zyw.
+        """
+        sql, params = _section_filter_clauses({"discipline": "astrophysics"})
+        assert "discipline" not in sql
+        assert "astrophysics" not in params
+
+    def test_discipline_not_in_filter_schema(self) -> None:
+        """Regression: ``discipline`` must not be advertised in the section
+        retrieval filter schema until ``papers.discipline`` exists.
+
+        See scix_experiments-9zyw.
+        """
+        from scix.mcp_server import _SECTION_FILTERS_SCHEMA
+
+        assert "discipline" not in _SECTION_FILTERS_SCHEMA["properties"]
 
 
 # ---------------------------------------------------------------------------
@@ -238,11 +252,14 @@ class TestRegistration:
         assert "k" in schema["properties"]
         assert "filters" in schema["properties"]
         assert schema.get("required") == ["query"]
-        # Filters object must accept the four documented keys
+        # Filters object must accept the three documented keys.
+        # ``discipline`` was removed in scix_experiments-9zyw because
+        # papers has no discipline column.
         filter_schema = schema["properties"]["filters"]
         assert filter_schema.get("type") == "object"
-        for key in ("discipline", "year_min", "year_max", "bibcode_prefix"):
+        for key in ("year_min", "year_max", "bibcode_prefix"):
             assert key in filter_schema["properties"], f"missing filter key: {key}"
+        assert "discipline" not in filter_schema["properties"]
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +368,6 @@ class TestSectionRetrievalDispatch:
                 "query": "JWST exoplanet atmospheres",
                 "k": 3,
                 "filters": {
-                    "discipline": "astrophysics",
                     "year_min": 2022,
                     "year_max": 2024,
                     "bibcode_prefix": "2024",
@@ -372,12 +388,12 @@ class TestSectionRetrievalDispatch:
 
         for sql, params in select_calls:
             # Filter clauses must appear in the SQL fragment.
-            assert "p.discipline = %s" in sql
             assert "p.year >= %s" in sql
             assert "p.year <= %s" in sql
             assert "p.bibcode LIKE %s" in sql
+            # discipline must NOT leak into the SQL — papers has no such column.
+            assert "p.discipline" not in sql
             # Filter values must appear among the bound params.
-            assert "astrophysics" in params
             assert 2022 in params
             assert 2024 in params
             assert "2024%" in params

@@ -1,7 +1,10 @@
-"""Schema tests for migration 055 (paper_umap_2d).
+"""Schema tests for migration 065 (paper_umap_2d).
+
+Originally numbered 055; renamed to 065 on 2026-05-03 (bead l0ub) to resolve
+a numbering collision with 055_agent_entity_context_rewrite.sql.
 
 Verifies:
-- paper_umap_2d table exists after applying migration 055 to a fresh scix_test DB.
+- paper_umap_2d table exists after applying migration 065 to a fresh scix_test DB.
 - Primary key is (bibcode).
 - Foreign key from paper_umap_2d.bibcode references papers(bibcode).
 - Columns (x, y, community_id, resolution, projected_at) exist with expected types
@@ -29,7 +32,7 @@ import pytest
 from tests.helpers import get_test_dsn
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-MIGRATION_FILE = REPO_ROOT / "migrations" / "055_paper_umap_2d.sql"
+MIGRATION_FILE = REPO_ROOT / "migrations" / "065_paper_umap_2d.sql"
 
 # Prerequisite migrations: paper_umap_2d has a FK to papers(bibcode), which is
 # defined in the initial schema. Applying only 001 is enough — later migrations
@@ -59,13 +62,13 @@ class TestMigrationSQLFile:
         ]
         for fragment in expected_fragments:
             assert fragment in text, (
-                f"migration 055 missing expected fragment: {fragment!r}"
+                f"migration 065 missing expected fragment: {fragment!r}"
             )
 
     def test_wrapped_in_transaction(self) -> None:
         text = MIGRATION_FILE.read_text()
-        assert "BEGIN;" in text, "migration 055 should be wrapped in BEGIN/COMMIT"
-        assert "COMMIT;" in text, "migration 055 should be wrapped in BEGIN/COMMIT"
+        assert "BEGIN;" in text, "migration 065 should be wrapped in BEGIN/COMMIT"
+        assert "COMMIT;" in text, "migration 065 should be wrapped in BEGIN/COMMIT"
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +97,7 @@ def _apply_sql_file(dsn: str, path: pathlib.Path) -> subprocess.CompletedProcess
 
 @pytest.fixture(scope="module")
 def ensure_migration_applied(dsn: str) -> Iterator[None]:
-    """Apply prerequisite migrations + 055 before any integration test in this
+    """Apply prerequisite migrations + 065 before any integration test in this
     module. Drop paper_umap_2d on teardown so scix_test is left clean.
 
     Not autouse: pure unit tests in `TestMigrationSQLFile` must run without a
@@ -102,7 +105,7 @@ def ensure_migration_applied(dsn: str) -> Iterator[None]:
     which depends on this one.
     """
     # 1. Prerequisites + migration under test
-    for fname in PREREQUISITE_MIGRATIONS + ["055_paper_umap_2d.sql"]:
+    for fname in PREREQUISITE_MIGRATIONS + ["065_paper_umap_2d.sql"]:
         path = REPO_ROOT / "migrations" / fname
         assert path.exists(), f"missing migration file: {fname}"
         result = _apply_sql_file(dsn, path)
@@ -284,7 +287,7 @@ class TestMigrationIdempotency:
         # Running it a second time must not raise.
         result = _apply_sql_file(dsn, MIGRATION_FILE)
         assert result.returncode == 0, (
-            "re-applying migration 055 must succeed (idempotent); got:\n"
+            "re-applying migration 065 must succeed (idempotent); got:\n"
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
 

@@ -1,6 +1,14 @@
--- Migration 063: section_entities — section-grain entity links
+-- Migration 067: section_entities — section-grain entity links
 --
--- Bead: scix_experiments-67e
+-- Bead: scix_experiments-67e (linker code) + scix_experiments-l0ub (renumber)
+--
+-- HISTORY: Originally numbered 063_section_entities.sql. Migration 063 was
+-- already taken in schema_migrations by zpm4's 063_section_bm25.sql (BM25
+-- generated column + GIN index on papers_fulltext.sections), which was
+-- applied to prod from a feature branch and never merged to main — its
+-- file is no longer on disk but its effects persist (sections_tsv column +
+-- idx_papers_fulltext_sections_tsv). Renamed to 067 on 2026-05-03 (l0ub)
+-- so this migration can be applied to prod without re-using v=63.
 -- Pairs with the wqr.9 section-embeddings work (migration 061): once papers
 -- have section-grain text and embeddings, entity linking can run per-section
 -- so retrieval can distinguish "paper uses JWST" from "paper cites JWST in

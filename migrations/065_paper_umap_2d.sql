@@ -1,6 +1,14 @@
--- migration: 055_paper_umap_2d — 2-D UMAP projections of paper embeddings
+-- migration: 065_paper_umap_2d — 2-D UMAP projections of paper embeddings
 --
 -- Work unit: unit-v3-schema
+--
+-- HISTORY: This file was originally numbered 055_paper_umap_2d.sql but
+-- collided with 055_agent_entity_context_rewrite.sql. Both were applied to
+-- prod scix; only the agent_entity_context_rewrite version was recorded as
+-- v=55 in schema_migrations. Renamed to 065 on 2026-05-03 (bead l0ub) so
+-- the file matches a free schema_migrations slot above the in-DB max of 64.
+-- Effects (table public.paper_umap_2d) are present on prod from the original
+-- apply; reconcile-time INSERT records the new v=65 row.
 --
 -- Introduces paper_umap_2d, a storage table for 2-D UMAP projections of
 -- paper embeddings. One row per projected paper (bibcode PK); the

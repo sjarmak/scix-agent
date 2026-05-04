@@ -1,6 +1,14 @@
--- 056_intent_populate.sql
+-- 066_intent_populate.sql
 -- Backfill marker for the citation_contexts.intent population job (PRD MH-1
 -- of docs/prd/scix_deep_search_v1.md).
+--
+-- HISTORY: This file was originally numbered 056_intent_populate.sql but
+-- collided with 056_concepts_vocabularies.sql. Both were applied to prod;
+-- only concepts_vocabularies was recorded as v=56 in schema_migrations.
+-- Renamed to 066 on 2026-05-03 (bead l0ub) so the file matches a free
+-- schema_migrations slot above the in-DB max of 64. The marker row in
+-- public.ingest_log (filename='intent_backfill:citation_contexts') is
+-- already present (status='complete'); reconcile-time INSERT records v=66.
 --
 -- This migration does NOT change schema. It records an idempotent marker row
 -- in ingest_log so that operator runs of scripts/backfill_citation_intent.py

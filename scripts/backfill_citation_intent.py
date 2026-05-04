@@ -12,7 +12,7 @@ loop:
 * Logs progress and final status to the ``ingest_log`` table under
   ``filename = 'intent_backfill:citation_contexts'`` (the PRD calls this
   ``scix_ingest_log``; the actual table is ``ingest_log`` — see
-  migrations/056_intent_populate.sql).
+  migrations/066_intent_populate.sql).
 * ``--validate-sample N`` writes a stratified hand-validation sample to
   ``docs/eval/mh1_intent_validation.md``.
 * ``--dry-run`` prints the plan and exits without touching the DB.

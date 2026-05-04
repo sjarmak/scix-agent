@@ -7,6 +7,7 @@ reference[] array, and stores results in the citation_contexts table.
 
 from __future__ import annotations
 
+import bisect
 import json
 import logging
 import re
@@ -347,19 +348,35 @@ def extract_author_year_citations(body: str) -> list[CitationMarker]:
     in-range year.  Numbered ``[N]`` markers are not produced here; use
     :func:`extract_citation_contexts` for those.
 
-    Overlapping matches across the three patterns are de-duplicated by
-    ``char_start``.
+    Overlapping matches across the four patterns are de-duplicated by
+    half-open interval overlap: once a match is accepted, any later match
+    whose ``[char_start, char_end)`` range intersects it is rejected. The
+    pattern iteration order (et-al → narrative → paren → sub-cite) decides
+    which match wins on conflict.
     """
     if not body:
         return []
 
-    spans: list[tuple[int, int]] = []  # accepted (start, end) for overlap check
+    # Accepted spans form a disjoint, sorted-by-start interval set (the
+    # overlap rejection below maintains that invariant). We keep parallel
+    # sorted lists so each overlap check is O(log N) via bisect rather than
+    # an O(N) linear scan over a tuple list — the linear form was 162ms at
+    # n=3000 spans (security-reviewer benchmark, 2026-04-27) and would blow
+    # up on a degenerate review-paper body. See scix_experiments-3ozn.
+    accepted_starts: list[int] = []
+    accepted_ends: list[int] = []
     out: list[CitationMarker] = []
 
     def _overlaps(start: int, end: int) -> bool:
-        for s, e in spans:
-            if start < e and end > s:
-                return True
+        # Half-open intervals: [a, b) overlaps [s, e) iff a < e and b > s.
+        # With disjoint sorted intervals, only the two neighbors matter:
+        #   - left neighbor (largest start <= start): overlap iff its end > start
+        #   - right neighbor (smallest start > start): overlap iff its start < end
+        i = bisect.bisect_right(accepted_starts, start)
+        if i > 0 and accepted_ends[i - 1] > start:
+            return True
+        if i < len(accepted_starts) and accepted_starts[i] < end:
+            return True
         return False
 
     # Order matters: et-al pattern is tried before narrative because
@@ -387,7 +404,12 @@ def extract_author_year_citations(body: str) -> list[CitationMarker]:
             win_start, win_end = _word_boundary_window(body, char_start, char_end)
             context = body[win_start:win_end]
 
-            spans.append((char_start, char_end))
+            # Insert into both lists at the same index so they stay
+            # aligned and accepted_starts remains sorted for the next
+            # bisect lookup.
+            i = bisect.bisect_right(accepted_starts, char_start)
+            accepted_starts.insert(i, char_start)
+            accepted_ends.insert(i, char_end)
             out.append(
                 CitationMarker(
                     marker_text=m.group(0),

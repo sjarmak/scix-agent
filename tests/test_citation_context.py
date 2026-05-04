@@ -11,6 +11,7 @@ from scix.citation_context import (
     CitationMarker,
     _enrich_with_sections,
     _parse_marker_numbers,
+    _word_boundary_window,
     extract_author_year_citations,
     extract_citation_contexts,
     process_paper,
@@ -841,3 +842,172 @@ class TestExtractAuthorYearOverlapPerfScaling:
         if t_10k <= 0:
             pytest.skip("perf_counter resolution too coarse for this measurement")
         assert t_10k < 0.1, f"10K overlap-check loop took {t_10k:.3f}s (expected <100ms)"
+
+
+# ---------------------------------------------------------------------------
+# _word_boundary_window — correctness (scix_experiments-3ozn.1)
+# ---------------------------------------------------------------------------
+
+
+class TestWordBoundaryWindow:
+    """Window must enclose the citation span and grow up to ``words`` tokens
+    on either side. Char-offset tolerance is ±1 across the bisect-prepass
+    refactor — token-boundary alignment may shift trivially on degenerate
+    input.
+    """
+
+    def test_marker_in_middle(self) -> None:
+        before = " ".join(f"w{i}" for i in range(50))
+        after = " ".join(f"a{i}" for i in range(50))
+        body = f"{before} [1] {after}"
+        char_start = len(before) + 1
+        char_end = char_start + 3
+        win_start, win_end = _word_boundary_window(body, char_start, char_end, words=10)
+        # Window should contain the marker.
+        assert win_start <= char_start
+        assert win_end >= char_end
+        # ~10 words before, marker, ~10 words after = ~21 tokens.
+        window_text = body[win_start:win_end]
+        token_count = len(window_text.split())
+        assert 18 <= token_count <= 24
+
+    def test_marker_at_start(self) -> None:
+        body = "[1] " + " ".join(f"a{i}" for i in range(20))
+        win_start, win_end = _word_boundary_window(body, 0, 3, words=10)
+        assert win_start == 0
+        # Window extends to ~10 tokens after.
+        assert win_end > 3
+
+    def test_marker_at_end(self) -> None:
+        before = " ".join(f"w{i}" for i in range(20))
+        body = f"{before} [1]"
+        char_start = len(before) + 1
+        char_end = char_start + 3
+        win_start, win_end = _word_boundary_window(body, char_start, char_end, words=10)
+        assert win_end == len(body)
+
+    def test_short_body_full_window(self) -> None:
+        body = "Short text [1] here."
+        char_start = body.index("[")
+        char_end = char_start + 3
+        win_start, win_end = _word_boundary_window(body, char_start, char_end, words=125)
+        assert win_start == 0
+        assert win_end == len(body)
+
+    def test_empty_body(self) -> None:
+        win_start, win_end = _word_boundary_window("", 0, 0, words=10)
+        assert win_start == 0
+        assert win_end == 0
+
+    def test_whitespace_only_body(self) -> None:
+        body = "     "
+        win_start, win_end = _word_boundary_window(body, 2, 3, words=10)
+        # No words on either side — window collapses to (0, len).
+        assert win_start == 0
+        assert win_end == len(body)
+
+    def test_multibyte_unicode(self) -> None:
+        # Python str is unicode-codepoint indexed, so char offsets work the
+        # same for ASCII and non-ASCII tokens.
+        before = " ".join(["héllo", "wörld", "résumé", "naïve", "café"])
+        after = " ".join(["α", "β", "γ", "δ", "ε"])
+        body = f"{before} [1] {after}"
+        char_start = len(before) + 1
+        char_end = char_start + 3
+        win_start, win_end = _word_boundary_window(body, char_start, char_end, words=3)
+        window = body[win_start:win_end]
+        assert "[1]" in window
+        # 3 words before + marker + 3 words after = 7 tokens.
+        assert len(window.split()) == 7
+
+    def test_no_whitespace_body(self) -> None:
+        # A single huge token — the marker is "inside" it conceptually but
+        # we treat the bracket span as a separate region. Window collapses
+        # to (0, len).
+        body = "averylongtokenwithnowhitespace"
+        win_start, win_end = _word_boundary_window(body, 5, 7, words=10)
+        assert win_start == 0
+        assert win_end == len(body)
+
+    def test_close_adjacent_markers_consistent(self) -> None:
+        """Two markers a few tokens apart should produce overlapping but
+        well-formed windows — neither window should drop tokens that are
+        clearly inside the requested radius."""
+        prefix = " ".join(f"p{i}" for i in range(20))
+        suffix = " ".join(f"s{i}" for i in range(20))
+        body = f"{prefix} [1] mid1 mid2 mid3 [2] {suffix}"
+        m1_start = body.index("[1]")
+        m1_end = m1_start + 3
+        m2_start = body.index("[2]")
+        m2_end = m2_start + 3
+
+        w1 = _word_boundary_window(body, m1_start, m1_end, words=5)
+        w2 = _word_boundary_window(body, m2_start, m2_end, words=5)
+
+        # Both windows must contain their own marker.
+        assert body[w1[0] : w1[1]].find("[1]") >= 0
+        assert body[w2[0] : w2[1]].find("[2]") >= 0
+        # The mid-tokens between markers must appear in at least one window.
+        assert "mid2" in body[w1[0] : w1[1]] or "mid2" in body[w2[0] : w2[1]]
+
+
+# ---------------------------------------------------------------------------
+# extract_author_year_citations — end-to-end perf scaling
+# (scix_experiments-3ozn.1)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractAuthorYearEndToEndPerfScaling:
+    """End-to-end: with N citations in a body of length ~60*N chars,
+    pre-3ozn.1 is O(L*N) (~12s at 10K). Post-fix, _word_boundary_window
+    is O(log L) per match via a one-shot word-boundary pre-pass, so total
+    runtime is O(L + N log L).
+    """
+
+    @staticmethod
+    def _make_dense_body(n: int) -> str:
+        """Body containing N author-year citations spaced evenly, with
+        non-citation filler words between each."""
+        parts: list[str] = []
+        for i in range(n):
+            parts.append(f"word{i} word{i}b word{i}c Hong et al. 2001 something here")
+        return " ".join(parts)
+
+    def _time_extract(self, n: int, repeats: int = 2) -> float:
+        body = self._make_dense_body(n)
+        best = float("inf")
+        for _ in range(repeats):
+            t0 = time.perf_counter()
+            extract_author_year_citations(body)
+            best = min(best, time.perf_counter() - t0)
+        return best
+
+    def test_end_to_end_sub_quadratic(self) -> None:
+        """t(10K)/t(1K) must be sub-quadratic.
+
+        Pre-fix (O(L*N)): ratio ≈ 50x (0.25s → 12s), with body length L
+        also growing 10x so N*L total grows 100x.
+        Post-fix (O(L + N log L)): ratio ≈ 12-15x.
+        Threshold 30x catches regression with healthy margin.
+        """
+        t_1k = self._time_extract(1_000, repeats=2)
+        t_10k = self._time_extract(10_000, repeats=2)
+        if t_1k <= 0:
+            pytest.skip("perf_counter resolution too coarse for this measurement")
+        ratio = t_10k / t_1k
+        assert ratio < 30.0, (
+            f"extract_author_year_citations end-to-end appears super-linear: "
+            f"t(1K)={t_1k * 1000:.1f}ms, t(10K)={t_10k * 1000:.1f}ms, "
+            f"ratio={ratio:.1f}x"
+        )
+
+    def test_end_to_end_5k_fast(self) -> None:
+        """Sanity bound: 5K citations must finish in <500ms on this host.
+
+        Pre-fix needs ~3.6s at this scale; post-fix should be <100ms.
+        Use a generous bound so a loaded machine doesn't false-positive.
+        """
+        t_5k = self._time_extract(5_000, repeats=2)
+        if t_5k <= 0:
+            pytest.skip("perf_counter resolution too coarse for this measurement")
+        assert t_5k < 0.5, f"5K citation extraction took {t_5k:.3f}s (expected <500ms post-3ozn.1)"

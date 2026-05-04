@@ -99,39 +99,67 @@ def _parse_marker_numbers(inner: str) -> tuple[int, ...]:
     return tuple(numbers)
 
 
+_WORD_RE = re.compile(r"\S+")
+
+
+def _word_offsets(text: str) -> tuple[list[int], list[int]]:
+    """Pre-compute per-word char offsets in ``text``.
+
+    Returns parallel sorted lists ``(starts, ends)`` of half-open char ranges
+    for each whitespace-delimited token, equivalent to ``text.split()`` token
+    positions. Computed once per body so callers can resolve word-window
+    boundaries via O(log N) bisect rather than re-splitting an O(L) prefix
+    on every match — see scix_experiments-3ozn.1.
+    """
+    starts: list[int] = []
+    ends: list[int] = []
+    for m in _WORD_RE.finditer(text):
+        starts.append(m.start())
+        ends.append(m.end())
+    return starts, ends
+
+
 def _word_boundary_window(
-    text: str, char_start: int, char_end: int, words: int = 125
+    text: str,
+    char_start: int,
+    char_end: int,
+    words: int = 125,
+    *,
+    word_starts: list[int] | None = None,
+    word_ends: list[int] | None = None,
 ) -> tuple[int, int]:
     """Find a ~words-before and ~words-after window around a span.
 
     Returns (window_start, window_end) as char offsets into text.
+
+    ``word_starts`` and ``word_ends`` are optional pre-computed parallel
+    lists from :func:`_word_offsets` over ``text``. When the same body is
+    queried for many citation spans, reusing the pre-computed arrays makes
+    each lookup O(log N) instead of O(L) per call. When omitted, the
+    arrays are computed inline (caller pays O(L) once).
     """
-    # Walk backward from char_start to find ~`words` word boundaries
-    before_text = text[:char_start]
-    before_tokens = before_text.split()
-    if len(before_tokens) <= words:
+    if word_starts is None or word_ends is None:
+        word_starts, word_ends = _word_offsets(text)
+
+    # Words strictly before char_start: those whose start offset < char_start.
+    # bisect_left returns the first index with value >= char_start, which is
+    # exactly the count of words before the span.
+    before_count = bisect.bisect_left(word_starts, char_start)
+    if before_count <= words:
         window_start = 0
     else:
-        # Find the position of the (words)th-from-last token
-        kept = before_tokens[-words:]
-        window_start = before_text.rfind(kept[0], 0, char_start)
-        if window_start < 0:
-            window_start = 0
+        window_start = word_starts[before_count - words]
 
-    # Walk forward from char_end to find ~`words` word boundaries
-    after_text = text[char_end:]
-    after_tokens = after_text.split()
-    if len(after_tokens) <= words:
+    # Words at or after char_end: those whose start offset >= char_end.
+    after_first = bisect.bisect_left(word_starts, char_end)
+    after_count = len(word_starts) - after_first
+    if after_count <= words:
         window_end = len(text)
     else:
-        # Accumulate words forward
-        consumed = 0
-        for i, token in enumerate(after_tokens):
-            if i >= words:
-                break
-            pos = after_text.find(token, consumed)
-            consumed = pos + len(token)
-        window_end = char_end + consumed
+        # End of the (words)th word after the span. word_ends is parallel
+        # to word_starts, so index `after_first + words - 1` is the end of
+        # the words-th token at or after char_end.
+        window_end = word_ends[after_first + words - 1]
 
     return window_start, window_end
 
@@ -157,6 +185,7 @@ def extract_citation_contexts(body: str) -> list[CitationMarker]:
     if not body:
         return []
 
+    word_starts, word_ends = _word_offsets(body)
     markers: list[CitationMarker] = []
     for m in _CITATION_RE.finditer(body):
         inner = m.group(1)
@@ -166,7 +195,9 @@ def extract_citation_contexts(body: str) -> list[CitationMarker]:
 
         char_start = m.start()
         char_end = m.end()
-        win_start, win_end = _word_boundary_window(body, char_start, char_end)
+        win_start, win_end = _word_boundary_window(
+            body, char_start, char_end, word_starts=word_starts, word_ends=word_ends
+        )
         context = body[win_start:win_end]
 
         markers.append(
@@ -357,6 +388,12 @@ def extract_author_year_citations(body: str) -> list[CitationMarker]:
     if not body:
         return []
 
+    # Pre-compute word-start/word-end offsets once per body so each
+    # _word_boundary_window call is O(log N) via bisect rather than
+    # re-splitting an O(L) prefix per match — was ~75% of cumtime on
+    # review-paper-scale bodies. See scix_experiments-3ozn.1.
+    word_starts, word_ends = _word_offsets(body)
+
     # Accepted spans form a disjoint, sorted-by-start interval set (the
     # overlap rejection below maintains that invariant). We keep parallel
     # sorted lists so each overlap check is O(log N) via bisect rather than
@@ -401,7 +438,13 @@ def extract_author_year_citations(body: str) -> list[CitationMarker]:
             if not _is_valid_year(year):
                 continue
 
-            win_start, win_end = _word_boundary_window(body, char_start, char_end)
+            win_start, win_end = _word_boundary_window(
+                body,
+                char_start,
+                char_end,
+                word_starts=word_starts,
+                word_ends=word_ends,
+            )
             context = body[win_start:win_end]
 
             # Insert into both lists at the same index so they stay

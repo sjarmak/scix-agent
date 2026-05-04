@@ -72,11 +72,51 @@ import logging
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Final, Literal, Mapping, Sequence
+from typing import Any, Final, Literal, Mapping, Sequence, TypedDict
 
 import psycopg
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Structured ``theme`` payload schema (bead i315)
+# ---------------------------------------------------------------------------
+#
+# These TypedDicts pin the wire shape of ``SectionBucket.theme`` (bead 4la8)
+# so call sites get static-checked key access instead of ``dict[str, Any]``.
+# At runtime they are plain dicts — no behaviour change.
+#
+# ``total=True`` (the default) because :func:`_theme_for` unconditionally
+# populates every key; the empty-section case still emits the dict with
+# empty lists, not missing keys.
+
+
+class TopPaperEntry(TypedDict):
+    """A single top-cited paper inside a section's ``theme`` payload."""
+
+    bibcode: str
+    title: str | None
+    first_author: str | None
+    citation_count: int
+
+
+class CommunityThemeEntry(TypedDict):
+    """A single community summary inside a section's ``theme.communities`` list."""
+
+    community_id: int
+    label: str | None
+    paper_count_in_section: int
+    top_arxiv_classes: list[str]
+    top_keywords: list[str]
+
+
+class SectionTheme(TypedDict):
+    """The ``theme`` payload attached to each :class:`SectionBucket`."""
+
+    communities: list[CommunityThemeEntry]
+    top_papers_by_citation: list[TopPaperEntry]
+
 
 # ---------------------------------------------------------------------------
 # Public constants
@@ -148,7 +188,9 @@ class SectionBucket:
     name: str
     cited_papers: list[dict[str, Any]] = field(default_factory=list)
     theme_summary: str = ""
-    theme: dict[str, Any] = field(default_factory=dict)
+    theme: SectionTheme = field(
+        default_factory=lambda: SectionTheme(communities=[], top_papers_by_citation=[])
+    )
 
 
 @dataclass(frozen=True)
@@ -831,7 +873,7 @@ def _theme_for(
     bibcodes: Sequence[str],
     paper_meta: Mapping[str, dict[str, Any]],
     community_map: Mapping[str, dict[str, Any]],
-) -> dict[str, Any]:
+) -> SectionTheme:
     """Build the structured ``theme`` payload for a section (bead 4la8).
 
     Returns ``{"communities": [...], "top_papers_by_citation": [...]}``.
@@ -869,7 +911,7 @@ def _theme_for(
         key=lambda cid: (-len(by_community[cid]), cid),
     )[:_THEME_MAX_COMMUNITIES]
 
-    communities_payload: list[dict[str, Any]] = []
+    communities_payload: list[CommunityThemeEntry] = []
     for cid in ordered_cids:
         members = by_community[cid]
         arxiv_counter: Counter[str] = Counter()
@@ -924,7 +966,7 @@ def _theme_for(
             b,
         ),
     )[:_THEME_MAX_TOP_PAPERS]
-    top_papers: list[dict[str, Any]] = []
+    top_papers: list[TopPaperEntry] = []
     for b in ranked:
         meta = paper_meta.get(b, {})
         top_papers.append(
@@ -939,10 +981,10 @@ def _theme_for(
             }
         )
 
-    return {
-        "communities": communities_payload,
-        "top_papers_by_citation": top_papers,
-    }
+    return SectionTheme(
+        communities=communities_payload,
+        top_papers_by_citation=top_papers,
+    )
 
 
 def _excerpts_for(

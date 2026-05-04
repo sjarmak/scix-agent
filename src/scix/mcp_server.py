@@ -45,6 +45,9 @@ from scix.synthesize import (
     DEFAULT_SECTIONS as _SYNTH_DEFAULT_SECTIONS,
 )
 from scix.synthesize import (
+    MAX_WORKING_SET_BIBCODES,
+)
+from scix.synthesize import (
     synthesize_findings as _synthesize_findings,
 )
 
@@ -3829,7 +3832,10 @@ def _handle_temporal_evolution(conn: psycopg.Connection, args: dict[str, Any]) -
     if year_start is not None and year_end is not None and year_end < year_start:
         raise ValueError(f"year_end ({year_end}) must be >= year_start ({year_start})")
 
-    bibcodes = _resolve_working_set_bibcodes(args)
+    # Cap to match synthesize.MAX_WORKING_SET_BIBCODES — focused_papers
+    # FIFO at 500 (bead u0j1) and explicit args["bibcodes"] is unbounded,
+    # so without this cap the ANY(%s) array could grow past the ceiling.
+    bibcodes = _resolve_working_set_bibcodes(args)[:MAX_WORKING_SET_BIBCODES]
     bibcode_or_query = args.get("bibcode_or_query")
 
     if not bibcodes and not bibcode_or_query:

@@ -67,6 +67,7 @@ INDUS cosine similarity in ``[-1, 1]`` mapped to ``[0, 1]`` via
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any, Callable
 
@@ -91,6 +92,22 @@ INTENT_WEIGHTS: dict[str, float] = {
 # run on a row, or the row predates intent classification). We choose the
 # floor (background's weight) so unlabeled hops do not get inflated credit.
 DEFAULT_INTENT_WEIGHT: float = 0.3
+
+
+def _intent_weight(hop: Mapping[str, Any]) -> float:
+    """Return the configured weight for ``hop``'s intent, None-safe.
+
+    psycopg dict-rows type ``hop['intent']`` as ``Any``, so it may be
+    ``None`` (NULL in DB) or an unrecognised string. ``INTENT_WEIGHTS`` is
+    declared ``dict[str, float]``; calling ``INTENT_WEIGHTS.get(None)``
+    is a type-contract violation even though Python accepts it at runtime.
+    Centralising the lookup here keeps the four call sites both type-clean
+    and DRY (bead scix_experiments-u5gz).
+    """
+    intent = hop.get("intent")
+    if not intent:
+        return DEFAULT_INTENT_WEIGHT
+    return INTENT_WEIGHTS.get(intent, DEFAULT_INTENT_WEIGHT)
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +326,7 @@ def _run_claim_blame(
     semantic_by_bib: dict[str, float] = {}
     for hop in all_hops:
         bib = hop["target_bibcode"]
-        weight = INTENT_WEIGHTS.get(hop.get("intent"), DEFAULT_INTENT_WEIGHT)
+        weight = _intent_weight(hop)
         if weight > intent_weight_by_bib.get(bib, -1.0):
             intent_weight_by_bib[bib] = weight
         sm = hop.get("semantic_match", 0.0) or 0.0
@@ -596,7 +613,7 @@ def _build_lineage(
     origin_hops = [h for h in all_hops if h["target_bibcode"] == origin_bib]
     origin_hops.sort(
         key=lambda h: (
-            -INTENT_WEIGHTS.get(h.get("intent"), DEFAULT_INTENT_WEIGHT),
+            -_intent_weight(h),
             h.get("char_offset") or 0,
         )
     )
@@ -608,7 +625,7 @@ def _build_lineage(
                 bibcode=origin_bib,
                 year=oh.get("target_year") or origin_year,
                 intent=oh.get("intent"),
-                intent_weight=INTENT_WEIGHTS.get(oh.get("intent"), DEFAULT_INTENT_WEIGHT),
+                intent_weight=_intent_weight(oh),
                 context_snippet=oh.get("context_snippet", "") or "",
                 section_name=oh.get("section_name"),
             )
@@ -655,7 +672,7 @@ def _build_lineage(
                     bibcode=cand_bib,
                     year=cand_hop.get("source_year") or cand_year,
                     intent=cand_hop.get("intent"),
-                    intent_weight=INTENT_WEIGHTS.get(cand_hop.get("intent"), DEFAULT_INTENT_WEIGHT),
+                    intent_weight=_intent_weight(cand_hop),
                     context_snippet=cand_hop.get("context_snippet", "") or "",
                     section_name=cand_hop.get("section_name"),
                 )

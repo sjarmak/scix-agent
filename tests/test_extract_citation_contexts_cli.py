@@ -142,3 +142,47 @@ class TestIngestLogFilenameForShard:
             extract_cli.ingest_log_filename_for_shard((3, 4))
             == "citctx_full_backfill_2026_shard_3_of_4"
         )
+
+
+# ---------------------------------------------------------------------------
+# --include-closed flag (bead 8584)
+# ---------------------------------------------------------------------------
+
+
+class TestIncludeClosedFlag:
+    """``--include-closed`` flips ``oa_only=False`` through ``main`` into
+    ``run_pipeline`` (and from there into ``_build_papers_select``).
+    """
+
+    def test_main_default_passes_oa_only_true(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        captured: dict[str, object] = {}
+
+        def _spy_run(**kwargs: object) -> int:
+            captured.update(kwargs)
+            return 0
+
+        monkeypatch.setattr(extract_cli, "run_pipeline", _spy_run)
+        # Use scix_test DSN so the prod guard doesn't reject the call.
+        rc = extract_cli.main(["--dsn", "dbname=scix_test"])
+        assert rc == 0
+        assert captured.get("oa_only") is True
+
+    def test_main_include_closed_passes_oa_only_false(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        captured: dict[str, object] = {}
+
+        def _spy_run(**kwargs: object) -> int:
+            captured.update(kwargs)
+            return 0
+
+        monkeypatch.setattr(extract_cli, "run_pipeline", _spy_run)
+        rc = extract_cli.main(
+            ["--dsn", "dbname=scix_test", "--include-closed"]
+        )
+        assert rc == 0
+        assert captured.get("oa_only") is False

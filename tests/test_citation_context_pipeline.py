@@ -59,6 +59,28 @@ class TestBuildPapersSelect:
         with pytest.raises(ValueError):
             cc._build_papers_select(shard=(-1, 4), limit=None)
 
+    def test_default_oa_only_appends_predicate(self) -> None:
+        # Bead 8584: default gate is OA/preprint via the SQL function.
+        sql, _ = cc._build_papers_select(shard=None, limit=None)
+        assert "papers_is_oa_or_preprint" in sql
+
+    def test_include_closed_drops_predicate(self) -> None:
+        sql, _ = cc._build_papers_select(shard=None, limit=None, oa_only=False)
+        assert "papers_is_oa_or_preprint" not in sql
+
+    def test_oa_gate_composes_with_shard_and_limit(self) -> None:
+        sql, params = cc._build_papers_select(
+            shard=(0, 4), limit=500, oa_only=True
+        )
+        assert "papers_is_oa_or_preprint" in sql
+        assert "mod(hashtext(p.bibcode), %s) = %s" in sql
+        # LIMIT must be the last clause; assert against the lowercase form
+        # the SQL builder actually emits, not an upper-cased copy.
+        assert sql.rstrip().endswith("LIMIT %s")
+        # Placeholder ordering must match params: [total_shards, shard_index, limit].
+        # The OA predicate takes no params, so it doesn't shift the list.
+        assert params == [4, 0, 500]
+
 
 # ---------------------------------------------------------------------------
 # run_pipeline ingest_log integration

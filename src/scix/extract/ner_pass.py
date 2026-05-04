@@ -401,13 +401,18 @@ def iter_paper_batches(
     batch_size: int = 1000,
     since_bibcode: str | None = None,
     max_papers: int | None = None,
+    oa_only: bool = True,
 ) -> Iterator[list[PaperInput]]:
     """Stream papers in deterministic ``bibcode`` order via keyset pagination.
 
     ``target`` is the column name (``abstract`` or ``body``); rows where
     the column is NULL or empty are skipped. ``since_bibcode`` sets a
     watermark for resumability and ``max_papers`` caps total yield
-    (sample runs).
+    (sample runs). ``oa_only`` (default True) gates the query on the
+    ``papers_is_oa_or_preprint(papers)`` SQL function — see migration 068
+    and ``scix.oa_gate`` — so body-AI pipelines default to OA/preprint
+    papers only. Operators wanting closed-access papers must opt in via
+    ``oa_only=False`` (CLI: ``--include-closed``).
 
     Keyset pagination (``WHERE bibcode > $watermark ORDER BY bibcode
     LIMIT N``) is used instead of a server-side named cursor because the
@@ -418,11 +423,13 @@ def iter_paper_batches(
     if target not in ("abstract", "body"):
         raise ValueError(f"target must be 'abstract' or 'body', got {target!r}")
 
+    oa_clause = "  AND papers_is_oa_or_preprint(papers) " if oa_only else ""
     sql = (
         f"SELECT bibcode, {target} AS text FROM papers "  # noqa: S608 — column whitelisted above
         f"WHERE bibcode > %s "
         f"  AND {target} IS NOT NULL "
         f"  AND ({target}) <> '' "
+        f"{oa_clause}"
         f"ORDER BY bibcode ASC "
         f"LIMIT %s "
     )

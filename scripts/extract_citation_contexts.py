@@ -146,6 +146,15 @@ def main(argv: list[str] | None = None) -> int:
             f"{INGEST_LOG_BASE_FILENAME!r}, or a per-shard variant when --shard is set)."
         ),
     )
+    parser.add_argument(
+        "--include-closed",
+        action="store_true",
+        help=(
+            "Process closed-access papers as well as OA/preprints. Default "
+            "is OA-only (bead 8584 publisher-policy gate). Use only with "
+            "explicit operator approval."
+        ),
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -165,12 +174,30 @@ def main(argv: list[str] | None = None) -> int:
 
     ingest_log_filename = None if args.no_ingest_log else ingest_log_filename_for_shard(shard)
 
+    logger.info(
+        "Running citation-context extraction on %s "
+        "(shard=%s, batch_size=%d, limit=%s, oa_only=%s)",
+        redact_dsn(dsn),
+        args.shard,
+        args.batch_size,
+        args.limit,
+        not args.include_closed,
+    )
+    if args.include_closed:
+        logger.warning(
+            "--include-closed is ACTIVE: citation-context extraction will run "
+            "on closed-access papers as well as OA/preprints. Confirm operator "
+            "approval and publisher-agreement (Wiley/Springer TDM) clearance "
+            "before each run."
+        )
+
     total = run_pipeline(
         dsn=args.dsn,
         batch_size=args.batch_size,
         limit=args.limit,
         shard=shard,
         ingest_log_filename=ingest_log_filename,
+        oa_only=not args.include_closed,
     )
 
     print(f"Inserted {total} citation context rows.")

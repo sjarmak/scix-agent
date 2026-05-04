@@ -327,11 +327,14 @@ def run_pipeline(
     max_papers: int | None = None,
     dry_run: bool = False,
     extraction_version: str = DEFAULT_EXTRACTION_VERSION,
+    oa_only: bool = True,
 ) -> dict[str, int]:
     """Stream batches, run section-aware NER, write to staging.
 
     Returns a totals dict so callers (CLI + tests) can format their own
-    report without scraping logger output.
+    report without scraping logger output. ``oa_only`` defaults to True —
+    body-AI pipelines are gated on ``papers_is_oa_or_preprint`` (bead 8584,
+    migration 068). Pass ``--include-closed`` at the CLI to flip this.
     """
     totals = {
         "papers_seen": 0,
@@ -347,6 +350,7 @@ def run_pipeline(
         batch_size=batch_size,
         since_bibcode=since_bibcode,
         max_papers=max_papers,
+        oa_only=oa_only,
     ):
         for paper in batch:
             totals["papers_seen"] += 1
@@ -461,6 +465,15 @@ def _build_argparser() -> argparse.ArgumentParser:
         help="torch.compile the model (~60s warmup, +30-50%% steady-state).",
     )
     p.add_argument("--dsn", default=None, help="Database DSN; defaults to SCIX_DSN.")
+    p.add_argument(
+        "--include-closed",
+        action="store_true",
+        help=(
+            "Process closed-access papers as well as OA/preprints. Default "
+            "is OA-only (bead 8584 publisher-policy gate). Use only with "
+            "explicit operator approval."
+        ),
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
@@ -482,13 +495,20 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     logger.info(
-        "Running body NER on %s (dry_run=%s, since=%s, max=%s, version=%s)",
+        "Running body NER on %s (dry_run=%s, since=%s, max=%s, version=%s, oa_only=%s)",
         redact_dsn(dsn),
         args.dry_run,
         args.since_bibcode,
         args.max_papers,
         args.source_version,
+        not args.include_closed,
     )
+    if args.include_closed:
+        logger.warning(
+            "--include-closed is ACTIVE: body NER will run on closed-access "
+            "papers as well as OA/preprints. Confirm operator approval and "
+            "publisher-agreement (Wiley/Springer TDM) clearance before each run."
+        )
 
     extractor = GlinerExtractor(
         model_name=args.model,
@@ -509,6 +529,7 @@ def main(argv: list[str] | None = None) -> int:
             max_papers=args.max_papers,
             dry_run=args.dry_run,
             extraction_version=args.source_version,
+            oa_only=not args.include_closed,
         )
         logger.info(
             "DONE: papers=%d kept=%d sections=%d mentions=%d inserted=%d",

@@ -376,8 +376,12 @@ def stub_iter_paper_batches(monkeypatch: pytest.MonkeyPatch) -> list[PaperInput]
         batch_size: int = 200,
         since_bibcode: str | None = None,
         max_papers: int | None = None,
+        oa_only: bool = True,
     ) -> Iterator[list[PaperInput]]:
-        # One batch with all papers — keeps the assertions simple.
+        # One batch with all papers — keeps the assertions simple. The stub
+        # mirrors iter_paper_batches's signature exactly so a future kwarg
+        # addition surfaces as a TypeError here (catching integration drift)
+        # rather than being silently absorbed.
         yield papers
 
     monkeypatch.setattr(r, "iter_paper_batches", _fake_iter)
@@ -484,3 +488,74 @@ class TestMcpSourcesFilter:
         assert rows == []
         _, params = cursor.execute.call_args[0]
         assert params == (["ner_v1"],)
+
+
+# ---------------------------------------------------------------------------
+# OA-gate (bead 8584) — iter_paper_batches gating + CLI flag
+# ---------------------------------------------------------------------------
+
+
+class TestIterPaperBatchesOaGate:
+    """``iter_paper_batches`` defaults to ``oa_only=True`` and appends the
+    ``papers_is_oa_or_preprint`` predicate to the WHERE clause; passing
+    ``oa_only=False`` drops the predicate (operator opt-in for closed-access).
+    """
+
+    @staticmethod
+    def _capture_iter_paper_batches_sql(*, oa_only: bool) -> str:
+        from scix.extract.ner_pass import iter_paper_batches
+
+        conn, cursor = _capture_cursor()
+        cursor.fetchall.return_value = []  # forces a single empty round
+        # Drain the iterator — one execute() call captured.
+        list(iter_paper_batches(conn, target="body", oa_only=oa_only))
+        sql, _params = cursor.execute.call_args[0]
+        return sql
+
+    def test_default_oa_only_appends_predicate(self) -> None:
+        sql = self._capture_iter_paper_batches_sql(oa_only=True)
+        assert "papers_is_oa_or_preprint" in sql, (
+            "default (oa_only=True) must gate the query on the OA function"
+        )
+
+    def test_include_closed_drops_predicate(self) -> None:
+        sql = self._capture_iter_paper_batches_sql(oa_only=False)
+        assert "papers_is_oa_or_preprint" not in sql, (
+            "oa_only=False must skip the gate (operator --include-closed)"
+        )
+
+
+class TestRunNerBodiesCli:
+    """``--include-closed`` flips ``oa_only=False`` through ``run_pipeline``
+    into ``iter_paper_batches``. Without the flag the default is to gate.
+    """
+
+    def test_argparser_default_oa_only_true(self) -> None:
+        args = r._build_argparser().parse_args([])
+        # Default --include-closed not set => oa_only stays True.
+        assert args.include_closed is False
+
+    def test_argparser_include_closed_flag_parses(self) -> None:
+        args = r._build_argparser().parse_args(["--include-closed"])
+        assert args.include_closed is True
+
+    def test_run_pipeline_passes_oa_only_to_iter(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        captured: dict[str, Any] = {}
+
+        def _spy_iter(conn: Any, **kwargs: Any) -> Iterator[list[PaperInput]]:
+            captured.update(kwargs)
+            yield []
+
+        monkeypatch.setattr(r, "iter_paper_batches", _spy_iter)
+        extractor, _stub_model = _make_stub_extractor()
+        conn, _cursor = _capture_cursor()
+
+        r.run_pipeline(conn, extractor, batch_size=200, oa_only=False)
+        assert captured.get("oa_only") is False
+
+        captured.clear()
+        r.run_pipeline(conn, extractor, batch_size=200)  # default
+        assert captured.get("oa_only") is True

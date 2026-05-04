@@ -662,6 +662,8 @@ _SELECT_PAPERS_BASE = """
 def _build_papers_select(
     shard: tuple[int, int] | None,
     limit: int | None,
+    *,
+    oa_only: bool = True,
 ) -> tuple[str, list[Any]]:
     """Compose the streaming SELECT for the extraction pipeline.
 
@@ -671,8 +673,15 @@ def _build_papers_select(
     parses it: callers that bypass the CLI (tests, future schedulers)
     must still get an error on bad input rather than a silently-empty
     result set.
+
+    ``oa_only`` (default True) appends ``papers_is_oa_or_preprint(p)`` to
+    the WHERE clause — the OA/preprint gate from migration 068. Set to
+    False (CLI: ``--include-closed``) to process closed-access papers as
+    well, with explicit operator approval.
     """
     sql = _SELECT_PAPERS_BASE
+    if oa_only:
+        sql = sql + "      AND papers_is_oa_or_preprint(p)\n"
     params: list[Any] = []
     if shard is not None:
         index, total = shard
@@ -734,6 +743,7 @@ def run_pipeline(
     *,
     shard: tuple[int, int] | None = None,
     ingest_log_filename: str | None = None,
+    oa_only: bool = True,
 ) -> int:
     """Process papers from DB, extracting citation contexts in batches.
 
@@ -774,7 +784,9 @@ def run_pipeline(
     pipeline_failed = False
 
     try:
-        query, params = _build_papers_select(shard=shard, limit=limit)
+        query, params = _build_papers_select(
+            shard=shard, limit=limit, oa_only=oa_only
+        )
 
         with read_conn.cursor(name="citctx_papers") as cur:
             cur.execute(query, params)

@@ -204,7 +204,51 @@ def test_iter_sections_passes_range_params():
 
     assert captured["params"]["start"] == "A"
     assert captured["params"]["end"] == "Z"
-    assert "ORDER BY bibcode" in captured["sql"]
+    # Default oa_only=True aliases papers_fulltext as ``pf`` because the JOIN
+    # to papers requires it.
+    assert "ORDER BY pf.bibcode" in captured["sql"]
+
+
+def test_iter_sections_default_oa_gate_appends_predicate():
+    """Bead 8584: section_pipeline defaults to OA-only via the
+    ``papers_is_oa_or_preprint`` SQL function. JOINs ``papers`` so the gate
+    can reference per-paper metadata.
+    """
+    captured = {}
+
+    def rows_for_query(sql, params):
+        captured["sql"] = sql
+        return []
+
+    conn = _FakeConn(rows_for_query)
+    list(iter_sections(conn))
+
+    sql = captured["sql"]
+    assert "papers_fulltext" in sql, "must still read sections from papers_fulltext"
+    assert "papers_is_oa_or_preprint" in sql, "default oa_only=True must gate"
+    # The JOIN is required so the function can see papers.property /
+    # papers.arxiv_class — the SELECT alone wouldn't have access.
+    assert "JOIN papers" in sql or "INNER JOIN papers" in sql
+
+
+def test_iter_sections_oa_only_false_drops_predicate_and_join():
+    """``oa_only=False`` (CLI: ``--include-closed``) drops the gate. We also
+    drop the JOIN to keep the SELECT path identical to the pre-gate shape —
+    otherwise an unnecessary JOIN penalty would ride on every closed-access
+    run.
+    """
+    captured = {}
+
+    def rows_for_query(sql, params):
+        captured["sql"] = sql
+        return []
+
+    conn = _FakeConn(rows_for_query)
+    list(iter_sections(conn, oa_only=False))
+
+    sql = captured["sql"]
+    assert "papers_is_oa_or_preprint" not in sql
+    assert "JOIN papers" not in sql
 
 
 # ---------------------------------------------------------------------------
@@ -359,6 +403,14 @@ def test_cli_argument_parsing_defaults():
     assert args.end_bibcode is None
     assert args.dry_run is False
     assert args.dsn is None
+    # Bead 8584: --include-closed defaults to False (gate ON by default).
+    assert args.include_closed is False
+
+
+def test_cli_include_closed_flag_parses():
+    parser = _build_parser()
+    args = parser.parse_args(["--include-closed"])
+    assert args.include_closed is True
 
 
 def test_cli_argument_parsing_overrides():

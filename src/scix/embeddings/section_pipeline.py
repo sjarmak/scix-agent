@@ -65,8 +65,6 @@ import logging
 import sys
 from typing import Any, Iterable, Iterator, Sequence
 
-import psycopg
-
 from scix.db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -134,6 +132,8 @@ def iter_sections(
     conn: Any,
     start_bibcode: str | None = None,
     end_bibcode: str | None = None,
+    *,
+    oa_only: bool = True,
 ) -> Iterator[tuple[str, int, str, str]]:
     """Yield ``(bibcode, section_index, heading, text)`` from papers_fulltext.
 
@@ -146,13 +146,34 @@ def iter_sections(
             context manager yields rows ``(bibcode, sections_jsonb)``).
         start_bibcode / end_bibcode: optional half-open range filter,
             ``[start, end]`` inclusive on both ends. Either may be None.
+        oa_only: when True (default), JOINs ``papers`` and gates the query
+            on ``papers_is_oa_or_preprint(p)`` — see migration 068. Drops
+            both the JOIN and the predicate when False so the closed-access
+            opt-in path keeps the original single-table SELECT shape.
+
+    The JOIN drives off ``papers_fulltext.bibcode`` (the existing primary
+    key supplies the ordered scan) and looks up ``papers`` by primary key
+    via nested loop. ``papers_fulltext.bibcode REFERENCES papers(bibcode)``
+    so every fulltext row has a matching paper, making the JOIN
+    rate-preserving on the OA-eligible subset.
     """
-    sql = (
-        "SELECT bibcode, sections FROM papers_fulltext "
-        "WHERE (%(start)s IS NULL OR bibcode >= %(start)s) "
-        "  AND (%(end)s   IS NULL OR bibcode <= %(end)s) "
-        "ORDER BY bibcode"
-    )
+    if oa_only:
+        sql = (
+            "SELECT pf.bibcode, pf.sections "
+            "FROM papers_fulltext pf "
+            "JOIN papers p ON p.bibcode = pf.bibcode "
+            "WHERE (%(start)s IS NULL OR pf.bibcode >= %(start)s) "
+            "  AND (%(end)s   IS NULL OR pf.bibcode <= %(end)s) "
+            "  AND papers_is_oa_or_preprint(p) "
+            "ORDER BY pf.bibcode"
+        )
+    else:
+        sql = (
+            "SELECT bibcode, sections FROM papers_fulltext "
+            "WHERE (%(start)s IS NULL OR bibcode >= %(start)s) "
+            "  AND (%(end)s   IS NULL OR bibcode <= %(end)s) "
+            "ORDER BY bibcode"
+        )
     params = {"start": start_bibcode, "end": end_bibcode}
 
     with conn.cursor() as cur:
@@ -397,6 +418,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Postgres DSN (defaults to SCIX_DSN env or the libpq default).",
     )
+    parser.add_argument(
+        "--include-closed",
+        action="store_true",
+        help=(
+            "Process closed-access papers as well as OA/preprints. Default "
+            "is OA-only (bead 8584 publisher-policy gate). Use only with "
+            "explicit operator approval."
+        ),
+    )
     return parser
 
 
@@ -464,14 +494,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logger.info(
-        "section-embed start: model=%s dims=%d batch=%d range=[%s, %s] dry_run=%s",
+        "section-embed start: model=%s dims=%d batch=%d range=[%s, %s] "
+        "dry_run=%s oa_only=%s",
         args.model,
         args.dimensions,
         args.batch_size,
         args.start_bibcode,
         args.end_bibcode,
         args.dry_run,
+        not args.include_closed,
     )
+    if args.include_closed:
+        logger.warning(
+            "--include-closed is ACTIVE: section embedding will run on "
+            "closed-access papers as well as OA/preprints. Confirm operator "
+            "approval and publisher-agreement (Wiley/Springer TDM) clearance "
+            "before each run."
+        )
 
     if args.dry_run:
         logger.info("dry-run: skipping model load and DB writes")
@@ -484,7 +523,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         total_written = 0
         total_seen = 0
         for batch in _chunked(
-            iter_sections(conn, args.start_bibcode, args.end_bibcode),
+            iter_sections(
+                conn,
+                args.start_bibcode,
+                args.end_bibcode,
+                oa_only=not args.include_closed,
+            ),
             args.batch_size,
         ):
             total_seen += len(batch)

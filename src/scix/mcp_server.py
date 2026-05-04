@@ -1039,18 +1039,16 @@ _FILTERS_SCHEMA = {
 # The section_retrieval tool fuses dense HNSW search over section_embeddings
 # with BM25 over papers_fulltext.sections_tsv via Reciprocal Rank Fusion.
 # It uses a slimmer filter object than the search-tool _FILTERS_SCHEMA: only
-# discipline, year_min, year_max, bibcode_prefix.
+# year_min, year_max, bibcode_prefix.
+#
+# A `discipline` filter was previously advertised here, but the `papers`
+# table has no `discipline` column, so any caller passing it crashed at
+# SQL execute() time. Re-adding it is tracked by scix_experiments-dbl.10
+# (facet_counts: add 'discipline' as first-class facet field).
 
 _SECTION_FILTERS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "discipline": {
-            "type": "string",
-            "description": (
-                "Restrict to papers whose papers.discipline equals this value "
-                "(e.g. 'astrophysics')."
-            ),
-        },
         "year_min": {"type": "integer"},
         "year_max": {"type": "integer"},
         "bibcode_prefix": {
@@ -5407,19 +5405,18 @@ def _section_filter_clauses(
     on the ``papers`` row aliased as ``p``. Params are bound positionally.
 
     Filter contract (matches _SECTION_FILTERS_SCHEMA):
-        - discipline   -> p.discipline = %s
         - year_min     -> p.year >= %s
         - year_max     -> p.year <= %s
         - bibcode_prefix -> p.bibcode LIKE %s   (caller-supplied trailing % logic)
+
+    Unknown keys are silently ignored. ``discipline`` is intentionally not
+    accepted because ``papers`` has no ``discipline`` column — see
+    scix_experiments-9zyw and scix_experiments-dbl.10.
     """
     if not filters:
         return "", []
     clauses: list[str] = []
     params: list[Any] = []
-    discipline = filters.get("discipline")
-    if discipline is not None:
-        clauses.append("AND p.discipline = %s")
-        params.append(str(discipline))
     year_min = _coerce_year(filters.get("year_min"), "year_min")
     if year_min is not None:
         clauses.append("AND p.year >= %s")

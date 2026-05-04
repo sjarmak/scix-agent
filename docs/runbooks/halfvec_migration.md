@@ -9,18 +9,36 @@
 
 ---
 
-## 0. Architectural decision — Option B (shadow column)
+## 0. Architectural decision — Option B (shadow column) **with mandatory pre-drop of idx_embed_hnsw_indus**
 
 We considered two paths:
 
 | Option | Approach | Pros | Cons |
 |---|---|---|---|
 | A | `ALTER TABLE ... ALTER COLUMN embedding TYPE halfvec(768) USING ...` | Single DDL; no code changes beyond cast literal. | ACCESS EXCLUSIVE on the table for the full rewrite (~hours on 32M rows / 125 GB TOAST), blocks `scripts/embed.py` daily cron, single-shot failure rolls the whole thing back. |
-| B | Add `embedding_hv halfvec(768)` shadow column, backfill in batches, build new HNSW, cut code over, drop old column later. | Online. Batches checkpoint. Rollback = don't deploy code. Survives OOM kills. | More code (column-aware casts in `search.py`, dual write in `embed.py`). Doubles storage during transition. |
+| B | Add `embedding_hv halfvec(768)` shadow column, backfill in batches, build new HNSW, cut code over, drop old column later. | Mostly online (only INDUS dense queries see an outage; lexical and DB writes remain available). Batches checkpoint. Rollback = don't deploy code. Survives OOM kills. | More code (column-aware casts in `search.py`, dual write in `embed.py`). Doubles storage during transition. **Backfill speed requires `idx_embed_hnsw_indus` to be dropped first** — see warning below. |
 
 **Chose B.** Online-ness matters more than code simplicity on a 253 GB table
 with a daily embed pipeline. The added TOAST during transition (~125 GB)
 is recovered in phase 5 when the legacy column is dropped.
+
+> **Critical (verified 2026-04-29 against prod scix):** the original Option B
+> assumption — "per-row UPDATEs of `embedding_hv` skip `idx_embed_hnsw_indus`
+> because the indexed expression `embedding::vector(768)` is unchanged" — does
+> **not** hold on this table. `pg_stat_user_tables` after a 1000-row probe:
+> `n_tup_hot_upd=3`, `n_tup_newpage_upd=29959` (i.e. HOT optimization fails on
+> 99.99% of rows). Heap fragmentation forces new tuple versions onto fresh
+> pages, which in turn forces a full HNSW index entry rewrite per row.
+>
+> Measured cost: ~39 ms/row UPDATE with `idx_embed_hnsw_indus` present →
+> 14 days for 32.4M rows. Non-viable.
+>
+> **Therefore phase 4 (backfill) MUST be preceded by dropping
+> `idx_embed_hnsw_indus`.** Local MCP INDUS dense search is degraded for the
+> backfill+rebuild window (~2-3 h total — see phase 5 timing). RRF in
+> `src/scix/search.py` falls back to lexical-only during the window.
+> Public `mcp.sjarmak.ai` is intentionally DOWN per ops state, so external
+> impact is nil; coordinate with the local-MCP user before starting.
 
 ---
 
@@ -104,6 +122,19 @@ psql "$SCIX_DSN" -c "SELECT count(*) FROM halfvec_backfill_progress;"
 
 ## 4. Backfill — scripts/backfill_halfvec.py
 
+> **MUST drop `idx_embed_hnsw_indus` before this phase** (see §0). Without
+> the drop, per-row UPDATE cost is ~39 ms/row → 14 days. Once the index is
+> gone the cost drops back to the ~4 µs/row range that the runbook originally
+> assumed.
+
+```bash
+# Step 0 (pre-backfill): drop the legacy HNSW partial index.
+# This is what makes the backfill feasible. INDUS dense search is offline
+# from this point until phase 5 finishes.
+scix-batch psql "$SCIX_DSN" -v ON_ERROR_STOP=1 \
+    -c "DROP INDEX CONCURRENTLY IF EXISTS idx_embed_hnsw_indus;"
+```
+
 Populates `embedding_hv` for all `model_name='indus'` rows. Idempotent,
 batched (default 20k/batch), signal-safe (SIGTERM finishes current batch).
 
@@ -116,9 +147,11 @@ scix-batch --mem-high 10G --mem-max 15G \
         2>&1 | tee logs/halfvec_backfill.log
 ```
 
-**Estimated runtime**: 32.4M rows / 20k batch = ~1600 batches. At an
-expected ~500k rows/s (pure SQL cast, no network round-trip), wall clock
-is ~60-90 minutes. Dominated by WAL write + TOAST rewrite.
+**Estimated runtime**: 32.4M rows / 20k batch = ~1600 batches. After the
+HNSW drop, per-batch cost is dominated by the toast rewrite (~30 MB WAL/batch)
+rather than HNSW graph maintenance, so wall clock returns to the ~60-90 min
+range. With the index still present, batches stalled at ~6+ minutes apiece
+on this host (verified 2026-04-29).
 
 **Monitoring** (from another tmux pane):
 ```bash
@@ -154,6 +187,33 @@ scix-batch --mem-high 20G --mem-max 30G \
 
 **Estimated runtime**: 45-90 minutes on this host
 (maintenance_work_mem=8GB, max_parallel_maintenance_workers=7).
+
+> **Build-time gotcha (verified 2026-04-30):** with the default 8 GB
+> `maintenance_work_mem`, the HNSW build hits "graph no longer fits into
+> maintenance_work_mem after 3870730 tuples" and spills to disk. Spilled
+> builds become 10×+ slower and risk getting killed by systemd-oomd (the
+> first 2026-04-29 build ran 21 hours and was terminated mid-stream,
+> leaving an INVALID index — `indisvalid=false`/`indisready=false` —
+> which the planner ignores. Symptom: every INDUS dense query falls back
+> to a Parallel Seq Scan over 32M rows / ~5-10 min wall-clock per query,
+> verified via `EXPLAIN`).
+>
+> Recovery from an INVALID index:
+> ```sql
+> -- The terminated CREATE INDEX backend may still be alive holding locks;
+> -- terminate it first or DROP INDEX CONCURRENTLY will block forever.
+> SELECT pg_terminate_backend(pid)
+>   FROM pg_stat_activity
+>  WHERE query LIKE 'CREATE INDEX%idx_embed_hnsw_indus_hv%';
+> DROP INDEX CONCURRENTLY IF EXISTS idx_embed_hnsw_indus_hv;
+> ```
+>
+> For the rebuild, prefer **non-concurrent** `CREATE INDEX` when no
+> concurrent writers to `paper_embeddings` exist (verified via
+> `crontab -l` + `pg_stat_activity`). Non-concurrent is significantly
+> faster because it avoids the 2-phase coordination overhead. The
+> ACCESS EXCLUSIVE lock is fine since INDUS dense search is already
+> offline at this stage anyway.
 
 **Monitor progress** (from another pane):
 ```bash
@@ -262,21 +322,22 @@ Write the comparison to `results/halfvec_migration/sizes_after.txt` and
 confirm `idx_embed_hnsw_indus_hv` is ≥40% smaller than the pre-migration
 `idx_embed_hnsw_indus`.
 
+**Result (2026-04-30):** 120 GB → 24 GB = **80.0% reduction** (96 GB freed).
+Acceptance gate (≥40%) passes by a wide margin. See
+`results/halfvec_migration/sizes_after.txt`.
+
 ---
 
 ## 9. Cleanup (later, gated on stability)
 
-After the new index runs clean for a week:
+`idx_embed_hnsw_indus` is already dropped in phase 4 (the original "later"
+DROP ran early, by necessity). Remaining cleanup:
 
-1. New migration `055_drop_legacy_indus_embedding.sql`:
-   ```sql
-   DROP INDEX CONCURRENTLY IF EXISTS idx_embed_hnsw_indus;
-   -- The column stays: paper_embeddings_nomic/_specter2 pilots still
-   -- use `embedding`. Column drop is a separate follow-up once pilots
-   -- are retired (see bead scix_experiments-2xe successors).
-   ```
-2. `VACUUM (ANALYZE, VERBOSE) paper_embeddings;` to reclaim TOAST space
+1. `VACUUM (ANALYZE, VERBOSE) paper_embeddings;` to reclaim TOAST space
    left over from the now-unused `embedding` values in INDUS rows.
+2. Eventual `DROP COLUMN embedding` (separate follow-up once
+   `paper_embeddings_nomic` / `_specter2` pilots are retired — see bead
+   `scix_experiments-2xe` successors).
 
 ---
 
@@ -285,10 +346,9 @@ After the new index runs clean for a week:
 | Stage reached | Rollback |
 |---|---|
 | Migration 053 only | `ALTER TABLE paper_embeddings DROP COLUMN embedding_hv; DROP TABLE halfvec_backfill_progress;` |
-| Backfill partially complete | Same as above — `embedding_hv` column drop takes everything with it. |
-| Index 054 built, code not deployed | `DROP INDEX CONCURRENTLY idx_embed_hnsw_indus_hv;` then column drop as above. |
-| Code deployed, eval regression | `git revert` the PR, redeploy. Old index and column are intact. |
-| Post-cleanup (055) | Out of rollback window — would need to rebuild `idx_embed_hnsw_indus` from scratch (~8h) against the surviving `embedding` values. This is why we wait a week before 055. |
+| `idx_embed_hnsw_indus` dropped, backfill partially complete | INDUS dense is already offline. To exit early: drop column as above, then `CREATE INDEX CONCURRENTLY idx_embed_hnsw_indus ON paper_embeddings USING hnsw ((embedding::vector(768)) vector_cosine_ops) WITH (m=16, ef_construction=64) WHERE model_name='indus';` (~6 h to rebuild against the `vector` column). |
+| Index 054 built, code not deployed | Set `SCIX_USE_HALFVEC=0` in env so queries fall back to the legacy path. NOTE: `idx_embed_hnsw_indus` is gone, so legacy fallback is seq-scan-tier slow (~44 s/query) until the old index is rebuilt or the new halfvec index is wired up. |
+| Code deployed, eval regression | `SCIX_USE_HALFVEC=0` cuts queries back to the legacy `embedding` column, but with `idx_embed_hnsw_indus` gone, that path is seq-scan slow. Practical fallback is to drop `idx_embed_hnsw_indus_hv` and rebuild `idx_embed_hnsw_indus` (~6 h). |
 
 ---
 
@@ -310,3 +370,14 @@ After the new index runs clean for a week:
   is validated on `vector_cosine_ops`; halfvec_cosine_ops uses the same
   code path but we have no historical data. The 50-query eval in
   phase 7 is the guardrail.
+- **LHS cast on `embedding_hv` defeats HNSW match (verified 2026-04-30).**
+  Migration 054 indexes `embedding_hv halfvec_cosine_ops` with NO
+  expression wrapper — but the legacy code in `src/scix/search.py` was
+  templated against the pilot indexes `((embedding)::vector(768))` and
+  applied the same `({vec_col})::{vec_cast}` to the halfvec column.
+  Result: planner can't match the indexed expression and falls back to
+  Seq Scan over 32M rows (verified ~12 min wall-clock vs sub-second).
+  Fixed by gating on `use_halfvec`: bare `pe.embedding_hv` for the
+  halfvec path, `(pe.embedding)::vector(768)` for the pilot path.
+  Unit test `test_indus_query_uses_embedding_hv_no_lhs_cast` is the
+  regression guard.

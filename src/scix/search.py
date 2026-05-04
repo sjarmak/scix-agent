@@ -34,11 +34,13 @@ STUB_COLUMNS = "p.bibcode, p.title, p.first_author, p.year, p.citation_count, p.
 RRF_K = 60
 
 # Halfvec cutover gate. Migrations 053/054 add paper_embeddings.embedding_hv
-# and idx_embed_hnsw_indus_hv, but were not applied to prod scix as of
-# 2026-04-22 (see bead scix_experiments-d0a). Default False so vector_search
-# stays on the legacy vector(768) column + idx_embed_hnsw_indus for INDUS.
-# Set SCIX_USE_HALFVEC=1 only after migration + scripts/backfill_halfvec.py
-# completes; see docs/runbooks/halfvec_migration.md.
+# + idx_embed_hnsw_indus_hv (halfvec_cosine_ops). Applied to prod scix on
+# 2026-04-29; backfill of all 32.4M INDUS rows + new HNSW build completed
+# the same day. The legacy idx_embed_hnsw_indus was dropped pre-backfill
+# (per docs/runbooks/halfvec_migration.md §0/§4) — when SCIX_USE_HALFVEC=0
+# INDUS dense queries fall back to seq-scan over the legacy `embedding`
+# column (~44 s/query). Flip to 1 after the 50-query post-migration eval
+# acceptance gate passes (runbook §7).
 _HALFVEC_ENABLED = os.environ.get("SCIX_USE_HALFVEC", "0") == "1"
 
 
@@ -350,11 +352,9 @@ def vector_search(
 
     ndim = len(query_embedding)
     vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
-    # INDUS halfvec path is gated on SCIX_USE_HALFVEC=1 because migrations
-    # 053/054 (add embedding_hv shadow column + HNSW index) have not been
-    # applied to prod scix yet — see bead scix_experiments-d0a. Default off
-    # falls back to the original vector(768) column and idx_embed_hnsw_indus.
-    # Flip the env var after the migration + backfill runbook completes.
+    # INDUS halfvec path is gated on SCIX_USE_HALFVEC=1. Migrations 053/054
+    # are applied and embedding_hv is fully backfilled (2026-04-29); flip
+    # only after the 50-query eval clears the runbook §7 gates.
     use_halfvec = _HALFVEC_ENABLED and model_name == "indus"
     vec_col = "pe.embedding_hv" if use_halfvec else "pe.embedding"
     vec_cast = f"halfvec({ndim})" if use_halfvec else f"vector({ndim})"
@@ -376,13 +376,18 @@ def vector_search(
     if scan_mode is not None:
         iterative_applied = configure_iterative_scan(conn, mode=scan_mode)
 
-    # Match the per-model partial HNSW expression: halfvec(768) for INDUS,
-    # vector(N) for pilots. The LHS cast `({vec_col})::{vec_cast}` is required
-    # for the planner to match the indexed expression `((embedding)::vector(768))`
-    # — without it, the planner falls back to a Seq Scan over 32M rows + Sort
-    # (verified 2026-04-26: omitting the cast produces cost=11.5M / ~44s wall-clock;
-    # adding it produces cost=4k / sub-100ms HNSW lookup).
-    cast_vec = f"({vec_col})::{vec_cast}"
+    # Match the per-model partial HNSW expression so the planner picks the
+    # right index, not a Seq Scan over 32M rows + Sort:
+    #   - INDUS halfvec: idx_embed_hnsw_indus_hv on `embedding_hv` (no cast).
+    #     The LHS must be the bare column; adding `::halfvec(768)` defeats
+    #     the planner match (verified 2026-04-30: ~12 min wall-clock vs
+    #     sub-100ms when the cast is omitted).
+    #   - Pilots (vector path): idx_embed_hnsw_{nomic,specter2} on
+    #     `((embedding)::vector(768))`. The LHS cast is required for the
+    #     planner to match the indexed expression (verified 2026-04-26:
+    #     omitting the cast produces cost=11.5M / ~44s wall-clock; adding
+    #     it produces cost=4k / sub-100ms HNSW lookup).
+    cast_vec = vec_col if use_halfvec else f"({vec_col})::{vec_cast}"
     query = f"""
         SELECT {STUB_COLUMNS},
                1 - ({cast_vec} <=> %s::{vec_cast}) AS similarity

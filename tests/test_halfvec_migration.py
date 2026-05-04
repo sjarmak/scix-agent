@@ -34,7 +34,11 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 # ---------------------------------------------------------------------------
 
 
-def _captured_sql(model_name: str) -> str:
+def _captured_sql(model_name: str, *, halfvec_enabled: bool = True) -> str:
+    # _HALFVEC_ENABLED is captured at module import time, so monkey-patching
+    # the env var alone is insufficient — patch the module attribute instead.
+    import scix.search as search
+
     from scix.search import vector_search  # local import after sys.path tweak
 
     conn = MagicMock()
@@ -54,24 +58,48 @@ def _captured_sql(model_name: str) -> str:
     capture = _Capture()
     cm.__enter__.return_value = capture
 
-    vector_search(conn, [0.1] * 768, model_name=model_name, limit=5)
+    original = search._HALFVEC_ENABLED
+    search._HALFVEC_ENABLED = halfvec_enabled
+    try:
+        vector_search(conn, [0.1] * 768, model_name=model_name, limit=5)
+    finally:
+        search._HALFVEC_ENABLED = original
     return capture.last_query
 
 
-def test_indus_query_uses_embedding_hv_and_halfvec_cast() -> None:
-    sql = _captured_sql("indus")
+def test_indus_query_uses_embedding_hv_no_lhs_cast() -> None:
+    """When SCIX_USE_HALFVEC=1, INDUS must hit pe.embedding_hv with NO LHS cast.
+
+    The new idx_embed_hnsw_indus_hv is on `embedding_hv halfvec_cosine_ops`
+    (no expression wrapper). Wrapping the column in `(pe.embedding_hv)::halfvec(768)`
+    breaks the planner's index-match and forces a Seq Scan over 32M rows
+    (verified 2026-04-30: ~12 min wall-clock vs sub-second when omitted).
+    """
+    sql = _captured_sql("indus", halfvec_enabled=True)
     assert "pe.embedding_hv" in sql, sql
+    # RHS halfvec cast on the literal is fine and required.
     assert "halfvec(768)" in sql, sql
+    # LHS must not wrap embedding_hv in any cast.
+    assert "(pe.embedding_hv)::" not in sql, sql
+    # Legacy vector path must not appear.
     assert "pe.embedding::" not in sql, sql
     assert "vector(768)" not in sql, sql
 
 
 def test_pilot_query_still_uses_legacy_vector_column() -> None:
-    sql = _captured_sql("specter2")
+    sql = _captured_sql("specter2", halfvec_enabled=True)
     assert "pe.embedding" in sql
     assert "vector(768)" in sql
     assert "embedding_hv" not in sql
     assert "halfvec" not in sql
+
+
+def test_indus_query_falls_back_to_vector_when_gate_off() -> None:
+    """When SCIX_USE_HALFVEC=0, INDUS keeps the legacy vector(768) path."""
+    sql = _captured_sql("indus", halfvec_enabled=False)
+    assert "(pe.embedding)::vector(768)" in sql, sql
+    assert "embedding_hv" not in sql, sql
+    assert "halfvec" not in sql, sql
 
 
 # ---------------------------------------------------------------------------

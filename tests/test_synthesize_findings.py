@@ -18,12 +18,12 @@ import pytest
 
 from scix.mcp_server import _dispatch_tool, _session_state
 from scix.synthesize import (
+    _CORE_SHARE_THRESHOLD,
+    _SUPPORTING_SHARE_THRESHOLD,
     DEFAULT_SECTIONS,
     INTENT_TO_SECTION,
     SectionBucket,
     SynthesisResult,
-    _CORE_SHARE_THRESHOLD,
-    _SUPPORTING_SHARE_THRESHOLD,
     _classify_share_tier,
     synthesize_findings,
 )
@@ -1902,3 +1902,132 @@ class TestAdditiveGroundingFields:
         methods = next(s for s in result["sections"] if s["name"] == "methods")
         row = next(p for p in methods["cited_papers"] if p["bibcode"] == "2024A")
         assert row["first_author"] == "Breu"
+
+
+# ---------------------------------------------------------------------------
+# DB-error guards on synthesize.py helpers (bead scix_experiments-vm1r)
+# ---------------------------------------------------------------------------
+
+
+class TestDBErrorGuards:
+    """Each of ``_fetch_paper_metadata``, ``_fetch_intent_histogram``, and
+    ``_fetch_community_assignments`` must trap ``psycopg.Error`` from the
+    underlying ``cursor.execute`` call, log a warning, and return an empty
+    dict. The reviewer finding (waves 3uvn/cfh9/2ixv/7avw, 2026-04-27)
+    is that without these guards a transient DB error propagates to
+    ``call_tool``'s outer ``except`` which echoes ``str(exc)`` back to
+    the agent — leaking SQL/table names. Mirrors the pattern in
+    ``src/scix/citation_contexts_coverage.py``.
+    """
+
+    @staticmethod
+    def _failing_conn(error: BaseException) -> MagicMock:
+        """Build a MagicMock psycopg connection whose cursor.execute raises."""
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.execute.side_effect = error
+        cur.__enter__ = lambda self: self
+        cur.__exit__ = MagicMock(return_value=False)
+        conn.cursor.return_value = cur
+        return conn
+
+    def test_fetch_paper_metadata_returns_empty_on_psycopg_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import psycopg
+
+        from scix.synthesize import _fetch_paper_metadata
+
+        conn = self._failing_conn(psycopg.OperationalError("simulated DB outage"))
+        with caplog.at_level("WARNING", logger="scix.synthesize"):
+            out = _fetch_paper_metadata(conn, ["2024A"])
+        assert out == {}
+        assert any("paper_metadata" in r.message for r in caplog.records)
+
+    def test_fetch_intent_histogram_returns_empty_on_psycopg_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import psycopg
+
+        from scix.synthesize import _fetch_intent_histogram
+
+        conn = self._failing_conn(psycopg.OperationalError("simulated DB outage"))
+        with caplog.at_level("WARNING", logger="scix.synthesize"):
+            out = _fetch_intent_histogram(conn, ["2024A"])
+        assert out == {}
+        assert any("intent_histogram" in r.message for r in caplog.records)
+
+    def test_fetch_community_assignments_returns_empty_on_psycopg_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import psycopg
+
+        from scix.synthesize import _fetch_community_assignments
+
+        conn = self._failing_conn(psycopg.OperationalError("simulated DB outage"))
+        with caplog.at_level("WARNING", logger="scix.synthesize"):
+            out = _fetch_community_assignments(conn, ["2024A"])
+        assert out == {}
+        assert any("community_assignments" in r.message for r in caplog.records)
+
+    def test_fetch_citation_excerpts_returns_empty_on_psycopg_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import psycopg
+
+        from scix.synthesize import _fetch_citation_excerpts
+
+        conn = self._failing_conn(psycopg.OperationalError("simulated DB outage"))
+        with caplog.at_level("WARNING", logger="scix.synthesize"):
+            out = _fetch_citation_excerpts(conn, ["2024A"])
+        assert out == {}
+        assert any("citation_excerpts" in r.message for r in caplog.records)
+
+    def test_synthesize_findings_does_not_propagate_db_errors(self) -> None:
+        """End-to-end: a DB error in any helper must NOT raise out of
+        ``synthesize_findings``. The agent gets a structurally valid
+        result (the Tier-3 citation-count fallback can still place the
+        paper into an empty section since it only reads ``paper_meta``,
+        which is itself an empty dict here) instead of a leaked
+        exception string."""
+        import psycopg
+
+        # All three SELECTs fail. Provide three failing cursors so each
+        # helper's `with conn.cursor()` block hits the same failure mode.
+        conn = MagicMock()
+        cursors = []
+        for _ in range(3):
+            cur = MagicMock()
+            cur.execute.side_effect = psycopg.OperationalError("simulated outage")
+            cur.__enter__ = lambda self: self
+            cur.__exit__ = MagicMock(return_value=False)
+            cursors.append(cur)
+        conn.cursor.side_effect = cursors
+
+        # Should not raise.
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+        )
+        assert isinstance(result, SynthesisResult)
+        # Tier 1 (intent) and Tier 2 (community) both got empty dicts
+        # from the guarded helpers, so neither contributed.
+        assert result.coverage["intent_assigned_bibcodes"] == 0
+        assert result.coverage["community_assigned_bibcodes"] == 0
+        # Total bibcodes is preserved; structure is uniform.
+        assert result.coverage["total_bibcodes"] == 1
+
+    def test_psycopg_error_message_not_in_helper_return(self) -> None:
+        """Defense-in-depth: even if a future caller logs the helper's
+        return value, no part of the original ``psycopg.Error`` string
+        (which may carry SQL or table names) survives the guard."""
+        import psycopg
+
+        from scix.synthesize import _fetch_paper_metadata
+
+        sentinel = "TABLE_NAME_LEAK_SENTINEL_8675309"
+        conn = self._failing_conn(psycopg.OperationalError(sentinel))
+        out = _fetch_paper_metadata(conn, ["2024A"])
+        # Empty dict; nothing carries the sentinel back to the caller.
+        assert sentinel not in repr(out)

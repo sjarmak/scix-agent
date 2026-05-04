@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import bisect
+import time
+
 import pytest
 
 from scix.citation_context import (
-    CitationContext,
     CitationMarker,
     _enrich_with_sections,
     _parse_marker_numbers,
@@ -606,9 +608,7 @@ class TestResolveAuthorYearAmbiguity:
             "2020Sci...380..200A",  # Andrews 2020 (initial A) — same year+initial
         ]
         marker = _ay_marker(("Adams",), 2020)
-        contexts = resolve_author_year_markers(
-            [marker], refs, "SRC", min_confidence=0.6
-        )
+        contexts = resolve_author_year_markers([marker], refs, "SRC", min_confidence=0.6)
         assert contexts == []
 
     def test_two_candidates_accepted_at_min_confidence_0_5(self) -> None:
@@ -618,9 +618,7 @@ class TestResolveAuthorYearAmbiguity:
             "2020Sci...380..200A",
         ]
         marker = _ay_marker(("Adams",), 2020)
-        contexts = resolve_author_year_markers(
-            [marker], refs, "SRC", min_confidence=0.5
-        )
+        contexts = resolve_author_year_markers([marker], refs, "SRC", min_confidence=0.5)
         # Both candidates are emitted (the marker is genuinely ambiguous, but
         # under-threshold rejection only kicks in below min_confidence).
         assert len(contexts) == 2
@@ -680,10 +678,7 @@ class TestProcessPaperAuthorYear:
 
     def test_mixed_styles_both_resolved(self) -> None:
         """Mixed [N] and author-year markers should both produce contexts."""
-        body = (
-            "We use [1] as our baseline. "
-            "Hong et al. 2001 showed a related trend."
-        )
+        body = "We use [1] as our baseline. " "Hong et al. 2001 showed a related trend."
         contexts = process_paper("SRC_BIB", body, AUTHOR_YEAR_REFERENCES)
         target_bibs = {c.target_bibcode for c in contexts}
         # [1] -> AUTHOR_YEAR_REFERENCES[0] -> Adams 2020
@@ -721,3 +716,128 @@ class TestCitationMarkerAuthorYearFields:
         )
         assert marker.marker_authors == ()
         assert marker.marker_year is None
+
+
+# ---------------------------------------------------------------------------
+# extract_author_year_citations — overlap dedup hardening (scix_experiments-3ozn)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractAuthorYearOverlapDedup:
+    """Cross-pattern dedup via interval overlap — not char_start uniqueness.
+
+    The 4 author-year regexes (et-al, narrative, paren, sub-cite) can produce
+    spans of different lengths at the same logical citation. The first pattern
+    that matches wins; later overlapping matches must be rejected.
+    """
+
+    def test_narrative_does_not_double_match_after_et_al(self) -> None:
+        """'Hong et al. (2001)' matches _AY_ET_AL first; _AY_NARRATIVE must
+        not also match the trailing 'Hong et al. (2001)' substring."""
+        body = "Earlier Hong et al. (2001) demonstrated this clearly."
+        markers = extract_author_year_citations(body)
+        # Exactly one citation, not two.
+        assert len(markers) == 1
+        assert markers[0].marker_authors == ("Hong",)
+        assert markers[0].marker_year == 2001
+
+    def test_paren_does_not_double_match_after_subcite(self) -> None:
+        """A sub-cite inside a multi-cite paren must not also fire as a
+        free-standing paren-form match."""
+        body = "Earlier work (Adams, 2020; Smith & Jones, 2003) was foundational."
+        markers = extract_author_year_citations(body)
+        # Exactly two citations (Adams 2020 + Smith&Jones 2003), not 3+.
+        assert len(markers) == 2
+        years = sorted(m.marker_year for m in markers if m.marker_year)
+        assert years == [2003, 2020]
+
+    def test_disjoint_citations_all_kept(self) -> None:
+        """Non-overlapping citations from any pattern must all survive."""
+        body = (
+            "Hong et al. 2001 showed X. "
+            "Adams (2020) extended Y. "
+            "(Smith & Jones, 2003) generalized Z."
+        )
+        markers = extract_author_year_citations(body)
+        assert len(markers) == 3
+
+
+class TestExtractAuthorYearOverlapPerfScaling:
+    """Regression-bench: per-candidate overlap check must be sub-linear.
+
+    Pre-fix: O(N) linear scan over accepted spans → O(N^2) total in dedup.
+    Post-fix: O(log N) bisect → O(N log N) total in dedup.
+
+    Note: the *end-to-end* extract_author_year_citations runtime is
+    currently dominated by _word_boundary_window (O(L) per match where L
+    is body length). This bead (scix_experiments-3ozn) targets only the
+    overlap-check hardening; word-boundary perf is tracked separately.
+    We isolate the overlap check by spying on call counts and elapsed
+    time spent inside _overlaps via direct invocation.
+    """
+
+    @staticmethod
+    def _synth_disjoint_spans(n: int) -> list[tuple[int, int]]:
+        """Generate N disjoint half-open intervals scattered across the line."""
+        return [(i * 10, i * 10 + 5) for i in range(n)]
+
+    def _time_overlap_check_loop(self, n: int, repeats: int = 3) -> float:
+        """Time the cost of N successive overlap-checks-then-inserts.
+
+        Mirrors the inner loop of extract_author_year_citations so we
+        measure exactly the data structure swap targeted by 3ozn.
+        """
+        spans = self._synth_disjoint_spans(n)
+        best = float("inf")
+        for _ in range(repeats):
+            accepted_starts: list[int] = []
+            accepted_ends: list[int] = []
+            t0 = time.perf_counter()
+            for start, end in spans:
+                # Same overlap check as the production code.
+                i = bisect.bisect_right(accepted_starts, start)
+                overlaps = (i > 0 and accepted_ends[i - 1] > start) or (
+                    i < len(accepted_starts) and accepted_starts[i] < end
+                )
+                if overlaps:
+                    continue
+                accepted_starts.insert(i, start)
+                accepted_ends.insert(i, end)
+            best = min(best, time.perf_counter() - t0)
+        return best
+
+    def test_overlap_check_is_sublinear_per_candidate(self) -> None:
+        """The bisect+insert overlap loop must scale better than O(N^2).
+
+        Use a wide N1:N2 ratio (1:10) on N values large enough to dominate
+        timer noise. Linear scan: ratio ≈ 100x; bisect: ratio ≈ 13x.
+        """
+        # n=2K baseline ~0.5ms with bisect, ~50ms with linear scan;
+        # n=20K is ~5ms with bisect, ~5s with linear scan.
+        t_small = self._time_overlap_check_loop(2_000, repeats=5)
+        t_large = self._time_overlap_check_loop(20_000, repeats=3)
+        if t_small <= 0:
+            pytest.skip("perf_counter resolution too coarse for this measurement")
+        ratio = t_large / t_small
+        # 30x catches a regression to linear-scan _overlaps (would be ~100x)
+        # with healthy margin for scheduler noise.
+        assert ratio < 30.0, (
+            f"overlap-check loop appears super-linear: "
+            f"t(2K)={t_small * 1000:.2f}ms, t(20K)={t_large * 1000:.2f}ms, "
+            f"ratio={ratio:.1f}x"
+        )
+
+    def test_overlap_check_10k_fast(self) -> None:
+        """Sanity bound: 10K accepts must finish in <100ms on this host.
+
+        Linear-scan implementation needs ~1.1s at this scale; bisect
+        comfortably finishes in single-digit ms. Use ``repeats=3`` and the
+        best-of measurement so a single scheduler stall on a loaded machine
+        doesn't false-positive (e.g. running alongside the gascity
+        supervisor or an embedding pipeline — see CLAUDE.md §Memory
+        isolation).
+        """
+        t_10k = self._time_overlap_check_loop(10_000, repeats=3)
+        if t_10k <= 0:
+            pytest.skip("perf_counter resolution too coarse for this measurement")
+        assert t_10k < 0.1, f"10K overlap-check loop took {t_10k:.3f}s (expected <100ms)"

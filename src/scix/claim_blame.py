@@ -432,9 +432,13 @@ def _walk_reverse_references(
     base_sql += " ORDER BY target_year ASC NULLS LAST, char_offset ASC NULLS LAST LIMIT %s"
     params.append(limit)
 
-    with conn.cursor() as cur:
-        cur.execute(base_sql, params)
-        rows = cur.fetchall()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(base_sql, params)
+            rows = cur.fetchall()
+    except psycopg.Error as exc:
+        logger.warning("claim_blame: reverse-reference walk failed: %s", exc)
+        return []
 
     out: list[dict[str, Any]] = []
     for row in rows:
@@ -473,9 +477,19 @@ def _lookup_retractions(
         "AND EXISTS (SELECT 1 FROM jsonb_array_elements(correction_events) AS ev "
         "WHERE ev->>'type' = 'retraction')"
     )
-    with conn.cursor() as cur:
-        cur.execute(sql, (list(bibcodes),))
-        rows = cur.fetchall()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (list(bibcodes),))
+            rows = cur.fetchall()
+    except psycopg.Error as exc:
+        # WHY fail-open (empty set): a transient papers-table failure should
+        # not pessimistically tag every candidate as retracted, which would
+        # collapse origin selection to an empty result. Bead
+        # scix_experiments-b647 fixes this as the required behavior — the
+        # trade-off is that during the brief outage we may accept an origin
+        # that would otherwise be excluded.
+        logger.warning("claim_blame: retraction lookup failed: %s", exc)
+        return set()
     return {r[0] for r in rows}
 
 

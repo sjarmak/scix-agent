@@ -22,16 +22,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scix.mcp_server import (
-    EXPECTED_TOOLS,
     _RRF_K_DEFAULT,
+    _SECTION_FILTERS_SCHEMA,
     _SNIPPET_MAX_CHARS,
+    EXPECTED_TOOLS,
     _dispatch_tool,
     _rrf_fuse,
     _section_filter_clauses,
     _truncate_snippet,
     startup_self_test,
 )
-
 
 # ---------------------------------------------------------------------------
 # Pure helpers
@@ -198,8 +198,6 @@ class TestSectionFilterClauses:
 
         See scix_experiments-9zyw.
         """
-        from scix.mcp_server import _SECTION_FILTERS_SCHEMA
-
         assert "discipline" not in _SECTION_FILTERS_SCHEMA["properties"]
 
 
@@ -516,14 +514,10 @@ def test_mcp_server_does_not_import_paid_sdks() -> None:
 def test_section_pipeline_does_not_import_paid_sdks() -> None:
     """Reused encoder loader must remain SDK-free."""
     src = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "scix"
-        / "embeddings"
-        / "section_pipeline.py"
+        Path(__file__).resolve().parents[1] / "src" / "scix" / "embeddings" / "section_pipeline.py"
     )
     text = src.read_text(encoding="utf-8")
     for pattern in _FORBIDDEN_IMPORT_PATTERNS:
-        assert pattern.search(text) is None, (
-            f"forbidden import pattern {pattern.pattern!r} found in section_pipeline.py"
-        )
+        assert (
+            pattern.search(text) is None
+        ), f"forbidden import pattern {pattern.pattern!r} found in section_pipeline.py"

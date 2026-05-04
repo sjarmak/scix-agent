@@ -43,6 +43,8 @@ from scix.search import CrossEncoderReranker
 from scix.session import SessionState
 from scix.synthesize import (
     DEFAULT_SECTIONS as _SYNTH_DEFAULT_SECTIONS,
+)
+from scix.synthesize import (
     synthesize_findings as _synthesize_findings,
 )
 
@@ -3327,8 +3329,7 @@ def _resolve_community_expand_seed(
         return None, _community_expand_no_seed_response(
             query=query,
             reason=(
-                f"filters.entity_ids must contain exactly 1 id, "
-                f"got {len(filters.entity_ids)}"
+                f"filters.entity_ids must contain exactly 1 id, " f"got {len(filters.entity_ids)}"
             ),
         )
 
@@ -3645,11 +3646,6 @@ def _attach_precision_to_linked_entities(
     year = paper.get("year")
     year_int = year if isinstance(year, int) else None
 
-    from scix.extract.ner_quality_profile import (
-        precision_band,
-        precision_estimate,
-    )
-
     # eq95: drop denylisted (name, type) pairs from linked_entities so
     # generic-word noise ('data'/'dataset', 'method'/'method', etc.) never
     # surfaces alongside real entities. Applied before precision estimate
@@ -3657,6 +3653,10 @@ def _attach_precision_to_linked_entities(
     # anyway — but the lookup is keyed by entity_id, not canonical_name,
     # so the cost is one batch regardless.
     from scix.extract.ner_denylist import is_denylisted as _is_denylisted
+    from scix.extract.ner_quality_profile import (
+        precision_band,
+        precision_estimate,
+    )
 
     enriched: list[Any] = []
     for ent in linked:
@@ -5127,9 +5127,7 @@ def _handle_claim_blame(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     try:
         scope = scope_from_dict(scope_arg) if scope_arg else None
     except (TypeError, ValueError) as exc:
-        return json.dumps(
-            {"error": f"invalid scope: {exc}", "error_code": "invalid_scope"}
-        )
+        return json.dumps({"error": f"invalid scope: {exc}", "error_code": "invalid_scope"})
 
     candidate_limit = int(args.get("candidate_limit", 20))
     lineage_limit = int(args.get("lineage_limit", 10))
@@ -5161,9 +5159,7 @@ def _handle_find_replications(conn: psycopg.Connection, args: dict[str, Any]) ->
     try:
         scope = scope_from_dict(scope_arg) if scope_arg else None
     except (TypeError, ValueError) as exc:
-        return json.dumps(
-            {"error": f"invalid scope: {exc}", "error_code": "invalid_scope"}
-        )
+        return json.dumps({"error": f"invalid scope: {exc}", "error_code": "invalid_scope"})
 
     limit = int(args.get("limit", 50))
 

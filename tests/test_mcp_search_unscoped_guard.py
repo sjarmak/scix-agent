@@ -469,6 +469,8 @@ class _CaptureCursor:
 
 
 class _CaptureConn:
+    """Connection double that vends a shared :class:`_CaptureCursor`."""
+
     def __init__(self, captured: dict[str, Any]) -> None:
         self._captured = captured
 
@@ -477,6 +479,18 @@ class _CaptureConn:
 
     def commit(self) -> None:
         pass
+
+
+def _expect_logged_params(captured: dict[str, Any]) -> tuple:
+    """Return ``captured["params"]`` with a clear message if execute() was skipped.
+
+    ``_log_query`` is best-effort and silently swallows exceptions on the
+    telemetry path. Using a bare ``captured["params"]`` would surface as
+    ``KeyError: 'params'`` and obscure the real failure (the telemetry call
+    never reached ``cur.execute()``).
+    """
+    assert "params" in captured, "_log_query never reached cur.execute() — telemetry path skipped"
+    return captured["params"]
 
 
 def test_log_query_surfaces_unscoped_broad_tag() -> None:
@@ -506,7 +520,7 @@ def test_log_query_surfaces_unscoped_broad_tag() -> None:
         result_json=payload,
     )
 
-    params = captured["params"]
+    params = _expect_logged_params(captured)
     assert params[4] == "unscoped_broad_query"  # error_msg
     # Result count is 0 because the response carried an "error" key.
     assert params[7] == 0  # result_count
@@ -529,7 +543,7 @@ def test_log_query_does_not_surface_tag_for_normal_results() -> None:
     )
 
     # error_msg stays None when no unscoped marker is present.
-    assert captured["params"][4] is None
+    assert _expect_logged_params(captured)[4] is None
 
 
 # ---------------------------------------------------------------------------
@@ -586,7 +600,7 @@ def test_telemetry_convention_lifted_structured_error_logs_success_true_and_tag(
     )
 
     # Pinned convention: structured-error + lifted tag => (True, <tag>).
-    params = captured["params"]
+    params = _expect_logged_params(captured)
     assert params[3] is True  # success
     assert params[4] == "unscoped_broad_query"  # error_msg
 
@@ -621,15 +635,15 @@ def test_telemetry_convention_unlifted_structured_error_logs_success_true_and_nu
         4.5,
         True,  # call_tool sets success=True because no exception fired
         None,
-    # No result_json kwarg: simulates the lift-skipped case for an unlifted
-    # structured-error payload. Even if result_json were passed, the
-    # current lift list (only unscoped_broad_blocked) would not match.
+        # No result_json kwarg: simulates the lift-skipped case for an unlifted
+        # structured-error payload. Even if result_json were passed, the
+        # current lift list (only unscoped_broad_blocked) would not match.
         result_json=payload,
     )
 
     # Pinned convention: structured-error WITHOUT lifted tag => (True, None).
     # If a future change adds an error_code-based lift, this test breaks
     # and the convention doc + operator dashboards must be updated together.
-    params = captured["params"]
+    params = _expect_logged_params(captured)
     assert params[3] is True  # success
     assert params[4] is None  # error_msg

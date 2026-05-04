@@ -179,9 +179,7 @@ class SynthesisResult:
                     # SectionBucket from accidental downstream mutation.
                     "theme": {
                         "communities": list(s.theme.get("communities", [])),
-                        "top_papers_by_citation": list(
-                            s.theme.get("top_papers_by_citation", [])
-                        ),
+                        "top_papers_by_citation": list(s.theme.get("top_papers_by_citation", [])),
                     },
                 }
                 for s in self.sections

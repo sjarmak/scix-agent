@@ -490,7 +490,7 @@
     return out
   }
 
-  function renderUMAP(points, container) {
+  function renderUMAP(points, container, options) {
     const node = _resolveContainer(container)
     if (!node) {
       throw new Error('renderUMAP: container not found')
@@ -512,7 +512,14 @@
     const height = rect && rect.height > 0 ? rect.height : 600
 
     const bounds = _computeBounds(points)
-    const initialViewState = _initialViewState(bounds, width, height)
+    // Allow callers to preserve the user's pan/zoom across resolution
+    // toggles by passing options.initialViewState — captured from the prior
+    // instance's _lastViewState before teardown. Falls back to fits-all.
+    const opts = options || {}
+    const initialViewState =
+      opts.initialViewState && typeof opts.initialViewState.zoom === 'number'
+        ? opts.initialViewState
+        : _initialViewState(bounds, width, height)
 
     // Tally per-community counts for the legend + stats line.
     const communityCounts = new Map()
@@ -642,16 +649,22 @@
       controller: true,
       initialViewState: initialViewState,
       onViewStateChange: function (evt) {
-        if (evt && evt.viewState && typeof evt.viewState.zoom === 'number') {
-          const prev = _currentZoom
-          _currentZoom = evt.viewState.zoom
-          if (Math.abs(prev - _currentZoom) > 0.3) {
-            // Only rebuild the labels layer on meaningful zoom changes.
-            labelLayer = _rebuildLabelsForZoom()
-            const existing = (instance.props.layers || []).filter(function (l) {
-              return l && l.id !== 'umap-labels'
-            })
-            instance.setProps({ layers: labelLayer ? existing.concat([labelLayer]) : existing })
+        if (evt && evt.viewState) {
+          // Stash the most recent viewState on the instance so the page
+          // bootstrap can preserve pan/zoom across a resolution toggle by
+          // passing it as options.initialViewState to the next renderUMAP.
+          instance._lastViewState = evt.viewState
+          if (typeof evt.viewState.zoom === 'number') {
+            const prev = _currentZoom
+            _currentZoom = evt.viewState.zoom
+            if (Math.abs(prev - _currentZoom) > 0.3) {
+              // Only rebuild the labels layer on meaningful zoom changes.
+              labelLayer = _rebuildLabelsForZoom()
+              const existing = (instance.props.layers || []).filter(function (l) {
+                return l && l.id !== 'umap-labels'
+              })
+              instance.setProps({ layers: labelLayer ? existing.concat([labelLayer]) : existing })
+            }
           }
         }
       },
@@ -767,6 +780,13 @@
         instance.setProps({ layers: otherLayers.concat([labelLayer]) })
       }
     })
+
+    // Seed _lastViewState with the mount-time viewState so a toggle that
+    // happens before the user has panned/zoomed still propagates the
+    // current camera (e.g. coarse → medium → coarse, when the user only
+    // panned in coarse). onViewStateChange overwrites this on any user
+    // interaction.
+    instance._lastViewState = initialViewState
 
     // Public ego-overlay surface — drives recoloring from the side panel
     // buttons added by _updatePanel. Mutates the shared egoOverlay ref then

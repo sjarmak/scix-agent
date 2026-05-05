@@ -1,10 +1,29 @@
 # ADR-010: Drop `sections_tsv` Stored Column, Replace with Expression GIN Index
 
-- **Status**: Proposed
+- **Status**: On-Hold (2026-05-04) — pending resolution of `scix_experiments-puln.14` (BM25 query architecture). The proposal is technically sound but the latency cost is dominated by an unrelated query-shape problem (`ORDER BY ts_rank ... LIMIT k` evaluating ts_rank on every match), making the column-vs-expression tradeoff secondary. See "Findings 2026-05-04" below.
 - **Deciders**: SciX maintainers
 - **Scope**: `papers_fulltext.sections_tsv` column + `idx_papers_fulltext_sections_tsv` GIN index
-- **Related beads**: `scix_experiments-zsbd` (section embeddings), `scix_experiments-6hr7` (citation_contexts backfill)
+- **Related beads**: `scix_experiments-zsbd` (section embeddings), `scix_experiments-6hr7` (citation_contexts backfill), `scix_experiments-puln.14` (BM25 query architecture — blocking prerequisite)
 - **Related ADRs**: ADR-009 (body-AI OA gate, which chose expression index over GENERATED STORED for the same reason)
+
+## Findings 2026-05-04 (resolves all four open questions)
+
+Investigation results from probing prod scix on 2026-05-04:
+
+| Q | Finding | Implication |
+|---|---------|-------------|
+| Q1 ts_rank latency | Column read: 16 ms / 100 rows. Expression call: 468 ms / 100 rows. **29× per-row regression**. Cost is dominated by `to_tsvector` tokenization on up to 900 KB of section text per row, NOT the BEGIN/EXCEPTION subtransaction. | Migration would push p95 well past the 500 ms budget for any non-trivial fanout. |
+| Q2 equivalence | 1000/1000 sample rows show `safe_sections_tsv(sections) = sections_tsv` exactly. | Data-equivalence path is clean — would not block migration if Q1 weren't a problem. |
+| Q3 `search_sections_bm25` callers | Zero callers in src/, scripts/, tests/, or other migrations. Function defined only in 064 but never invoked. The active BM25 path is the inline SQL at `mcp_server.py:5500-5510`. | Migration 069 should still include `CREATE OR REPLACE` for the dead function as defensive housekeeping, but it isn't load-bearing. |
+| Q4 PARALLEL UNSAFE | The 4.6 ms / row cost is dominated by `to_tsvector`, not the subtransaction overhead (~5%). Refactoring `safe_sections_tsv` to PARALLEL SAFE would speed up index *build time* but not query *runtime*. | Marginal benefit — not the right lever. |
+
+### Why this puts the ADR on hold
+
+A separate finding from Q1: the existing column-based query at full fanout for "galaxy formation" (242,523 matches) takes **110 seconds** on prod scix. The `ORDER BY ts_rank ... LIMIT k` pattern in `mcp_server.py:5500-5510` requires ts_rank evaluation on every match before sorting. The expression-index variant would scale this to ~50 minutes for the same query.
+
+The 500 ms p95 budget cited in migration 064 was evidently set on a narrower workload than "galaxy formation" produces. Today this isn't user-visible because `section_retrieval` is in `_HIDDEN_TOOLS`. But `zsbd`'s acceptance criteria require p50/p95 capture on a 50-query eval set before unhide, and the column-based path would already not pass.
+
+This is a query-architecture problem, not a column-vs-expression problem. Until that's fixed (`scix_experiments-puln.14`), the migration only makes the existing slowness worse. Resume this ADR after the query-architecture decision lands and re-measure latency.
 
 ## Context
 

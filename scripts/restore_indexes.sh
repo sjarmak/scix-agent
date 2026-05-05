@@ -32,7 +32,6 @@ declare -a INDEXES=(
   "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_papers_year ON papers (year)"
   "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_papers_doctype ON papers (doctype)"
   "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_papers_tsv ON papers USING GIN (tsv)"
-  "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_papers_first_author ON papers (first_author)"
   "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_papers_data ON papers USING GIN (data)"
   "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_papers_facility ON papers USING GIN (facility)"
   "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_papers_esources ON papers USING GIN (esources)"
@@ -40,9 +39,11 @@ declare -a INDEXES=(
   "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_papers_simbid ON papers USING GIN (simbid)"
   "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_papers_keyword_norm ON papers USING GIN (keyword_norm)"
   "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_papers_author_norm ON papers USING GIN (author_norm)"
-  "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_papers_author_count ON papers (author_count)"
-  "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_papers_openalex_id ON papers(openalex_id)"
 )
+# Removed 2026-05-04 (storage reclamation pass scix_experiments-puln; per-bead operator approval):
+#   idx_papers_first_author       — bead puln.2 (no equality/prefix consumer; only ILIKE '%X%' which btree can't serve)
+#   idx_papers_author_count       — bead puln.6 (no WHERE/ORDER BY/aggregation consumer; defensive add in mig 012)
+#   idx_papers_openalex_id        — bead puln.7 (papers.openalex_id is backward-compat shadow of papers_external_ids.openalex_id; canonical lookup uses idx_papers_external_ids_openalex_id)
 
 for sql in "${INDEXES[@]}"; do
   idx_name=$(echo "$sql" | grep -oP 'idx_papers_\w+')

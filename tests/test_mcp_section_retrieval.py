@@ -296,8 +296,8 @@ class _ScriptedCursor:
     def __enter__(self) -> "_ScriptedCursor":
         return self
 
-    def __exit__(self, *_exc: Any) -> bool:
-        return False
+    def __exit__(self, *_exc: Any) -> None:
+        return None
 
     def execute(self, sql: str, params: Any = None) -> None:
         self.calls.append((sql, params))

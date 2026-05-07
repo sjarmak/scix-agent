@@ -70,21 +70,26 @@ class TestBibcodeToPointId:
 
 class TestExpectedToolSet:
     """Post-2026-04-25: the active tool set excludes find_similar_by_examples
-    regardless of Qdrant state. We assert the set matches EXPECTED_TOOLS (the
-    canonical source) rather than a hardcoded count, so this stays correct as
-    new tools are added to EXPECTED_TOOLS."""
+    regardless of Qdrant state. We assert the set matches EXPECTED_TOOLS minus
+    any default-hidden tools (the canonical visible source) rather than a
+    hardcoded count, so this stays correct as new tools are added to
+    EXPECTED_TOOLS or moved in/out of _HIDDEN_TOOLS."""
 
     def test_active_set_when_qdrant_disabled(self, no_qdrant):
         tools = mcp_server._expected_tool_set()
-        assert tools == set(mcp_server.EXPECTED_TOOLS)
+        assert tools == set(mcp_server.EXPECTED_TOOLS) - set(mcp_server._HIDDEN_TOOLS)
         assert "find_similar_by_examples" not in tools
 
     def test_active_set_when_qdrant_enabled(self, fake_qdrant):
         # When Qdrant is on, the active set is the base EXPECTED_TOOLS plus
-        # the optional Qdrant-gated tools (currently just chunk_search). The
-        # retired tool is gone from both groups.
+        # the optional Qdrant-gated tools (currently just chunk_search), with
+        # any default-hidden tools removed. The retired tool is gone from
+        # both groups.
         tools = mcp_server._expected_tool_set()
-        assert tools == set(mcp_server.EXPECTED_TOOLS) | set(mcp_server._OPTIONAL_TOOLS)
+        expected = (
+            set(mcp_server.EXPECTED_TOOLS) | set(mcp_server._OPTIONAL_TOOLS)
+        ) - set(mcp_server._HIDDEN_TOOLS)
+        assert tools == expected
         assert "find_similar_by_examples" not in tools
 
 
@@ -109,22 +114,25 @@ class TestRetiredToolDispatch:
 
 
 class TestMCPSelfTest:
-    """The server self-test must pass at exactly EXPECTED_TOOLS-many tools
-    regardless of QDRANT_URL.  Count is read from EXPECTED_TOOLS rather than
-    hardcoded so adding/removing tools updates only one place."""
+    """The server self-test must pass at exactly the active (visible) tool
+    count regardless of QDRANT_URL. Count is derived from
+    EXPECTED_TOOLS / _OPTIONAL_TOOLS minus _HIDDEN_TOOLS so the test tracks
+    deployment-level visibility decisions in one place."""
 
     def test_self_test_passes_without_qdrant(self, no_qdrant):
         status = mcp_server.startup_self_test()
         assert status["ok"] is True
-        assert status["tool_count"] == len(mcp_server.EXPECTED_TOOLS)
+        expected = set(mcp_server.EXPECTED_TOOLS) - set(mcp_server._HIDDEN_TOOLS)
+        assert status["tool_count"] == len(expected)
         assert "find_similar_by_examples" not in status["tool_names"]
 
     def test_self_test_passes_with_qdrant(self, fake_qdrant):
         status = mcp_server.startup_self_test()
         assert status["ok"] is True
-        assert status["tool_count"] == len(mcp_server.EXPECTED_TOOLS) + len(
-            mcp_server._OPTIONAL_TOOLS
-        )
+        expected = (
+            set(mcp_server.EXPECTED_TOOLS) | set(mcp_server._OPTIONAL_TOOLS)
+        ) - set(mcp_server._HIDDEN_TOOLS)
+        assert status["tool_count"] == len(expected)
         assert "find_similar_by_examples" not in status["tool_names"]
 
 

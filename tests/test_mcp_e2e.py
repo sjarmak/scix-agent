@@ -50,15 +50,53 @@ def server(db_available):
 
 @pytest.fixture(scope="module")
 def list_tools_handler(server):
-    """Extract the list_tools handler from the server."""
-    # The server registers handlers via decorators; access internal registry
-    return server.list_tools_handlers[0] if server.list_tools_handlers else None
+    """Wrap the SDK's request handler so callers get the unwrapped tools list.
+
+    The current mcp SDK exposes decorated handlers via
+    ``server.request_handlers[ListToolsRequest]``; calling that returns a
+    ``ServerResult`` envelope around a ``ListToolsResult``. The legacy
+    ``server.list_tools_handlers`` registry no longer exists. Return a thin
+    async callable so test bodies can keep ``await list_tools_handler()``.
+    """
+    from mcp.types import ListToolsRequest
+
+    handler = server.request_handlers.get(ListToolsRequest)
+    if handler is None:
+        return None
+
+    async def _call():
+        result = await handler(ListToolsRequest(method="tools/list"))
+        # mcp SDK wraps responses in ServerResult(root=ListToolsResult(...));
+        # tolerate either shape for robustness.
+        if hasattr(result, "root") and hasattr(result.root, "tools"):
+            return result.root.tools
+        return result.tools
+
+    return _call
 
 
 @pytest.fixture(scope="module")
 def call_tool_handler(server):
-    """Extract the call_tool handler from the server."""
-    return server.call_tool_handlers[0] if server.call_tool_handlers else None
+    """Wrap the SDK's call_tool request handler to preserve the legacy
+    ``await call_tool_handler(name, arguments)`` test contract.
+
+    See ``list_tools_handler`` for the SDK migration rationale.
+    """
+    from mcp.types import CallToolRequest, CallToolRequestParams
+
+    handler = server.request_handlers.get(CallToolRequest)
+    if handler is None:
+        return None
+
+    async def _call(name: str, arguments: dict):
+        params = CallToolRequestParams(name=name, arguments=arguments)
+        req = CallToolRequest(method="tools/call", params=params)
+        result = await handler(req)
+        if hasattr(result, "root") and hasattr(result.root, "content"):
+            return result.root.content
+        return result.content
+
+    return _call
 
 
 def _has_papers_direct() -> bool:

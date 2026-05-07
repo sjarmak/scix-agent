@@ -207,12 +207,26 @@ class TestSectionFilterClauses:
 
 
 class TestRegistration:
-    """Verify section_retrieval is wired into list_tools()."""
+    """Verify section_retrieval is wired into list_tools().
+
+    section_retrieval is in ``_HIDDEN_TOOLS`` by default (backing data not
+    fully populated on most deployments). These tests verify the tool is
+    *registered*, which is independent of deployment-level visibility, so
+    they monkeypatch ``_HIDDEN_TOOLS`` to an empty frozenset to bypass the
+    list_tools visibility filter.
+    """
+
+    @pytest.fixture
+    def unhide_all(self, monkeypatch: pytest.MonkeyPatch):
+        """Clear _HIDDEN_TOOLS for tests that must see registered-but-hidden tools."""
+        import scix.mcp_server as _mcp
+
+        monkeypatch.setattr(_mcp, "_HIDDEN_TOOLS", frozenset())
 
     def test_section_retrieval_in_expected_tools(self) -> None:
         assert "section_retrieval" in EXPECTED_TOOLS
 
-    def test_section_retrieval_appears_in_list_tools(self) -> None:
+    def test_section_retrieval_appears_in_list_tools(self, unhide_all) -> None:
         try:
             import mcp.types  # noqa: F401
         except ImportError:
@@ -224,7 +238,7 @@ class TestRegistration:
         assert status["ok"] is True
         assert "section_retrieval" in status["tool_names"]
 
-    def test_section_retrieval_input_schema_shape(self) -> None:
+    def test_section_retrieval_input_schema_shape(self, unhide_all) -> None:
         """Input schema must require ``query`` and accept ``k`` and ``filters``."""
         try:
             import asyncio

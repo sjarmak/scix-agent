@@ -157,8 +157,8 @@ def _classify_share_tier(share: float) -> ShareTier:
     """Classify a working-set community share into a share-tier label.
 
     Pure arithmetic — no DB, no model. The thresholds live in the
-    module-level constants :data:`_CORE_SHARE_THRESHOLD` and
-    :data:`_SUPPORTING_SHARE_THRESHOLD` so they're trivial to retune.
+    module-level constants ``_CORE_SHARE_THRESHOLD`` (0.15) and
+    ``_SUPPORTING_SHARE_THRESHOLD`` (0.05) so they're trivial to retune.
     """
     if share >= _CORE_SHARE_THRESHOLD:
         return "core"
@@ -639,7 +639,7 @@ def _fetch_citation_excerpts(
 
     One row in ``citation_contexts`` per (source -> target) citation
     incident. Bead tq0t surfaces up to
-    :data:`_CITATION_EXCERPTS_MAX_PER_PAPER` rows per paper so the agent
+    ``_CITATION_EXCERPTS_MAX_PER_PAPER`` (3) rows per paper so the agent
     can ground bucket assignments on actual citing-sentence evidence.
 
     Determinism: ORDER BY (target_bibcode ASC, intent ASC, source_bibcode
@@ -880,7 +880,7 @@ def _theme_for(
 
     ``communities`` is sorted by ``paper_count_in_section`` desc
     (tiebreak: ``community_id`` asc) and capped at
-    :data:`_THEME_MAX_COMMUNITIES`. Each entry carries
+    ``_THEME_MAX_COMMUNITIES`` (3). Each entry carries
     ``community_id``, ``label``, ``paper_count_in_section``,
     ``top_arxiv_classes`` (Counter over the section's papers' arxiv
     arrays, top N), and ``top_keywords`` (Counter over keywords, with
@@ -888,7 +888,7 @@ def _theme_for(
 
     ``top_papers_by_citation`` is the section's papers sorted by
     ``citation_count`` desc (tiebreak: ``bibcode`` asc) and capped at
-    :data:`_THEME_MAX_TOP_PAPERS`.
+    ``_THEME_MAX_TOP_PAPERS`` (3).
 
     Pure aggregation — no DB, no model. Empty section returns
     ``{"communities": [], "top_papers_by_citation": []}`` (no crash).
@@ -1003,7 +1003,7 @@ def _excerpts_for(
                      ``citation_contexts`` for this target.
       * ``list[dict]`` -> kwarg on, paper is intent_modal, and rows
                      exist (capped upstream by
-                     :data:`_CITATION_EXCERPTS_MAX_PER_PAPER`).
+                     ``_CITATION_EXCERPTS_MAX_PER_PAPER`` (3)).
     """
     if excerpts_map is None:
         return None

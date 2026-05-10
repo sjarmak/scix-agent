@@ -969,23 +969,24 @@ def _theme_for(
             for ax in meta.get("arxiv_class") or []:
                 if isinstance(ax, str) and ax:
                     arxiv_counter[ax] += 1
-            for kw in meta.get("keywords") or []:
-                if isinstance(kw, str) and kw:
-                    keyword_counter[kw.lower()] += 1
-        # Title-token fallback when no keyword data is available across
-        # the community's section papers (papers.keywords is NULL on
-        # ~52% of prod rows per the labels-pipeline note in CLAUDE.md).
-        #
-        # Known limitation: this fires only when *all* members have empty
-        # `keywords`. Mixed-coverage communities (some papers have
-        # keywords, others don't) skip the fallback entirely — the
-        # `top_keywords` then reflect only the keyword-bearing minority.
-        # That asymmetry is acceptable for now (the keyword signal is
-        # advisory metadata, not load-bearing for routing) but worth
-        # revisiting if `papers.keywords` coverage changes materially.
-        if not keyword_counter:
-            for member in members:
-                meta = paper_meta.get(member, {})
+            # Per-paper title-token fallback (bead kmyf). Each member
+            # contributes either its keyword array (if any non-empty
+            # entries) OR its title tokens — not both. The previous
+            # all-or-nothing fallback fired only when every member had
+            # empty ``keywords``, so mixed-coverage communities (typical
+            # on prod where ~52% of papers.keywords is NULL) silently
+            # contributed zero signal from the no-keyword half. Per-paper
+            # routing recovers that signal so ``top_keywords`` reflects
+            # the whole community, not just the keyword-bearing minority.
+            paper_keywords = [
+                kw.lower()
+                for kw in (meta.get("keywords") or [])
+                if isinstance(kw, str) and kw
+            ]
+            if paper_keywords:
+                for kw in paper_keywords:
+                    keyword_counter[kw] += 1
+            else:
                 for tok in _title_tokens(meta.get("title")):
                     keyword_counter[tok] += 1
         communities_payload.append(

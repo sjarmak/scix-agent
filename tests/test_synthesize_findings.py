@@ -1495,6 +1495,44 @@ class TestSectionTheme:
         assert "communities" in bg.theme
         assert "top_papers_by_citation" in bg.theme
 
+    def test_theme_keyword_fallback_per_paper_for_mixed_coverage(self) -> None:
+        """Bead kmyf: title-token fallback fires per-paper, not per-community.
+
+        Mixed-coverage fixture (3 papers, 2 with keywords + 1 without)
+        used to skip the fallback entirely under the old all-or-nothing
+        rule, and ``top_keywords`` reflected only the keyword-bearing
+        minority. Per-paper routing now contributes title-token signal
+        from the no-keyword paper alongside the kept keywords from the
+        other two."""
+        bibcodes = [f"2024M{i:02d}" for i in range(3)]
+        # Two papers carry keywords; the third has empty keywords and
+        # only title tokens to contribute.
+        papers_rows = [
+            (bibcodes[0], "Galaxy formation and evolution", 2024, "abs", 0, [], ["dark matter"]),
+            (bibcodes[1], "Stellar populations in dwarfs", 2024, "abs", 0, [], ["dark matter", "halo"]),
+            (bibcodes[2], "Reionization quasar luminosity", 2024, "abs", 0, [], []),
+        ]
+        intent_rows: list[tuple] = []
+        community_rows = [(b, 1, "Galaxies") for b in bibcodes]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=30,
+        )
+        bg = next(s for s in result.sections if s.name == "background")
+        comm = bg.theme["communities"][0]
+        top_kw = comm["top_keywords"]
+        # Kept-keyword path: papers 0 and 1 contribute "dark matter".
+        assert "dark matter" in top_kw
+        # Title-token path: paper 2 has empty keywords, so its title
+        # tokens (filtered through _TITLE_TOKEN_STOPWORDS) flow in.
+        # 'reionization' is content-bearing; with the bead-2eeq stopwords
+        # it survives.
+        assert "reionization" in top_kw
+
     def test_theme_keyword_fallback_uses_title_tokens(self) -> None:
         """When all section papers' keyword arrays are empty, top_keywords
         falls back to title-token aggregation (per labels pipeline note in

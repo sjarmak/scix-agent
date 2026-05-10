@@ -1472,6 +1472,45 @@ class TestSectionTheme:
         assert "atmosphere" in top_kw
         assert "jupiter" in top_kw
 
+    def test_title_token_fallback_filters_scientific_noise_words(self) -> None:
+        """Bead 2eeq: high-frequency scientific noise tokens (low, high,
+        first, two, large, etc.) are stopworded out of the title-token
+        keyword fallback so partitions surface the physics, not the
+        modifier."""
+        bibcodes = [f"2024N{i:02d}" for i in range(3)]
+        # Every title pairs a high-info physics token with a noise modifier
+        # the bead enumerated. Noise tokens should be filtered; physics
+        # tokens should surface.
+        papers_rows = [
+            (bibcodes[0], "Low-mass stars in nearby galaxies", 2024, "abs", 0, [], []),
+            (bibcodes[1], "High-redshift quasars and galaxies", 2024, "abs", 0, [], []),
+            (bibcodes[2], "First detection of two galaxies", 2024, "abs", 0, [], []),
+        ]
+        intent_rows: list[tuple] = []
+        community_rows = [(b, 1, "Galaxies") for b in bibcodes]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=bibcodes,
+            sections=list(DEFAULT_SECTIONS),
+            max_papers_per_section=30,
+        )
+        bg = next(s for s in result.sections if s.name == "background")
+        comm = bg.theme["communities"][0]
+        top_kw = comm["top_keywords"]
+        # Physics-bearing tokens survive.
+        assert "galaxies" in top_kw
+        # Each enumerated noise token is filtered out.
+        for noise in ("low", "high", "first", "two", "mass", "nearby"):
+            # 'mass' and 'nearby' are content tokens — they should survive
+            # if present; the assertion below targets only the bead-listed
+            # stopwords.
+            if noise in {"low", "high", "first", "two"}:
+                assert noise not in top_kw, (
+                    f"noise token {noise!r} leaked into top_keywords {top_kw}"
+                )
+
     def test_theme_in_wire_format_via_to_dict(self) -> None:
         """AC1 wire: ``theme`` is serialised via ``to_dict()`` so MCP clients
         receive it. ``theme_summary`` continues to be emitted alongside."""

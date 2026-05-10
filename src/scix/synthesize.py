@@ -840,6 +840,22 @@ _TITLE_TOKEN_STOPWORDS: Final[frozenset[str]] = frozenset(
         "use",
         "used",
         "new",
+        # High-frequency, low-information modifiers commonly seen in
+        # scientific titles (e.g. "low-mass stars", "high-redshift
+        # galaxies", "two-body problem"). Without these, the
+        # title-token keyword fallback in _summarize_section_theme
+        # surfaces them as top keywords for partitions where the
+        # underlying physics is what the user actually wants.
+        "low",
+        "high",
+        "one",
+        "two",
+        "three",
+        "all",
+        "first",
+        "large",
+        "small",
+        "non",
     }
 )
 

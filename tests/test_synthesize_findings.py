@@ -1148,20 +1148,49 @@ class TestWeightedShareClassifier:
         all_rows = {p["bibcode"]: p for s in result.sections for p in s.cited_papers}
         assert all_rows["2024U"]["signals"]["share_tier"] is None
 
-    def test_weighted_classifier_differs_from_modal_only(self) -> None:
-        """AC3 verbatim: a working set with two ~equal-share communities
-        produces a different distribution than the current modal-only rule
-        (specifically: papers from the second-largest community get
-        bucketed into supporting tiers, not all dumped into open_questions).
+    @staticmethod
+    def _legacy_modal_only_route(
+        community_map: dict[str, int],
+    ) -> dict[str, str]:
+        """Replicate the pre-37wj binary modal-only routing rule.
 
-        Fixture: 12 papers — community A (7, share=7/12=0.583, core) and
-        community B (5, share=5/12=0.417, also core under weighted rule).
-        Wait — both are core under the weighted classifier with the
-        defaults, since 0.417 >= 0.15. To produce the AC3 contrast, scale
-        community B down to land in [0.05, 0.15). Use community A=12,
+        Bead 0853: mechanically anchor what the OLD rule would have
+        produced so a future revert can't accidentally pass
+        ``test_weighted_classifier_differs_from_modal_only`` by
+        regressing the weighted classifier back to modal-only.
+
+        Pre-37wj rule was: identify the single most-populous community
+        in the working set, route every paper in that community to
+        ``background``, and dump every other paper into
+        ``open_questions``.
+        """
+        if not community_map:
+            return {}
+        # Pick the modal community (most-populous; tiebreak by id asc).
+        counts: dict[int, int] = {}
+        for cid in community_map.values():
+            counts[cid] = counts.get(cid, 0) + 1
+        modal_cid = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+        return {
+            bib: ("background" if cid == modal_cid else "open_questions")
+            for bib, cid in community_map.items()
+        }
+
+    def test_weighted_classifier_differs_from_modal_only(self) -> None:
+        """AC3 verbatim: a working set with two unequal-share communities
+        produces a different distribution than the current modal-only rule
+        (specifically: papers from the smaller community get bucketed
+        into supporting tiers under the weighted classifier, not all
+        dumped into open_questions).
+
+        Fixture: community A=12 (share=12/14=0.857, core) and
         community B=2 (share=2/14=0.143, supporting). Under modal-only,
         B would dump in open_questions; under weighted, B routes to
         methods.
+
+        Bead 0853: mechanically compute the old-rule prediction via
+        ``_legacy_modal_only_route`` so the divergence assertion can't
+        be silently bypassed by a future weighted-classifier revert.
         """
         bibcodes = [f"2024A{i:02d}" for i in range(12)] + [
             "2024B0",
@@ -1181,12 +1210,34 @@ class TestWeightedShareClassifier:
             max_papers_per_section=30,
         )
         bib_to_section = {p["bibcode"]: s.name for s in result.sections for p in s.cited_papers}
-        # Old (modal-only) behavior would have routed both B papers to
-        # open_questions. New (weighted) routes them to methods.
+
+        # Mechanical anchor for the legacy rule: B papers route to
+        # open_questions; A papers route to background.
+        community_map = {b: 1 for b in bibcodes[:12]} | {
+            "2024B0": 2,
+            "2024B1": 2,
+        }
+        legacy_routing = self._legacy_modal_only_route(community_map)
+        assert legacy_routing["2024B0"] == "open_questions"
+        assert legacy_routing["2024B1"] == "open_questions"
+
+        # The new weighted classifier routes B papers to methods —
+        # diverging from legacy on at least one bibcode (in fact on both).
         assert bib_to_section["2024B0"] == "methods"
         assert bib_to_section["2024B1"] == "methods"
-        # And explicitly: the open_questions section should NOT contain
-        # them (would only happen under the old rule).
+        diverged = [
+            b
+            for b in legacy_routing
+            if bib_to_section.get(b) != legacy_routing[b]
+        ]
+        assert diverged, (
+            "weighted classifier produced the same routing as the legacy "
+            "modal-only rule for every bibcode — AC3 contrast is gone, "
+            "either the weighted rule has been reverted or the fixture "
+            "no longer triggers the supporting tier"
+        )
+        # Explicit: open_questions section should NOT contain B papers
+        # (would only happen under the old rule).
         oq = next(s for s in result.sections if s.name == "open_questions")
         oq_bibs = {p["bibcode"] for p in oq.cited_papers}
         assert "2024B0" not in oq_bibs

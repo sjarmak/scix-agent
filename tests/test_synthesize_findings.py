@@ -1599,6 +1599,32 @@ class TestAdditiveGroundingFields:
         assert "first_author" in row
         assert row["first_author"] is None
 
+    def test_first_author_default_in_legacy_7tuple_fixtures(self) -> None:
+        """Backwards compatibility: pre-tq0t 7-tuple test fixtures (with
+        arxiv_class + keywords but no first_author column) still produce
+        a row with ``first_author`` populated as ``None`` (not missing).
+        Pins the ``len(row) > 7`` guard contract for the intermediate
+        legacy shape used by TestSectionTheme fixtures."""
+        # 7-tuple legacy fixture (bibcode, title, year, abstract,
+        # citation_count, arxiv_class, keywords) — pre-tq0t shape.
+        papers_rows = [
+            ("2024A", "T", 2024, "abs", 0, ["astro-ph.GA"], ["dark matter"])
+        ]
+        intent_rows = [("2024A", "method", 1)]
+        community_rows = [("2024A", 1, "L")]
+        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+        )
+        methods = next(s for s in result.sections if s.name == "methods")
+        row = next(p for p in methods.cited_papers if p["bibcode"] == "2024A")
+        # 7-tuple fixture missing first_author -> None.
+        assert "first_author" in row
+        assert row["first_author"] is None
+
     # -- AC2: include_full_abstracts kwarg ------------------------------------
 
     def test_include_full_abstracts_off_by_default(self) -> None:

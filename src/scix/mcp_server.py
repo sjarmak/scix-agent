@@ -185,6 +185,11 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "find_replications": float(os.environ.get("SCIX_TIMEOUT_FIND_REPLICATIONS", "15")),
     # Structural-citation lookup over citation_contexts.intent
     "cited_by_intent": float(os.environ.get("SCIX_TIMEOUT_CITED_BY_INTENT", "5")),
+    # Claim/finding extraction surface (bead c996) — split from entity tool's
+    # entity_type enum under bead mh14. Default-hidden today (extractions table
+    # has 0 rows for negative_result/quant_claim on prod); explicit timeout so
+    # operators can tune without a code change once the table is populated.
+    "claim_search": float(os.environ.get("SCIX_TIMEOUT_CLAIM_SEARCH", "10")),
     # Terminal synthesis tool — three short SELECTs against papers,
     # citation_contexts, paper_metrics; cap matches find_gaps.
     "synthesize_findings": float(os.environ.get("SCIX_TIMEOUT_SYNTHESIZE_FINDINGS", "15")),

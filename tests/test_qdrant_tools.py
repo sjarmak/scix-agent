@@ -10,7 +10,8 @@ date to validate the retirement contract:
      accepts (kept in case the tool returns; fits the eventual NAS-Qdrant
      migration).
   3. The MCP server does NOT register find_similar_by_examples regardless
-     of QDRANT_URL, and the self-test reports exactly 15 tools either way.
+     of QDRANT_URL, and the self-test reports the consolidated tool set
+     either way.
   4. The dispatch path for the retired name returns a clear
      "tool_removed" error.
 """

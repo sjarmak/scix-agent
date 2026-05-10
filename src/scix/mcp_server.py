@@ -1,11 +1,16 @@
-"""MCP server exposing 15 consolidated tools for agent navigation of the SciX corpus.
+"""MCP server exposing the consolidated tool surface for agent navigation of the SciX corpus.
 
 Uses the `mcp` Python SDK to register tools. Each tool is a thin wrapper
 around functions in search.py. Connection pooling via psycopg.pool for
 production-grade performance.
 
+The current tool registry is enumerated in ``EXPECTED_TOOLS``; the
+agent-visible subset is gated by ``_HIDDEN_TOOLS`` (overridable via
+``SCIX_HIDDEN_TOOLS``). The premortem tool-count cap (≤ 15 visible)
+is tracked in ``docs/mcp_tool_audit_2026-04.md`` and policed by ADRs.
+
 Consolidation (v3, 2026-04-25):
-    Original 28 -> 13 -> 15 agent-facing tools + deprecated aliases.
+    Original 28 → 13 → ~15 agent-facing tools + deprecated aliases.
     The 2026-04-25 pass merged citation_graph + citation_chain into
     citation_traverse (mode enum), retired find_similar_by_examples
     (qdrant backend out of active use), and ratified the additions of
@@ -1439,7 +1444,7 @@ def _smoke_call_new_tools() -> list[str]:
 
 
 def create_server(_run_self_test: bool = True):
-    """Create and configure the MCP server with the 15 consolidated tools.
+    """Create and configure the MCP server with the consolidated tool surface.
 
     Eagerly pre-loads the INDUS model so semantic_search is fast from
     the first call.
@@ -3087,7 +3092,7 @@ def _wrap_deprecated(result_json: str, original_name: str, use_instead: str) -> 
 
 
 def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, Any]) -> str:
-    """Dispatch to the 15 consolidated tool handlers plus legacy/health handlers."""
+    """Dispatch to the consolidated tool handlers plus legacy/health handlers."""
 
     # --- find_similar_by_examples retired 2026-04-25 ---
     if name == "find_similar_by_examples":

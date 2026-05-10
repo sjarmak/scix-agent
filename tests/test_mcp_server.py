@@ -1,11 +1,11 @@
 """Unit tests for the consolidated MCP server (no database or MCP SDK required).
 
 Covers:
-- 15 consolidated tools dispatch correctly (13 baseline + claim_blame +
+- Consolidated tool handlers dispatch correctly (baseline + claim_blame +
   find_replications per PRD MH-4)
 - Deprecated aliases return deprecated:true + use_instead
 - Implicit session tracking (focused papers)
-- list_tools() returns exactly 15 tools
+- list_tools() returns the EXPECTED_TOOLS set minus _HIDDEN_TOOLS
 """
 
 from __future__ import annotations

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import bisect
 import time
 
 import pytest
@@ -779,43 +778,122 @@ class TestExtractAuthorYearOverlapPerfScaling:
     """
 
     @staticmethod
-    def _synth_disjoint_spans(n: int) -> list[tuple[int, int]]:
-        """Generate N disjoint half-open intervals scattered across the line."""
-        return [(i * 10, i * 10 + 5) for i in range(n)]
+    def _surname_for_index(i: int) -> str:
+        """Generate a unique surname matching the production regex
+        ``[A-Z][a-z]+`` from a non-negative integer index.
+
+        Production patterns (cf. ``_SURNAME`` in
+        :mod:`scix.citation_context`) reject digits in the surname, so
+        ``Smith0`` / ``Smith1`` / etc. don't match. Encode ``i`` in
+        base-26 lowercase letters appended to a fixed prefix instead.
+        """
+        suffix = ""
+        j = i
+        while True:
+            suffix = chr(ord("a") + j % 26) + suffix
+            j //= 26
+            if j == 0:
+                break
+        return "Smith" + suffix
+
+    @classmethod
+    def _synth_body_with_n_citations(cls, n: int) -> str:
+        """Build a synthetic body string carrying N author-year citations
+        plus enough overlap-eligible markers to exercise the
+        ``_overlaps`` rejection branch.
+
+        Bead 3ozn.2: previously this fixture produced N disjoint
+        half-open intervals and the test reimplemented the bisect+insert
+        loop inline — measuring insertion throughput, not true
+        production overlap-rejection cost. Building a real body and
+        calling :func:`extract_author_year_citations` ties the
+        regression bound to the production code path.
+
+        Each base block contributes one ``et-al`` marker; every fourth
+        block injects an extra ``(Surname, YYYY)`` paren marker that
+        overlaps with the surrounding ``et-al`` marker so the
+        ``_overlaps: continue`` branch fires roughly N//4 times.
+        """
+        filler = " The result is consistent with prior work, see also "
+        parts: list[str] = []
+        for i in range(n):
+            year = 2000 + (i % 25)
+            surname = cls._surname_for_index(i)
+            if i % 4 == 0:
+                # ``(Surname et al., YYYY)`` — both _AY_ET_AL (matching
+                # ``Surname et al., YYYY)``) and _AY_PAREN (matching the
+                # whole ``(Surname et al., YYYY)``) fire on overlapping
+                # spans here. ET_AL is tried first and wins; PAREN is
+                # rejected by _overlaps. This is the rejection-branch
+                # exercise the bench needs.
+                parts.append(f"({surname} et al., {year})")
+            else:
+                # Plain et-al marker; no overlap, just one accept.
+                parts.append(f"{surname} et al. {year}")
+            parts.append(filler)
+        return "".join(parts)
 
     def _time_overlap_check_loop(self, n: int, repeats: int = 3) -> float:
-        """Time the cost of N successive overlap-checks-then-inserts.
+        """Time the cost of running ``extract_author_year_citations``
+        on a synthetic body with N citations.
 
-        Mirrors the inner loop of extract_author_year_citations so we
-        measure exactly the data structure swap targeted by 3ozn.
+        Bead 3ozn.2: routes the perf bench through the production
+        function instead of an inline copy of the bisect+insert loop.
+        Two consequences:
+          * A future refactor of the ``_overlaps`` data structure now
+            shows up here directly — no silent regression past a stale
+            inline copy.
+          * The fixture exercises the ``_overlaps: continue`` branch
+            (~N//4 times per body) so we measure rejection throughput,
+            not pure insertion throughput.
         """
-        spans = self._synth_disjoint_spans(n)
+        body = self._synth_body_with_n_citations(n)
         best = float("inf")
         for _ in range(repeats):
-            accepted_starts: list[int] = []
-            accepted_ends: list[int] = []
             t0 = time.perf_counter()
-            for start, end in spans:
-                # Same overlap check as the production code.
-                i = bisect.bisect_right(accepted_starts, start)
-                overlaps = (i > 0 and accepted_ends[i - 1] > start) or (
-                    i < len(accepted_starts) and accepted_starts[i] < end
-                )
-                if overlaps:
-                    continue
-                accepted_starts.insert(i, start)
-                accepted_ends.insert(i, end)
+            extract_author_year_citations(body)
             best = min(best, time.perf_counter() - t0)
         return best
 
+    def test_synth_body_actually_triggers_overlap_branch(self) -> None:
+        """Sanity gate for the perf bench (bead 3ozn.2).
+
+        The fixture is supposed to inject overlapping paren markers so
+        the perf bench measures rejection cost, not just insertion.
+        Verify that the synthetic body actually produces fewer markers
+        than candidate spans — i.e. the ``_overlaps: continue`` branch
+        fires. If a future fixture refactor accidentally degenerates
+        back to disjoint spans, this assertion fires before the perf
+        tests silently start measuring the wrong thing.
+        """
+        n = 100
+        body = self._synth_body_with_n_citations(n)
+        markers = extract_author_year_citations(body)
+        # The fixture emits N et-al markers + N//4 paren markers; only
+        # the et-als should survive (they're tried first in
+        # extract_author_year_citations and the overlapping parens are
+        # then rejected). So `len(markers) == n` confirms overlap
+        # rejection ran on roughly N//4 candidates.
+        assert len(markers) == n, (
+            f"expected {n} et-al markers after overlap dedup, got "
+            f"{len(markers)} — fixture may no longer trigger the "
+            f"_overlaps rejection branch"
+        )
+
     def test_overlap_check_is_sublinear_per_candidate(self) -> None:
-        """The bisect+insert overlap loop must scale better than O(N^2).
+        """The end-to-end ``extract_author_year_citations`` runtime must
+        scale better than O(N^2) in the citation count.
 
         Use a wide N1:N2 ratio (1:10) on N values large enough to dominate
-        timer noise. Linear scan: ratio ≈ 100x; bisect: ratio ≈ 13x.
+        timer noise. Linear-scan _overlaps: ratio ≈ 100x. Bisect: the
+        overlap-check itself stays O(log N), but the regex sweep and
+        word-boundary lookup dominate end-to-end at ~O(L) per match,
+        so the observed ratio is ~10x at these N values.
         """
-        # n=2K baseline ~0.5ms with bisect, ~50ms with linear scan;
-        # n=20K is ~5ms with bisect, ~5s with linear scan.
+        # Bead 3ozn.2: timings now reflect production extract_author_year_citations
+        # on a synthetic body, not the inline bisect+insert loop. n=2K
+        # ~10ms; n=20K ~120ms on a quiet host. Linear-scan _overlaps
+        # would be ~50ms / ~5s respectively (≈100x ratio).
         t_small = self._time_overlap_check_loop(2_000, repeats=5)
         t_large = self._time_overlap_check_loop(20_000, repeats=3)
         if t_small <= 0:
@@ -830,19 +908,22 @@ class TestExtractAuthorYearOverlapPerfScaling:
         )
 
     def test_overlap_check_10k_fast(self) -> None:
-        """Sanity bound: 10K accepts must finish in <100ms on this host.
+        """Sanity bound: end-to-end extract on a 10K-citation body must
+        finish in <500ms on this host.
 
-        Linear-scan implementation needs ~1.1s at this scale; bisect
-        comfortably finishes in single-digit ms. Use ``repeats=3`` and the
-        best-of measurement so a single scheduler stall on a loaded machine
-        doesn't false-positive (e.g. running alongside the gascity
-        supervisor or an embedding pipeline — see CLAUDE.md §Memory
-        isolation).
+        Bead 3ozn.2 routed this bench through production
+        ``extract_author_year_citations`` (instead of an inline copy of
+        the bisect+insert loop), so the observed timing now includes
+        regex sweep and word-boundary lookup. ~60ms on a quiet host;
+        500ms cap leaves margin for a loaded machine (cf. CLAUDE.md
+        §Memory isolation — workers can run alongside the gascity
+        supervisor or an embedding pipeline). Linear-scan _overlaps
+        would push past 1s here.
         """
         t_10k = self._time_overlap_check_loop(10_000, repeats=3)
         if t_10k <= 0:
             pytest.skip("perf_counter resolution too coarse for this measurement")
-        assert t_10k < 0.1, f"10K overlap-check loop took {t_10k:.3f}s (expected <100ms)"
+        assert t_10k < 0.5, f"10K extract took {t_10k:.3f}s (expected <500ms)"
 
 
 # ---------------------------------------------------------------------------

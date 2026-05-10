@@ -333,6 +333,34 @@ def _detect_unscoped_broad_block(result_json: str | None) -> bool:
     return isinstance(data, dict) and data.get("unscoped_broad_blocked") is True
 
 
+# Single source of truth for the query_log INSERT column order.
+# Tests use this tuple to map captured params to named fields, so adding
+# a column here automatically updates every downstream assertion that
+# indexes by name (see _CaptureCursor in tests/test_mcp_search_unscoped_guard.py).
+_LOG_QUERY_COLS: tuple[str, ...] = (
+    "tool_name",
+    "params_json",
+    "latency_ms",
+    "success",
+    "error_msg",
+    "tool",
+    "query",
+    "result_count",
+    "session_id",
+    "is_test",
+)
+
+# Per-column placeholder casts — only params_json needs the explicit jsonb cast.
+_LOG_QUERY_PLACEHOLDERS: tuple[str, ...] = tuple(
+    "%s::jsonb" if c == "params_json" else "%s" for c in _LOG_QUERY_COLS
+)
+
+_LOG_QUERY_INSERT_SQL: str = (
+    f"INSERT INTO query_log ({', '.join(_LOG_QUERY_COLS)}) "
+    f"VALUES ({', '.join(_LOG_QUERY_PLACEHOLDERS)})"
+)
+
+
 def _log_query(
     conn: psycopg.Connection,
     tool_name: str,
@@ -372,14 +400,7 @@ def _log_query(
             conn.rollback()
         with conn.cursor() as cur:
             cur.execute(
-                """
-                INSERT INTO query_log (
-                    tool_name, params_json, latency_ms, success, error_msg,
-                    tool, query, result_count, session_id, is_test
-                )
-                VALUES (%s, %s::jsonb, %s, %s, %s,
-                        %s, %s, %s, %s, %s)
-                """,
+                _LOG_QUERY_INSERT_SQL,
                 (
                     tool_name,
                     params_json,

@@ -405,16 +405,7 @@ def synthesize_findings(
         return SynthesisResult(
             sections=[],
             unattributed_bibcodes=[],
-            coverage={
-                "total_bibcodes": 0,
-                "assigned_bibcodes": 0,
-                "unattributed_bibcodes": 0,
-                "intent_assigned_bibcodes": 0,
-                "community_assigned_bibcodes": 0,
-                "override_assigned_bibcodes": 0,
-                "fallback_pulled_bibcodes": 0,
-                "fallback_pulled_per_section": {name: 0 for name in sections_list},
-            },
+            coverage=_empty_coverage_block(sections_list),
             metadata={
                 "message": (
                     "Empty working set. Pass working_set_bibcodes or "
@@ -496,6 +487,27 @@ def _prepare_bibcodes(raw: Sequence[str] | None) -> list[str]:
         if len(out) >= MAX_WORKING_SET_BIBCODES:
             break
     return out
+
+
+def _empty_coverage_block(sections: Sequence[str]) -> dict[str, Any]:
+    """Build the canonical empty-coverage shape (bead ykcx).
+
+    Single source of truth for the coverage dict's key set: both the
+    empty-working-set early return in :func:`synthesize_findings` and
+    the normal-path assembly call this so that adding a new coverage
+    key is a one-place change. Returns a fresh dict on each call —
+    callers freely mutate the per-section sub-dict.
+    """
+    return {
+        "total_bibcodes": 0,
+        "assigned_bibcodes": 0,
+        "unattributed_bibcodes": 0,
+        "intent_assigned_bibcodes": 0,
+        "community_assigned_bibcodes": 0,
+        "override_assigned_bibcodes": 0,
+        "fallback_pulled_bibcodes": 0,
+        "fallback_pulled_per_section": {name: 0 for name in sections},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1203,19 +1215,20 @@ def _assemble_sections(
         )
 
     fallback_pulled_total = sum(fallback_pulled_per_section.values())
-    coverage = {
-        "total_bibcodes": len(bibcodes),
-        # ``unattributed`` was mutated in-place by the Tier-3 helper to remove
-        # any bibcode that was successfully fallback-pulled, so the
-        # ``assigned_bibcodes`` total reflects all four tiers.
-        "assigned_bibcodes": len(bibcodes) - len(unattributed),
-        "unattributed_bibcodes": len(unattributed),
-        "intent_assigned_bibcodes": intent_assigned,
-        "community_assigned_bibcodes": community_assigned,
-        "override_assigned_bibcodes": override_assigned,
-        "fallback_pulled_bibcodes": fallback_pulled_total,
-        "fallback_pulled_per_section": dict(fallback_pulled_per_section),
-    }
+    # Bead ykcx: start from the canonical empty-coverage shape so the key
+    # set is governed by ``_empty_coverage_block`` (one-place change when
+    # a new coverage key is added). ``unattributed`` was mutated in-place
+    # by the Tier-3 helper to remove any bibcode that was successfully
+    # fallback-pulled, so ``assigned_bibcodes`` reflects all four tiers.
+    coverage = _empty_coverage_block(sections)
+    coverage["total_bibcodes"] = len(bibcodes)
+    coverage["assigned_bibcodes"] = len(bibcodes) - len(unattributed)
+    coverage["unattributed_bibcodes"] = len(unattributed)
+    coverage["intent_assigned_bibcodes"] = intent_assigned
+    coverage["community_assigned_bibcodes"] = community_assigned
+    coverage["override_assigned_bibcodes"] = override_assigned
+    coverage["fallback_pulled_bibcodes"] = fallback_pulled_total
+    coverage["fallback_pulled_per_section"] = dict(fallback_pulled_per_section)
 
     return SynthesisResult(
         sections=out_sections,

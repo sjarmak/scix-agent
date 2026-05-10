@@ -534,15 +534,6 @@ def _fetch_paper_metadata(
     production coverage is high but a small number of legacy rows have
     it as NULL.
 
-    Production rows always return 8 columns from the SELECT below; the
-    ``len(row) > 5/6/7`` guards exist *only* to keep pre-4la8/pre-tq0t
-    short-tuple test fixtures working (the test suite uses 5-tuples in
-    older suites, 7-tuples in TestSectionTheme, and 8-tuples in
-    TestAdditiveGroundingFields). Migrating those fixtures to 8-tuples
-    is tracked as bead k27h; once done, drop the guards. Do NOT take
-    inspiration from these guards for new code — the SELECT contract
-    guarantees the column count.
-
     The full ``abstract`` string is stashed under the ``abstract`` key
     (in addition to the truncated ``abstract_snippet``) so that
     callers passing ``include_full_abstracts=True`` can surface it in
@@ -570,12 +561,9 @@ def _fetch_paper_metadata(
         bibcode = row[0]
         abstract = row[3] or ""
         citation_count = int(row[4])  # COALESCE in SQL guarantees non-NULL
-        # Fixture-compat guards: see docstring above. Production rows
-        # always return 8 columns; remove these once the legacy
-        # short-tuple test fixtures are migrated (bead k27h).
-        arxiv_class: list[str] = list(row[5]) if len(row) > 5 and row[5] else []
-        keywords: list[str] = list(row[6]) if len(row) > 6 and row[6] else []
-        first_author: str | None = row[7] if len(row) > 7 else None
+        arxiv_class: list[str] = list(row[5]) if row[5] else []
+        keywords: list[str] = list(row[6]) if row[6] else []
+        first_author: str | None = row[7]
         out[bibcode] = {
             "bibcode": bibcode,
             "title": row[1],
@@ -1424,7 +1412,7 @@ def _paper_row(
 
     ``first_author`` is always present (bead tq0t / AC1) — populated
     from ``papers.first_author`` via :func:`_fetch_paper_metadata`. May
-    be ``None`` for legacy fixtures or rows where the column is NULL.
+    be ``None`` for rows where the column is NULL.
 
     ``abstract_full`` (bead tq0t / AC2) is added only when
     ``include_full_abstracts`` is True. Coexists with ``abstract_snippet``

@@ -1828,14 +1828,22 @@ class TestAdditiveGroundingFields:
         assert "citation_excerpts" not in all_rows["2024D"]
 
     def test_include_citation_contexts_capped_at_three_per_paper(self) -> None:
-        """AC3: when more than 3 excerpts exist for a paper, only the
-        first 3 (in deterministic order) are surfaced."""
+        """AC3: at most _CITATION_EXCERPTS_MAX_PER_PAPER excerpts (3)
+        are surfaced per paper, in deterministic ORDER BY order.
+
+        Bead e8ac moved the cap from a Python-side post-fetch slice to
+        a SQL-level ``ROW_NUMBER() OVER (PARTITION BY target_bibcode)``
+        filter, so the row transfer from Postgres → Python is bounded.
+        The mock connection here simulates that contract by returning
+        only the first 3 ranked rows for the target — which is what a
+        real DB would return after applying ``rn <= 3``."""
         papers_rows = [("2024A", "T", 2024, "abs", 0, [], [], "Smith")]
         intent_rows = [("2024A", "method", 5)]
         community_rows = [("2024A", 1, "L")]
-        # 5 excerpt rows for one paper.
+        # SQL window function returns at most 3 rows per target;
+        # mock the post-filter result.
         excerpt_rows = [
-            ("2024A", f"ctx-{i}", "method", f"2025citer{i}") for i in range(5)
+            ("2024A", f"ctx-{i}", "method", f"2025citer{i}") for i in range(3)
         ]
         conn = _mock_conn(
             [papers_rows, intent_rows, community_rows, excerpt_rows]
@@ -1850,9 +1858,8 @@ class TestAdditiveGroundingFields:
         methods = next(s for s in result.sections if s.name == "methods")
         row = next(p for p in methods.cited_papers if p["bibcode"] == "2024A")
         assert len(row["citation_excerpts"]) == 3
-        # The first 3 in fixture (= ORDER BY) order are kept; rows 3 and 4
-        # are skipped. Pinning the exact set protects the determinism
-        # contract against a future change that randomises the slice.
+        # The first 3 in fixture (= ORDER BY) order are surfaced.
+        # Pinning the exact set protects the determinism contract.
         kept_citers = {e["citing_bibcode"] for e in row["citation_excerpts"]}
         assert kept_citers == {"2025citer0", "2025citer1", "2025citer2"}
 

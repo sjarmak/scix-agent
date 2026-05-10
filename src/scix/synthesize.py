@@ -642,35 +642,51 @@ def _fetch_citation_excerpts(
     ``_CITATION_EXCERPTS_MAX_PER_PAPER`` (3) rows per paper so the agent
     can ground bucket assignments on actual citing-sentence evidence.
 
-    Determinism: ORDER BY (target_bibcode ASC, intent ASC, source_bibcode
-    ASC, char_offset ASC NULLS LAST) so repeated calls return the same
-    excerpts in the same order. The leading target_bibcode key groups
-    rows contiguously per target so the cap-3 logic in this function can
-    use a simple per-target counter. Filters out rows with NULL intent
-    (they carry no signal for the synthesise output and are excluded
-    from intent-modal bucketing upstream).
+    Determinism: the per-target ORDER BY (intent ASC, source_bibcode ASC,
+    char_offset ASC NULLS LAST) returns the same excerpts in the same
+    order on repeated calls. Filters out rows with NULL intent (they
+    carry no signal for the synthesise output and are excluded from
+    intent-modal bucketing upstream).
 
     Implementation notes:
-      * One query, one IN/ANY filter, bounded by the working-set cap
-        (200 bibcodes).
-      * Top-K sliced in Python rather than via SQL ROW_NUMBER —
-        simpler, and the row count for a 200-bibcode working set is
-        tiny in practice.
+      * SQL-level bound (bead e8ac): the cap-3 slice is enforced
+        inside SQL via ``ROW_NUMBER() OVER (PARTITION BY target_bibcode
+        ORDER BY ...)`` filtered to ``rn <= 3`` so per-call row transfer
+        is bounded at ``len(bibcodes) * _CITATION_EXCERPTS_MAX_PER_PAPER``
+        (≤ 600 rows for a 200-bibcode working set) regardless of how
+        many citation_contexts rows the targets actually have. Important
+        for the post-79n.1 row-growth world (200-300M citation_contexts
+        rows), where a single mega-cited target could otherwise pull
+        tens of thousands of rows into Python before the in-process
+        cap applied — and a flat ``LIMIT N`` would mis-distribute rows
+        toward the highest-cited target, starving others.
     """
     sql = """
         SELECT target_bibcode, context_text, intent, source_bibcode
-        FROM citation_contexts
-        WHERE target_bibcode = ANY(%s)
-          AND intent IS NOT NULL
+        FROM (
+            SELECT
+                target_bibcode,
+                context_text,
+                intent,
+                source_bibcode,
+                ROW_NUMBER() OVER (
+                    PARTITION BY target_bibcode
+                    ORDER BY intent ASC,
+                             source_bibcode ASC,
+                             char_offset ASC NULLS LAST
+                ) AS rn
+            FROM citation_contexts
+            WHERE target_bibcode = ANY(%s)
+              AND intent IS NOT NULL
+        ) ranked
+        WHERE rn <= %s
         ORDER BY target_bibcode ASC,
-                 intent ASC,
-                 source_bibcode ASC,
-                 char_offset ASC NULLS LAST
+                 rn ASC
     """
     out: dict[str, list[dict[str, Any]]] = {}
     try:
         with conn.cursor() as cur:
-            cur.execute(sql, (list(bibcodes),))
+            cur.execute(sql, (list(bibcodes), _CITATION_EXCERPTS_MAX_PER_PAPER))
             rows = cur.fetchall()
     except psycopg.Error as exc:
         # Bead vm1r: see _fetch_paper_metadata for rationale.
@@ -679,8 +695,6 @@ def _fetch_citation_excerpts(
     for row in rows:
         target = row[0]
         bucket = out.setdefault(target, [])
-        if len(bucket) >= _CITATION_EXCERPTS_MAX_PER_PAPER:
-            continue  # cap reached; skip the rest for this target
         bucket.append(
             {
                 "context_text": row[1],

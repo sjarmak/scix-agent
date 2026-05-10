@@ -22,6 +22,7 @@ from scix.synthesize import (
     _SUPPORTING_SHARE_THRESHOLD,
     DEFAULT_SECTIONS,
     INTENT_TO_SECTION,
+    SIGNAL_USED_VALUES,
     SectionBucket,
     SynthesisResult,
     _classify_share_tier,
@@ -76,6 +77,26 @@ class TestSectionMapping:
         assert INTENT_TO_SECTION["background"] == "background"
         assert INTENT_TO_SECTION["method"] == "methods"
         assert INTENT_TO_SECTION["result_comparison"] == "results"
+
+    def test_signal_used_values_drives_mcp_tool_description(self) -> None:
+        """Bead qxcp: ``SIGNAL_USED_VALUES`` is the single source of truth
+        for the cited_papers[].signal_used enum. The MCP tool description
+        for synthesize_findings derives its prose from this tuple, so a
+        new signal value added here propagates automatically.
+
+        Pin both the canonical set and the derivation contract so
+        accidentally renaming a value (or breaking the import in
+        mcp_server) is caught at test time."""
+        assert SIGNAL_USED_VALUES == (
+            "override",
+            "intent_modal",
+            "community_fallthrough",
+            "citation_count_fallback",
+        )
+        from scix.mcp_server import _SIGNAL_USED_DESCRIPTION
+
+        for value in SIGNAL_USED_VALUES:
+            assert f"'{value}'" in _SIGNAL_USED_DESCRIPTION
 
 
 # ---------------------------------------------------------------------------

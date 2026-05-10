@@ -139,6 +139,24 @@ INTENT_TO_SECTION: Mapping[str, str] = {
     "result_comparison": "results",
 }
 
+# Single source of truth for the ``cited_papers[].signal_used`` enum
+# (bead qxcp). Both the synthesize module docstring and the MCP tool
+# description in src/scix/mcp_server.py derive their prose from this
+# tuple; adding a new signal value is a one-place change.
+#
+# Values are listed in agent-facing precedence order (Tier 1 → Tier 3):
+#   * ``override`` — caller pinned the section via section_overrides.
+#   * ``intent_modal`` — assigned from a modal citation_contexts.intent.
+#   * ``community_fallthrough`` — assigned via weighted community share.
+#   * ``citation_count_fallback`` — Tier 3 backfill from unattributed
+#     pool to keep empty sections non-empty (bead a2bk).
+SIGNAL_USED_VALUES: tuple[str, ...] = (
+    "override",
+    "intent_modal",
+    "community_fallthrough",
+    "citation_count_fallback",
+)
+
 # Maximum number of bibcodes we will accept in a single call. Mirrors
 # find_gaps' implicit cap (200) so behaviour is consistent across tools.
 MAX_WORKING_SET_BIBCODES = 200

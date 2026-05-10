@@ -53,7 +53,19 @@ from scix.synthesize import (
     MAX_WORKING_SET_BIBCODES,
 )
 from scix.synthesize import (
+    SIGNAL_USED_VALUES as _SYNTH_SIGNAL_USED_VALUES,
+)
+from scix.synthesize import (
     synthesize_findings as _synthesize_findings,
+)
+
+# Bead qxcp: derive the signal_used enum prose from the single source of
+# truth in synthesize.py so the tool description never drifts when a new
+# signal value is added. Hand-typed before; one-place change now.
+_SIGNAL_USED_DESCRIPTION: str = (
+    "signal_used ("
+    + " | ".join(f"'{v}'" for v in _SYNTH_SIGNAL_USED_VALUES)
+    + ")"
 )
 
 # Optional Qdrant-backed discovery tool. Feature-flagged via QDRANT_URL so the
@@ -2479,9 +2491,8 @@ def create_server(_run_self_test: bool = True):
                     "pool by within-set citation_count desc. Each "
                     "cited_papers entry exposes the signals that produced "
                     "its assignment so the agent can audit and re-bucket: "
-                    "signal_used ('intent_modal' | 'community_fallthrough' | "
-                    "'override' | 'citation_count_fallback'), "
-                    "section_assigned, and a signals payload "
+                    + _SIGNAL_USED_DESCRIPTION
+                    + ", section_assigned, and a signals payload "
                     "with intent_counts (Counter of intent->n_rows), "
                     "intent_total_rows, community_id, community_share "
                     "(fraction of working set in the same community), "

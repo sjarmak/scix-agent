@@ -1235,76 +1235,50 @@ class TestSectionTheme:
     framing.
     """
 
-    def test_theme_communities_sorted_by_paper_count_desc(self) -> None:
-        """AC2: communities[] is sorted by paper_count_in_section desc.
-
-        Fixture: 4 communities with sizes 6 / 4 / 3 / 2 in the section.
-        Assert the ordering of the first three entries (capped at top 3).
-        """
-        # 15 papers in one core community (share=15/15=1.0 -> background).
-        # All in same section so we can test cross-community aggregation.
-        bibcodes = (
-            [f"2024C1_{i:02d}" for i in range(6)]
-            + [f"2024C2_{i:02d}" for i in range(4)]
-            + [f"2024C3_{i:02d}" for i in range(3)]
-            + [f"2024C4_{i:02d}" for i in range(2)]
-        )
+    @pytest.mark.parametrize(
+        "community_specs, expected_top_3",
+        [
+            # AC2: 4 communities (sizes 6/4/3/2). Returned list is sorted
+            # desc by paper_count and capped at 3, so community 4 (size 2)
+            # is dropped.
+            pytest.param(
+                [(1, 6), (2, 4), (3, 3), (4, 2)],
+                [(1, 6), (2, 4), (3, 3)],
+                id="four_communities_drops_smallest",
+            ),
+            # AC2: 5 communities (sizes 8/5/4/3/2). Cap drops the bottom
+            # two; ordering is by paper_count desc.
+            pytest.param(
+                [(1, 8), (2, 5), (3, 4), (4, 3), (5, 2)],
+                [(1, 8), (2, 5), (3, 4)],
+                id="five_communities_drops_bottom_two",
+            ),
+        ],
+    )
+    def test_theme_communities_sorted_and_capped(
+        self,
+        community_specs: list[tuple[int, int]],
+        expected_top_3: list[tuple[int, int]],
+    ) -> None:
+        """AC2: theme.communities is sorted by paper_count_in_section desc
+        and capped at 3 entries. Parametrizes the bead-smo7 collapse of
+        the previous sorted-desc and capped-at-three tests onto a single
+        community-spec → expected-top-3 mapping."""
+        # Build bibcode list and rowsets from the (community_id, size) spec.
+        bibcodes: list[str] = []
+        community_rows: list[tuple] = []
+        for cid, n in community_specs:
+            for i in range(n):
+                bib = f"2024C{cid}_{i:02d}"
+                bibcodes.append(bib)
+                community_rows.append((bib, cid, f"Lbl{cid}"))
         papers_rows = [
             (b, f"Title {b}", 2024, f"abs {b}", 0, ["astro-ph.GA"], ["galaxies"])
             for b in bibcodes
         ]
         intent_rows: list[tuple] = []
-        # All 4 communities are 'core' under the weighted classifier (smallest
-        # share is 2/15=0.133, but below threshold 0.15 -> 'supporting').
-        # To get all into background, we pin via overrides.
-        community_rows = []
-        for i, b in enumerate(bibcodes):
-            if i < 6:
-                community_rows.append((b, 1, "Lbl1"))
-            elif i < 10:
-                community_rows.append((b, 2, "Lbl2"))
-            elif i < 13:
-                community_rows.append((b, 3, "Lbl3"))
-            else:
-                community_rows.append((b, 4, "Lbl4"))
-        # Pin everyone to 'background' to guarantee all 4 communities show up
-        # in the same section's theme.
-        overrides = {b: "background" for b in bibcodes}
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
-
-        result = synthesize_findings(
-            conn,
-            working_set_bibcodes=bibcodes,
-            sections=list(DEFAULT_SECTIONS),
-            max_papers_per_section=30,
-            section_overrides=overrides,
-        )
-        bg = next(s for s in result.sections if s.name == "background")
-        theme = bg.theme
-        comms = theme["communities"]
-        # AC2: capped at 3 entries.
-        assert len(comms) == 3
-        # AC2: sorted desc by paper_count_in_section.
-        assert comms[0]["community_id"] == 1 and comms[0]["paper_count_in_section"] == 6
-        assert comms[1]["community_id"] == 2 and comms[1]["paper_count_in_section"] == 4
-        assert comms[2]["community_id"] == 3 and comms[2]["paper_count_in_section"] == 3
-
-    def test_theme_communities_capped_at_three(self) -> None:
-        """AC2: with 5 communities in one section, only the top-3 by
-        paper_count_in_section appear in theme.communities."""
-        bibcodes = []
-        for cid, n in [(1, 8), (2, 5), (3, 4), (4, 3), (5, 2)]:
-            bibcodes.extend([f"2024C{cid}_{i:02d}" for i in range(n)])
-        papers_rows = [
-            (b, f"T{b}", 2024, f"a{b}", 0, ["astro-ph.GA"], ["x"]) for b in bibcodes
-        ]
-        intent_rows: list[tuple] = []
-        community_rows = []
-        offset = 0
-        for cid, n in [(1, 8), (2, 5), (3, 4), (4, 3), (5, 2)]:
-            for i in range(n):
-                community_rows.append((bibcodes[offset + i], cid, f"Lbl{cid}"))
-            offset += n
+        # Pin everyone to 'background' to guarantee all communities show up
+        # in the same section's theme regardless of share-tier classifier.
         overrides = {b: "background" for b in bibcodes}
         conn = _mock_conn([papers_rows, intent_rows, community_rows])
 
@@ -1317,9 +1291,14 @@ class TestSectionTheme:
         )
         bg = next(s for s in result.sections if s.name == "background")
         comms = bg.theme["communities"]
+        # AC2: capped at 3 entries.
         assert len(comms) == 3
-        # Top 3 are communities 1, 2, 3 (highest counts).
-        assert [c["community_id"] for c in comms] == [1, 2, 3]
+        # AC2: sorted desc by paper_count_in_section, with the expected
+        # community ids and counts.
+        actual_top_3 = [
+            (c["community_id"], c["paper_count_in_section"]) for c in comms
+        ]
+        assert actual_top_3 == expected_top_3
 
     def test_top_papers_by_citation_has_three_highest(self) -> None:
         """AC1: theme.top_papers_by_citation contains the top-3 papers by

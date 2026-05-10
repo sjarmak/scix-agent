@@ -102,6 +102,18 @@ def _parse_marker_numbers(inner: str) -> tuple[int, ...]:
 _WORD_RE = re.compile(r"\S+")
 
 
+# Hard cap on body length passed to the public extractors. _word_offsets builds
+# two list[int]s sized to the token count of the body — at ~8 chars/token, a
+# 100 MB body materialises ~12.5M ints and ~200 MB peak RAM, which OOM-kills
+# the shard worker even under scix-batch's MemoryMax. Truncate at the entry of
+# the public functions so the rest of the module can assume bounded input. The
+# 10M-char cap is well above the body-size distribution we actually see in
+# papers_fulltext (P99.9 ≈ 1.5M chars per spot-checks) so legitimate bodies
+# pass through untouched. Surfaced from wave-k6w0-u5gz-i315-3ozn1 review (bead
+# scix_experiments-2wbx).
+_MAX_BODY_CHARS: int = 10_000_000
+
+
 def _word_offsets(text: str) -> tuple[list[int], list[int]]:
     """Pre-compute per-word char offsets in ``text``.
 
@@ -175,7 +187,9 @@ def extract_citation_contexts(body: str) -> list[CitationMarker]:
     Parameters
     ----------
     body : str
-        Plain-text body of a paper.
+        Plain-text body of a paper. Truncated at :data:`_MAX_BODY_CHARS`
+        with a single warning log if exceeded — see the constant's
+        rationale for why.
 
     Returns
     -------
@@ -184,6 +198,13 @@ def extract_citation_contexts(body: str) -> list[CitationMarker]:
     """
     if not body:
         return []
+    if len(body) > _MAX_BODY_CHARS:
+        logger.warning(
+            "extract_citation_contexts: body length %d exceeds cap %d; truncating",
+            len(body),
+            _MAX_BODY_CHARS,
+        )
+        body = body[:_MAX_BODY_CHARS]
 
     word_starts, word_ends = _word_offsets(body)
     markers: list[CitationMarker] = []
@@ -384,9 +405,19 @@ def extract_author_year_citations(body: str) -> list[CitationMarker]:
     whose ``[char_start, char_end)`` range intersects it is rejected. The
     pattern iteration order (et-al → narrative → paren → sub-cite) decides
     which match wins on conflict.
+
+    Body length is capped at :data:`_MAX_BODY_CHARS` with a warning log
+    when truncation fires.
     """
     if not body:
         return []
+    if len(body) > _MAX_BODY_CHARS:
+        logger.warning(
+            "extract_author_year_citations: body length %d exceeds cap %d; truncating",
+            len(body),
+            _MAX_BODY_CHARS,
+        )
+        body = body[:_MAX_BODY_CHARS]
 
     # Pre-compute word-start/word-end offsets once per body so each
     # _word_boundary_window call is O(log N) via bisect rather than

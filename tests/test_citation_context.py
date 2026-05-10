@@ -8,6 +8,7 @@ import time
 import pytest
 
 from scix.citation_context import (
+    _MAX_BODY_CHARS,
     CitationMarker,
     _enrich_with_sections,
     _parse_marker_numbers,
@@ -1011,3 +1012,90 @@ class TestExtractAuthorYearEndToEndPerfScaling:
         if t_5k <= 0:
             pytest.skip("perf_counter resolution too coarse for this measurement")
         assert t_5k < 0.5, f"5K citation extraction took {t_5k:.3f}s (expected <500ms post-3ozn.1)"
+
+
+# ---------------------------------------------------------------------------
+# Body-size guard (scix_experiments-2wbx)
+# ---------------------------------------------------------------------------
+
+
+class TestBodySizeGuard:
+    """Verify both public extractors truncate over-cap bodies and emit a warning."""
+
+    def test_max_body_chars_constant(self) -> None:
+        """Cap is 10M chars per the bead's recommendation."""
+        assert _MAX_BODY_CHARS == 10_000_000
+
+    def test_extract_citation_contexts_truncates_oversize_body(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Body >_MAX_BODY_CHARS is truncated and a warning is logged."""
+        # Build a body that's just past the cap with one [1] marker BEFORE the cap.
+        prefix = "ctx " * 10  # 40 chars
+        marker = "[1]"
+        suffix_pad = "x" * (_MAX_BODY_CHARS + 1024)
+        body = prefix + marker + suffix_pad
+        assert len(body) > _MAX_BODY_CHARS
+
+        with caplog.at_level("WARNING", logger="scix.citation_context"):
+            markers = extract_citation_contexts(body)
+
+        # The early [1] is well under the cap so it should still be found.
+        assert len(markers) == 1
+        assert markers[0].marker_text == "[1]"
+
+        # Truncation warning fired.
+        assert any(
+            "exceeds cap" in r.message and "extract_citation_contexts" in r.message
+            for r in caplog.records
+        ), f"expected truncation warning; got: {[r.message for r in caplog.records]}"
+
+    def test_extract_citation_contexts_under_cap_no_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Body at-or-below cap leaves the truncation path untouched."""
+        body = "small body with [1] marker"
+
+        with caplog.at_level("WARNING", logger="scix.citation_context"):
+            extract_citation_contexts(body)
+
+        assert not any("exceeds cap" in r.message for r in caplog.records)
+
+    def test_extract_author_year_citations_truncates_oversize_body(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Author-year extractor also caps at _MAX_BODY_CHARS with a warning."""
+        prefix = "Smith et al. 2020 reported that "
+        suffix_pad = "x" * (_MAX_BODY_CHARS + 1024)
+        body = prefix + suffix_pad
+        assert len(body) > _MAX_BODY_CHARS
+
+        with caplog.at_level("WARNING", logger="scix.citation_context"):
+            markers = extract_author_year_citations(body)
+
+        # Smith et al. 2020 is at offset 0, well under the cap.
+        assert len(markers) >= 1
+        assert any(m.marker_authors == ("Smith",) and m.marker_year == 2020 for m in markers)
+
+        assert any(
+            "exceeds cap" in r.message and "extract_author_year_citations" in r.message
+            for r in caplog.records
+        ), f"expected truncation warning; got: {[r.message for r in caplog.records]}"
+
+    def test_truncation_drops_markers_past_cap(self) -> None:
+        """Markers that fall beyond _MAX_BODY_CHARS are NOT extracted (truncated away).
+
+        Pin the contract so a future change that switches truncation to e.g.
+        a streaming scan would break this test visibly.
+        """
+        # Marker BEFORE cap, then a long pad, then a second marker AFTER cap.
+        early_marker = "[1]"
+        pad = "x" * (_MAX_BODY_CHARS + 100)
+        late_marker = "[2]"
+        body = early_marker + " ctx " + pad + " " + late_marker
+        assert body.index(late_marker) > _MAX_BODY_CHARS
+
+        markers = extract_citation_contexts(body)
+        marker_nums = sorted({n for m in markers for n in m.marker_numbers})
+        assert 1 in marker_nums
+        assert 2 not in marker_nums  # past the cap → truncated away

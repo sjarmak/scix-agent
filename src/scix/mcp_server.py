@@ -30,7 +30,7 @@ import uuid
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Generator, Sequence
+from typing import Any, Generator, Protocol, Sequence
 
 import psycopg
 
@@ -361,8 +361,39 @@ _LOG_QUERY_INSERT_SQL: str = (
 )
 
 
+class _LogQueryCursor(Protocol):
+    """Narrow cursor Protocol — the slice :func:`_log_query` uses.
+
+    Concrete ``psycopg.Cursor[Row]`` satisfies this structurally; test
+    fakes only need to expose ``execute`` plus the context-manager dunders.
+    """
+
+    def execute(self, sql: str, params: Any = ..., /) -> Any: ...
+
+    def __enter__(self) -> "_LogQueryCursor": ...
+
+    def __exit__(self, *args: Any) -> Any: ...
+
+
+class _LogQueryConnection(Protocol):
+    """Narrow connection Protocol — the slice :func:`_log_query` uses.
+
+    Documents the actual contract :func:`_log_query` has on its connection
+    arg so test fakes can declare structural compatibility instead of
+    needing a ``# type: ignore[arg-type]`` at every call site. The
+    ``info`` attribute is read defensively via ``getattr`` so it is not
+    declared here.
+    """
+
+    def cursor(self) -> _LogQueryCursor: ...
+
+    def commit(self) -> None: ...
+
+    def rollback(self) -> None: ...
+
+
 def _log_query(
-    conn: psycopg.Connection,
+    conn: _LogQueryConnection,
     tool_name: str,
     params: dict[str, Any],
     latency_ms: float,
@@ -4288,7 +4319,7 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                 }
             )
 
-        limit = min(args.get("limit", 20), 200)
+        limit = min(args.get("limit", 20), MAX_WORKING_SET_BIBCODES)
         containment = json.dumps({entity_type: [query]})
 
         # Build WHERE clauses conditionally so backward compatibility is
@@ -4386,7 +4417,7 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         except (TypeError, ValueError):
             return json.dumps({"error": "entity_id must be an integer"})
 
-        limit = min(args.get("limit", 20), 200)
+        limit = min(args.get("limit", 20), MAX_WORKING_SET_BIBCODES)
         # Pull entity metadata (entity_type, source) and per-link
         # provenance (match_method, evidence with optional 'agreement'
         # flag from the classifier post-pass) so we can attach a
@@ -4505,7 +4536,7 @@ def _handle_claim_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
 
     raw_limit = args.get("limit", 20)
     try:
-        limit = min(int(raw_limit), 200)
+        limit = min(int(raw_limit), MAX_WORKING_SET_BIBCODES)
     except (TypeError, ValueError):
         return json.dumps(
             {
@@ -4718,7 +4749,7 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """
     signal = args.get("signal", "semantic")
     resolution = args.get("resolution", "medium")
-    limit = min(args.get("limit", 20), 200)
+    limit = min(args.get("limit", 20), MAX_WORKING_SET_BIBCODES)
     clear_first = args.get("clear_first", False)
 
     if clear_first:
@@ -4756,7 +4787,7 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     ws_bibcodes = _session_state.get_focused_papers()
     if not ws_bibcodes:
         ws_bibcodes = [e.bibcode for e in _session_state.get_working_set()]
-    ws_bibcodes = ws_bibcodes[:200]
+    ws_bibcodes = ws_bibcodes[:MAX_WORKING_SET_BIBCODES]
 
     # When no working set is populated and the caller passed a query, seed
     # the working set on-the-fly via concept_search so single-call agents
@@ -5255,7 +5286,7 @@ def _handle_cited_by_intent(conn: psycopg.Connection, args: dict[str, Any]) -> s
             }
         )
 
-    limit = min(int(args.get("limit", 20)), 200)
+    limit = min(int(args.get("limit", 20)), MAX_WORKING_SET_BIBCODES)
     target = target_bibcode.strip()
 
     # Window-function dedup: one row per source_bibcode, keeping the
@@ -5346,8 +5377,8 @@ def _handle_synthesize_findings(conn: psycopg.Connection, args: dict[str, Any]) 
         return json.dumps(
             {"error": "max_papers_per_section must be an integer"},
         )
-    # Hard cap to keep payload sizes sane; matches find_gaps' 200 cap.
-    max_papers = max(0, min(max_papers, 200))
+    # Hard cap to keep payload sizes sane; matches find_gaps' cap.
+    max_papers = max(0, min(max_papers, MAX_WORKING_SET_BIBCODES))
 
     raw_overrides = args.get("section_overrides")
     if raw_overrides is not None and not isinstance(raw_overrides, dict):
@@ -5660,8 +5691,8 @@ def _handle_section_retrieval(conn: psycopg.Connection, args: dict[str, Any]) ->
     if k <= 0:
         return json.dumps({"error": "k must be positive"})
     # Cap fanout to keep blast radius bounded; matches the convention used
-    # elsewhere in this module (find_gaps caps at 200).
-    k = min(k, 200)
+    # elsewhere in this module (find_gaps caps at MAX_WORKING_SET_BIBCODES).
+    k = min(k, MAX_WORKING_SET_BIBCODES)
 
     try:
         filter_sql, filter_params = _section_filter_clauses(args.get("filters"))

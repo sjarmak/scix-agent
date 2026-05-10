@@ -25,7 +25,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scix import mcp_server
-from scix.mcp_server import _LOG_QUERY_COLS, _dispatch_tool, _is_unscoped_broad_query
+from scix.mcp_server import (
+    _LOG_QUERY_COLS,
+    _dispatch_tool,
+    _is_unscoped_broad_query,
+    _LogQueryConnection,
+    _LogQueryCursor,
+)
 from scix.search import SearchResult
 
 # ---------------------------------------------------------------------------
@@ -437,39 +443,50 @@ def test_description_mentions_structured_error_behavior() -> None:
 # ---------------------------------------------------------------------------
 
 
-class _CaptureCursor:
+class _CaptureCursor(_LogQueryCursor):
     """Test double that captures the params tuple from a single execute().
 
     Stores both the raw tuple under ``captured["params"]`` and a named
     mapping under ``captured["named"]`` keyed by
     :data:`scix.mcp_server._LOG_QUERY_COLS`. Tests should prefer the named
     form so assertions survive INSERT column reordering.
+
+    Declares :class:`_LogQueryCursor` as a structural base so the static
+    type checker accepts this double in place of ``psycopg.Cursor``.
     """
 
     def __init__(self, captured: dict[str, Any]) -> None:
         self._captured = captured
 
-    def __enter__(self) -> "_CaptureCursor":
+    def __enter__(self) -> "_LogQueryCursor":
         return self
 
     def __exit__(self, *_a: Any) -> None:
         pass
 
-    def execute(self, _sql: str, params: tuple) -> None:
+    def execute(self, _sql: str, params: Any = (), /) -> None:
         self._captured["params"] = params
         self._captured["named"] = dict(zip(_LOG_QUERY_COLS, params, strict=True))
 
 
-class _CaptureConn:
-    """Connection double that vends a shared :class:`_CaptureCursor`."""
+class _CaptureConn(_LogQueryConnection):
+    """Connection double that vends a shared :class:`_CaptureCursor`.
+
+    Declares :class:`_LogQueryConnection` as a structural base so the
+    static type checker accepts this double in place of
+    ``psycopg.Connection``.
+    """
 
     def __init__(self, captured: dict[str, Any]) -> None:
         self._captured = captured
 
-    def cursor(self) -> _CaptureCursor:
+    def cursor(self) -> _LogQueryCursor:
         return _CaptureCursor(self._captured)
 
     def commit(self) -> None:
+        pass
+
+    def rollback(self) -> None:
         pass
 
 

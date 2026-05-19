@@ -4829,6 +4829,11 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             ]
         except Exception:
             # Best-effort: fall through to the no-papers branch below.
+            logger.debug(
+                "find_gaps auto-seed via concept_search failed for query=%r",
+                seed_query,
+                exc_info=True,
+            )
             ws_bibcodes = []
 
     if not ws_bibcodes:

@@ -1056,6 +1056,39 @@ class TestFindGaps:
         assert result["total"] == 0
         assert "message" in result
 
+    @patch("scix.search.concept_search")
+    def test_auto_seed_failure_logs_debug_and_falls_through(
+        self, mock_concept: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """When concept_search auto-seed raises, find_gaps logs at DEBUG with
+        exc_info and falls through to the no-papers branch (bead 5z8a)."""
+        mock_concept.side_effect = RuntimeError("concept_search boom")
+
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchall.return_value = []
+        cur.__enter__ = lambda self: self
+        cur.__exit__ = MagicMock(return_value=False)
+        conn.cursor.return_value = cur
+
+        with caplog.at_level("DEBUG", logger="scix.mcp_server"):
+            result = json.loads(
+                _dispatch_tool(conn, "find_gaps", {"query": "dark matter halos"})
+            )
+
+        # Graceful fall-through to the no-papers branch.
+        assert result["total"] == 0
+        assert "message" in result
+
+        # The swallowed exception was logged at DEBUG with a traceback.
+        seed_logs = [
+            r
+            for r in caplog.records
+            if "auto-seed" in r.message and r.levelname == "DEBUG"
+        ]
+        assert seed_logs, f"expected DEBUG auto-seed log; got: {[r.message for r in caplog.records]}"
+        assert seed_logs[0].exc_info is not None, "auto-seed log must carry exc_info"
+
 
 # ---------------------------------------------------------------------------
 # AC16: session tools NOT in list_tools

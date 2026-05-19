@@ -198,6 +198,59 @@ def _elapsed_ms(t0: float) -> float:
 # Lexical search (tsvector with custom scix_english config)
 # ---------------------------------------------------------------------------
 
+# ts_config is interpolated into the SQL string (Postgres regconfig names
+# cannot be bound as parameters), so it must be whitelisted to close the
+# injection vector. These are the only two configs the corpus ships.
+_TS_CONFIG_WHITELIST: frozenset[str] = frozenset({"scix_english", "english"})
+
+# Candidate-pool cap for lexical_search. Without a cap, common single-token
+# queries (e.g. 'galaxy' → ~344K title/abstract matches) force ts_rank_cd over
+# the entire match set and blow past the 30s statement timeout at the DB level,
+# before ORDER BY ever runs. Capping the candidate set first bounds ranking
+# cost — 'galaxy' goes from a >35s timeout to ~134ms at the default. Operators
+# can retune via SCIX_LEXICAL_POOL without restarting the MCP container.
+_LEXICAL_POOL_DEFAULT: int = 5000
+
+# Token values of SCIX_LEXICAL_POOL that disable the cap entirely (unbounded
+# pool — rank the full match set). Used by eval harnesses measuring the recall
+# cost of the cap; not appropriate for the live MCP server.
+_LEXICAL_POOL_UNBOUNDED: frozenset[str] = frozenset({"inf", "all", "none"})
+
+
+def _resolve_lexical_pool() -> int | None:
+    """Resolve the lexical_search candidate-pool cap from ``SCIX_LEXICAL_POOL``.
+
+    Returns the row cap, or ``None`` for an unbounded pool (passed to SQL as
+    ``LIMIT NULL``, which Postgres treats as no limit). Read on every call so
+    operators can tune the running container without a restart. Misconfigured
+    values log a warning and fall back to :data:`_LEXICAL_POOL_DEFAULT`.
+    """
+    raw = os.environ.get("SCIX_LEXICAL_POOL")
+    if raw is None:
+        return _LEXICAL_POOL_DEFAULT
+    token = raw.strip().lower()
+    if token in _LEXICAL_POOL_UNBOUNDED:
+        return None
+    try:
+        value = int(token)
+    except ValueError:
+        logger.warning(
+            "SCIX_LEXICAL_POOL=%r is not an integer or one of %s; falling back to %d",
+            raw,
+            sorted(_LEXICAL_POOL_UNBOUNDED),
+            _LEXICAL_POOL_DEFAULT,
+        )
+        return _LEXICAL_POOL_DEFAULT
+    if value <= 0:
+        logger.warning(
+            "SCIX_LEXICAL_POOL=%d must be positive (use INF for unbounded); "
+            "falling back to %d",
+            value,
+            _LEXICAL_POOL_DEFAULT,
+        )
+        return _LEXICAL_POOL_DEFAULT
+    return value
+
 
 def lexical_search(
     conn: psycopg.Connection,
@@ -210,28 +263,59 @@ def lexical_search(
     """Full-text search using PostgreSQL tsvector with ts_rank_cd scoring.
 
     Uses the custom scix_english text search config by default, which handles
-    scientific text (hyphens like X-ray, numeric tokens) better than built-in english.
-    Falls back to 'english' if scix_english config does not exist.
+    scientific text (hyphens like X-ray, numeric tokens) better than built-in
+    english. ``ts_config`` is whitelisted (see :data:`_TS_CONFIG_WHITELIST`).
+
+    Query shape (candidate-pool cap, bead 3t37):
+      1. ``q`` CTE materializes ``plainto_tsquery`` once.
+      2. ``cand`` CTE caps the matched candidate set at ``SCIX_LEXICAL_POOL``
+         rows (default 5000). This bounds the ts_rank_cd cost, which would
+         otherwise time out on common terms.
+      3. The outer SELECT computes ``ts_rank_cd`` only over the bounded set.
+
+    Trade-off: when the match set exceeds the cap, only the first ~POOL rows
+    the bitmap heap scan returns are ranked — biased toward earlier-ingested
+    (TID order) papers. Acceptable because lexical_search is RRF-fused with the
+    vector and body lanes in hybrid_search; direct callers (eval harnesses) can
+    set ``SCIX_LEXICAL_POOL=INF`` to rank the full match set.
     """
+    if ts_config not in _TS_CONFIG_WHITELIST:
+        raise ValueError(
+            f"ts_config must be one of {sorted(_TS_CONFIG_WHITELIST)}; got {ts_config!r}"
+        )
+
     t0 = time.perf_counter()
 
     effective = filters or SearchFilters()
     filter_clause, filter_params = effective.to_where_clause("p")
     entity_clause, entity_params = effective.to_entity_filter_clause("p")
 
-    # plainto_tsquery is more robust than websearch_to_tsquery for programmatic use:
-    # it doesn't fail on unmatched quotes or special chars in user input.
+    pool_size = _resolve_lexical_pool()
+    cand_columns = STUB_COLUMNS.replace("p.", "cand.")
+
+    # plainto_tsquery is more robust than websearch_to_tsquery for programmatic
+    # use: it doesn't fail on unmatched quotes or special chars in user input.
     query = f"""
-        SELECT {STUB_COLUMNS},
-               ts_rank_cd(p.tsv, plainto_tsquery('{ts_config}', %s), 32) AS rank
-        FROM papers p
-        WHERE p.tsv @@ plainto_tsquery('{ts_config}', %s)
-        {filter_clause}
-        {entity_clause}
+        WITH q AS (
+            SELECT plainto_tsquery('{ts_config}', %s) AS tsq
+        ),
+        cand AS (
+            SELECT {STUB_COLUMNS}, p.tsv
+            FROM papers p, q
+            WHERE p.tsv @@ q.tsq
+            {filter_clause}
+            {entity_clause}
+            LIMIT %s
+        )
+        SELECT {cand_columns},
+               ts_rank_cd(cand.tsv, q.tsq, 32) AS rank
+        FROM cand, q
         ORDER BY rank DESC
         LIMIT %s
     """
-    params: list[Any] = [query_text, query_text] + filter_params + entity_params + [limit]
+    params: list[Any] = (
+        [query_text] + filter_params + entity_params + [pool_size, limit]
+    )
 
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(query, params)

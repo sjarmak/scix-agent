@@ -44,22 +44,65 @@ def _reset_session() -> Iterator[None]:
     _session_state.clear_focused()
 
 
-def _mock_conn(rows_by_query: list[list[tuple]]) -> MagicMock:
-    """Build a MagicMock psycopg connection that returns the given rows in order.
+def _mock_conn(
+    papers_rows: list[tuple] | None = None,
+    intent_rows: list[tuple] | None = None,
+    community_rows: list[tuple] | None = None,
+    excerpt_rows: list[tuple] | None = None,
+) -> MagicMock:
+    """psycopg-shaped MagicMock that dispatches by SQL content.
 
-    Each call to ``cursor()`` (used as a context manager) yields a cursor
-    whose ``fetchall()`` returns the next batch of rows. Used to script
-    the multi-query behaviour of ``synthesize_findings``.
+    Bead 9egm: the previous implementation cycled through a
+    positional ``rows_by_query`` list using ``conn.cursor.side_effect``,
+    which silently coupled tests to the call order of the SELECTs
+    inside ``synthesize_findings``. A future refactor that swapped
+    ``community`` before ``intent`` would have fed each fixture's rows
+    to the wrong query without surfacing a failure. Mirrors the
+    SQL-substring dispatch in ``tests/test_claim_coverage_block.py``
+    so reordering inside the production code can never silently
+    mislabel mock rows again.
+
+    Each query is dispatched by a unique substring in its SQL:
+
+    - ``_fetch_paper_metadata``      -> ``FROM papers`` (no ``paper_metrics``)
+    - ``_fetch_intent_histogram``    -> ``GROUP BY`` (only intent uses it)
+    - ``_fetch_community_assignments`` -> ``paper_metrics``
+    - ``_fetch_citation_excerpts``   -> ``ROW_NUMBER(`` (unique to excerpts)
     """
+    papers = list(papers_rows or [])
+    intent = list(intent_rows or [])
+    community = list(community_rows or [])
+    excerpts = list(excerpt_rows or [])
+
+    # Mutable holder so the closure can update which batch the next
+    # ``fetchall()`` returns. Lists-of-one are the standard Python idiom
+    # for closure cells without ``nonlocal``.
+    last_rows: list[list[tuple]] = [[]]
+
+    def _execute(sql: str, params: object = None) -> None:
+        s = sql.lower()
+        # Order matters: check the most specific substring first so the
+        # excerpt query (which references citation_contexts inside a
+        # subquery) is not misclassified as the intent histogram.
+        if "row_number(" in s:
+            last_rows[0] = excerpts
+        elif "paper_metrics" in s:
+            last_rows[0] = community
+        elif "group by" in s:
+            last_rows[0] = intent
+        elif "from papers" in s:
+            last_rows[0] = papers
+        else:
+            last_rows[0] = []
+
+    cur = MagicMock()
+    cur.execute.side_effect = _execute
+    cur.fetchall.side_effect = lambda: last_rows[0]
+    cur.__enter__ = lambda self: self
+    cur.__exit__ = MagicMock(return_value=False)
+
     conn = MagicMock()
-    cursors: list[MagicMock] = []
-    for rows in rows_by_query:
-        cur = MagicMock()
-        cur.fetchall.return_value = rows
-        cur.__enter__ = lambda self: self
-        cur.__exit__ = MagicMock(return_value=False)
-        cursors.append(cur)
-    conn.cursor.side_effect = cursors
+    conn.cursor.return_value = cur
     return conn
 
 
@@ -147,7 +190,11 @@ class TestIntentAssignment:
             ("2024A", 7, "Cosmology"),
         ]
 
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
         result = synthesize_findings(
             conn,
             working_set_bibcodes=["2024A"],
@@ -165,7 +212,11 @@ class TestIntentAssignment:
         papers_rows = [("2024B", "Replication paper", 2024, "abs", 0, [], [], None)]
         intent_rows = [("2024B", "result_comparison", 5)]
         community_rows = [("2024B", 1, "Stellar")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
         result = synthesize_findings(
             conn,
             working_set_bibcodes=["2024B"],
@@ -199,7 +250,11 @@ class TestCommunityFallThrough:
         # First 18 in modal community 5; Z alone in community 99.
         community_rows = [(b, 5, "Galaxies") for b in bibcodes[:18]]
         community_rows.append(("2024Z", 99, "Plasma"))
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -232,7 +287,11 @@ class TestCommunityFallThrough:
         papers_rows = [("2024U", "Orphan paper", 2024, "abs", 0, [], [], None)]
         intent_rows: list[tuple] = []
         community_rows: list[tuple] = []  # no metrics row at all
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         # cap == 0 path: no fallback, paper unattributed.
         result = synthesize_findings(
@@ -252,7 +311,11 @@ class TestCommunityFallThrough:
         papers_rows = [("2024U", "Orphan paper", 2024, "abs", 0, [], [], None)]
         intent_rows: list[tuple] = []
         community_rows: list[tuple] = []
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -278,7 +341,11 @@ class TestDeterministicStructure:
         papers_rows = [("2024A", "P", 2024, "a", 0, [], [], None)]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "L1")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -298,7 +365,11 @@ class TestDeterministicStructure:
         papers_rows = [(f"2024P{i}", f"P{i}", 2024, f"a{i}", 0, [], [], None) for i in range(10)]
         intent_rows: list[tuple] = []
         community_rows = [(f"2024P{i}", 1, "Common") for i in range(10)]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -319,7 +390,11 @@ class TestDeterministicStructure:
             ("2024A", 1, "L"),
             ("2024B", 1, "L"),
         ]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
         result = synthesize_findings(
             conn,
             working_set_bibcodes=["2024A", "2024B"],
@@ -344,7 +419,11 @@ class TestMCPDispatch:
         papers_rows = [("2024A", "T", 2024, "abs", 0, [], [], None)]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "Lbl")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         out = _dispatch_tool(
             conn,
@@ -370,7 +449,11 @@ class TestMCPDispatch:
         papers_rows = [("2024A", "T", 2024, "abs", 0, [], [], None)]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "Lbl")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         out = _dispatch_tool(conn, "synthesize_findings", {})
         result = json.loads(out)
@@ -421,7 +504,11 @@ class TestAcceptanceCoverage:
                 community_rows.append((b, 2, "Minority"))
             # else: skip -> unattributed
 
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
         result = synthesize_findings(
             conn,
             working_set_bibcodes=bibcodes,
@@ -451,7 +538,11 @@ class TestPerPaperSignals:
             ("2024A", "background", 1),
         ]
         community_rows = [("2024A", 7, "Cosmology")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -473,7 +564,11 @@ class TestPerPaperSignals:
             ("2024X", 5, "Modal"),
             ("2024Y", 5, "Modal"),
         ]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -502,7 +597,11 @@ class TestPerPaperSignals:
             ("2024B", 1, "Lbl1"),
             ("2024C", 2, "Lbl2"),
         ]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -556,7 +655,11 @@ class TestPerPaperSignals:
             ("2024A", "result_comparison", 1),
         ]
         community_rows = [("2024A", 1, "Lbl")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -590,7 +693,11 @@ class TestSectionOverrides:
         # All 30 papers in modal community 1 -> would all go to 'background'.
         intent_rows: list[tuple] = []
         community_rows = [(b, 1, "L") for b in bibcodes]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         overrides = {
             "2024P00": "methods",
@@ -628,7 +735,11 @@ class TestSectionOverrides:
         papers_rows = [("2024A", "A", 2024, "abs", 0, [], [], None)]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "L")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -647,7 +758,11 @@ class TestSectionOverrides:
         papers_rows = [("2024A", "A", 2024, "abs", 0, [], [], None)]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "L")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         # Cast to silence type checkers — we're testing runtime defense.
         bad_overrides = {123: "methods", "2024A": 456}  # type: ignore[dict-item]
@@ -672,7 +787,11 @@ class TestMCPDispatchOverrides:
         papers_rows = [("2024A", "T", 2024, "abs", 0, [], [], None)]
         intent_rows: list[tuple] = []
         community_rows = [("2024A", 1, "L")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         out = _dispatch_tool(
             conn,
@@ -744,7 +863,11 @@ class TestEmptySectionFallback:
         # is the highest-citation eligible candidate.
         community_rows = [(f"2024P{i:02d}", 1, "Modal") for i in range(10, 20)]
 
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
         result = synthesize_findings(
             conn,
             working_set_bibcodes=bibcodes,
@@ -779,7 +902,11 @@ class TestEmptySectionFallback:
         ]
         intent_rows: list[tuple] = []  # nothing attributed via intent
         community_rows: list[tuple] = []  # nothing attributed via community
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -806,7 +933,11 @@ class TestEmptySectionFallback:
         ]
         intent_rows: list[tuple] = []
         community_rows: list[tuple] = []
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -841,7 +972,11 @@ class TestEmptySectionFallback:
             ("2024S04", 1, "Lbl"),
             ("2024S05", 1, "Lbl"),
         ]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -872,7 +1007,11 @@ class TestEmptySectionFallback:
         ]
         intent_rows: list[tuple] = []
         community_rows: list[tuple] = []
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -904,7 +1043,11 @@ class TestEmptySectionFallback:
         community_rows: list[tuple] = []
         # Pin the highest-citation paper to 'methods' via override.
         overrides = {"2024V00": "methods"}
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -933,7 +1076,11 @@ class TestEmptySectionFallback:
         # Every paper has a method intent -> all attributed to 'methods'.
         intent_rows = [(b, "method", 1) for b in bibcodes]
         community_rows: list[tuple] = []
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -954,7 +1101,11 @@ class TestEmptySectionFallback:
         ]
         intent_rows: list[tuple] = []
         community_rows: list[tuple] = []
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -989,7 +1140,11 @@ class TestEmptySectionFallback:
         # Y05 -> pinned to 'open_questions' via override.
         # Y06-Y09 -> unattributed; eligible for fallback to fill 'results'.
         overrides = {"2024Y05": "open_questions"}
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1059,7 +1214,11 @@ class TestWeightedShareClassifier:
         intent_rows: list[tuple] = []
         community_rows = [(b, 1, "Modal") for b in bibcodes[:19]]
         community_rows.append(("2024B", 2, "Supporting"))
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1097,7 +1256,11 @@ class TestWeightedShareClassifier:
         intent_rows: list[tuple] = []
         community_rows = [(b, 1, "Modal") for b in bibcodes[:25]]
         community_rows.append(("2024B", 2, "Peripheral"))
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1124,7 +1287,11 @@ class TestWeightedShareClassifier:
         intent_rows: list[tuple] = []
         community_rows = [(b, 1, "Modal") for b in bibcodes[:19]]
         community_rows.append(("2024B", 2, "Supporting"))
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1146,7 +1313,11 @@ class TestWeightedShareClassifier:
         papers_rows = [("2024U", "Orphan", 2024, "abs", 50, [], [], None)]
         intent_rows: list[tuple] = []
         community_rows: list[tuple] = []
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1211,7 +1382,11 @@ class TestWeightedShareClassifier:
         community_rows = [(b, 1, "Modal") for b in bibcodes[:12]]
         community_rows.append(("2024B0", 2, "Supporting"))
         community_rows.append(("2024B1", 2, "Supporting"))
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1264,7 +1439,11 @@ class TestWeightedShareClassifier:
         intent_rows: list[tuple] = []
         community_rows = [(b, 1, "Modal") for b in bibcodes[:19]]
         community_rows.append(("2024B", 2, "Supporting"))
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         # Custom sections list — no 'methods'.
         result = synthesize_findings(
@@ -1285,7 +1464,11 @@ class TestWeightedShareClassifier:
         papers_rows = [(b, f"T{b}", 2024, f"abs{b}", 0, [], [], None) for b in bibcodes]
         intent_rows: list[tuple] = []
         community_rows = [(b, 1, "Solo") for b in bibcodes]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1362,7 +1545,11 @@ class TestSectionTheme:
         # Pin everyone to 'background' to guarantee all communities show up
         # in the same section's theme regardless of share-tier classifier.
         overrides = {b: "background" for b in bibcodes}
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1393,7 +1580,11 @@ class TestSectionTheme:
         ]
         intent_rows: list[tuple] = []
         community_rows = [(b, 1, "Modal") for b in bibcodes]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1420,7 +1611,11 @@ class TestSectionTheme:
         papers_rows = [("2024A", "T", 2024, "abs", 0, [], [], None)]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "L")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1454,7 +1649,11 @@ class TestSectionTheme:
         ]
         intent_rows: list[tuple] = []
         community_rows = [(b, 7, "Planets") for b in bibcodes]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1490,7 +1689,11 @@ class TestSectionTheme:
             ("2024A", 1, "Cosmology"),
             ("2024B", 1, "Cosmology"),
         ]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1542,7 +1745,11 @@ class TestSectionTheme:
         ]
         intent_rows: list[tuple] = []
         community_rows = [(b, 1, "Galaxies") for b in bibcodes]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1574,7 +1781,11 @@ class TestSectionTheme:
         ]
         intent_rows: list[tuple] = []
         community_rows = [(b, 1, "Planets") for b in bibcodes]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1605,7 +1816,11 @@ class TestSectionTheme:
         ]
         intent_rows: list[tuple] = []
         community_rows = [(b, 1, "Galaxies") for b in bibcodes]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1634,7 +1849,11 @@ class TestSectionTheme:
         papers_rows = [("2024A", "T", 2024, "abs", 5, ["astro-ph.GA"], ["galaxies"], None)]
         intent_rows: list[tuple] = []
         community_rows = [("2024A", 1, "Galaxies")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1681,7 +1900,11 @@ class TestAdditiveGroundingFields:
         ]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "L")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1698,7 +1921,11 @@ class TestAdditiveGroundingFields:
         papers_rows = [("2024A", "T", 2024, "abs", 0, [], [], None)]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "L")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1718,7 +1945,11 @@ class TestAdditiveGroundingFields:
         ]
         intent_rows: list[tuple] = []
         community_rows = [("2024A", 1, "L"), ("2024B", 1, "L")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1742,7 +1973,11 @@ class TestAdditiveGroundingFields:
         papers_rows = [("2024A", "T", 2024, long_abstract, 0, [], [], "Smith")]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "L")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1764,7 +1999,11 @@ class TestAdditiveGroundingFields:
         papers_rows = [("2024A", "T", 2024, long_abstract, 0, [], [], "Smith")]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "L")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1786,7 +2025,11 @@ class TestAdditiveGroundingFields:
         papers_rows = [("2024A", "T", 2024, None, 0, [], [], "Smith")]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "L")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1806,7 +2049,11 @@ class TestAdditiveGroundingFields:
         papers_rows = [("2024A", "T", 2024, "abs", 0, [], [], "Smith")]
         intent_rows = [("2024A", "method", 2)]
         community_rows = [("2024A", 1, "L")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         result = synthesize_findings(
             conn,
@@ -1831,7 +2078,10 @@ class TestAdditiveGroundingFields:
             ("2024A", "Following Smith's procedure...", "method", "2025citerB"),
         ]
         conn = _mock_conn(
-            [papers_rows, intent_rows, community_rows, excerpt_rows]
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+            excerpt_rows=excerpt_rows,
         )
 
         result = synthesize_findings(
@@ -1893,7 +2143,10 @@ class TestAdditiveGroundingFields:
             ("2024D", "ctx-D1", "background", "2025citerD"),
         ]
         conn = _mock_conn(
-            [papers_rows, intent_rows, community_rows, excerpt_rows]
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+            excerpt_rows=excerpt_rows,
         )
 
         result = synthesize_findings(
@@ -1936,7 +2189,10 @@ class TestAdditiveGroundingFields:
             ("2024A", f"ctx-{i}", "method", f"2025citer{i}") for i in range(3)
         ]
         conn = _mock_conn(
-            [papers_rows, intent_rows, community_rows, excerpt_rows]
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+            excerpt_rows=excerpt_rows,
         )
 
         result = synthesize_findings(
@@ -1963,7 +2219,10 @@ class TestAdditiveGroundingFields:
         community_rows = [("2024A", 1, "L")]
         excerpt_rows: list[tuple] = []  # empty
         conn = _mock_conn(
-            [papers_rows, intent_rows, community_rows, excerpt_rows]
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+            excerpt_rows=excerpt_rows,
         )
 
         result = synthesize_findings(
@@ -1985,7 +2244,11 @@ class TestAdditiveGroundingFields:
         papers_rows = [("2024A", "T", 2024, long_abstract, 0, [], [], "Smith")]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "L")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         out = _dispatch_tool(
             conn,
@@ -2008,7 +2271,10 @@ class TestAdditiveGroundingFields:
         community_rows = [("2024A", 1, "L")]
         excerpt_rows = [("2024A", "ctx-1", "method", "2025citerA")]
         conn = _mock_conn(
-            [papers_rows, intent_rows, community_rows, excerpt_rows]
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+            excerpt_rows=excerpt_rows,
         )
 
         out = _dispatch_tool(
@@ -2032,7 +2298,11 @@ class TestAdditiveGroundingFields:
         papers_rows = [("2024A", "T", 2024, "abs", 0, [], [], "Breu")]
         intent_rows = [("2024A", "method", 1)]
         community_rows = [("2024A", 1, "L")]
-        conn = _mock_conn([papers_rows, intent_rows, community_rows])
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
 
         out = _dispatch_tool(
             conn,

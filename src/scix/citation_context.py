@@ -351,7 +351,11 @@ _AY_NARRATIVE = re.compile(
 )
 
 # Pattern B — "Surname et al. YYYY" / "Surname et al., YYYY".
-_AY_ET_AL = re.compile(rf"\b({_SURNAME})\s+et\s+al\.?,?\s*\(?\s*{_YEAR}\s*\)?")
+# Whitespace and parens are grouped so trailing space is consumed only when a
+# closing paren follows — otherwise m.end() inflates past the year.
+_AY_ET_AL = re.compile(
+    rf"\b({_SURNAME})\s+et\s+al\.?,?\s*(?:\(\s*)?{_YEAR}(?:\s*\))?"
+)
 
 # Pattern C — fully parenthetical: "(Surname, YYYY)" / "(Surname & Other, YYYY)"
 # / "(Surname et al., YYYY)" / "(Surname, Other, & Third, YYYY)".

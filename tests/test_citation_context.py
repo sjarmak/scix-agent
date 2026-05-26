@@ -544,6 +544,30 @@ class TestExtractAuthorYearOffsetsAndContext:
         markers = extract_author_year_citations(body)
         assert "Hong et al. 2001" in markers[0].context_text
 
+    def test_et_al_no_parens_does_not_consume_trailing_whitespace(self) -> None:
+        """body[char_start:char_end] must equal marker_text for et-al-without-parens.
+
+        Regression: the _AY_ET_AL pattern previously ended with ``\\s*\\)?``,
+        which let the trailing ``\\s*`` consume whitespace independently of the
+        optional closing paren. That inflated char_end past the year and broke
+        the span/marker_text equality.
+        """
+        body = "We follow Hong et al. 2001 in this analysis."
+        markers = extract_author_year_citations(body)
+        assert len(markers) == 1
+        m = markers[0]
+        assert body[m.char_start : m.char_end] == m.marker_text
+        assert m.marker_text == "Hong et al. 2001"
+        assert not m.marker_text.endswith((" ", "\t", "\n"))
+
+    def test_et_al_with_comma_no_trailing_whitespace(self) -> None:
+        body = "Earlier work by Hong et al., 2001 established this."
+        markers = extract_author_year_citations(body)
+        assert len(markers) == 1
+        m = markers[0]
+        assert body[m.char_start : m.char_end] == m.marker_text
+        assert m.marker_text == "Hong et al., 2001"
+
 
 # ---------------------------------------------------------------------------
 # resolve_author_year_markers — name+year disambiguation

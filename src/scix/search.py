@@ -206,10 +206,21 @@ _TS_CONFIG_WHITELIST: frozenset[str] = frozenset({"scix_english", "english"})
 # Candidate-pool cap for lexical_search. Without a cap, common single-token
 # queries (e.g. 'galaxy' → ~344K title/abstract matches) force ts_rank_cd over
 # the entire match set and blow past the 30s statement timeout at the DB level,
-# before ORDER BY ever runs. Capping the candidate set first bounds ranking
-# cost — 'galaxy' goes from a >35s timeout to ~134ms at the default. Operators
+# before ORDER BY ever runs (the uncapped 'spectroscopy' pass measured ~90s).
+# Capping the candidate set first bounds ranking cost.
+#
+# The cap LIMITs candidates in bitmap-heap (TID/ingestion) order *before*
+# ranking, so it is a blunt recall instrument: it keeps an arbitrary slice of
+# the match set, not the top-ranked one. Bead zsou measured this against the
+# uncapped recall ceiling on 16 broad single-token queries (eval/
+# lexical_stress_16q.jsonl): the old 5000 default recovered only ~15% of the
+# uncapped top-20 (Recall@20 −84.7pp, nDCG@10 −58.2pp). 30000 is the knee —
+# Recall@20 −37pp / nDCG@10 −14pp at ~1.4s worst-case (vs ~0.7s at 5000);
+# 50000 buys only +13pp recall for +40% latency. Lanes run serially in
+# hybrid_search, so this latency adds directly to hybrid cost on broad queries
+# (narrow queries whose match set is below the cap are unaffected). Operators
 # can retune via SCIX_LEXICAL_POOL without restarting the MCP container.
-_LEXICAL_POOL_DEFAULT: int = 5000
+_LEXICAL_POOL_DEFAULT: int = 30000
 
 # Token values of SCIX_LEXICAL_POOL that disable the cap entirely (unbounded
 # pool — rank the full match set). Used by eval harnesses measuring the recall
@@ -269,7 +280,7 @@ def lexical_search(
     Query shape (candidate-pool cap, bead 3t37):
       1. ``q`` CTE materializes ``plainto_tsquery`` once.
       2. ``cand`` CTE caps the matched candidate set at ``SCIX_LEXICAL_POOL``
-         rows (default 5000). This bounds the ts_rank_cd cost, which would
+         rows (default 30000). This bounds the ts_rank_cd cost, which would
          otherwise time out on common terms.
       3. The outer SELECT computes ``ts_rank_cd`` only over the bounded set.
 

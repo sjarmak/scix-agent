@@ -1,0 +1,371 @@
+{
+  "acceptance": {
+    "baseline_pool": "INF",
+    "by_bucket": {
+      "author_specific": {
+        "n_paired": 0,
+        "ndcg_drop_pp": null
+      },
+      "concept": {
+        "n_paired": 16,
+        "ndcg_drop_pp": 14.04756142317164
+      },
+      "method": {
+        "n_paired": 0,
+        "ndcg_drop_pp": null
+      },
+      "title_matchable": {
+        "n_paired": 0,
+        "ndcg_drop_pp": null
+      }
+    },
+    "default_pool": "30000",
+    "max_match_set": 851969,
+    "n_cap_engaged_at_default": 15,
+    "ndcg_drop_pp": 14.04756142317164,
+    "pass": false,
+    "threshold_pp": 2.0,
+    "unexercised": false
+  },
+  "bead": "scix_experiments-a2fp",
+  "match_set_sizes": {
+    "accretion disk": 43501,
+    "active galactic nuclei": 30706,
+    "black hole": 126962,
+    "cosmic microwave background": 21092,
+    "dark matter": 91273,
+    "exoplanet": 32990,
+    "galaxy": 344264,
+    "gravitational waves": 54804,
+    "interstellar medium": 39258,
+    "neutron star": 61230,
+    "redshift": 107029,
+    "spectroscopy": 851969,
+    "star formation": 129299,
+    "stellar evolution": 88084,
+    "supernova": 106842,
+    "white dwarf": 30811
+  },
+  "n_queries": 16,
+  "n_queries_with_gold": 16,
+  "pools": {
+    "15000": {
+      "aggregate": {
+        "by_bucket": {
+          "author_specific": {
+            "n_scored": 0,
+            "ndcg_at_10": null,
+            "recall_at_20": null
+          },
+          "concept": {
+            "n_scored": 16,
+            "ndcg_at_10": 0.68347004012904,
+            "recall_at_20": 0.35000000000000003
+          },
+          "method": {
+            "n_scored": 0,
+            "ndcg_at_10": null,
+            "recall_at_20": null
+          },
+          "title_matchable": {
+            "n_scored": 0,
+            "ndcg_at_10": null,
+            "recall_at_20": null
+          }
+        },
+        "errored_queries": [],
+        "latency_ms": {
+          "max": 1224.5574230328202,
+          "mean": 533.8928183191456,
+          "total": 8542.28509310633
+        },
+        "n_errored": 0,
+        "n_queries": 16,
+        "overall": {
+          "n_scored": 16,
+          "ndcg_at_10": 0.68347004012904,
+          "recall_at_20": 0.35000000000000003
+        }
+      },
+      "delta_vs_baseline": {
+        "by_bucket": {
+          "author_specific": {
+            "n_paired": 0,
+            "ndcg_drop_pp": null
+          },
+          "concept": {
+            "n_paired": 16,
+            "ndcg_drop_pp": 31.652995987096
+          },
+          "method": {
+            "n_paired": 0,
+            "ndcg_drop_pp": null
+          },
+          "title_matchable": {
+            "n_paired": 0,
+            "ndcg_drop_pp": null
+          }
+        },
+        "n_paired": 16,
+        "ndcg_at_10_baseline": 1.0,
+        "ndcg_at_10_pool": 0.68347004012904,
+        "ndcg_drop_pp": 31.652995987096,
+        "recall_at_20_baseline": 1.0,
+        "recall_at_20_pool": 0.35000000000000003,
+        "recall_drop_pp": 64.99999999999999
+      },
+      "n_cap_engaged": 16
+    },
+    "30000": {
+      "aggregate": {
+        "by_bucket": {
+          "author_specific": {
+            "n_scored": 0,
+            "ndcg_at_10": null,
+            "recall_at_20": null
+          },
+          "concept": {
+            "n_scored": 16,
+            "ndcg_at_10": 0.8595243857682836,
+            "recall_at_20": 0.628125
+          },
+          "method": {
+            "n_scored": 0,
+            "ndcg_at_10": null,
+            "recall_at_20": null
+          },
+          "title_matchable": {
+            "n_scored": 0,
+            "ndcg_at_10": null,
+            "recall_at_20": null
+          }
+        },
+        "errored_queries": [],
+        "latency_ms": {
+          "max": 1553.1521486118436,
+          "mean": 996.9798636739142,
+          "total": 15951.677818782628
+        },
+        "n_errored": 0,
+        "n_queries": 16,
+        "overall": {
+          "n_scored": 16,
+          "ndcg_at_10": 0.8595243857682836,
+          "recall_at_20": 0.628125
+        }
+      },
+      "delta_vs_baseline": {
+        "by_bucket": {
+          "author_specific": {
+            "n_paired": 0,
+            "ndcg_drop_pp": null
+          },
+          "concept": {
+            "n_paired": 16,
+            "ndcg_drop_pp": 14.04756142317164
+          },
+          "method": {
+            "n_paired": 0,
+            "ndcg_drop_pp": null
+          },
+          "title_matchable": {
+            "n_paired": 0,
+            "ndcg_drop_pp": null
+          }
+        },
+        "n_paired": 16,
+        "ndcg_at_10_baseline": 1.0,
+        "ndcg_at_10_pool": 0.8595243857682836,
+        "ndcg_drop_pp": 14.04756142317164,
+        "recall_at_20_baseline": 1.0,
+        "recall_at_20_pool": 0.628125,
+        "recall_drop_pp": 37.18749999999999
+      },
+      "n_cap_engaged": 15
+    },
+    "5000": {
+      "aggregate": {
+        "by_bucket": {
+          "author_specific": {
+            "n_scored": 0,
+            "ndcg_at_10": null,
+            "recall_at_20": null
+          },
+          "concept": {
+            "n_scored": 16,
+            "ndcg_at_10": 0.41820917269609686,
+            "recall_at_20": 0.153125
+          },
+          "method": {
+            "n_scored": 0,
+            "ndcg_at_10": null,
+            "recall_at_20": null
+          },
+          "title_matchable": {
+            "n_scored": 0,
+            "ndcg_at_10": null,
+            "recall_at_20": null
+          }
+        },
+        "errored_queries": [],
+        "latency_ms": {
+          "max": 770.1099142432213,
+          "mean": 256.67341373628005,
+          "total": 4106.774619780481
+        },
+        "n_errored": 0,
+        "n_queries": 16,
+        "overall": {
+          "n_scored": 16,
+          "ndcg_at_10": 0.41820917269609686,
+          "recall_at_20": 0.153125
+        }
+      },
+      "delta_vs_baseline": {
+        "by_bucket": {
+          "author_specific": {
+            "n_paired": 0,
+            "ndcg_drop_pp": null
+          },
+          "concept": {
+            "n_paired": 16,
+            "ndcg_drop_pp": 58.17908273039032
+          },
+          "method": {
+            "n_paired": 0,
+            "ndcg_drop_pp": null
+          },
+          "title_matchable": {
+            "n_paired": 0,
+            "ndcg_drop_pp": null
+          }
+        },
+        "n_paired": 16,
+        "ndcg_at_10_baseline": 1.0,
+        "ndcg_at_10_pool": 0.41820917269609686,
+        "ndcg_drop_pp": 58.17908273039032,
+        "recall_at_20_baseline": 1.0,
+        "recall_at_20_pool": 0.153125,
+        "recall_drop_pp": 84.6875
+      },
+      "n_cap_engaged": 16
+    },
+    "50000": {
+      "aggregate": {
+        "by_bucket": {
+          "author_specific": {
+            "n_scored": 0,
+            "ndcg_at_10": null,
+            "recall_at_20": null
+          },
+          "concept": {
+            "n_scored": 16,
+            "ndcg_at_10": 0.9284316724806858,
+            "recall_at_20": 0.7625
+          },
+          "method": {
+            "n_scored": 0,
+            "ndcg_at_10": null,
+            "recall_at_20": null
+          },
+          "title_matchable": {
+            "n_scored": 0,
+            "ndcg_at_10": null,
+            "recall_at_20": null
+          }
+        },
+        "errored_queries": [],
+        "latency_ms": {
+          "max": 3451.5903936699033,
+          "mean": 1238.16314159194,
+          "total": 19810.61026547104
+        },
+        "n_errored": 0,
+        "n_queries": 16,
+        "overall": {
+          "n_scored": 16,
+          "ndcg_at_10": 0.9284316724806858,
+          "recall_at_20": 0.7625
+        }
+      },
+      "delta_vs_baseline": {
+        "by_bucket": {
+          "author_specific": {
+            "n_paired": 0,
+            "ndcg_drop_pp": null
+          },
+          "concept": {
+            "n_paired": 16,
+            "ndcg_drop_pp": 7.156832751931419
+          },
+          "method": {
+            "n_paired": 0,
+            "ndcg_drop_pp": null
+          },
+          "title_matchable": {
+            "n_paired": 0,
+            "ndcg_drop_pp": null
+          }
+        },
+        "n_paired": 16,
+        "ndcg_at_10_baseline": 1.0,
+        "ndcg_at_10_pool": 0.9284316724806858,
+        "ndcg_drop_pp": 7.156832751931419,
+        "recall_at_20_baseline": 1.0,
+        "recall_at_20_pool": 0.7625,
+        "recall_drop_pp": 23.750000000000004
+      },
+      "n_cap_engaged": 10
+    },
+    "INF": {
+      "aggregate": {
+        "by_bucket": {
+          "author_specific": {
+            "n_scored": 0,
+            "ndcg_at_10": null,
+            "recall_at_20": null
+          },
+          "concept": {
+            "n_scored": 16,
+            "ndcg_at_10": 1.0,
+            "recall_at_20": 1.0
+          },
+          "method": {
+            "n_scored": 0,
+            "ndcg_at_10": null,
+            "recall_at_20": null
+          },
+          "title_matchable": {
+            "n_scored": 0,
+            "ndcg_at_10": null,
+            "recall_at_20": null
+          }
+        },
+        "errored_queries": [],
+        "latency_ms": {
+          "max": 82350.79260449857,
+          "mean": 8015.390020562336,
+          "total": 128246.24032899737
+        },
+        "n_errored": 0,
+        "n_queries": 16,
+        "overall": {
+          "n_scored": 16,
+          "ndcg_at_10": 1.0,
+          "recall_at_20": 1.0
+        }
+      },
+      "n_cap_engaged": 0
+    }
+  },
+  "pools_order": [
+    "5000",
+    "15000",
+    "30000",
+    "50000",
+    "INF"
+  ],
+  "queries_path": "eval/lexical_stress_16q.jsonl",
+  "retrieve_limit": 20,
+  "statement_timeout_ms": 300000
+}

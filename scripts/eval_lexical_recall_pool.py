@@ -2,7 +2,7 @@
 """Lexical-search recall regression eval across SCIX_LEXICAL_POOL settings.
 
 Bead scix_experiments-a2fp (follow-up to 3t37 / itgl). The candidate-pool cap
-in :func:`scix.search.lexical_search` (default 5000, see ``_LEXICAL_POOL_DEFAULT``)
+in :func:`scix.search.lexical_search` (default 30000, see ``_LEXICAL_POOL_DEFAULT``)
 bounds ``ts_rank_cd`` cost so common single-token queries don't blow the 30s
 statement timeout. The cap trades recall for latency: when the match set
 exceeds the pool, only the first ~POOL rows the bitmap heap scan returns get
@@ -15,7 +15,7 @@ Runs the 50-query gold set (``eval/retrieval_50q.jsonl``) against
 nDCG@10 and Recall@20 against ``gold_bibcodes``. INF (uncapped) is the recall
 ceiling; every capped pool is reported as a paired delta against it.
 
-Acceptance (a2fp): the default pool (5000) must drop nDCG@10 by <= 2 percentage
+Acceptance (a2fp): the default pool (30000) must drop nDCG@10 by <= 2 percentage
 points vs INF. The paired delta is computed only over queries that scored
 successfully under *both* settings, so an INF timeout never silently inflates a
 capped pool's apparent score. On FAIL the per-bucket table shows which query
@@ -82,9 +82,9 @@ DEFAULT_QUERIES: str = "eval/retrieval_50q.jsonl"
 DEFAULT_OUTPUT: str = "docs/eval/lexical_recall_pool_2026-05.json"
 # Pool labels in eval order. INF maps to the SCIX_LEXICAL_POOL token that
 # disables the cap (see scix.search._LEXICAL_POOL_UNBOUNDED).
-DEFAULT_POOLS: tuple[str, ...] = ("1000", "5000", "50000", "INF")
+DEFAULT_POOLS: tuple[str, ...] = ("5000", "15000", "30000", "50000", "INF")
 # Must match scix.search._LEXICAL_POOL_DEFAULT — the pool the live MCP uses.
-DEFAULT_POOL_LABEL: str = "5000"
+DEFAULT_POOL_LABEL: str = "30000"
 BASELINE_POOL_LABEL: str = "INF"
 RECALL_K: int = 20
 NDCG_K: int = 10

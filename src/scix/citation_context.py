@@ -340,21 +340,25 @@ _SURNAME_FALSE_POSITIVES = frozenset(
 # initial like "J." won't match — we strip leading initials separately.
 _SURNAME = r"[A-Z][a-z]+(?:-[A-Z][a-z]+)?"
 
-# Year token: 4 digits. Range is validated post-match.
-_YEAR = r"(\d{4})"
+# Year token: 4 digits. Range is validated post-match. Named so the resolver
+# reads m.group("year") and stays correct if a maintainer inserts a capturing
+# group elsewhere in a pattern.
+_YEAR = r"(?P<year>\d{4})"
 
 # Pattern A — narrative form: "Surname (YYYY)" or "Surname and Other (YYYY)".
 # The optional second author after "and" / "&" is captured but not strictly
 # required. We anchor with a word boundary so we don't match within tokens.
 _AY_NARRATIVE = re.compile(
-    rf"\b({_SURNAME})" rf"(?:\s+(?:and|&)\s+(?:{_SURNAME}))?" rf"\s*\(\s*{_YEAR}\s*\)"
+    rf"\b(?P<surname>{_SURNAME})"
+    rf"(?:\s+(?:and|&)\s+(?:{_SURNAME}))?"
+    rf"\s*\(\s*{_YEAR}\s*\)"
 )
 
 # Pattern B — "Surname et al. YYYY" / "Surname et al., YYYY".
 # Whitespace and parens are grouped so trailing space is consumed only when a
 # closing paren follows — otherwise m.end() inflates past the year.
 _AY_ET_AL = re.compile(
-    rf"\b({_SURNAME})\s+et\s+al\.?,?\s*(?:\(\s*)?{_YEAR}(?:\s*\))?"
+    rf"\b(?P<surname>{_SURNAME})\s+et\s+al\.?,?\s*(?:\(\s*)?{_YEAR}(?:\s*\))?"
 )
 
 # Pattern C — fully parenthetical: "(Surname, YYYY)" / "(Surname & Other, YYYY)"
@@ -362,7 +366,7 @@ _AY_ET_AL = re.compile(
 # Capture only the first surname inside the parens — that's what the bibcode
 # initial encodes.
 _AY_PAREN = re.compile(
-    rf"\(\s*({_SURNAME})"
+    rf"\(\s*(?P<surname>{_SURNAME})"
     rf"(?:\s+et\s+al\.?)?"
     rf"(?:(?:\s+(?:and|&)\s+|,\s+|,\s*&\s+){_SURNAME})*"
     rf",?\s*{_YEAR}\s*\)"
@@ -371,9 +375,9 @@ _AY_PAREN = re.compile(
 # Pattern D — sub-citation inside a multi-cite paren block. Matches "Surname
 # [et al.] [& Other], YYYY" only when preceded by '(' or '; ' (i.e. inside a
 # paren-separated list like "(Adams, 2020; Smith & Jones, 2003)"). The leading
-# delimiter is consumed as part of group(0) but group(1) is the surname only.
+# delimiter is consumed as part of group(0) but group("surname") is the surname only.
 _AY_SUBCITE = re.compile(
-    rf"(?<=[\(;])\s*({_SURNAME})"
+    rf"(?<=[\(;])\s*(?P<surname>{_SURNAME})"
     rf"(?:\s+et\s+al\.?)?"
     rf"(?:\s+(?:and|&)\s+{_SURNAME})?"
     rf",\s*{_YEAR}(?=\s*[;\)])"
@@ -462,11 +466,11 @@ def extract_author_year_citations(body: str) -> list[CitationMarker]:
             if _overlaps(char_start, char_end):
                 continue
 
-            surname = m.group(1)
+            surname = m.group("surname")
             if not _is_surname_candidate(surname):
                 continue
             try:
-                year = int(m.group(2))
+                year = int(m.group("year"))
             except (ValueError, IndexError):
                 continue
             if not _is_valid_year(year):

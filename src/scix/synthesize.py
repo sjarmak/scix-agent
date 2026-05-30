@@ -1242,6 +1242,9 @@ def _apply_citation_count_fallback(
     """Fill empty sections from the unattributed pool by citation_count desc.
 
     Mutates ``buckets``, ``unattributed``, and ``signal_used`` in place.
+    These are locals (not module/instance state) — ``_assemble_sections``
+    is the sole caller and they are stack-frame-scoped, so the in-place
+    mutation has no reach beyond that frame.
     Returns a ``{section_name: int}`` map of how many papers were pulled
     per section (always populated for every section in ``sections``,
     even if zero).

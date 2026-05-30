@@ -500,6 +500,15 @@ class TestExtractAuthorYearPatterns:
         assert markers[0].marker_authors[0] == "Smith"
         assert markers[0].marker_year == 2003
 
+    def test_et_al_hyphenated_surname(self) -> None:
+        """'Smith-Jones et al. 2003' — the hyphenated surname _SURNAME claims to
+        support must extract as one token, not split into 'Smith' / 'Jones'."""
+        body = "We follow Smith-Jones et al. 2003 in this analysis."
+        markers = extract_author_year_citations(body)
+        assert len(markers) == 1
+        assert markers[0].marker_authors == ("Smith-Jones",)
+        assert markers[0].marker_year == 2003
+
 
 class TestExtractAuthorYearNegatives:
     """Patterns that look citation-shaped but are not citations."""
@@ -603,6 +612,23 @@ class TestResolveAuthorYearUnambiguous:
         contexts = resolve_author_year_markers(markers, AUTHOR_YEAR_REFERENCES, "SRC")
         targets = sorted(c.target_bibcode for c in contexts)
         assert targets == sorted(["2020ApJ...900..100A", "2001AJ....120..200H"])
+
+    def test_resolves_hyphenated_surname_by_leading_initial(self) -> None:
+        """A hyphenated surname disambiguates on the *first* component's initial.
+
+        'Smith-Jones et al. 2003' -> initial 'S', so it must resolve to the
+        ...S reference and ignore a same-year ...J distractor (the second
+        component's initial), confirming surname[0] — not the post-hyphen
+        letter — drives initial-matching.
+        """
+        refs = [
+            "2003ApJ...500..100S",  # Smith-Jones 2003 (initial S) — expected
+            "2003MNRAS.400..050J",  # Jones 2003 (initial J) — must NOT match
+        ]
+        marker = _ay_marker(("Smith-Jones",), 2003)
+        contexts = resolve_author_year_markers([marker], refs, "SRC")
+        assert len(contexts) == 1
+        assert contexts[0].target_bibcode == "2003ApJ...500..100S"
 
 
 class TestResolveAuthorYearMissing:

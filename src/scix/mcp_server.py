@@ -249,8 +249,25 @@ def _hnsw_index_name(model_name: str) -> str:
     return f"idx_embed_hnsw_{model_name}"
 
 
+def _vector_index_names(model_name: str) -> tuple[str, ...]:
+    """Return the candidate ANN partial-index names for a given embedding model.
+
+    The dense lane is served by whichever ANN index exists on the per-model
+    partial: the legacy pgvector HNSW index (``idx_embed_hnsw_<model>``) or the
+    pgvectorscale StreamingDiskANN index (``idx_embed_diskann_<model>``). Both
+    are built over the same ``(embedding)::vector(768)`` expression, so the
+    dense query in ``search.py`` is index-agnostic — only this existence gate
+    needs to know about both.
+    """
+    return (f"idx_embed_hnsw_{model_name}", f"idx_embed_diskann_{model_name}")
+
+
 def _hnsw_index_exists(conn: psycopg.Connection, model_name: str) -> bool:
-    """Check whether the per-model HNSW partial index on paper_embeddings exists."""
+    """Check whether a per-model ANN partial index (HNSW or DiskANN) exists.
+
+    Name retained for caller compatibility; it now gates on either ANN index
+    so the dense lane re-enables automatically once the DiskANN index is built.
+    """
     now = time.monotonic()
     cached = _hnsw_index_cache.get(model_name)
     if cached is not None:
@@ -264,9 +281,9 @@ def _hnsw_index_exists(conn: psycopg.Connection, model_name: str) -> bool:
             SELECT 1 FROM pg_indexes
             WHERE schemaname = 'public'
               AND tablename = 'paper_embeddings'
-              AND indexname = %s
+              AND indexname = ANY(%s)
             """,
-            (_hnsw_index_name(model_name),),
+            (list(_vector_index_names(model_name)),),
         )
         exists = cur.fetchone() is not None
 
@@ -3547,8 +3564,8 @@ def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                     "error": "vector_index_unavailable",
                     "model_name": model_name,
                     "detail": (
-                        f"HNSW index '{_hnsw_index_name(model_name)}' is not "
-                        "available yet. Use mode='keyword' as a fallback."
+                        f"No ANN index ({' or '.join(_vector_index_names(model_name))}) "
+                        "is available yet. Use mode='keyword' as a fallback."
                     ),
                 },
                 indent=2,

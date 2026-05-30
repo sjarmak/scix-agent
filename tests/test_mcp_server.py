@@ -22,6 +22,7 @@ from scix.mcp_server import (
     _hnsw_index_cache,
     _hnsw_index_exists,
     _hnsw_index_name,
+    _vector_index_names,
     _parse_filters,
     _result_to_json,
     _session_state,
@@ -1226,6 +1227,28 @@ class TestHnswIndexGuard:
     def test_index_name_convention(self) -> None:
         assert _hnsw_index_name("indus") == "idx_embed_hnsw_indus"
         assert _hnsw_index_name("specter2") == "idx_embed_hnsw_specter2"
+
+    def test_vector_index_names_includes_hnsw_and_diskann(self) -> None:
+        # The dense lane is served by either the legacy HNSW index or the
+        # pgvectorscale DiskANN index; the gate must accept both.
+        assert _vector_index_names("indus") == (
+            "idx_embed_hnsw_indus",
+            "idx_embed_diskann_indus",
+        )
+
+    def test_gate_queries_both_index_names(self) -> None:
+        # Regression: after the DiskANN cutover the gate must look for the
+        # diskann index name too, not just HNSW (mcp_server uses indexname=ANY).
+        _hnsw_index_cache.pop("diskonly", None)
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = (1,)
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        assert _hnsw_index_exists(mock_conn, "diskonly") is True
+        # the candidate-name list passed to the query carries both names
+        passed = mock_cursor.execute.call_args[0][1][0]
+        assert "idx_embed_diskann_diskonly" in passed
+        assert "idx_embed_hnsw_diskonly" in passed
 
     def _mock_conn_with_index(self, *, exists: bool) -> MagicMock:
         mock_cursor = MagicMock()

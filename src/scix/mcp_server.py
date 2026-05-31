@@ -1651,11 +1651,13 @@ def create_server(_run_self_test: bool = True):
                         },
                         "year_min": {
                             "type": "integer",
-                            "description": "Earliest publication year to include in seed retrieval (inclusive).",
+                            "description": "Earliest publication year to include in "
+                            "seed retrieval (inclusive).",
                         },
                         "year_max": {
                             "type": "integer",
-                            "description": "Latest publication year to include (inclusive). Filters seeds AND citation-expanded papers.",
+                            "description": "Latest publication year to include (inclusive). "
+                            "Filters seeds AND citation-expanded papers.",
                         },
                         "top_seeds": {
                             "type": "integer",
@@ -1665,7 +1667,8 @@ def create_server(_run_self_test: bool = True):
                         "expansion_seeds": {
                             "type": "integer",
                             "default": 5,
-                            "description": "How many top seeds to expand via refs+citations (0..top_seeds).",
+                            "description": "How many top seeds to expand via "
+                            "refs+citations (0..top_seeds).",
                         },
                         "expand_per_seed": {
                             "type": "integer",
@@ -1675,11 +1678,13 @@ def create_server(_run_self_test: bool = True):
                         "sample_abstracts": {
                             "type": "integer",
                             "default": 5,
-                            "description": "Number of seeds to attach full abstracts to in the response (0..top_seeds).",
+                            "description": "Number of seeds to attach full abstracts "
+                            "to in the response (0..top_seeds).",
                         },
                         "discipline": {
                             "type": "string",
-                            "description": "Optional discipline hint (currently informational, surfaced in metadata).",
+                            "description": "Optional discipline hint (currently "
+                            "informational, surfaced in metadata).",
                         },
                     },
                     "required": ["query"],
@@ -1832,7 +1837,8 @@ def create_server(_run_self_test: bool = True):
                         },
                         "search_query": {
                             "type": "string",
-                            "description": "If provided, search within the paper body instead of reading",
+                            "description": "If provided, search within the paper "
+                            "body instead of reading",
                         },
                         "char_offset": {
                             "type": "integer",
@@ -2100,7 +2106,8 @@ def create_server(_run_self_test: bool = True):
                     "properties": {
                         "entity_id": {
                             "type": "integer",
-                            "description": "Entity ID (from entity search/resolve or document_context)",
+                            "description": "Entity ID (from entity search/resolve "
+                            "or document_context)",
                         },
                     },
                     "required": ["entity_id"],
@@ -2172,9 +2179,9 @@ def create_server(_run_self_test: bool = True):
                     "concept_search in a single call. Use citation_traverse(mode='graph') "
                     "instead when you want direct citations of a single paper rather than "
                     "cross-community gap detection. The 'signal' parameter picks which "
-                    "community partition to traverse: 'semantic' (default, INDUS k-means, full 32M-paper "
-                    "coverage) or 'citation' (currently offline — Leiden Phase B has not "
-                    "completed, so this path returns empty)."
+                    "community partition to traverse: 'semantic' (default, INDUS k-means, "
+                    "full 32M-paper coverage) or 'citation' (currently offline — Leiden "
+                    "Phase B has not completed, so this path returns empty)."
                 ),
                 inputSchema={
                     "type": "object",

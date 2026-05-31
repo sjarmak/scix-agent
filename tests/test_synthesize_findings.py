@@ -152,8 +152,8 @@ class TestEmptyInputs:
         conn = MagicMock()
         result = synthesize_findings(conn, working_set_bibcodes=[])
         assert isinstance(result, SynthesisResult)
-        assert result.sections == []
-        assert result.unattributed_bibcodes == []
+        assert result.sections == ()
+        assert result.unattributed_bibcodes == ()
         assert result.coverage["total_bibcodes"] == 0
         assert "message" in result.metadata
 
@@ -161,7 +161,7 @@ class TestEmptyInputs:
         # No DB calls should happen if the working set is also empty.
         conn = MagicMock()
         result = synthesize_findings(conn, working_set_bibcodes=None)
-        assert result.sections == []
+        assert result.sections == ()
         assert "message" in result.metadata
 
 
@@ -357,8 +357,33 @@ class TestDeterministicStructure:
         # Each section is a SectionBucket with required fields.
         for s in result.sections:
             assert isinstance(s, SectionBucket)
-            assert isinstance(s.cited_papers, list)
+            assert isinstance(s.cited_papers, tuple)
             assert isinstance(s.theme_summary, str)
+
+    def test_sequence_fields_are_immutable_tuples(self) -> None:
+        """Bead s4nq: the frozen result's sequence fields are tuples, so a
+        caller cannot mutate them in place (the previous list fields allowed
+        ``result.sections.append(...)`` to silently succeed)."""
+        papers_rows = [("2024A", "P", 2024, "a", 0, [], [], None)]
+        intent_rows = [("2024A", "method", 1)]
+        community_rows = [("2024A", 1, "L1")]
+        conn = _mock_conn(
+            papers_rows=papers_rows,
+            intent_rows=intent_rows,
+            community_rows=community_rows,
+        )
+
+        result = synthesize_findings(
+            conn,
+            working_set_bibcodes=["2024A"],
+            sections=list(DEFAULT_SECTIONS),
+        )
+        assert isinstance(result.sections, tuple)
+        assert isinstance(result.unattributed_bibcodes, tuple)
+        with pytest.raises(AttributeError):
+            result.sections.append(result.sections[0])  # type: ignore[attr-defined]
+        with pytest.raises(AttributeError):
+            result.sections[0].cited_papers.append({})  # type: ignore[attr-defined]
 
     def test_max_papers_per_section_is_respected(self) -> None:
         # 10 papers all assigned to background via modal community.
@@ -1625,7 +1650,7 @@ class TestSectionTheme:
         )
         # 'results' is empty under this fixture.
         results_section = next(s for s in result.sections if s.name == "results")
-        assert results_section.cited_papers == []
+        assert results_section.cited_papers == ()
         assert results_section.theme["communities"] == []
         assert results_section.theme["top_papers_by_citation"] == []
 

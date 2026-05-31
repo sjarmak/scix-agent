@@ -204,7 +204,7 @@ class SectionBucket:
     """
 
     name: str
-    cited_papers: list[dict[str, Any]] = field(default_factory=list)
+    cited_papers: tuple[dict[str, Any], ...] = ()
     theme_summary: str = ""
     theme: SectionTheme = field(
         default_factory=lambda: SectionTheme(communities=[], top_papers_by_citation=[])
@@ -215,8 +215,8 @@ class SectionBucket:
 class SynthesisResult:
     """Top-level result returned by :func:`synthesize_findings`."""
 
-    sections: list[SectionBucket]
-    unattributed_bibcodes: list[str]
+    sections: tuple[SectionBucket, ...]
+    unattributed_bibcodes: tuple[str, ...]
     # int counters plus dict[str, int] for fallback_pulled_per_section.
     coverage: dict[str, Any]
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -403,8 +403,8 @@ def synthesize_findings(
 
     if not bibcodes:
         return SynthesisResult(
-            sections=[],
-            unattributed_bibcodes=[],
+            sections=(),
+            unattributed_bibcodes=(),
             coverage=_empty_coverage_block(sections_list),
             metadata={
                 "message": (
@@ -1196,7 +1196,7 @@ def _assemble_sections(
         out_sections.append(
             SectionBucket(
                 name=name,
-                cited_papers=cited,
+                cited_papers=tuple(cited),
                 theme_summary=theme_summary,
                 theme=theme,
             )
@@ -1219,8 +1219,8 @@ def _assemble_sections(
     coverage["fallback_pulled_per_section"] = dict(fallback_pulled_per_section)
 
     return SynthesisResult(
-        sections=out_sections,
-        unattributed_bibcodes=unattributed,
+        sections=tuple(out_sections),
+        unattributed_bibcodes=tuple(unattributed),
         coverage=coverage,
         metadata={
             "sections_requested": list(sections),

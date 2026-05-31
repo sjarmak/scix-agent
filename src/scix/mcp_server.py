@@ -431,6 +431,27 @@ class _LogQueryConnection(Protocol):
     def rollback(self) -> None: ...
 
 
+def _cap_params_lists(params: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``params`` with oversized list values truncated.
+
+    Callers like ``temporal_evolution`` / ``find_gaps`` / ``synthesize_findings``
+    may pass hundreds of bibcodes, but the tools themselves cap working sets at
+    :data:`MAX_WORKING_SET_BIBCODES`, so storing the full list in
+    ``query_log.params_json`` records inputs the tool never used and bloats
+    telemetry over time (bead ``scix_experiments-pbh8``). Cap any list-typed
+    value at the canonical bound. A new dict is returned so the caller's live
+    arguments dict is never mutated.
+    """
+    if not any(
+        isinstance(v, list) and len(v) > MAX_WORKING_SET_BIBCODES for v in params.values()
+    ):
+        return params
+    return {
+        k: (v[:MAX_WORKING_SET_BIBCODES] if isinstance(v, list) else v)
+        for k, v in params.items()
+    }
+
+
 def _log_query(
     conn: _LogQueryConnection,
     tool_name: str,
@@ -453,7 +474,7 @@ def _log_query(
     payloads — see bead ``scix_experiments-uerc``.
     """
     try:
-        params_json = json.dumps(params, default=str)
+        params_json = json.dumps(_cap_params_lists(params), default=str)
         query_text = _extract_query_text(params)
         result_count = _extract_result_count(result_json) if result_json else 0
         if error_msg is None and _detect_unscoped_broad_block(result_json):

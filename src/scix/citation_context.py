@@ -114,21 +114,36 @@ _WORD_RE = re.compile(r"\S+")
 _MAX_BODY_CHARS: int = 10_000_000
 
 
-def _word_offsets(text: str) -> tuple[list[int], list[int]]:
+@dataclass(frozen=True)
+class WordOffsets:
+    """Pre-computed per-word char offsets for a body, for window lookups.
+
+    ``starts`` and ``ends`` are parallel sorted lists of half-open char ranges
+    for each whitespace-delimited token. They stay plain ``list[int]`` (rather
+    than tuples) deliberately: a worst-case body near :data:`_MAX_BODY_CHARS`
+    materialises ~12.5M ints per list, and a defensive ``tuple()`` copy would
+    double that transient footprint for no benefit — the arrays are an internal
+    cache, only ever read (via bisect), never mutated after creation.
+    """
+
+    starts: list[int]
+    ends: list[int]
+
+
+def _word_offsets(text: str) -> WordOffsets:
     """Pre-compute per-word char offsets in ``text``.
 
-    Returns parallel sorted lists ``(starts, ends)`` of half-open char ranges
-    for each whitespace-delimited token, equivalent to ``text.split()`` token
-    positions. Computed once per body so callers can resolve word-window
-    boundaries via O(log N) bisect rather than re-splitting an O(L) prefix
-    on every match.
+    Returns a :class:`WordOffsets` of half-open char ranges for each
+    whitespace-delimited token, equivalent to ``text.split()`` token positions.
+    Computed once per body so callers can resolve word-window boundaries via
+    O(log N) bisect rather than re-splitting an O(L) prefix on every match.
     """
     starts: list[int] = []
     ends: list[int] = []
     for m in _WORD_RE.finditer(text):
         starts.append(m.start())
         ends.append(m.end())
-    return starts, ends
+    return WordOffsets(starts=starts, ends=ends)
 
 
 def _word_boundary_window(
@@ -137,21 +152,21 @@ def _word_boundary_window(
     char_end: int,
     words: int = 125,
     *,
-    word_starts: list[int] | None = None,
-    word_ends: list[int] | None = None,
+    offsets: WordOffsets | None = None,
 ) -> tuple[int, int]:
     """Find a ~words-before and ~words-after window around a span.
 
     Returns (window_start, window_end) as char offsets into text.
 
-    ``word_starts`` and ``word_ends`` are optional pre-computed parallel
-    lists from :func:`_word_offsets` over ``text``. When the same body is
-    queried for many citation spans, reusing the pre-computed arrays makes
-    each lookup O(log N) instead of O(L) per call. When omitted, the
-    arrays are computed inline (caller pays O(L) once).
+    ``offsets`` is an optional pre-computed :class:`WordOffsets` over ``text``.
+    When the same body is queried for many citation spans, reusing the
+    pre-computed arrays makes each lookup O(log N) instead of O(L) per call.
+    When omitted, the offsets are computed inline (caller pays O(L) once).
     """
-    if word_starts is None or word_ends is None:
-        word_starts, word_ends = _word_offsets(text)
+    if offsets is None:
+        offsets = _word_offsets(text)
+    word_starts = offsets.starts
+    word_ends = offsets.ends
 
     # Words strictly before char_start: those whose start offset < char_start.
     # bisect_left returns the first index with value >= char_start, which is
@@ -206,7 +221,7 @@ def extract_citation_contexts(body: str) -> list[CitationMarker]:
         )
         body = body[:_MAX_BODY_CHARS]
 
-    word_starts, word_ends = _word_offsets(body)
+    offsets = _word_offsets(body)
     markers: list[CitationMarker] = []
     for m in _CITATION_RE.finditer(body):
         inner = m.group(1)
@@ -217,7 +232,7 @@ def extract_citation_contexts(body: str) -> list[CitationMarker]:
         char_start = m.start()
         char_end = m.end()
         win_start, win_end = _word_boundary_window(
-            body, char_start, char_end, word_starts=word_starts, word_ends=word_ends
+            body, char_start, char_end, offsets=offsets
         )
         context = body[win_start:win_end]
 
@@ -431,7 +446,7 @@ def extract_author_year_citations(body: str) -> list[CitationMarker]:
     # _word_boundary_window call is O(log N) via bisect rather than
     # re-splitting an O(L) prefix per match — was ~75% of cumtime on
     # review-paper-scale bodies.
-    word_starts, word_ends = _word_offsets(body)
+    offsets = _word_offsets(body)
 
     # Accepted spans form a disjoint, sorted-by-start interval set (the
     # overlap rejection below maintains that invariant). We keep parallel
@@ -480,8 +495,7 @@ def extract_author_year_citations(body: str) -> list[CitationMarker]:
                 body,
                 char_start,
                 char_end,
-                word_starts=word_starts,
-                word_ends=word_ends,
+                offsets=offsets,
             )
             context = body[win_start:win_end]
 

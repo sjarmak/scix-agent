@@ -1502,6 +1502,76 @@ def get_references(
     )
 
 
+def _citation_edges_batch(
+    conn: psycopg.Connection,
+    bibcodes: list[str],
+    *,
+    join_col: str,
+    where_col: str,
+    limit: int,
+) -> dict[str, list[dict[str, Any]]]:
+    """Batched form of ``_citation_edge_query`` for many source papers.
+
+    Collapses N per-bibcode round-trips into a single query. A window function
+    partitions edges by the queried bibcode and keeps the top ``limit`` neighbors
+    per partition (ranked by ``citation_count`` DESC, matching the single-paper
+    query). Returns ``{queried_bibcode: [paper stub dicts]}`` with an entry for
+    every input bibcode (empty list when a paper has no edges).
+    """
+    assert join_col in _EDGE_COLS, f"invalid join_col: {join_col}"
+    assert where_col in _EDGE_COLS, f"invalid where_col: {where_col}"
+
+    out: dict[str, list[dict[str, Any]]] = {bib: [] for bib in bibcodes}
+    if not bibcodes:
+        return out
+
+    sql = f"""
+        SELECT * FROM (
+            SELECT {STUB_COLUMNS},
+                   ce.{where_col} AS src_bibcode,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY ce.{where_col}
+                       ORDER BY p.citation_count DESC NULLS LAST
+                   ) AS rn
+            FROM citation_edges ce
+            JOIN papers p ON p.bibcode = ce.{join_col}
+            WHERE ce.{where_col} = ANY(%s)
+        ) ranked
+        WHERE rn <= %s
+        ORDER BY src_bibcode, rn
+    """
+
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(sql, (list(bibcodes), limit))
+        for row in cur.fetchall():
+            out.setdefault(row["src_bibcode"], []).append(PaperStub.from_row(row).to_dict())
+    return out
+
+
+def get_citations_batch(
+    conn: psycopg.Connection,
+    bibcodes: list[str],
+    *,
+    limit: int = 20,
+) -> dict[str, list[dict[str, Any]]]:
+    """Forward citations for many papers in one query (top ``limit`` each)."""
+    return _citation_edges_batch(
+        conn, bibcodes, join_col="source_bibcode", where_col="target_bibcode", limit=limit
+    )
+
+
+def get_references_batch(
+    conn: psycopg.Connection,
+    bibcodes: list[str],
+    *,
+    limit: int = 20,
+) -> dict[str, list[dict[str, Any]]]:
+    """Backward references for many papers in one query (top ``limit`` each)."""
+    return _citation_edges_batch(
+        conn, bibcodes, join_col="target_bibcode", where_col="source_bibcode", limit=limit
+    )
+
+
 def _author_name_variants(author_name: str) -> list[str]:
     """Generate plausible ADS name variants from user input.
 

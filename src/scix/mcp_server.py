@@ -4102,23 +4102,79 @@ def _handle_citation_traverse_multi(
 ) -> str:
     """Walk the citation neighborhood of multiple bibcodes.
 
-    Iterates ``_handle_citation_graph`` per source bibcode and aggregates
-    the results into a ``by_bibcode`` mapping. The per-bibcode ``limit`` is
-    preserved unchanged (so an agent passing ``limit=20`` gets up to 20
-    neighbors per source paper). Bibcodes that error out (missing paper,
-    DB error) are surfaced as ``{"error": "..."}`` entries rather than
-    aborting the whole call — keeps multi-paper exploration robust.
+    Fetches all requested neighborhoods with batched queries (one per direction
+    against ``citation_edges`` plus one per direction against
+    ``citation_contexts`` for intent) instead of looping a per-bibcode
+    ``_handle_citation_graph`` call. This bounds DB round-trips at a small
+    constant regardless of working-set size — the previous per-bibcode loop
+    could fire up to ``len(bibcodes)`` sequential queries (FIFO cap 200) and
+    reliably timed out on large working sets (bead scix_experiments-sd71). The
+    per-bibcode ``limit`` is preserved (each source paper gets up to ``limit``
+    neighbors), as is the ``by_bibcode`` output shape.
     """
+    direction = args.get("direction", "forward")
+    limit = args.get("limit", 20)
+
+    if direction not in ("forward", "backward", "both"):
+        err = {
+            "error": f"Invalid direction: {direction}. Use 'forward', 'backward', or 'both'.",
+            "error_code": "invalid_direction",
+        }
+        return json.dumps(
+            {
+                "mode": "graph",
+                "scope": "working_set",
+                "bibcodes": list(bibcodes),
+                "by_bibcode": {bib: err for bib in bibcodes},
+            },
+            indent=2,
+            default=str,
+        )
+
+    fwd_papers: dict[str, list[dict[str, Any]]] = {}
+    bwd_papers: dict[str, list[dict[str, Any]]] = {}
+    fwd_intents: dict[str, dict[str, str]] = {}
+    bwd_intents: dict[str, dict[str, str]] = {}
+
+    if direction in ("forward", "both"):
+        fwd_papers = search.get_citations_batch(conn, list(bibcodes), limit=limit)
+        fwd_intents = _enrich_citations_with_intent_batch(
+            conn, neighbors_by_bibcode=fwd_papers, direction="forward"
+        )
+    if direction in ("backward", "both"):
+        bwd_papers = search.get_references_batch(conn, list(bibcodes), limit=limit)
+        bwd_intents = _enrich_citations_with_intent_batch(
+            conn, neighbors_by_bibcode=bwd_papers, direction="backward"
+        )
+
     per_bibcode: dict[str, Any] = {}
     for bib in bibcodes:
-        per_args = dict(args)
-        per_args["bibcode"] = bib
-        per_args.pop("bibcodes", None)
-        try:
-            single_json = _handle_citation_graph(conn, per_args)
-            per_bibcode[bib] = json.loads(single_json)
-        except Exception as exc:  # pragma: no cover — surfaces tool-level error
-            per_bibcode[bib] = {"error": str(exc)}
+        if direction == "forward":
+            per_bibcode[bib] = _build_traverse_direction(
+                fwd_papers.get(bib, []), fwd_intents.get(bib)
+            )
+        elif direction == "backward":
+            per_bibcode[bib] = _build_traverse_direction(
+                bwd_papers.get(bib, []), bwd_intents.get(bib)
+            )
+        else:  # both
+            per_bibcode[bib] = {
+                "bibcode": bib,
+                "directions": [
+                    {
+                        "direction": "forward",
+                        "result": _build_traverse_direction(
+                            fwd_papers.get(bib, []), fwd_intents.get(bib)
+                        ),
+                    },
+                    {
+                        "direction": "backward",
+                        "result": _build_traverse_direction(
+                            bwd_papers.get(bib, []), bwd_intents.get(bib)
+                        ),
+                    },
+                ],
+            }
 
     return json.dumps(
         {
@@ -4130,6 +4186,21 @@ def _handle_citation_traverse_multi(
         indent=2,
         default=str,
     )
+
+
+def _build_traverse_direction(
+    papers: list[dict[str, Any]], intents: dict[str, str] | None
+) -> dict[str, Any]:
+    """Build a single-direction payload matching ``_handle_citation_graph``.
+
+    Applies working-set annotation and (where covered) citation intent, so the
+    batched working-set path returns the same per-paper shape as the
+    single-bibcode path.
+    """
+    annotated = _annotate_working_set(papers)
+    if intents:
+        _annotate_papers_with_intent(annotated, intents)
+    return {"papers": annotated, "total": len(annotated), "timing_ms": {}}
 
 
 def _enrich_citations_with_intent(
@@ -4167,6 +4238,44 @@ def _enrich_citations_with_intent(
     with conn.cursor() as cur:
         cur.execute(sql, params)
         return {row[0]: row[1] for row in cur.fetchall()}
+
+
+def _enrich_citations_with_intent_batch(
+    conn: psycopg.Connection,
+    *,
+    neighbors_by_bibcode: dict[str, list[dict[str, Any]]],
+    direction: str,
+) -> dict[str, dict[str, str]]:
+    """Batched form of ``_enrich_citations_with_intent`` for many traversed papers.
+
+    Returns ``{traversed_bibcode: {neighbor_bibcode: intent}}`` from a single
+    ``citation_contexts`` query keyed on every traversed bibcode that has
+    neighbors. Because citation_contexts coverage is sparse (~0.27% of edges,
+    bead 79n), the result set stays small even when fetching all covered
+    contexts for the queried papers; ``_annotate_papers_with_intent`` only
+    applies the entries whose neighbor bibcode is actually in the result list.
+    """
+    traversed = [bib for bib, papers in neighbors_by_bibcode.items() if papers]
+    if not traversed:
+        return {}
+    # forward: traversed paper is the cited target; neighbors are citing sources.
+    # backward: traversed paper is the citing source; neighbors are cited targets.
+    if direction == "forward":
+        sql = (
+            "SELECT target_bibcode, source_bibcode, intent FROM citation_contexts "
+            "WHERE target_bibcode = ANY(%s) AND intent IS NOT NULL"
+        )
+    else:
+        sql = (
+            "SELECT source_bibcode, target_bibcode, intent FROM citation_contexts "
+            "WHERE source_bibcode = ANY(%s) AND intent IS NOT NULL"
+        )
+    out: dict[str, dict[str, str]] = {}
+    with conn.cursor() as cur:
+        cur.execute(sql, (traversed,))
+        for traversed_bib, neighbor_bib, intent in cur.fetchall():
+            out.setdefault(traversed_bib, {})[neighbor_bib] = intent
+    return out
 
 
 def _annotate_papers_with_intent(

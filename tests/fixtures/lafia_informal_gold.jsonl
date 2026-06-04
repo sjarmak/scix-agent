@@ -1,0 +1,36 @@
+{"kind": "positive", "text": "The model was implemented in PyTorch and trained on a single GPU.", "expect": [["PyTorch", "software"]]}
+{"kind": "positive", "text": "Source detection was performed using SExtractor on each frame.", "expect": [["SExtractor", "software"]]}
+{"kind": "positive", "text": "Spectra were reduced with the IRAF package following standard recipes.", "expect": [["IRAF", "software"]]}
+{"kind": "positive", "text": "We used Astropy to handle the coordinate transformations.", "expect": [["Astropy", "software"]]}
+{"kind": "positive", "text": "Light-curve modelling was carried out with the GALFIT software.", "expect": [["GALFIT", "software"]]}
+{"kind": "positive", "text": "The reduction pipeline was implemented using TensorFlow.", "expect": [["TensorFlow", "software"]]}
+{"kind": "positive", "text": "Visualisation relied on the Matplotlib library.", "expect": [["Matplotlib", "software"]]}
+{"kind": "positive", "text": "Cross-correlation was computed with the scikit-learn toolkit.", "expect": [["scikit-learn", "software"]]}
+{"kind": "positive", "text": "We employed CASA for calibration of the visibilities.", "expect": [["CASA", "software"]]}
+{"kind": "positive", "text": "Photometric redshifts were estimated using the EAZY code.", "expect": [["EAZY", "software"]]}
+{"kind": "positive", "text": "Halo finding was done with the ROCKSTAR pipeline.", "expect": [["ROCKSTAR", "software"]]}
+{"kind": "positive", "text": "The full analysis was implemented in IDL.", "expect": [["IDL", "software"]]}
+{"kind": "positive", "text": "We selected targets from the SDSS survey.", "expect": [["SDSS", "dataset"]]}
+{"kind": "positive", "text": "We used data from the Gaia mission archive.", "expect": [["Gaia", "dataset"]]}
+{"kind": "positive", "text": "The sample was taken from the 2MASS catalog.", "expect": [["2MASS", "dataset"]]}
+{"kind": "positive", "text": "Stellar parameters came from the LAMOST DR5 release.", "expect": [["LAMOST", "dataset"]]}
+{"kind": "positive", "text": "We analysed light curves from the K2 database.", "expect": [["K2", "dataset"]]}
+{"kind": "positive", "text": "Galaxies were selected from the GAMA survey.", "expect": [["GAMA", "dataset"]]}
+{"kind": "positive", "text": "The comparison used the IllustrisTNG simulation.", "expect": [["IllustrisTNG", "dataset"]]}
+{"kind": "positive", "text": "Targets were observed as part of the APOGEE survey.", "expect": [["APOGEE", "dataset"]]}
+{"kind": "positive", "text": "We cross-matched against the WISE catalogue.", "expect": [["WISE", "dataset"]]}
+{"kind": "positive", "text": "Cosmological parameters were taken from the Planck data release 3.", "expect": [["Planck", "dataset"]]}
+{"kind": "decoy", "text": "We used the same method as in our previous work.", "expect": []}
+{"kind": "decoy", "text": "The algorithm was implemented in a straightforward way.", "expect": []}
+{"kind": "decoy", "text": "Targets were selected from the previous catalog of sources.", "expect": []}
+{"kind": "decoy", "text": "Reduction was performed using standard techniques.", "expect": []}
+{"kind": "decoy", "text": "The data set was relatively small for this study.", "expect": []}
+{"kind": "decoy", "text": "We adopt the following naming convention.", "expect": []}
+{"kind": "decoy", "text": "The validation was done via a series of careful checks.", "expect": []}
+{"kind": "decoy", "text": "Results are shown using the figure above.", "expect": []}
+{"kind": "decoy", "text": "The software package is freely available online.", "expect": []}
+{"kind": "decoy", "text": "We employed several different models in the comparison.", "expect": []}
+{"kind": "decoy", "text": "Data from previous studies were combined here.", "expect": []}
+{"kind": "decoy", "text": "The catalog contains millions of sources.", "expect": []}
+{"kind": "decoy", "text": "It was implemented in the same framework as before.", "expect": []}
+{"kind": "decoy", "text": "We used these data to constrain the model.", "expect": []}

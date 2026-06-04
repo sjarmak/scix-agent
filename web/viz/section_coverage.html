@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SciX — Full-Text Section Coverage</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      main.viz-container {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 24px 20px 48px;
+      }
+      .viz-sub {
+        color: #555;
+        margin-top: -4px;
+        line-height: 1.5;
+        max-width: 780px;
+      }
+      #sc-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      #sc-stats {
+        color: #555;
+        font-size: 13px;
+      }
+      .sc-card {
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        padding: 16px 18px 18px;
+        margin-top: 18px;
+      }
+      .sc-card h2 {
+        font-size: 16px;
+        margin: 0 0 4px;
+      }
+      .sc-card p.note {
+        margin: 0 0 12px;
+        color: #666;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .sc-legend {
+        display: flex;
+        gap: 16px;
+        font-size: 12px;
+        color: #555;
+        margin: 4px 0 12px;
+      }
+      .sc-legend span.key {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .sc-legend i {
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+        display: inline-block;
+      }
+      .sc-caveat {
+        margin-top: 18px;
+        padding: 12px 14px;
+        background: #fafafa;
+        border: 1px solid #eaeaea;
+        border-radius: 6px;
+        font-size: 13px;
+        color: #444;
+        line-height: 1.5;
+      }
+      #sc-status {
+        margin-top: 12px;
+        color: #b00020;
+        font-size: 13px;
+        min-height: 18px;
+      }
+      .cov-axis path,
+      .cov-axis line {
+        stroke: #bbb;
+      }
+      .cov-axis text {
+        fill: #555;
+        font-size: 11px;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  </head>
+  <body>
+    <main class="viz-container">
+      <div id="sc-header">
+        <h1 style="margin: 0">Full-Text Section Coverage</h1>
+        <span id="sc-stats">loading&hellip;</span>
+      </div>
+      <p class="viz-sub">
+        Most retrieval systems either carry full text or they don't — they
+        rarely report its <em>internal structure</em>. SciX segments every
+        full-text paper into sections and classifies each heading into one of
+        five canonical roles, which is what powers section-scoped reads and
+        claim extraction. This page shows which roles are populated and how
+        full-text coverage has grown by decade.
+      </p>
+
+      <div class="sc-card">
+        <h2>Which section roles are populated?</h2>
+        <p class="note">
+          Share of sampled full-text papers carrying at least one section in
+          each canonical role. Headings are mapped to roles by
+          <code>scix.section_role.classify_section_role</code>.
+        </p>
+        <div id="sc-roles" aria-label="Section role presence"></div>
+      </div>
+
+      <div class="sc-card">
+        <h2>Full-text coverage by decade</h2>
+        <p class="note">
+          Papers with full text (blue) vs metadata-only (grey) per decade. The
+          percentage above each bar is the full-text coverage rate for that
+          decade.
+        </p>
+        <div class="sc-legend">
+          <span class="key"><i style="background:#0b60b0"></i>Full text</span>
+          <span class="key"><i style="background:#d7dee6"></i>Metadata only</span>
+        </div>
+        <div id="sc-decades" aria-label="Full-text coverage by decade"></div>
+      </div>
+
+      <div class="sc-caveat" id="sc-caveat"></div>
+      <div id="sc-status" role="status" aria-live="polite"></div>
+    </main>
+
+    <script src="./shared.js"></script>
+    <script src="./section_coverage.js"></script>
+    <script>
+      // Bootstrap: fetch section_coverage.json (web/viz first, data/viz
+      // fallback) and render both charts. Single static dataset — no
+      // resolution dependence, so no re-render on resolution change.
+      ;(function bootstrap() {
+        var status = document.getElementById('sc-status')
+        var statsEl = document.getElementById('sc-stats')
+        var caveatEl = document.getElementById('sc-caveat')
+        var roleRoot = document.getElementById('sc-roles')
+        var decadeRoot = document.getElementById('sc-decades')
+        var lastPayload = null
+
+        var candidates = [
+          './section_coverage.json',
+          '/viz/section_coverage.json',
+          '/data/viz/section_coverage.json',
+        ]
+
+        function fmtPct(x) {
+          return (x * 100).toFixed(0) + '%'
+        }
+        function fmtM(n) {
+          return (n / 1e6).toFixed(1) + 'M'
+        }
+
+        async function load() {
+          status.textContent = ''
+          var payload = null
+          var lastErr = null
+          for (var i = 0; i < candidates.length; i++) {
+            try {
+              var resp = await fetch(candidates[i], { cache: 'no-store' })
+              if (!resp.ok) {
+                lastErr = new Error(candidates[i] + ' -> HTTP ' + resp.status)
+                continue
+              }
+              payload = await resp.json()
+              break
+            } catch (err) {
+              lastErr = err
+            }
+          }
+          if (!payload) {
+            status.textContent =
+              'Could not load section_coverage.json (' +
+              (lastErr ? lastErr.message || String(lastErr) : 'unknown error') +
+              '). Run scripts/viz/build_section_coverage.py to generate it.'
+            return
+          }
+
+          statsEl.textContent =
+            fmtM(payload.fulltext_papers) +
+            ' full-text / ' +
+            fmtM(payload.corpus_papers) +
+            ' papers · ' +
+            fmtPct(payload.fulltext_fraction) +
+            ' coverage'
+
+          caveatEl.innerHTML =
+            '<strong>Caveat:</strong> only ' +
+            fmtPct(payload.fulltext_fraction) +
+            ' of the ' +
+            fmtM(payload.corpus_papers) +
+            '-paper corpus has full text; the rest is metadata-only. Role ' +
+            'rates are estimated from a random sample of ' +
+            payload.sample_size.toLocaleString('en-US') +
+            ' full-text papers (mean ' +
+            payload.mean_sections_per_paper.toFixed(1) +
+            ', median ' +
+            payload.median_sections_per_paper +
+            ' sections/paper). Decade counts are exact.'
+
+          if (typeof window.renderSectionCoverage !== 'function') {
+            status.textContent =
+              'renderSectionCoverage is not defined — section_coverage.js failed to load.'
+            return
+          }
+          lastPayload = payload
+          draw()
+        }
+
+        function draw() {
+          if (!lastPayload) return
+          try {
+            window.renderSectionCoverage(lastPayload, {
+              roleRoot: roleRoot,
+              decadeRoot: decadeRoot,
+            })
+          } catch (err) {
+            status.textContent = 'Render failed: ' + (err.message || String(err))
+          }
+        }
+
+        // Re-render on resize (debounced) so the responsive viewBox bars and
+        // band layout track the new container width.
+        var resizeTimer = null
+        window.addEventListener('resize', function () {
+          if (resizeTimer) window.clearTimeout(resizeTimer)
+          resizeTimer = window.setTimeout(draw, 150)
+        })
+
+        load()
+      })()
+    </script>
+  </body>
+</html>

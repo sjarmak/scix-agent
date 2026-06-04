@@ -144,7 +144,18 @@ class JudgeScore:
 
 
 class DispatcherError(Exception):
-    """Transient error from a dispatcher call. Retried by :class:`PersonaJudge`."""
+    """Transient error from a dispatcher call. Retried by :class:`PersonaJudge`.
+
+    Subprocess error output is stashed on the :attr:`stderr` attribute rather
+    than embedded in the message. ``claude -p`` may echo the research-query
+    prompt on failure, and the message propagates into WARNING logs and
+    :attr:`JudgeScore.reason`; keeping stderr off the message confines that
+    text to opt-in DEBUG logging.
+    """
+
+    def __init__(self, message: str, *, stderr: str | None = None) -> None:
+        super().__init__(message)
+        self.stderr = stderr
 
 
 # ---------------------------------------------------------------------------
@@ -443,7 +454,8 @@ class ClaudeSubprocessDispatcher:
 
         if completed.returncode != 0:
             raise DispatcherError(
-                f"claude -p exited {completed.returncode}: " f"stderr={completed.stderr[:500]!r}"
+                f"claude -p exited {completed.returncode}",
+                stderr=completed.stderr,
             )
 
         try:
@@ -575,6 +587,12 @@ class PersonaJudge:
                         attempt + 1,
                         exc,
                     )
+                    if exc.stderr:
+                        logger.debug(
+                            "judge failure stderr for %s: %s",
+                            triple.bibcode,
+                            exc.stderr,
+                        )
                     return JudgeScore(
                         score=ERROR_SENTINEL,
                         reason=f"dispatcher error after {attempt + 1} attempts: {exc}",

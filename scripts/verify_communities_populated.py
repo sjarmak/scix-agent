@@ -413,8 +413,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     dsn_redacted = redact_dsn(args.dsn)
     logger.info("verifying communities state against %s", dsn_redacted)
 
-    with psycopg.connect(args.dsn) as conn:
-        conn.autocommit = True
+    with psycopg.connect(args.dsn, autocommit=True) as conn:
         report = verify(conn, dsn_redacted=dsn_redacted)
 
     payload = report.to_dict()

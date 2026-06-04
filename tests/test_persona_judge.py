@@ -141,6 +141,35 @@ class TestParseUmbrelaResponse:
         assert score.score == 0
         assert score.needs_human_review is False
 
+    def test_tolerates_trailing_text_on_score_line(self) -> None:
+        """Biomedical-jargon failure mode: the judge appends a clause after
+        the integer (``##final score: 2 (highly relevant to SARS-CoV-2)``).
+        The score is unambiguous right after the colon, so trailing text on
+        the directive line must be ignored, not rejected."""
+        raw = (
+            "##final score: 2 — highly relevant to SARS-CoV-2 transmission\n"
+            "##needs_human_review: false\n"
+        )
+        score = parse_umbrela_response(raw)
+        assert score.score == 2
+        assert score.needs_human_review is False
+
+    def test_tolerates_trailing_text_on_review_line(self) -> None:
+        raw = (
+            "##final score: 1\n"
+            "##needs_human_review: true (borderline biomedical jargon)\n"
+        )
+        score = parse_umbrela_response(raw)
+        assert score.score == 1
+        assert score.needs_human_review is True
+
+    def test_review_flag_not_matched_inside_word(self) -> None:
+        """``false`` embedded in a longer token must not satisfy the flag —
+        the \\b guard prevents ``falsehood`` from parsing as ``false``."""
+        raw = "##final score: 2\n##needs_human_review: falsehood\n"
+        with pytest.raises(ValueError, match="##needs_human_review"):
+            parse_umbrela_response(raw)
+
     def test_rejects_missing_score_line(self) -> None:
         with pytest.raises(ValueError, match="##final score"):
             parse_umbrela_response("##needs_human_review: false")

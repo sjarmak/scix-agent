@@ -252,11 +252,14 @@ def parse_judge_response(raw: str) -> JudgeScore:
     raise ValueError(f"no parseable judge JSON in response (last error: {last_error})")
 
 
+# ``\b`` (not ``\s*$``) ends each value so trailing text on the directive line
+# is tolerated — see :func:`parse_umbrela_response`. The boundary also stops a
+# value matching inside a longer token (``false`` in ``falsehood``).
 _UMBRELA_SCORE_RE = re.compile(
-    r"^\s*##\s*final\s*score\s*:\s*(\d+)\s*$", re.IGNORECASE | re.MULTILINE
+    r"^\s*##\s*final\s*score\s*:\s*(\d+)\b", re.IGNORECASE | re.MULTILINE
 )
 _UMBRELA_REVIEW_RE = re.compile(
-    r"^\s*##\s*needs[_ ]human[_ ]review\s*:\s*(true|false)\s*$",
+    r"^\s*##\s*needs[_ ]human[_ ]review\s*:\s*(true|false)\b",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -265,10 +268,11 @@ def parse_umbrela_response(raw: str) -> JudgeScore:
     """Parse the UMBRELA-formatted judge response.
 
     UMBRELA (verbatim) emits ``##final score: N``. Our pipeline adds one
-    adapter line — ``##needs_human_review: true|false`` — after it. Both
-    lines must appear on their own line; any surrounding prose is
-    tolerated but ignored. Two score lines or two review lines are
-    rejected as ambiguous — that indicates the subagent was confused
+    adapter line — ``##needs_human_review: true|false`` — after it. Each
+    directive must *begin* its own ``##``-prefixed line; trailing text
+    after the value on that line, and any surrounding prose on other
+    lines, are tolerated but ignored. Two score lines or two review lines
+    are rejected as ambiguous — that indicates the subagent was confused
     enough to double-emit.
 
     Args:

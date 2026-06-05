@@ -191,6 +191,36 @@ def test_offsets_point_at_surface() -> None:
         assert text[m.start_char : m.end_char] == m.surface
 
 
+def test_multitoken_irregular_whitespace_slices_back() -> None:
+    # dbl.23: a multi-token name with non-uniform internal whitespace. The
+    # canonical key collapses the double space (so it dedupes with the single-
+    # space form), while the surface stays verbatim so the offsets slice back.
+    text = "We cross-matched against the SDSS  DR16 catalog."
+    mentions = [
+        m for m in detect_informal_references(text)
+        if m.canonical_name == "SDSS DR16"
+    ]
+    assert mentions, "expected the two-token dataset name to fire"
+    m = mentions[0]
+    assert m.canonical_name == "SDSS DR16"   # collapsed — stable upsert key
+    assert m.surface == "SDSS  DR16"          # verbatim — matches the body
+    assert text[m.start_char : m.end_char] == m.surface
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "We used data from Cohen et al. for calibration.",
+        "We used data from Cohen, et al. for calibration.",  # comma after name
+    ],
+)
+def test_author_citation_not_treated_as_reference(text: str) -> None:
+    # "<Name> et al" is an author citation, not a dataset/software reference.
+    # The comma form must stay suppressed even though the span now ends at the
+    # cleaned core (before the comma) rather than the raw token end (dbl.23).
+    assert detect_informal_references(text) == []
+
+
 def test_highest_confidence_cue_wins_for_same_name() -> None:
     # "the GALFIT software" (suffix, 0.90) beats nothing else; one row only.
     mentions = detect_informal_references("We ran the GALFIT software.")

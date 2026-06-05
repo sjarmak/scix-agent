@@ -95,8 +95,10 @@ _MAX_NAME_TOKENS: int = 4
 _EVIDENCE_SPAN_CHARS: int = 160
 
 # A name immediately followed by "et al" is an author citation, not a
-# software/dataset reference ("data from Cohen et al.").
-_AUTHOR_CITATION_RE = re.compile(r"\s+et\s+al", re.IGNORECASE)
+# software/dataset reference ("data from Cohen et al." / "Cohen, et al."). The
+# separator class admits a trailing comma because the span now ends at the
+# cleaned core, before any punctuation the raw token carried (dbl.23).
+_AUTHOR_CITATION_RE = re.compile(r"[\s,;:.]+et\s+al", re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
 # Name validation
@@ -136,6 +138,8 @@ _STOPWORDS: frozenset[str] = frozenset(
 _NAME_PUNCT: str = "-+./_"
 _LEADING_STRIP = " \t\n\r\"'`([{“”‘’"
 _TRAILING_STRIP = " \t\n\r\"'`)]}.,;:!?“”‘’"
+# Surface punctuation peeled off both ends of a token to reach its name core.
+_STRIP = _LEADING_STRIP + _TRAILING_STRIP
 
 # A real software/dataset name is ASCII and uses only this charset. Scanned
 # 19th-century ADS bodies produce OCR garbage ("Obf~", "i8óO", "3,7165") that
@@ -203,13 +207,13 @@ _LEADING_ADJECTIVES: frozenset[str] = frozenset(
 
 def _is_leading_adjective(token: str) -> bool:
     """True if ``token`` is a generic descriptive adjective (span-boundary trim)."""
-    core = token.strip(_LEADING_STRIP + _TRAILING_STRIP)
+    core = token.strip(_STRIP)
     return core.lower() in _LEADING_ADJECTIVES
 
 
 def _is_namey_token(token: str) -> bool:
     """Return True if ``token`` has the surface shape of a proper name."""
-    core = token.strip(_LEADING_STRIP + _TRAILING_STRIP)
+    core = token.strip(_STRIP)
     if len(core) < 2:
         return False
     if not core.isascii() or _TOKEN_RE.match(core) is None:
@@ -228,29 +232,50 @@ def _is_namey_token(token: str) -> bool:
     return False
 
 
-def _normalise_name(tokens: list[str]) -> str | None:
-    """Trim surface punctuation off a token run and validate it as a name.
+def _validate_cores(cores: list[str]) -> str | None:
+    """Validate a run of already-stripped name cores as a single name.
 
-    Returns the canonical surface (whitespace-collapsed) or ``None`` if the run
-    does not validate.
+    Returns the canonical surface (cores joined by single spaces) or ``None``
+    if the run does not validate. The single source of truth for "does this
+    token run name a software/dataset" — both raw tokens (via
+    :func:`_normalise_name`) and offset-tracked cores (via :func:`_clean_run`)
+    funnel through here, so surface and span can never disagree on what counts.
     """
-    cleaned: list[str] = []
-    for tok in tokens:
-        core = tok.strip(_LEADING_STRIP + _TRAILING_STRIP)
-        if core:
-            cleaned.append(core)
-    if not cleaned or len(cleaned) > _MAX_NAME_TOKENS:
+    if not cores or len(cores) > _MAX_NAME_TOKENS:
         return None
-    if all(not _is_namey_token(t) for t in cleaned):
+    if all(not _is_namey_token(t) for t in cores):
         return None
-    if any(t.lower() in _DENY_TOKENS for t in cleaned):
+    if any(t.lower() in _DENY_TOKENS for t in cores):
         return None
-    surface = " ".join(cleaned)
+    surface = " ".join(cores)
     if surface.lower() in _STOPWORDS:
         return None
     if sum(ch.isalpha() for ch in surface) < 2:  # reject pure numbers/symbols
         return None
     return surface
+
+
+def _normalise_name(tokens: list[str]) -> str | None:
+    """Trim surface punctuation off raw tokens and validate them as a name."""
+    return _validate_cores([core for core in (t.strip(_STRIP) for t in tokens) if core])
+
+
+def _clean_run(run: list[tuple[str, int, int]]) -> list[tuple[str, int, int]]:
+    """Strip surface punctuation off each token, tightening offsets to the core.
+
+    Tokens that strip to empty (a lone bracket or quote) are dropped. Every
+    surviving core carries the offsets that bound *its own* characters, so the
+    first and last cores delimit the real name — excluding leading ``(`` /
+    trailing ``.`` that validation would otherwise discard from the surface
+    while leaving them inside the raw span (dbl.23).
+    """
+    cleaned: list[tuple[str, int, int]] = []
+    for tok, start, _end in run:
+        lead = len(tok) - len(tok.lstrip(_STRIP))
+        core = tok.strip(_STRIP)
+        if core:
+            cleaned.append((core, start + lead, start + lead + len(core)))
+    return cleaned
 
 
 def _finalise_run(run: list[tuple[str, int, int]]) -> tuple[str, int, int] | None:
@@ -263,15 +288,17 @@ def _finalise_run(run: list[tuple[str, int, int]]) -> tuple[str, int, int] | Non
     that was *only* adjectives ("high-quality dataset") collapse to ``None``.
 
     Returns ``(surface, start, end)`` with window-relative offsets, or ``None``.
+    ``surface`` is the canonical (whitespace-collapsed) name; the offsets bound
+    the cleaned cores in the source text, so a verbatim slice over them recovers
+    the matched text even when its internal spacing is irregular (dbl.23).
     """
     while run and _is_leading_adjective(run[0][0]):
         run.pop(0)
-    if not run:
-        return None
-    surface = _normalise_name([tok for tok, _s, _e in run])
+    cleaned = _clean_run(run)
+    surface = _validate_cores([core for core, _s, _e in cleaned])
     if surface is None:
         return None
-    return surface, run[0][1], run[-1][2]
+    return surface, cleaned[0][1], cleaned[-1][2]
 
 
 def _leading_name_span(window: str) -> tuple[str, int, int] | None:
@@ -462,7 +489,7 @@ def detect_informal_references(body: str) -> list[InformalMention]:
             if existing is not None and existing.confidence >= cue.confidence:
                 continue
             best[key] = InformalMention(
-                surface=name,
+                surface=body[start:end],
                 canonical_name=name,
                 entity_type=cue.entity_type,
                 cue_id=cue.cue_id,

@@ -141,6 +141,13 @@ _TRAILING_STRIP = " \t\n\r\"'`)]}.,;:!?“”‘’"
 # Surface punctuation peeled off both ends of a token to reach its name core.
 _STRIP = _LEADING_STRIP + _TRAILING_STRIP
 
+# Sentence/clause-terminating marks. A name run must not be extended across one:
+# 'implemented in TOPCAT. See docs' otherwise yields 'TOPCAT See' (bead 23w).
+_SENTENCE_PUNCT: str = ".!?;:"
+# Closing wrappers that may sit AFTER the terminator ('GADGET).', 'emcee."'), so
+# the run-boundary test strips them before inspecting the final character.
+_SENTENCE_WRAPPERS: str = " \t\n\r\"'`)]}“”‘’"
+
 # A real software/dataset name is ASCII and uses only this charset. Scanned
 # 19th-century ADS bodies produce OCR garbage ("Obf~", "i8óO", "3,7165") that
 # would otherwise slip through ``X Catalog`` / ``X Library`` cues; this rejects
@@ -209,6 +216,19 @@ def _is_leading_adjective(token: str) -> bool:
     """True if ``token`` is a generic descriptive adjective (span-boundary trim)."""
     core = token.strip(_STRIP)
     return core.lower() in _LEADING_ADJECTIVES
+
+
+def _ends_sentence(token: str) -> bool:
+    """True if ``token``'s raw form terminates a sentence/clause (bead 23w).
+
+    The marker is a sentence-terminating mark (``.!?;:``) as the final character
+    of the raw token, possibly behind a closing quote or bracket (``TOPCAT.``,
+    ``(GADGET).``, ``emcee."``). Internal dots in versions or paths (``v4.0``,
+    ``healpy.io``) are not terminal once wrappers are stripped, so they do not
+    count — only a boundary that a name run must never cross.
+    """
+    stripped = token.rstrip(_SENTENCE_WRAPPERS)
+    return bool(stripped) and stripped[-1] in _SENTENCE_PUNCT
 
 
 def _is_namey_token(token: str) -> bool:
@@ -302,24 +322,37 @@ def _finalise_run(run: list[tuple[str, int, int]]) -> tuple[str, int, int] | Non
 
 
 def _leading_name_span(window: str) -> tuple[str, int, int] | None:
-    """Name span (surface + window-relative offsets) at the *start* of ``window``."""
+    """Name span (surface + window-relative offsets) at the *start* of ``window``.
+
+    The run stops *after* a token that ends its sentence (bead 23w): the
+    terminator sits to that token's right, so the token itself stays in the name
+    but nothing past the boundary can join it.
+    """
     run: list[tuple[str, int, int]] = []
     for m in re.finditer(r"\S+", window):
-        if _is_namey_token(m.group()) and len(run) < _MAX_NAME_TOKENS:
-            run.append((m.group(), m.start(), m.end()))
-        else:
+        if not (_is_namey_token(m.group()) and len(run) < _MAX_NAME_TOKENS):
+            break
+        run.append((m.group(), m.start(), m.end()))
+        if _ends_sentence(m.group()):
             break
     return _finalise_run(run)
 
 
 def _trailing_name_span(window: str) -> tuple[str, int, int] | None:
-    """Name span (surface + window-relative offsets) at the *end* of ``window``."""
+    """Name span (surface + window-relative offsets) at the *end* of ``window``.
+
+    Walking right-to-left, a token that ends its sentence is a boundary to the
+    *left* of everything already collected (bead 23w). Once the run is non-empty
+    that token belongs to the previous sentence and must not be absorbed, so the
+    run stops *before* it.
+    """
     run: list[tuple[str, int, int]] = []
     for m in reversed(list(re.finditer(r"\S+", window))):
-        if _is_namey_token(m.group()) and len(run) < _MAX_NAME_TOKENS:
-            run.insert(0, (m.group(), m.start(), m.end()))
-        else:
+        if not (_is_namey_token(m.group()) and len(run) < _MAX_NAME_TOKENS):
             break
+        if run and _ends_sentence(m.group()):
+            break
+        run.insert(0, (m.group(), m.start(), m.end()))
     return _finalise_run(run)
 
 

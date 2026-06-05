@@ -25,6 +25,7 @@ from scix.extract.lafia import (
     MATCH_METHOD,
     SOURCE,
     InformalMention,
+    _ends_sentence,
     _is_leading_adjective,
     _is_namey_token,
     _normalise_name,
@@ -86,6 +87,68 @@ def test_take_leading_name_stops_at_non_name() -> None:
 def test_take_trailing_name_stops_at_non_name() -> None:
     assert _take_trailing_name("reduced with the IRAF") == "IRAF"
     assert _take_trailing_name("selected from the previous") is None
+
+
+# ---------------------------------------------------------------------------
+# 1c. Sentence-boundary span trim (bead 23w)
+# ---------------------------------------------------------------------------
+# A name token ending in sentence punctuation ("TOPCAT.") followed by a
+# capitalised word was absorbed into the run, yielding "TOPCAT See" / "TOPCAT
+# Et". A run must not cross a sentence/clause boundary.
+
+
+@pytest.mark.parametrize(
+    "token,expected",
+    [
+        ("TOPCAT.", True),       # sentence-final period
+        ("TOPCAT;", True),       # clause boundary
+        ("TOPCAT:", True),       # colon boundary
+        ("GADGET?", True),       # question mark
+        ("(GADGET).", True),     # terminator behind a closing bracket
+        ('emcee."', True),       # terminator behind a closing quote
+        ("TOPCAT", False),       # bare name
+        ("v4.0", False),         # internal dot, digit tail
+        ("healpy.io", False),    # internal dot, alpha tail
+        ("scikit-learn", False), # hyphenated name
+        ("TOPCAT,", False),      # comma is not a sentence terminator
+    ],
+)
+def test_ends_sentence(token: str, expected: bool) -> None:
+    assert _ends_sentence(token) is expected
+
+
+def test_leading_run_stops_at_sentence_boundary() -> None:
+    # The capitalised next-sentence word must not be absorbed into the name.
+    assert _take_leading_name("TOPCAT. See the docs for details.") == "TOPCAT"
+    # 'Et' bypassed the author-citation guard by being pulled into the span.
+    assert _take_leading_name("TOPCAT. Et al. described the method") == "TOPCAT"
+    # A single sentence-final name token is still kept (terminator is to its right).
+    assert _take_leading_name("TOPCAT. for the cross-match") == "TOPCAT"
+
+
+def test_trailing_run_stops_at_sentence_boundary() -> None:
+    # The previous sentence's last word must not be pulled into a trailing name.
+    assert _take_trailing_name("Finished. TOPCAT") == "TOPCAT"
+    assert _take_trailing_name("done with calibration; IRAF") == "IRAF"
+
+
+def test_sentence_crossing_not_emitted_as_mention() -> None:
+    # End to end: "implemented in TOPCAT. See ..." must yield TOPCAT, never the
+    # cross-sentence run "TOPCAT See".
+    text = "The code was implemented in TOPCAT. See the docs for details."
+    hits = {(m.canonical_name, m.entity_type) for m in detect_informal_references(text)}
+    assert ("TOPCAT", "software") in hits
+    assert ("TOPCAT See", "software") not in hits
+    for m in detect_informal_references(text):
+        assert text[m.start_char : m.end_char] == m.surface
+    # The 'TOPCAT. Et al.' shape no longer leaks "TOPCAT Et"; the author-citation
+    # guard now sees the real "et al" lookahead once the span ends at TOPCAT.
+    assert all(
+        " Et" not in m.canonical_name
+        for m in detect_informal_references(
+            "We used data from TOPCAT. Et al. described the method."
+        )
+    )
 
 
 def test_normalise_name_rejects_overlong_and_pure_number() -> None:

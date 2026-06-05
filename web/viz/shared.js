@@ -245,6 +245,7 @@
       { href: './ego.html', label: 'V6 Ego' },
       { href: './streamgraph.html', label: 'V7 Streams' },
       { href: './section_coverage.html', label: 'V11 Sections' },
+      { href: './provenance.html', label: 'V12 Provenance' },
     ]
     pages.forEach(function (p) {
       var a = document.createElement('a')

@@ -25,6 +25,7 @@ from scix.extract.lafia import (
     MATCH_METHOD,
     SOURCE,
     InformalMention,
+    _is_leading_adjective,
     _is_namey_token,
     _normalise_name,
     _take_leading_name,
@@ -91,6 +92,74 @@ def test_normalise_name_rejects_overlong_and_pure_number() -> None:
     assert _normalise_name(["A", "B", "C", "D", "E"]) is None  # > MAX tokens
     assert _normalise_name(["1234"]) is None                   # pure number
     assert _normalise_name(["GALFIT"]) == "GALFIT"
+
+
+# ---------------------------------------------------------------------------
+# 1b. Leading generic-adjective span-boundary trim (bead dbl.21)
+# ---------------------------------------------------------------------------
+# The GLiNER type-confirmation pass (dbl.20) cannot reject a candidate that is a
+# leading descriptive adjective adjacent to a head noun ("high-quality dataset")
+# because GLiNER legitimately confirms the full noun phrase. The fix trims the
+# adjective off the *span* before the name is emitted.
+
+
+@pytest.mark.parametrize(
+    "token,expected",
+    [
+        ("high-quality", True),
+        ("High-Quality", True),     # sentence-initial capitalised
+        ("open-source", True),
+        ("high-resolution", True),
+        ("standardized", True),
+        ("large-scale", True),
+        ("Pan-STARRS", False),      # a real hyphenated name, not an adjective
+        ("SExtractor", False),
+        ("LAMOST", False),
+    ],
+)
+def test_is_leading_adjective(token: str, expected: bool) -> None:
+    assert _is_leading_adjective(token) is expected
+
+
+def test_adjective_only_span_yields_no_mention() -> None:
+    # The head noun ("dataset"/"code") is the cue, so trimming the adjective
+    # leaves nothing — the candidate is dropped, not emitted as the adjective.
+    assert detect_informal_references(
+        "we collect a high-quality dataset consisting of clips"
+    ) == []
+    assert detect_informal_references(
+        "we modify their open-source code to take audio"
+    ) == []
+    # Two stacked descriptive adjectives collapse the same way.
+    assert detect_informal_references(
+        "We build a High-Quality Standardized Dataset for this"
+    ) == []
+
+
+def test_leading_adjective_trimmed_but_real_name_kept() -> None:
+    # The adjective is dropped from the front; the real name survives with the
+    # right type, and its offsets still slice back to the surface.
+    text = "targets from the high-resolution LAMOST survey were used"
+    hits = {(m.surface, m.entity_type) for m in detect_informal_references(text)}
+    assert ("LAMOST", "dataset") in hits
+    assert ("high-resolution", "dataset") not in hits
+    for m in detect_informal_references(text):
+        assert text[m.start_char : m.end_char] == m.surface
+
+
+def test_real_hyphenated_name_not_trimmed() -> None:
+    # Pan-STARRS is a real survey name, not a generic adjective: it must survive.
+    hits = {
+        (m.surface, m.entity_type)
+        for m in detect_informal_references("drawn from the Pan-STARRS survey catalog")
+    }
+    assert ("Pan-STARRS", "dataset") in hits
+
+
+def test_take_name_helpers_trim_leading_adjective() -> None:
+    assert _take_leading_name("high-quality dataset consisting") is None
+    assert _take_leading_name("high-resolution SDSS imaging") == "SDSS"
+    assert _take_trailing_name("the high-resolution LAMOST") == "LAMOST"
 
 
 # ---------------------------------------------------------------------------

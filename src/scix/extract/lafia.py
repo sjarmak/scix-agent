@@ -155,6 +155,57 @@ _DENY_TOKENS: frozenset[str] = frozenset(
     }
 )
 
+# Leading generic descriptive adjectives (bead dbl.21). These DESCRIBE a
+# resource ("high-quality dataset", "open-source code") but never name one. The
+# residual false positives after GLiNER type-confirmation (bead dbl.20) are
+# dominated by such an adjective being captured as the candidate: hyphenated
+# compounds slip past ``_is_namey_token`` via the internal-punctuation rule, and
+# capitalised participles slip past via the leading-capital rule, so GLiNER then
+# legitimately confirms the full noun phrase and cannot reject them.
+#
+# This is a SPAN-BOUNDARY fix, not a name-token stopword: a leading adjective is
+# trimmed off the *front* of a candidate run before it is normalised, so the
+# span starts at the real name ("high-resolution VLA" -> "VLA") or, when the
+# adjective was the whole run ("high-quality dataset"), no candidate is emitted.
+# It is deliberately restricted to generic quality / resolution / scale /
+# availability / processing descriptors that never lead a resource name; domain
+# compounds that can be part of one (e.g. "high-mass", "X-ray") are excluded.
+_LEADING_ADJECTIVES: frozenset[str] = frozenset(
+    {
+        # quality / fidelity
+        "high-quality", "low-quality", "high-fidelity", "high-precision",
+        # resolution / dimensionality
+        "high-resolution", "low-resolution", "high-dimensional",
+        "low-dimensional", "high-contrast",
+        # performance / throughput
+        "high-performance", "high-throughput", "high-speed", "high-level",
+        "low-level", "low-cost", "general-purpose", "special-purpose",
+        # scale
+        "large-scale", "small-scale", "full-scale", "web-scale",
+        # availability / openness
+        "open-source", "closed-source", "open-access", "publicly-available",
+        "freely-available", "ready-to-use", "easy-to-use",
+        # maturity / familiarity
+        "state-of-the-art", "well-known", "well-studied", "well-tested",
+        "well-defined", "well-established", "well-calibrated", "well-sampled",
+        "up-to-date", "real-time", "real-world",
+        # granularity
+        "fine-grained", "coarse-grained", "ground-truth",
+        # single-word processing / quality descriptors (namey only when
+        # sentence-initial-capitalised; never a standalone resource name)
+        "standardized", "standardised", "normalized", "normalised",
+        "augmented", "synthetic", "annotated", "curated", "preprocessed",
+        "pre-processed", "labeled", "labelled", "unlabeled", "unlabelled",
+        "balanced", "cleaned",
+    }
+)
+
+
+def _is_leading_adjective(token: str) -> bool:
+    """True if ``token`` is a generic descriptive adjective (span-boundary trim)."""
+    core = token.strip(_LEADING_STRIP + _TRAILING_STRIP)
+    return core.lower() in _LEADING_ADJECTIVES
+
 
 def _is_namey_token(token: str) -> bool:
     """Return True if ``token`` has the surface shape of a proper name."""
@@ -202,26 +253,59 @@ def _normalise_name(tokens: list[str]) -> str | None:
     return surface
 
 
-def _take_leading_name(window: str) -> str | None:
-    """Collect the run of name-shaped tokens at the *start* of ``window``."""
-    run: list[str] = []
-    for tok in window.split():
-        if _is_namey_token(tok) and len(run) < _MAX_NAME_TOKENS:
-            run.append(tok)
+def _finalise_run(run: list[tuple[str, int, int]]) -> tuple[str, int, int] | None:
+    """Trim leading generic adjectives, normalise, and return the name span.
+
+    ``run`` is the collected token sequence in left-to-right order, each token
+    carrying its ``(start, end)`` offsets within the window. Leading generic
+    descriptive adjectives are dropped from the front (the dbl.21 span-boundary
+    fix), which both shifts the start offset to the real name and lets a run
+    that was *only* adjectives ("high-quality dataset") collapse to ``None``.
+
+    Returns ``(surface, start, end)`` with window-relative offsets, or ``None``.
+    """
+    while run and _is_leading_adjective(run[0][0]):
+        run.pop(0)
+    if not run:
+        return None
+    surface = _normalise_name([tok for tok, _s, _e in run])
+    if surface is None:
+        return None
+    return surface, run[0][1], run[-1][2]
+
+
+def _leading_name_span(window: str) -> tuple[str, int, int] | None:
+    """Name span (surface + window-relative offsets) at the *start* of ``window``."""
+    run: list[tuple[str, int, int]] = []
+    for m in re.finditer(r"\S+", window):
+        if _is_namey_token(m.group()) and len(run) < _MAX_NAME_TOKENS:
+            run.append((m.group(), m.start(), m.end()))
         else:
             break
-    return _normalise_name(run)
+    return _finalise_run(run)
+
+
+def _trailing_name_span(window: str) -> tuple[str, int, int] | None:
+    """Name span (surface + window-relative offsets) at the *end* of ``window``."""
+    run: list[tuple[str, int, int]] = []
+    for m in reversed(list(re.finditer(r"\S+", window))):
+        if _is_namey_token(m.group()) and len(run) < _MAX_NAME_TOKENS:
+            run.insert(0, (m.group(), m.start(), m.end()))
+        else:
+            break
+    return _finalise_run(run)
+
+
+def _take_leading_name(window: str) -> str | None:
+    """Collect the run of name-shaped tokens at the *start* of ``window``."""
+    span = _leading_name_span(window)
+    return span[0] if span is not None else None
 
 
 def _take_trailing_name(window: str) -> str | None:
     """Collect the run of name-shaped tokens at the *end* of ``window``."""
-    run: list[str] = []
-    for tok in reversed(window.split()):
-        if _is_namey_token(tok) and len(run) < _MAX_NAME_TOKENS:
-            run.insert(0, tok)
-        else:
-            break
-    return _normalise_name(run)
+    span = _trailing_name_span(window)
+    return span[0] if span is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -332,15 +416,14 @@ def _locate_name(body: str, cue: _Cue, match: "re.Match[str]") -> tuple[str, int
     if cue.position == "prefix":
         win_lo = match.end()
         window = body[win_lo:win_lo + _NAME_WINDOW_CHARS]
-        name = _take_leading_name(window)
-        if name is None:
+        span = _leading_name_span(window)
+        if span is None:
             return None
+        name, ws, we = span
         if cue.strict_candidate and not name[0].isupper():
             return None  # weak cue + lower-case method phrase
-        # Offset of the first non-space char in the window.
-        lead = len(window) - len(window.lstrip())
-        start = win_lo + lead
-        end = start + len(name)
+        start = win_lo + ws
+        end = win_lo + we
         if _AUTHOR_CITATION_RE.match(body[end:end + 8]):
             return None  # "data from Cohen et al." — an author, not a source
         return name, start, end
@@ -349,12 +432,11 @@ def _locate_name(body: str, cue: _Cue, match: "re.Match[str]") -> tuple[str, int
     win_hi = match.start()
     win_lo = max(0, win_hi - _NAME_WINDOW_CHARS)
     window = body[win_lo:win_hi]
-    name = _take_trailing_name(window)
-    if name is None:
+    span = _trailing_name_span(window)
+    if span is None:
         return None
-    trail = len(window) - len(window.rstrip())
-    end = win_hi - trail
-    return name, end - len(name), end
+    name, ws, we = span
+    return name, win_lo + ws, win_lo + we
 
 
 def detect_informal_references(body: str) -> list[InformalMention]:

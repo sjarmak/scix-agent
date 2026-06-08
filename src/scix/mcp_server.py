@@ -5712,6 +5712,61 @@ def _section_dense_retrieve(
     return rows
 
 
+# Candidate-pool cap for the section BM25 leg (scix_experiments-ynt8). Mirrors
+# the lexical_search cap (search._LEXICAL_POOL_DEFAULT, bead 3t37): without it a
+# common single-token query matches a large slice of papers_fulltext (14.4M
+# rows) and forces ts_rank over the whole match set — the same
+# ORDER-BY-ts_rank cost that times out lexical_search on broad terms. The
+# section leg is heavier per candidate (jsonb unnest + per-section to_tsvector),
+# so the cap matters even at the smaller corpus size. The cap LIMITs candidates
+# in bitmap-heap (TID) order *before* ranking, so it is a blunt recall
+# instrument — acceptable because the leg is RRF-fused with the dense leg. The
+# default borrows the lexical knee (30000) pending section-specific tuning;
+# operators retune via SCIX_SECTIONS_POOL without a restart. A separate knob
+# (not SCIX_LEXICAL_POOL) keeps the two lanes independently tunable.
+_SECTIONS_POOL_DEFAULT: int = 30000
+
+# Token values of SCIX_SECTIONS_POOL that disable the cap (rank the full match
+# set). Mirrors search._LEXICAL_POOL_UNBOUNDED; for eval harnesses only, not the
+# live server.
+_SECTIONS_POOL_UNBOUNDED: frozenset[str] = frozenset({"inf", "all", "none"})
+
+
+def _resolve_sections_pool() -> int | None:
+    """Resolve the section BM25 candidate-pool cap from ``SCIX_SECTIONS_POOL``.
+
+    Returns the row cap, or ``None`` for an unbounded pool (passed to SQL as
+    ``LIMIT NULL``, which Postgres treats as no limit). Read on every call so
+    operators can tune the running container without a restart. Misconfigured
+    values log a warning and fall back to :data:`_SECTIONS_POOL_DEFAULT`.
+    """
+    raw = os.environ.get("SCIX_SECTIONS_POOL")
+    if raw is None:
+        return _SECTIONS_POOL_DEFAULT
+    token = raw.strip().lower()
+    if token in _SECTIONS_POOL_UNBOUNDED:
+        return None
+    try:
+        value = int(token)
+    except ValueError:
+        logger.warning(
+            "SCIX_SECTIONS_POOL=%r is not an integer or one of %s; falling back to %d",
+            raw,
+            sorted(_SECTIONS_POOL_UNBOUNDED),
+            _SECTIONS_POOL_DEFAULT,
+        )
+        return _SECTIONS_POOL_DEFAULT
+    if value <= 0:
+        logger.warning(
+            "SCIX_SECTIONS_POOL=%d must be positive (use INF for unbounded); "
+            "falling back to %d",
+            value,
+            _SECTIONS_POOL_DEFAULT,
+        )
+        return _SECTIONS_POOL_DEFAULT
+    return value
+
+
 def _section_bm25_retrieve(
     conn: psycopg.Connection,
     query: str,
@@ -5729,14 +5784,20 @@ def _section_bm25_retrieve(
     """
     if fanout <= 0:
         return []
+    pool_size = _resolve_sections_pool()
     sql = f"""
-        WITH matching_papers AS (
-            SELECT pf.bibcode, pf.sections,
-                   ts_rank(pf.sections_tsv, plainto_tsquery('english', %s)) AS paper_rank
+        WITH matching_candidates AS (
+            SELECT pf.bibcode, pf.sections, pf.sections_tsv
             FROM papers_fulltext pf
             JOIN papers p ON p.bibcode = pf.bibcode
             WHERE pf.sections_tsv @@ plainto_tsquery('english', %s)
             {filter_sql}
+            LIMIT %s
+        ),
+        matching_papers AS (
+            SELECT bibcode, sections,
+                   ts_rank(sections_tsv, plainto_tsquery('english', %s)) AS paper_rank
+            FROM matching_candidates
             ORDER BY paper_rank DESC
             LIMIT %s
         ),
@@ -5763,9 +5824,10 @@ def _section_bm25_retrieve(
         LIMIT %s
     """
     params = [
-        query,  # paper_rank ts_rank
-        query,  # paper match
+        query,  # candidate match: sections_tsv @@ plainto_tsquery
         *filter_params,
+        pool_size,  # candidate-pool cap (LIMIT NULL = unbounded)
+        query,  # paper_rank ts_rank
         fanout,  # paper LIMIT
         query,  # section_rank ts_rank
         query,  # section match

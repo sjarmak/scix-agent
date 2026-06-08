@@ -97,6 +97,31 @@ def _seed_entity(
         return cur.fetchone()[0]
 
 
+def _seed_vizier_table(conn: psycopg.Connection, *, table_path: str) -> int:
+    """Seed a VizieR ``dataset`` entity + JSON-quoted external_id.
+
+    Replicates the prod layout: the table path lives in
+    ``entity_identifiers`` (``id_scheme='vizier'``) stored JSON-quoted,
+    while ``entities.properties`` stays empty.  Returns the entity id.
+    """
+    entity_id = _seed_entity(
+        conn,
+        canonical=f"desc {table_path}",
+        entity_type="dataset",
+        source="vizier",
+    )
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO entity_identifiers (entity_id, id_scheme, external_id)
+            VALUES (%s, 'vizier', %s)
+            ON CONFLICT (id_scheme, external_id) DO NOTHING
+            """,
+            (entity_id, json.dumps(table_path)),
+        )
+    return entity_id
+
+
 # ---------------------------------------------------------------------------
 # GCMD
 # ---------------------------------------------------------------------------
@@ -267,7 +292,7 @@ def test_populate_ssodnet_creates_taxa_and_edges(
     conn.commit()
 
     stats = populate.populate_ssodnet(conn, harvest_run_id=harvest_run_id, include_targets=True)
-    assert stats.taxa_created >= 2
+    assert stats.nodes_created >= 2
     # Expect at least: 1 class->class + 2 asteroid->leaf part_of
     assert stats.edges_inserted >= 3
 
@@ -425,3 +450,73 @@ def test_run_populates_multiple_sources(
     assert len(stats_list) == 1
     assert stats_list[0].source == "gcmd"
     assert stats_list[0].edges_inserted >= 1
+
+
+# ---------------------------------------------------------------------------
+# VizieR
+# ---------------------------------------------------------------------------
+
+
+def test_populate_vizier_creates_catalogs_and_edges(
+    conn: psycopg.Connection, harvest_run_id: int
+) -> None:
+    # Two tables sharing one catalog + one table in a second catalog.
+    cat_a = f"J/TEST{_RUN_TAG}/1"
+    t1 = _seed_vizier_table(conn, table_path=f"{cat_a}/table1")
+    t2 = _seed_vizier_table(conn, table_path=f"{cat_a}/table2")
+    cat_b = f"I/TEST{_RUN_TAG}"
+    t3 = _seed_vizier_table(conn, table_path=f"{cat_b}/stars")
+    conn.commit()
+
+    stats = populate.populate_vizier(conn, harvest_run_id=harvest_run_id)
+    assert stats.source == "vizier"
+    assert stats.nodes_created >= 2  # cat_a, cat_b
+    assert stats.edges_inserted >= 3  # 3 catalog->table edges
+
+    # Catalog entities were created with entity_type='catalog'.
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT canonical_name FROM entities
+             WHERE source='vizier' AND entity_type='catalog'
+               AND canonical_name IN (%s, %s)
+            """,
+            (cat_a, cat_b),
+        )
+        names = {r[0] for r in cur.fetchall()}
+    assert names == {cat_a, cat_b}
+
+    # cat_a parent_of both its tables, with the right evidence.
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT er.object_entity_id, er.predicate, er.evidence->>'method'
+              FROM entity_relationships er
+              JOIN entities a ON a.id = er.subject_entity_id
+             WHERE a.canonical_name = %s
+               AND a.entity_type = 'catalog'
+               AND er.source = 'vizier'
+            """,
+            (cat_a,),
+        )
+        edge_rows = cur.fetchall()
+    objects = {r[0] for r in edge_rows}
+    assert objects == {t1, t2}
+    assert all(r[1] == "parent_of" for r in edge_rows)
+    assert all(r[2] == "vizier_table_path" for r in edge_rows)
+    # cat_b parent_of its single table.
+    assert t3 is not None
+
+
+def test_populate_vizier_is_idempotent(
+    conn: psycopg.Connection, harvest_run_id: int
+) -> None:
+    cat = f"V/TEST{_RUN_TAG}/cat"
+    _seed_vizier_table(conn, table_path=f"{cat}/t1")
+    conn.commit()
+
+    first = populate.populate_vizier(conn, harvest_run_id=harvest_run_id)
+    assert first.edges_inserted == 1
+    # Second run inserts nothing new (ON CONFLICT DO NOTHING).
+    second = populate.populate_vizier(conn, harvest_run_id=harvest_run_id)
+    assert second.edges_inserted == 0

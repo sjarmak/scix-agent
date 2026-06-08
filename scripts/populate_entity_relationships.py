@@ -11,6 +11,8 @@ directed edges.  Supported tiers:
   plus optional asteroid->leaf-class ``part_of`` edges.
 * ``curated_flagship`` — hardcoded mission->instrument map.
   ``has_instrument``.
+* ``vizier`` — VizieR table path (stored in ``entity_identifiers``).
+  Catalog->table ``parent_of``, with synthetic ``catalog`` nodes.
 
 Idempotent: every insert is ``ON CONFLICT DO NOTHING`` against the
 ``(subject_entity_id, predicate, object_entity_id)`` unique key.  Each
@@ -54,13 +56,14 @@ from scix.entity_relationships import (  # noqa: E402
     extract_gcmd_edges,
     extract_spase_region_edges,
     extract_ssodnet_class_edges,
+    extract_vizier_catalog_edges,
     parse_gcmd_hierarchy,
 )
 from scix.harvest_utils import HarvestRunLog  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-ALL_SOURCES = ("gcmd", "spase", "ssodnet", "curated_flagship")
+ALL_SOURCES = ("gcmd", "spase", "ssodnet", "curated_flagship", "vizier")
 
 
 @dataclass(frozen=True)
@@ -68,7 +71,9 @@ class SourceStats:
     source: str
     edges_emitted: int
     edges_inserted: int
-    taxa_created: int = 0
+    # Synthetic parent nodes created for this source (SsODNet taxa,
+    # VizieR catalogs); 0 for sources whose endpoints already exist.
+    nodes_created: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -210,42 +215,57 @@ def populate_spase(conn: psycopg.Connection, *, harvest_run_id: int) -> SourceSt
 # ---------------------------------------------------------------------------
 
 
-def _upsert_synthetic_taxa(conn: psycopg.Connection, taxon_names: list[str]) -> dict[str, int]:
-    """Upsert SsODNet taxonomic classes as entities; return name->id map."""
-    if not taxon_names:
+def _upsert_synthetic_entities(
+    conn: psycopg.Connection,
+    names: list[str],
+    *,
+    entity_type: str,
+    discipline: str,
+    source: str,
+    batch_size: int = 5000,
+) -> dict[str, int]:
+    """Upsert synthetic parent entities; return ``canonical_name -> id``.
+
+    Used for hierarchy parent nodes that aren't real harvested entities —
+    SsODNet taxonomic classes (``entity_type='taxon'``) and VizieR
+    catalogs (``entity_type='catalog'``).  Relies on the
+    ``(canonical_name, entity_type, source)`` unique constraint to skip
+    duplicates.
+
+    Inserts are batched: a single multi-row INSERT is bounded by
+    PostgreSQL's 65535 bind-parameter limit (4 params/row), so VizieR's
+    ~27K catalogs must be chunked.
+    """
+    if not names:
         return {}
 
-    # Insert missing taxa; rely on the existing unique constraint to
-    # skip duplicates.  entity_type='taxon' is a new value — we use it
-    # here to distinguish asteroid class nodes from the real asteroid
-    # target entities (entity_type='target').
     name_to_id: dict[str, int] = {}
     with conn.cursor() as cur:
-        # 1. Bulk insert (ignore conflicts) — psycopg has no executemany
-        # RETURNING so we do a single multi-row INSERT.
-        values_sql = ",".join(["(%s, %s, %s, %s)"] * len(taxon_names))
-        params: list[object] = []
-        for name in taxon_names:
-            params.extend([name, "taxon", "planetary_science", "ssodnet"])
-        cur.execute(
-            f"""
-            INSERT INTO entities
-                (canonical_name, entity_type, discipline, source)
-            VALUES {values_sql}
-            ON CONFLICT (canonical_name, entity_type, source) DO NOTHING
-            """,
-            params,
-        )
+        for start in range(0, len(names), batch_size):
+            batch = names[start : start + batch_size]
+            values_sql = ",".join(["(%s, %s, %s, %s)"] * len(batch))
+            params: list[object] = []
+            for name in batch:
+                params.extend([name, entity_type, discipline, source])
+            cur.execute(
+                f"""
+                INSERT INTO entities
+                    (canonical_name, entity_type, discipline, source)
+                VALUES {values_sql}
+                ON CONFLICT (canonical_name, entity_type, source) DO NOTHING
+                """,
+                params,
+            )
 
-        # 2. Look up ids for every name we care about
+        # Look up ids for every name we care about (one array param).
         cur.execute(
             """
             SELECT canonical_name, id FROM entities
-             WHERE source = 'ssodnet'
-               AND entity_type = 'taxon'
+             WHERE source = %s
+               AND entity_type = %s
                AND canonical_name = ANY(%s)
             """,
-            (taxon_names,),
+            (source, entity_type, names),
         )
         for name, eid in cur.fetchall():
             name_to_id[name] = eid
@@ -295,7 +315,13 @@ def populate_ssodnet(
         return SourceStats(source="ssodnet", edges_emitted=0, edges_inserted=0)
 
     taxa_names = [t.canonical_name for t in taxa]
-    name_to_id = _upsert_synthetic_taxa(conn, taxa_names)
+    name_to_id = _upsert_synthetic_entities(
+        conn,
+        taxa_names,
+        entity_type="taxon",
+        discipline="planetary_science",
+        source="ssodnet",
+    )
     conn.commit()
     taxa_created = len(name_to_id)
     logger.info("ssodnet: upserted %d taxa", taxa_created)
@@ -332,7 +358,7 @@ def populate_ssodnet(
         source="ssodnet",
         edges_emitted=len(resolved),
         edges_inserted=inserted,
-        taxa_created=taxa_created,
+        nodes_created=taxa_created,
     )
 
 
@@ -379,6 +405,85 @@ def populate_curated_flagship(conn: psycopg.Connection, *, harvest_run_id: int) 
 
 
 # ---------------------------------------------------------------------------
+# VizieR
+# ---------------------------------------------------------------------------
+
+
+def populate_vizier(conn: psycopg.Connection, *, harvest_run_id: int) -> SourceStats:
+    """Extract VizieR ``catalog parent_of table`` edges.
+
+    The catalog->table hierarchy is encoded in the VizieR table path
+    stored in ``entity_identifiers`` (``id_scheme='vizier'``), so no
+    network re-harvest is needed.  Catalog designations don't exist as
+    harvested entities, so they're upserted as synthetic
+    ``entity_type='catalog'`` nodes (mirroring SsODNet taxa) and then
+    resolved to ids before the edges are inserted.
+    """
+    logger.info("vizier: loading dataset entities with external ids...")
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT e.id, ei.external_id
+              FROM entities e
+              JOIN entity_identifiers ei ON ei.entity_id = e.id
+             WHERE e.source = 'vizier'
+               AND e.entity_type = 'dataset'
+               AND ei.id_scheme = 'vizier'
+            """)
+        rows = cur.fetchall()
+
+    edges, catalog_names = extract_vizier_catalog_edges(rows)
+    logger.info(
+        "vizier: emitted %d candidate edges, %d catalogs to upsert",
+        len(edges),
+        len(catalog_names),
+    )
+
+    if not edges:
+        return SourceStats(source="vizier", edges_emitted=0, edges_inserted=0)
+
+    name_to_id = _upsert_synthetic_entities(
+        conn,
+        catalog_names,
+        entity_type="catalog",
+        discipline="astrophysics",
+        source="vizier",
+    )
+    conn.commit()
+    catalogs_created = len(name_to_id)
+    logger.info("vizier: upserted %d catalogs", catalogs_created)
+
+    # Resolve each catalog subject_name to its freshly-upserted id.
+    resolved: list[EdgeCandidate] = []
+    unresolved = 0
+    for e in edges:
+        subj = name_to_id.get(e.subject_name) if e.subject_name is not None else e.subject_id
+        if subj is None or e.object_id is None:
+            unresolved += 1
+            continue
+        resolved.append(
+            EdgeCandidate(
+                subject_id=subj,
+                object_id=e.object_id,
+                predicate=e.predicate,
+                source=e.source,
+                evidence=e.evidence,
+            )
+        )
+    if unresolved:
+        logger.warning("vizier: %d edges dropped — catalog id could not be resolved", unresolved)
+
+    inserted = bulk_insert_edges(conn, resolved, harvest_run_id=harvest_run_id)
+    conn.commit()
+    logger.info("vizier: inserted %d new edges", inserted)
+    return SourceStats(
+        source="vizier",
+        edges_emitted=len(resolved),
+        edges_inserted=inserted,
+        nodes_created=catalogs_created,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
 
@@ -387,6 +492,7 @@ SOURCE_DISPATCH = {
     "gcmd": populate_gcmd,
     "spase": populate_spase,
     "curated_flagship": populate_curated_flagship,
+    "vizier": populate_vizier,
 }
 
 
@@ -508,7 +614,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\nSummary:")
     for s in stats_list:
-        extra = f" (taxa_created={s.taxa_created})" if s.taxa_created else ""
+        extra = f" (nodes_created={s.nodes_created})" if s.nodes_created else ""
         print(
             f"  {s.source:20s} emitted={s.edges_emitted:>8d}  "
             f"inserted={s.edges_inserted:>8d}{extra}"

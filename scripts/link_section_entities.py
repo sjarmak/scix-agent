@@ -59,6 +59,8 @@ for path in (SRC_DIR, SCRIPTS_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+import link_tier2  # noqa: E402  reuse fetch_entity_rows + ENTITY_SOURCES
+
 from scix.aho_corasick import (  # noqa: E402
     AhocorasickAutomaton,
     build_automaton,
@@ -69,8 +71,6 @@ from scix.section_linker import (  # noqa: E402
     link_paper_sections,
     parse_sections,
 )
-
-import link_tier2  # noqa: E402  reuse fetch_entity_rows + ENTITY_SOURCES
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +213,7 @@ _INSERT_SQL = """
     )
     ON CONFLICT (bibcode, section_index, entity_id, link_type, tier)
     DO NOTHING
-"""  # noqa: resolver-lint (transitional; section linker owns its own writes per 67e)
+"""  # resolver-lint: bypass (transitional; section linker owns its own writes per 67e)
 
 
 def run_section_link(
@@ -306,7 +306,7 @@ def run_section_link(
                         candidates_generated += 1
                         entities_with_links.add(cand.entity_id)
                         insert_cur.execute(
-                            _INSERT_SQL,  # noqa: resolver-lint
+                            _INSERT_SQL,  # resolver-lint: bypass
                             {
                                 "bibcode": bibcode,
                                 "section_index": cand.section_index,

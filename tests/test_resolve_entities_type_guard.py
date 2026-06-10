@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import pytest
 
+from scix import resolve_entities as re_mod
 from scix.entity_link_set import EntityLink, EntityLinkSet
 from scix.resolve_entities import EntityResolveContext, resolve_entities
-from scix import resolve_entities as re_mod
 
 
 def test_entity_link_set_rejects_direct_construction_missing_token():

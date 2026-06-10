@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # Single-pass SQL
 # ---------------------------------------------------------------------------
 
-# noqa: resolver-lint (transitional; u03's AST lint exempts tier-1 scripts)
+# resolver-lint: bypass (transitional; u03's AST lint exempts tier-1 scripts)
 TIER1_INSERT_SQL = """
 WITH canonical_matches AS (
     SELECT
@@ -83,7 +83,7 @@ collapsed AS (
     FROM all_matches
     ORDER BY bibcode, entity_id, match_source
 )
-INSERT INTO document_entities (  -- noqa: resolver-lint (transitional; u03's AST lint exempts tier-1 scripts)
+INSERT INTO document_entities (  -- resolver-lint: bypass (transitional; u03's AST lint exempts tier-1 scripts)
     bibcode,
     entity_id,
     link_type,

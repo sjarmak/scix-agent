@@ -1,0 +1,32 @@
+# Pre-commit hooks for SciX experiments.
+#
+#   pip install pre-commit && pre-commit install
+#
+# Hooks run only on staged files, so formatting is adopted incrementally —
+# black/ruff reformat a file the first time it is touched, not the whole tree.
+# Mirrors `make fmt-check` + `make lint`.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.8
+    hooks:
+      - id: ruff
+        name: ruff (lint + autofix)
+        args: [--fix]
+
+  - repo: https://github.com/psf/black-pre-commit-mirror
+    rev: 25.1.0
+    hooks:
+      - id: black
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      # Corpus guard: ADS JSONL shards are multi-GB and must never be committed
+      # (see CLAUDE.md "Database safety"). Blocks accidental large adds.
+      - id: check-added-large-files
+        args: [--maxkb=10000]

@@ -2,35 +2,28 @@
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import MagicMock, call, patch
-
-import pytest
-
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from harvest_spase import (
-    DISCIPLINE,
-    INSTRUMENT_LISTS,
-    MEASUREMENT_LISTS,
-    REGION_SUB_LISTS,
-    REGION_TOP_LIST,
     SOURCE,
     SPASE_VERSION,
+    _build_definition_map,
+    _make_entry,
     _write_entity_graph,
     camel_case_split,
     download_and_parse,
+    main,
     parse_instrument_entries,
     parse_measurement_entries,
     parse_region_entries,
     parse_tab_file,
-    _build_definition_map,
-    _make_entry,
-    main,
 )
 
 # ---------------------------------------------------------------------------
@@ -644,8 +637,9 @@ class TestRunHarvestLifecycle:
 class TestNoUrllib:
     def test_no_urllib_imports(self) -> None:
         """Verify harvest_spase does not import urllib."""
-        import harvest_spase
         import inspect
+
+        import harvest_spase
 
         source = inspect.getsource(harvest_spase)
         assert "urllib" not in source
@@ -667,7 +661,7 @@ class TestLiveDataCounts:
 
     @pytest.fixture(autouse=True)
     def _download(self) -> None:
-        from harvest_spase import _download_tab_file, MEMBER_URL, DICTIONARY_URL
+        from harvest_spase import DICTIONARY_URL, MEMBER_URL, _download_tab_file
 
         member_text = _download_tab_file(MEMBER_URL)
         dictionary_text = _download_tab_file(DICTIONARY_URL)

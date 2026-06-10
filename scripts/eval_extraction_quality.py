@@ -13,16 +13,15 @@ import argparse
 import json
 import logging
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import psycopg
 
 from scix.db import get_connection
-from scix.entity_resolver import EntityCandidate, EntityResolver
+from scix.entity_resolver import EntityResolver
 
 logger = logging.getLogger(__name__)
 

@@ -15,18 +15,17 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Sequence
 
 # Add src/ to path for direct script execution
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import psycopg
 
-from scix.db import DEFAULT_DSN, get_connection
+from scix.db import get_connection
 
 logger = logging.getLogger(__name__)
 

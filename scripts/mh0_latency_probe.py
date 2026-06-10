@@ -39,7 +39,6 @@ import asyncio
 import json
 import logging
 import math
-import statistics
 import sys
 import time
 from dataclasses import dataclass, field

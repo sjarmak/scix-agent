@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import psycopg
-from psycopg.rows import dict_row
 
 logger = logging.getLogger(__name__)
 

@@ -34,7 +34,6 @@ import pytest
 from scix import mcp_server
 from scix.mcp_server import _dispatch_tool, _reset_coverage_note_cache
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

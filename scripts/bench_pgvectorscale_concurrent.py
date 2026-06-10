@@ -34,7 +34,6 @@ import logging
 import os
 import random
 import sys
-import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed

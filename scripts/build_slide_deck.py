@@ -6,13 +6,12 @@ Duration: 30 min (28 slides)
 Output: pptx for Google Slides import
 """
 from pathlib import Path
+
 from pptx import Presentation
-from pptx.util import Inches, Pt, Emu
-from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.dml.color import RGBColor
-from pptx.oxml.ns import qn
-from lxml import etree
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+from pptx.util import Emu, Inches, Pt
 
 ASSETS = Path("/home/ds/projects/scix_experiments/docs/slides_assets")
 OUT_PATH = Path("/home/ds/projects/scix_experiments/docs/slides/mlops_community_research_copilot.pptx")
@@ -112,7 +111,7 @@ def add_rule(slide, left, top, width, height=Pt(2), color=ACCENT):
 
 
 def add_footer(slide, idx, total):
-    add_text(slide, f"Stephanie Jarmak  ·  MLOps Community  ·  Making Scientific Knowledge Navigable for Agents",
+    add_text(slide, "Stephanie Jarmak  ·  MLOps Community  ·  Making Scientific Knowledge Navigable for Agents",
              Inches(0.5), Inches(7.1), Inches(10), Inches(0.3),
              size=10, color=INK_SOFT)
     add_text(slide, f"{idx} / {total}",

@@ -16,13 +16,13 @@ import json
 import math
 import subprocess
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
-
-import pytest
 
 # `eval_entity_value_props` lives in scripts/ (pythonpath configured in
 # pyproject.toml), so this import works at test time.
 import eval_entity_value_props as eevp
+import pytest
 
 # ---------------------------------------------------------------------------
 # Gold-set loader

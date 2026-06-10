@@ -6,8 +6,7 @@ import os
 
 import psycopg
 import pytest
-
-from helpers import DSN, is_production_dsn
+from helpers import is_production_dsn
 
 from scix.crosswalk import (
     CrosswalkEntry,

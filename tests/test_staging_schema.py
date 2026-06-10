@@ -11,7 +11,6 @@ import pathlib
 
 import psycopg
 import pytest
-
 from helpers import is_production_dsn
 
 MIGRATION_PATH = (

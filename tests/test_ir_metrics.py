@@ -7,7 +7,6 @@ import math
 import pytest
 
 from scix.ir_metrics import (
-    EvalReport,
     RetrievalScore,
     aggregate_scores,
     compute_retrieval_score,
@@ -17,7 +16,6 @@ from scix.ir_metrics import (
     precision_at_k,
     recall_at_k,
 )
-
 
 # ---------------------------------------------------------------------------
 # dcg_at_k

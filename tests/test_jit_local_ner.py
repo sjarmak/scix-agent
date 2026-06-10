@@ -12,7 +12,6 @@ import time
 
 import pytest
 
-from scix.jit import local_ner
 from scix.jit.local_ner import (
     LOCAL_NER_CONFIDENCE,
     LOCAL_NER_MODEL_VERSION,

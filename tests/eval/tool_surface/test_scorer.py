@@ -6,8 +6,6 @@ cases."""
 
 from __future__ import annotations
 
-import pytest
-
 from scix.eval.tool_surface.scorer import (
     _args_subset_match,
     _candidate_oracles,

@@ -24,7 +24,6 @@ import pytest
 
 from scix.search import SearchFilters, SearchResult, community_expand_search
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -40,7 +40,7 @@ import pickle
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Iterable, Optional
+from typing import Optional
 
 import psycopg
 
@@ -53,6 +53,8 @@ SCRIPTS_DIR = REPO_ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import link_tier2  # noqa: E402
+
 from scix.aho_corasick import (  # noqa: E402
     AhocorasickAutomaton,
     build_automaton,
@@ -60,8 +62,6 @@ from scix.aho_corasick import (  # noqa: E402
 )
 from scix.circuit_breaker import CircuitBreaker, CircuitBreakerOpen  # noqa: E402
 from scix.db import DEFAULT_DSN, get_connection  # noqa: E402
-
-import link_tier2  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ collapsed AS (
     FROM all_matches
     ORDER BY bibcode, entity_id, match_source
 )
-INSERT INTO document_entities (  -- noqa: resolver-lint (u13 incremental; scripts/ is outside AST-lint scope)
+INSERT INTO document_entities (  -- resolver-lint: bypass (u13 incremental; scripts/ is outside AST-lint scope)
     bibcode, entity_id, link_type, tier, tier_version,
     confidence, match_method, evidence
 )
@@ -415,7 +415,7 @@ def run_tier2_scoped(
                         separators=(",", ":"),
                     )
                     insert_cur.execute(
-                        link_tier2._INSERT_SQL,  # noqa: resolver-lint
+                        link_tier2._INSERT_SQL,  # resolver-lint: bypass
                         {
                             "bibcode": bibcode,
                             "entity_id": entity_id,

@@ -34,7 +34,7 @@ linking exists to capture.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Iterator, Optional, Sequence
+from typing import Iterable, Optional, Sequence
 
 from scix.aho_corasick import (
     AhocorasickAutomaton,
@@ -42,7 +42,6 @@ from scix.aho_corasick import (
     link_abstract,
 )
 from scix.section_role import classify_section_role
-
 
 # ---------------------------------------------------------------------------
 # Inputs / outputs

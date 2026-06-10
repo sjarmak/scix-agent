@@ -22,10 +22,10 @@ from scix.mcp_server import (
     _hnsw_index_cache,
     _hnsw_index_exists,
     _hnsw_index_name,
-    _vector_index_names,
     _parse_filters,
     _result_to_json,
     _session_state,
+    _vector_index_names,
 )
 
 # ---------------------------------------------------------------------------
@@ -1117,7 +1117,6 @@ class TestDeprecatedAliases:
     @patch("scix.search.lexical_search")
     def test_semantic_search_alias(self, mock_lex: MagicMock) -> None:
         """AC17: old 'semantic_search' returns deprecated:true."""
-        from scix.search import SearchResult
 
         # semantic_search will check HNSW index, so mock it to fallback
         with patch("scix.mcp_server._hnsw_index_exists", return_value=False):

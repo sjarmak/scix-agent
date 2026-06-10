@@ -42,7 +42,6 @@ import argparse
 import json
 import logging
 import os
-import statistics
 import sys
 import time
 import uuid

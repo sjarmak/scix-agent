@@ -10,7 +10,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -23,7 +23,6 @@ from harvest_gcmd import (
     download_github_scheme,
     download_kms_scheme,
     harvest_all,
-    harvest_scheme,
     parse_github_scheme,
     parse_kms_scheme,
     run_harvest,

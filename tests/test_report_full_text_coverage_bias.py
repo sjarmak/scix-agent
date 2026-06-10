@@ -30,7 +30,6 @@ sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from coverage_bias_analysis import DistributionRow  # noqa: E402
-
 from report_full_text_coverage_bias import (  # noqa: E402
     build_facet_payload,
     build_payload,
@@ -41,7 +40,6 @@ from report_full_text_coverage_bias import (  # noqa: E402
     synthetic_facets,
     upsert_agent_guidance_section,
 )
-
 
 # ---------------------------------------------------------------------------
 # kl_divergence

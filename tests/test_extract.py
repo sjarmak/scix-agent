@@ -7,21 +7,19 @@ and idempotent upserts. No external services required.
 from __future__ import annotations
 
 import json
-import textwrap
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from scix.extract import (
+    _SYSTEM_PROMPT,
+    _TOOL_SCHEMA,
     EXTRACTION_TYPES,
-    EXTRACTION_VERSION,
     BudgetExceededError,
     ExtractionRequest,
     ExtractionRow,
-    _SYSTEM_PROMPT,
-    _TOOL_SCHEMA,
     _checkpoint_path,
     _get_existing_bibcodes,
     _load_checkpoint,

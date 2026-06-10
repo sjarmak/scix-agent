@@ -19,14 +19,12 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
-from scix import qdrant_tools
-from scix import mcp_server
+from scix import mcp_server, qdrant_tools
 
 
 @pytest.fixture

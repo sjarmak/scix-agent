@@ -21,7 +21,7 @@ import psycopg
 # Add src/ to path for direct script execution
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from scix.db import DEFAULT_DSN, get_connection
+from scix.db import get_connection
 from scix.normalize import normalize_entity
 
 logger = logging.getLogger(__name__)
@@ -81,16 +81,14 @@ class CoverageReport:
 
 
 def extract_metadata_entities(
-    raw_jsonb: dict[str, Any] | None,
     columns: dict[str, Any],
 ) -> dict[str, set[str]]:
     """Extract normalized entity sets from ADS metadata fields.
 
-    Looks for facility, data, keyword_norm in raw JSONB and column values,
-    and bibgroup from columns.
+    Looks for facility, data, keyword_norm, and bibgroup in the dedicated
+    column values (papers.raw was dropped in ADR-011).
 
     Args:
-        raw_jsonb: Parsed raw JSONB column (may be None).
         columns: Dict with column values for facility, data, keyword_norm, bibgroup.
 
     Returns:
@@ -105,14 +103,6 @@ def extract_metadata_entities(
         col_val = columns.get(field)
         if isinstance(col_val, list):
             raw_values.extend(v for v in col_val if isinstance(v, str) and v.strip())
-
-        # Also check raw JSONB for fields that might only be there
-        if raw_jsonb and field in raw_jsonb:
-            jsonb_val = raw_jsonb[field]
-            if isinstance(jsonb_val, list):
-                for v in jsonb_val:
-                    if isinstance(v, str) and v.strip():
-                        raw_values.append(v)
 
         normalized = {normalize_entity(v) for v in raw_values if v.strip()}
         # Remove empty strings that might result from normalization
@@ -242,12 +232,12 @@ def fetch_sample_papers(
         sample_size: Number of papers to sample.
 
     Returns:
-        List of dicts with bibcode, facility, data, keyword_norm, bibgroup, raw.
+        List of dicts with bibcode, facility, data, keyword_norm, bibgroup.
     """
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT bibcode, facility, data, keyword_norm, bibgroup, raw
+            SELECT bibcode, facility, data, keyword_norm, bibgroup
             FROM papers
             WHERE 'astronomy' = ANY(database)
             ORDER BY citation_count DESC NULLS LAST
@@ -259,14 +249,7 @@ def fetch_sample_papers(
 
     results = []
     for row in rows:
-        bibcode, facility, data, keyword_norm, bibgroup, raw_val = row
-        raw_parsed = None
-        if raw_val is not None:
-            if isinstance(raw_val, str):
-                raw_parsed = json.loads(raw_val)
-            elif isinstance(raw_val, dict):
-                raw_parsed = raw_val
-
+        bibcode, facility, data, keyword_norm, bibgroup = row
         results.append(
             {
                 "bibcode": bibcode,
@@ -276,7 +259,6 @@ def fetch_sample_papers(
                     "keyword_norm": keyword_norm,
                     "bibgroup": bibgroup,
                 },
-                "raw": raw_parsed,
             }
         )
     return results
@@ -359,7 +341,7 @@ def run_analysis(
         bib = paper["bibcode"]
 
         # Metadata entities
-        meta_entities = extract_metadata_entities(paper["raw"], paper["columns"])
+        meta_entities = extract_metadata_entities(paper["columns"])
         for etype, eset in meta_entities.items():
             if etype not in all_metadata:
                 all_metadata[etype] = set()

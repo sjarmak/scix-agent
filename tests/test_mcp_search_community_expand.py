@@ -32,7 +32,6 @@ from scix import mcp_server
 from scix.mcp_server import _dispatch_tool
 from scix.search import SearchResult
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

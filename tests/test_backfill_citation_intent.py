@@ -21,7 +21,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 SCRIPT_PATH = (
     Path(__file__).resolve().parent.parent / "scripts" / "backfill_citation_intent.py"
 )

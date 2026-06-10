@@ -28,10 +28,11 @@ import hashlib
 import logging
 import re
 import tarfile
-import defusedxml.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+import defusedxml.ElementTree as ET
 
 logger = logging.getLogger(__name__)
 

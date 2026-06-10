@@ -16,6 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import calibrate_judge  # noqa: E402
+
 from scix.eval.persona_judge import JudgeScore, JudgeTriple, StubDispatcher  # noqa: E402
 
 

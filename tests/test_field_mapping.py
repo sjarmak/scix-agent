@@ -93,7 +93,7 @@ FULL_RECORD: dict = {
     "citation_count_norm": 0.53,
     "cite_read_boost": 0.42,
     "classic_factor": 0.0,
-    # --- Fields that stay in raw JSONB ---
+    # --- Unmapped field (silently dropped since ADR-011) ---
     "id": "26840679",
 }
 
@@ -171,11 +171,6 @@ class TestTransformRecord:
         row, _ = transform_record(FULL_RECORD)
         assert row[COL["body"]] == "Full text here..."
 
-    def test_body_not_in_raw(self) -> None:
-        row, _ = transform_record(FULL_RECORD)
-        raw = json.loads(row[COL["raw"]])
-        assert "body" not in raw
-
     def test_body_none_when_missing(self) -> None:
         row, _ = transform_record(MINIMAL_RECORD)
         assert row[COL["body"]] is None
@@ -185,36 +180,12 @@ class TestTransformRecord:
         row, _ = transform_record(rec)
         assert row[COL["body"]] == "Fulltexthere"
 
-    def test_unmapped_fields_in_raw_jsonb(self) -> None:
+    def test_no_raw_column(self) -> None:
+        # ADR-011: the raw catch-all column is gone; unmapped JSONL
+        # fields are dropped and the row width matches COLUMN_ORDER.
+        assert "raw" not in COLUMN_ORDER
         row, _ = transform_record(FULL_RECORD)
-        raw_str = row[COL["raw"]]
-        assert raw_str is not None
-        raw = json.loads(raw_str)
-        assert raw["id"] == "26840679"
-        assert "reference" in raw  # preserved in raw for provenance
-        assert "citation" in raw
-
-    def test_unmapped_fields_exclude_mapped(self) -> None:
-        row, _ = transform_record(FULL_RECORD)
-        raw = json.loads(row[COL["raw"]])
-        # Mapped fields should NOT appear in raw
-        assert "bibcode" not in raw
-        assert "title" not in raw
-        assert "author" not in raw
-        assert "year" not in raw
-        assert "abstract" not in raw
-        assert "body" not in raw
-        # New mapped fields should also NOT appear in raw
-        assert "ack" not in raw
-        assert "data" not in raw
-        assert "facility" not in raw
-        assert "grant" not in raw
-        assert "author_count" not in raw
-        assert "citation_count_norm" not in raw
-
-    def test_raw_none_when_no_unmapped(self) -> None:
-        row, _ = transform_record(MINIMAL_RECORD)
-        assert row[COL["raw"]] is None
+        assert len(row) == len(COLUMN_ORDER)
 
     def test_missing_optional_fields_are_none(self) -> None:
         row, _ = transform_record(MINIMAL_RECORD)
@@ -246,11 +217,11 @@ class TestTransformRecord:
         row, _ = transform_record(rec)
         assert row[COL["authors"]] == ["Author, A."]
 
-    def test_null_bytes_stripped_from_raw_jsonb(self) -> None:
-        rec = {**MINIMAL_RECORD, "some_unmapped_field": "Thanks\x00reviewer"}
+    def test_unmapped_field_dropped(self) -> None:
+        # ADR-011: unmapped JSONL fields are silently dropped (no raw column).
+        rec = {**MINIMAL_RECORD, "some_unmapped_field": "anything"}
         row, _ = transform_record(rec)
-        raw = json.loads(row[COL["raw"]])
-        assert "\x00" not in raw["some_unmapped_field"]
+        assert len(row) == len(COLUMN_ORDER)
 
 
 class TestEdgeExtraction:
@@ -361,13 +332,11 @@ class TestNewFullCoverageFields:
         row, _ = transform_record(rec)
         assert row[COL["data"]] == ["SIMBAD:4"]
 
-    def test_ack_not_in_raw(self) -> None:
-        """ack was previously unmapped and in raw; now it's a dedicated column."""
+    def test_ack_dedicated_column(self) -> None:
+        """ack was previously unmapped (lived in raw); now it's a dedicated column."""
         rec = {**MINIMAL_RECORD, "ack": "We thank the reviewer."}
         row, _ = transform_record(rec)
         assert row[COL["ack"]] == "We thank the reviewer."
-        # raw should be None since ack is the only extra field and it's now mapped
-        assert row[COL["raw"]] is None
 
 
 class TestFieldSetConsistency:
@@ -397,14 +366,12 @@ class TestFieldSetConsistency:
 
 class TestColumnOrder:
     def test_column_count_matches_schema(self) -> None:
-        # papers table: 33 original + 34 new full-coverage + raw = 68 columns
-        assert len(COLUMN_ORDER) == 68
+        # papers table: 33 original + 34 new full-coverage = 67 columns
+        # (raw dropped in migration 069 / ADR-011)
+        assert len(COLUMN_ORDER) == 67
 
     def test_bibcode_is_first(self) -> None:
         assert COLUMN_ORDER[0] == "bibcode"
-
-    def test_raw_is_last(self) -> None:
-        assert COLUMN_ORDER[-1] == "raw"
 
     def test_no_duplicates(self) -> None:
         assert len(COLUMN_ORDER) == len(set(COLUMN_ORDER))

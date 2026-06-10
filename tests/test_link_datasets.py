@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from scix.link_datasets import (
     DatasetResolver,
-    DatasetResolverMatch,
     _extract_dataset_mentions,
     _parse_ads_data_field,
     get_dataset_linking_progress,
     link_datasets_batch,
 )
-
 
 # ---------------------------------------------------------------------------
 # _parse_ads_data_field

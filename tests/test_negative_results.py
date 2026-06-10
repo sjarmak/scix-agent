@@ -28,7 +28,6 @@ from scix.negative_results import (
     insert_extractions,
 )
 
-
 _FIXTURE_PATH = (
     Path(__file__).resolve().parent / "fixtures" / "negative_results_gold_100.jsonl"
 )

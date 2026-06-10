@@ -25,13 +25,10 @@ from scix.sources.ar5iv import (
     Ar5ivConfig,
     Ar5ivLoader,
     Ar5ivParser,
+    InlineCite,
     ParsedFulltext,
     ProductionGuardError,
     Section,
-    InlineCite,
-    Figure,
-    Table,
-    Equation,
     _build_canonical_url,
 )
 

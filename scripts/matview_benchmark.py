@@ -171,7 +171,7 @@ def setup_schema(cur):
 
 def generate_synthetic_data(cur):
     """Generate synthetic data at target scale using generate_series."""
-    print(f"\nGenerating synthetic data...")
+    print("\nGenerating synthetic data...")
 
     # Papers: 2M synthetic bibcodes (enough for 10M document_entities)
     n_papers = 2_000_000
@@ -538,8 +538,8 @@ def write_report(results: list[TimingResult], total_elapsed: float):
         "",
         "## Synthetic Data Scale",
         "",
-        f"| Table | Target Rows |",
-        f"|-------|------------|",
+        "| Table | Target Rows |",
+        "|-------|------------|",
         f"| entities | {N_ENTITIES:,} |",
         f"| document_entities | {N_DOC_ENTITIES:,} |",
         f"| entity_aliases | {N_ALIASES:,} |",
@@ -548,7 +548,7 @@ def write_report(results: list[TimingResult], total_elapsed: float):
         f"| datasets | {N_DATASETS:,} |",
         f"| dataset_entities | {N_DATASET_ENTITIES:,} |",
         f"| document_datasets | {N_DOC_DATASETS:,} |",
-        f"| papers (synthetic) | 2,000,000 |",
+        "| papers (synthetic) | 2,000,000 |",
         "",
         "## Results",
         "",

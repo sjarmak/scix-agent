@@ -27,7 +27,6 @@ from scix.extract.chunk_pass.collection import (
 qdrant_client = pytest.importorskip("qdrant_client")
 from qdrant_client.http import models as qm  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------

@@ -100,8 +100,8 @@ class LinkCandidate:
 
     Tier 2 candidates are unresolved links: the writer
     (``scripts/link_tier2.py``) routes them through M13
-    ``resolve_entities`` or annotates the SQL with ``# noqa:
-    resolver-lint`` as a transitional exemption.
+    ``resolve_entities`` or annotates the SQL with
+    ``# resolver-lint: bypass`` as a transitional exemption.
     """
 
     entity_id: int

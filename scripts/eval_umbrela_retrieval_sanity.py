@@ -405,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\nOwn-corpus retrieval-quality sanity")
     print(f"  n_scored / n_failed : {metrics['n_scored']} / {metrics['n_failed']}")
-    print(f"  mean UMBRELA per slot:")
+    print("  mean UMBRELA per slot:")
     for slot in ("r1", "r3", "r10", "random"):
         print(f"    {slot:7s}: {metrics['mean_by_slot'][slot]:+.3f} (n={metrics['count_by_slot'][slot]})")
     print(f"  monotonic r1>=r3>=r10>=random : {metrics['all_monotonic']}")

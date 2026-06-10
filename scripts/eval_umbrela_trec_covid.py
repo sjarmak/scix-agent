@@ -82,8 +82,8 @@ class Pair:
 
 def load_trec_covid() -> tuple[dict[str, str], dict[str, tuple[str, str]], list[tuple[str, str, int]]]:
     """Pull queries, corpus (as {id: (title, text)}), and qrels rows."""
-    from huggingface_hub import hf_hub_download
     import pandas as pd
+    from huggingface_hub import hf_hub_download
 
     queries_pq = hf_hub_download(
         TREC_COVID_ID, "queries/queries-00000-of-00001.parquet", repo_type="dataset"

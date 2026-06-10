@@ -5,10 +5,8 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from scix.search import SearchResult, get_citation_context
 from scix.mcp_server import _dispatch_tool
+from scix.search import SearchResult, get_citation_context
 
 # ---------------------------------------------------------------------------
 # search.get_citation_context — unit tests with mocked DB

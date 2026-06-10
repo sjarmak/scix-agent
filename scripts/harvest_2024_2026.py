@@ -1,9 +1,10 @@
-import os
 import gzip
 import json
-import requests
+import os
 from datetime import datetime
 from time import sleep
+
+import requests
 
 # ─── CONFIG ────────────────────────────────────────────────────────────────
 API_KEY = os.environ["ADS_API_KEY"]

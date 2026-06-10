@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 
 from scix.db import get_connection
 from scix.link_entities import get_linking_progress, link_entities_batch
@@ -73,13 +72,13 @@ def main(argv: list[str] | None = None) -> None:
             dry_run=args.dry_run,
         )
 
-        print(f"\nLinking summary:")
+        print("\nLinking summary:")
         print(f"  Bibcodes processed: {summary['bibcodes_processed']}")
         print(f"  Links created:      {summary['links_created']}")
         print(f"  Skipped (no match): {summary['skipped_no_match']}")
 
         progress = get_linking_progress(conn)
-        print(f"\nOverall progress:")
+        print("\nOverall progress:")
         print(f"  Total bibcodes:   {progress['total_bibcodes']}")
         print(f"  Linked bibcodes:  {progress['linked_bibcodes']}")
         print(f"  Pending bibcodes: {progress['pending_bibcodes']}")

@@ -45,10 +45,8 @@ from scix.ir_metrics import (
     compute_retrieval_score,
 )
 from scix.search import (
-    SearchResult,
     hybrid_search,
     lexical_search,
-    rrf_fuse,
     vector_search,
 )
 

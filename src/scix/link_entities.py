@@ -259,7 +259,7 @@ def link_entities_batch(
 
         if not dry_run and insert_params:
             with conn.cursor() as cur:
-                # noqa: resolver-lint
+                # resolver-lint: bypass
                 # Layer-0 batch writer predates M13. u10 will route this
                 # through scix.resolve_entities; keep the direct write until
                 # then and flag it so ast_lint_resolver.py doesn't block CI.
@@ -270,7 +270,7 @@ def link_entities_batch(
                          match_method, evidence)
                     VALUES (%s, %s, %s, %s, %s, %s)
                     ON CONFLICT (bibcode, entity_id, link_type) DO NOTHING
-                    """,  # noqa: resolver-lint
+                    """,  # resolver-lint: bypass
                     insert_params,
                 )
             conn.commit()

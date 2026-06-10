@@ -8,7 +8,6 @@ reference[] array, and stores results in the citation_contexts table.
 from __future__ import annotations
 
 import bisect
-import json
 import logging
 import re
 import time
@@ -633,6 +632,8 @@ def process_paper(
     bibcode: str,
     body: str,
     references: list[str],
+    *,
+    ordered: bool = True,
 ) -> list[CitationContext]:
     """Extract and resolve citation contexts for a single paper.
 
@@ -641,6 +642,14 @@ def process_paper(
     Duplicate (target_bibcode, char_offset) pairs are de-duplicated so a
     single physical marker never produces two rows even if both extractors
     happen to fire on overlapping spans.
+
+    When ``ordered=False`` the references list is an unordered set (e.g.
+    assembled from ``citation_edges``, which does not store reference
+    position — ADR-011 Option B). Positional ``[N]`` resolution indexes
+    directly into the list, so running it against an unordered list would
+    silently resolve markers to wrong bibcodes; it is skipped entirely.
+    Author-year resolution matches by year prefix + surname initial and is
+    order-independent, so it always runs.
 
     Parameters
     ----------
@@ -667,7 +676,7 @@ def process_paper(
     sections = parse_sections(body)
 
     contexts: list[CitationContext] = []
-    if numbered_markers:
+    if numbered_markers and ordered:
         enriched = _enrich_with_sections(numbered_markers, sections)
         contexts.extend(resolve_citation_markers(enriched, references, bibcode))
     if author_year_markers:
@@ -700,11 +709,18 @@ def process_paper(
 _CONTEXT_TEXT_MAX_CHARS = 1000
 
 _SELECT_PAPERS_BASE = """
-    SELECT p.bibcode, p.body, p.raw
+    SELECT p.bibcode, p.body,
+           (
+               SELECT array_agg(ce.target_bibcode ORDER BY ce.target_bibcode)
+               FROM citation_edges ce
+               WHERE ce.source_bibcode = p.bibcode
+           ) AS references
     FROM papers p
     WHERE p.body IS NOT NULL
-      AND p.raw IS NOT NULL
-      AND p.raw::jsonb ? 'reference'
+      AND EXISTS (
+          SELECT 1 FROM citation_edges ce
+          WHERE ce.source_bibcode = p.bibcode
+      )
       AND NOT EXISTS (
           SELECT 1 FROM citation_contexts cc
           WHERE cc.source_bibcode = p.bibcode
@@ -846,23 +862,14 @@ def run_pipeline(
 
             batch: list[tuple[str, str, str, int, str | None, str | None]] = []
 
-            for bibcode, body, raw_val in cur:
-                # Parse references from raw JSONB
-                if isinstance(raw_val, str):
-                    try:
-                        raw_dict = json.loads(raw_val)
-                    except json.JSONDecodeError:
-                        continue
-                elif isinstance(raw_val, dict):
-                    raw_dict = raw_val
-                else:
+            for bibcode, body, refs in cur:
+                if not refs:
                     continue
 
-                refs = raw_dict.get("reference")
-                if not isinstance(refs, list):
-                    continue
-
-                contexts = process_paper(bibcode, body, refs)
+                # refs come from citation_edges (unordered — no
+                # ref_position column yet, ADR-011 Option B), so
+                # positional [N] resolution is disabled.
+                contexts = process_paper(bibcode, body, refs, ordered=False)
                 for ctx in contexts:
                     batch.append(
                         (

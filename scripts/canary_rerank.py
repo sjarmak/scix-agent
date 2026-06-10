@@ -457,6 +457,7 @@ def _bootstrap_pairs_from_db(seed_bibcodes: list[str]) -> list[Pair]:
     if src not in sys.path:
         sys.path.insert(0, src)
     from psycopg.rows import dict_row  # type: ignore[import-not-found]
+
     from scix.db import get_connection  # type: ignore[import-not-found]
 
     pairs: list[Pair] = []

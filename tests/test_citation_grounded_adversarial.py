@@ -29,7 +29,6 @@ from scix.citation_grounded import (
     set_embedder,
 )
 
-
 # ---------------------------------------------------------------------------
 # Deterministic embedder (shared with test_citation_grounded.py logic)
 # ---------------------------------------------------------------------------

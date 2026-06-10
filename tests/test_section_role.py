@@ -30,7 +30,6 @@ from scix.section_role import (
     classify_section_role,
 )
 
-
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "section_roles_50.jsonl"
 
 

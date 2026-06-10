@@ -12,7 +12,6 @@ from scix.eval.audit import (
     write_audit_report,
 )
 from scix.eval.wilson import wilson_95_ci
-
 from tests.helpers import get_test_dsn
 
 # ---------------------------------------------------------------------------
@@ -139,7 +138,7 @@ def _seed(conn) -> None:
                 eid = eids[i % len(eids)]
                 rows.append((bib, eid, f"m9_audit_tier{tier}", tier, 0.5))
         cur.executemany(
-            "INSERT INTO document_entities (bibcode, entity_id, link_type, tier, confidence) "  # noqa: resolver-lint
+            "INSERT INTO document_entities (bibcode, entity_id, link_type, tier, confidence) "  # resolver-lint: bypass
             "VALUES (%s, %s, %s, %s, %s) "
             "ON CONFLICT DO NOTHING",
             rows,
@@ -150,7 +149,7 @@ def _seed(conn) -> None:
 def _cleanup(conn) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            "DELETE FROM document_entities WHERE link_type LIKE 'm9_audit_tier%'"  # noqa: resolver-lint
+            "DELETE FROM document_entities WHERE link_type LIKE 'm9_audit_tier%'"  # resolver-lint: bypass
         )
         cur.execute("DELETE FROM entities WHERE source = 'm9_audit_fixture'")
         cur.execute(

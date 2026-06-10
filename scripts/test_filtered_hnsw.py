@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scix.db import get_connection
-from scix.search import SearchFilters, vector_search, configure_iterative_scan
+from scix.search import SearchFilters, vector_search
 
 
 def get_sample_embedding(conn, model_name: str = "specter2") -> tuple[str, list[float]]:

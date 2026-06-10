@@ -7,8 +7,7 @@ from datetime import datetime
 
 import psycopg
 import pytest
-
-from helpers import DSN, is_production_dsn
+from helpers import is_production_dsn
 
 from scix.entity_audit import (
     MergeEntry,

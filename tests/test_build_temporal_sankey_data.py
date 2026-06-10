@@ -16,7 +16,6 @@ from scripts.viz.build_temporal_sankey_data import (
     validate_sankey_data,
 )
 
-
 # ---------------------------------------------------------------------------
 # 5(1) — schema validation on a hand-built minimal dataset
 # ---------------------------------------------------------------------------

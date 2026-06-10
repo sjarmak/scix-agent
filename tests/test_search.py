@@ -18,16 +18,14 @@ from helpers import (
 )
 
 from scix.search import (
+    _LEXICAL_POOL_DEFAULT,
+    _TS_CONFIG_WHITELIST,
     SELECTIVITY_THRESHOLD,
     SearchFilters,
     SearchResult,
     _elapsed_ms,
     _estimate_filter_selectivity,
-    _filter_first_vector_search,
-    _LEXICAL_POOL_DEFAULT,
-    _model_has_embeddings,
     _resolve_lexical_pool,
-    _TS_CONFIG_WHITELIST,
     bibliographic_coupling,
     citation_chain,
     co_citation_analysis,

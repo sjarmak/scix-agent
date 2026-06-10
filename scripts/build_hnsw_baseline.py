@@ -38,7 +38,6 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
-from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict
 
 logging.basicConfig(

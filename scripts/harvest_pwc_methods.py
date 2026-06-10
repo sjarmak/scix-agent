@@ -9,7 +9,6 @@ and loads into entity_dictionary with entity_type='method', source='pwc'.
 from __future__ import annotations
 
 import argparse
-import io
 import logging
 import sys
 import time

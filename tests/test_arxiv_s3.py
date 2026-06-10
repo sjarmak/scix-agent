@@ -27,11 +27,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scix.sources.arxiv_s3 import (
-    ArxivS3Config,
     ArxivS3Client,
+    ArxivS3Config,
     ManifestEntry,
-    parse_manifest_xml,
     extract_arxiv_id_from_filename,
+    parse_manifest_xml,
 )
 
 # ---------------------------------------------------------------------------

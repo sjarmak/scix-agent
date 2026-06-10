@@ -25,7 +25,7 @@ _COPY_COLS = ", ".join(COLUMN_ORDER)
 # (citation counts, read counts, new references, etc.).
 _PAPER_STAGING_DDL = (
     "CREATE TEMP TABLE IF NOT EXISTS _paper_staging "
-    f"(LIKE papers INCLUDING DEFAULTS) ON COMMIT DELETE ROWS"
+    "(LIKE papers INCLUDING DEFAULTS) ON COMMIT DELETE ROWS"
 )
 _PAPER_STAGING_COPY = f"COPY _paper_staging ({_COPY_COLS}) FROM STDIN"
 

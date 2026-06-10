@@ -24,10 +24,10 @@ import pytest
 
 from scix.mcp_server import (
     _DEPRECATED_ALIASES,
+    EXPECTED_TOOLS,
     _dispatch_consolidated,
     _dispatch_tool,
     _expected_tool_set,
-    EXPECTED_TOOLS,
 )
 from scix.search import SearchResult
 

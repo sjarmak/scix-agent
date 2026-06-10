@@ -40,7 +40,6 @@ import link_catchup  # noqa: E402
 import link_incremental  # noqa: E402
 
 from scix.circuit_breaker import CircuitBreaker  # noqa: E402
-
 from tests.helpers import get_test_dsn  # noqa: E402
 
 # ---------------------------------------------------------------------------

@@ -21,11 +21,9 @@ entity_aliases) and logs harvest runs to harvest_runs.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
 

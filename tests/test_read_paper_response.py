@@ -16,7 +16,6 @@ import pytest
 from scix.read_paper_response import MAX_SNIPPET_CHARS, build_read_paper_response
 from scix.search import LATEX_DERIVED_SOURCES
 
-
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------

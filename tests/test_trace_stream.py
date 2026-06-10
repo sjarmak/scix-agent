@@ -255,7 +255,6 @@ def test_sse_endpoint_serves_event_stream() -> None:
 
 
 import pytest  # noqa: E402  — kept with ring-buffer tests
-from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 

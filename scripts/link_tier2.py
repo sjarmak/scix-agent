@@ -29,7 +29,7 @@ Usage::
     python scripts/link_tier2.py --allow-prod --text-source body --workers 16
 
 Transitional exemption: all ``INSERT INTO document_entities`` statements
-in this file are marked ``# noqa: resolver-lint``. The real M13 resolver
+in this file are marked ``# resolver-lint: bypass``. The real M13 resolver
 (u03) only owns writes from within ``src/``; scripts under ``scripts/``
 are outside the lint's scope by design, so the annotation is for parity
 and discoverability only.
@@ -419,7 +419,7 @@ _INSERT_SQL = """
         %(confidence)s, %(match_method)s, %(evidence)s::jsonb
     )
     ON CONFLICT (bibcode, entity_id, link_type, tier) DO NOTHING
-"""  # noqa: resolver-lint (transitional; tier-2 script owns its own writes per u09)
+"""  # resolver-lint: bypass (transitional; tier-2 script owns its own writes per u09)
 
 _DEMOTE_SQL = """
     UPDATE entities
@@ -616,7 +616,7 @@ def run_tier2_link(
                             continue
 
                         insert_cur.execute(
-                            _INSERT_SQL,  # noqa: resolver-lint
+                            _INSERT_SQL,  # resolver-lint: bypass
                             {
                                 "bibcode": bibcode,
                                 "entity_id": entity_id,

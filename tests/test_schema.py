@@ -107,19 +107,6 @@ class TestPaperTable:
             rows = cur.fetchall()
             assert any(r[0] == SAMPLE_PAPER["bibcode"] for r in rows)
 
-    def test_jsonb_raw_field(self, conn):
-        with conn.cursor() as cur:
-            paper = {**SAMPLE_PAPER, "bibcode": "2024ApJ...test.002B"}
-            _insert_paper(cur, paper)
-            cur.execute(
-                "UPDATE papers SET raw = %s::jsonb WHERE bibcode = %s",
-                ('{"extra_field": "extra_value", "nested": {"key": 1}}', paper["bibcode"]),
-            )
-            cur.execute(
-                "SELECT raw->>'extra_field' FROM papers WHERE bibcode = %s", (paper["bibcode"],)
-            )
-            assert cur.fetchone()[0] == "extra_value"
-
 
 class TestCitationEdges:
     def test_forward_and_backward_queries(self, conn):

@@ -35,7 +35,6 @@ from scripts.viz.project_embeddings_umap import (
     validate_projection_payload,
 )
 
-
 # ---------------------------------------------------------------------------
 # 6(a) — synthetic end-to-end with umap-learn
 # ---------------------------------------------------------------------------

@@ -16,7 +16,6 @@ from fastapi.testclient import TestClient
 
 from scix.viz.server import app
 
-
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _HTML = _REPO_ROOT / "web" / "viz" / "section_coverage.html"
 _JS = _REPO_ROOT / "web" / "viz" / "section_coverage.js"

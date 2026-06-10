@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from scix.mcp_server import _dispatch_tool
 from scix.search import (
     SearchResult,

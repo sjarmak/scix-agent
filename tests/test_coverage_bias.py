@@ -6,14 +6,13 @@ No database required. Matplotlib is mocked so tests pass without it installed.
 
 from __future__ import annotations
 
+# Import the module under test via sys.path manipulation matching the script convention
+import sys
 import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-# Import the module under test via sys.path manipulation matching the script convention
-import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))

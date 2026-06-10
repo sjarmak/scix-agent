@@ -26,7 +26,6 @@ from scix.extract.chunk_pass.section_norm import (
     normalize_heading,
 )
 
-
 # ---------------------------------------------------------------------------
 # Criterion 1: module exists & is importable
 # ---------------------------------------------------------------------------

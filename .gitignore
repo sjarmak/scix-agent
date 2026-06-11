@@ -105,3 +105,5 @@ CLAUDE.local.md
 
 # prd-build orchestration artifacts
 .prd-build/
+.qdrant_gpu_storage/
+.qdrant_v2_storage/

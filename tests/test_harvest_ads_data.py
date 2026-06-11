@@ -7,11 +7,11 @@ database with migrations 012 and 013 applied.
 
 from __future__ import annotations
 
+import sys
+
 import psycopg
 import pytest
 from helpers import DSN, is_production_dsn
-
-import sys
 
 sys.path.insert(0, "scripts")
 sys.path.insert(0, "src")
@@ -23,6 +23,7 @@ from harvest_ads_data_field import (  # noqa: E402
     fetch_data_sources,
     main,
 )
+
 from scix.dictionary import lookup  # noqa: E402
 
 # ---------------------------------------------------------------------------

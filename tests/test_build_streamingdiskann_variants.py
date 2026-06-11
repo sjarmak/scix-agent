@@ -19,7 +19,6 @@ import pytest
 
 from scripts import build_streamingdiskann_variants as mod
 
-
 # ---------------------------------------------------------------------------
 # Production-DSN refusal
 # ---------------------------------------------------------------------------

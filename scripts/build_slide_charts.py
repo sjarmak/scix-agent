@@ -1,7 +1,8 @@
 """Generate matplotlib charts for the slide deck."""
 from pathlib import Path
-import matplotlib.pyplot as plt
+
 import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
 import numpy as np
 
 OUT = Path("/home/ds/projects/scix_experiments/docs/slides_assets")

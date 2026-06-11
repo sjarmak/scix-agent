@@ -27,12 +27,11 @@ import math
 import time
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
 from scix import search
-from scix.search import SearchResult, search_within_paper
+from scix.search import search_within_paper
 from scix.section_parser import parse_sections
 
 # ---------------------------------------------------------------------------

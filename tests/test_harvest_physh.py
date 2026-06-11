@@ -20,7 +20,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from harvest_physh import (
-    PHYSH_URL,
     TECHNIQUES_FACET_ID,
     download_physh,
     parse_physh_techniques,

@@ -31,7 +31,6 @@ from scix import mcp_server
 from scix.mcp_server import _dispatch_tool, _reset_default_reranker_cache
 from scix.search import SearchResult
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

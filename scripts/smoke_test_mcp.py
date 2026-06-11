@@ -19,8 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 from scix.db import get_connection
-from scix.mcp_server import _dispatch_tool, _session_state
-
+from scix.mcp_server import _dispatch_tool
 
 # ---------------------------------------------------------------------------
 # Test data

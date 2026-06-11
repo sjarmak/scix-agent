@@ -30,12 +30,12 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from scix.db import is_production_dsn  # noqa: E402
 from scix.sources.s2_datasets import (  # noqa: E402
+    CitationIntentMerger,
+    ProductionGuardError,
     S2ClientConfig,
     S2DatasetsClient,
     S2HealthPing,
     S2OrcBodyNormalizer,
-    CitationIntentMerger,
-    ProductionGuardError,
     normalize_s2orc_body,
     parse_citation_intent,
     prune_s2ag_metadata,
@@ -124,7 +124,7 @@ class TestS2DatasetsClient:
         }
         mock_response.status_code = 200
 
-        with patch.object(client._http, "get", return_value=mock_response) as mock_get:
+        with patch.object(client._http, "get", return_value=mock_response):
             urls = client.get_dataset_partitions("s2orc", release_id="2026-04-07")
             assert len(urls) == 2
             assert all(u.startswith("https://") for u in urls)

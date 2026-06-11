@@ -43,11 +43,11 @@ SCRIPTS_DIR = REPO_ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from scix.circuit_breaker import CircuitBreaker  # noqa: E402
-from scix.db import DEFAULT_DSN, get_connection  # noqa: E402
-
 import link_incremental  # noqa: E402
 import link_tier2  # noqa: E402
+
+from scix.circuit_breaker import CircuitBreaker  # noqa: E402
+from scix.db import DEFAULT_DSN, get_connection  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

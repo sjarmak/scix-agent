@@ -1,11 +1,11 @@
 """Unit tests for the consolidated MCP server (no database or MCP SDK required).
 
 Covers:
-- 15 consolidated tools dispatch correctly (13 baseline + claim_blame +
+- Consolidated tool handlers dispatch correctly (baseline + claim_blame +
   find_replications per PRD MH-4)
 - Deprecated aliases return deprecated:true + use_instead
 - Implicit session tracking (focused papers)
-- list_tools() returns exactly 15 tools
+- list_tools() returns the EXPECTED_TOOLS set minus _HIDDEN_TOOLS
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from scix.mcp_server import (
     _parse_filters,
     _result_to_json,
     _session_state,
+    _vector_index_names,
 )
 
 # ---------------------------------------------------------------------------
@@ -1056,6 +1057,39 @@ class TestFindGaps:
         assert result["total"] == 0
         assert "message" in result
 
+    @patch("scix.search.concept_search")
+    def test_auto_seed_failure_logs_debug_and_falls_through(
+        self, mock_concept: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """When concept_search auto-seed raises, find_gaps logs at DEBUG with
+        exc_info and falls through to the no-papers branch (bead 5z8a)."""
+        mock_concept.side_effect = RuntimeError("concept_search boom")
+
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.fetchall.return_value = []
+        cur.__enter__ = lambda self: self
+        cur.__exit__ = MagicMock(return_value=False)
+        conn.cursor.return_value = cur
+
+        with caplog.at_level("DEBUG", logger="scix.mcp_server"):
+            result = json.loads(
+                _dispatch_tool(conn, "find_gaps", {"query": "dark matter halos"})
+            )
+
+        # Graceful fall-through to the no-papers branch.
+        assert result["total"] == 0
+        assert "message" in result
+
+        # The swallowed exception was logged at DEBUG with a traceback.
+        seed_logs = [
+            r
+            for r in caplog.records
+            if "auto-seed" in r.message and r.levelname == "DEBUG"
+        ]
+        assert seed_logs, f"expected DEBUG auto-seed log; got: {[r.message for r in caplog.records]}"
+        assert seed_logs[0].exc_info is not None, "auto-seed log must carry exc_info"
+
 
 # ---------------------------------------------------------------------------
 # AC16: session tools NOT in list_tools
@@ -1083,7 +1117,6 @@ class TestDeprecatedAliases:
     @patch("scix.search.lexical_search")
     def test_semantic_search_alias(self, mock_lex: MagicMock) -> None:
         """AC17: old 'semantic_search' returns deprecated:true."""
-        from scix.search import SearchResult
 
         # semantic_search will check HNSW index, so mock it to fallback
         with patch("scix.mcp_server._hnsw_index_exists", return_value=False):
@@ -1193,6 +1226,28 @@ class TestHnswIndexGuard:
     def test_index_name_convention(self) -> None:
         assert _hnsw_index_name("indus") == "idx_embed_hnsw_indus"
         assert _hnsw_index_name("specter2") == "idx_embed_hnsw_specter2"
+
+    def test_vector_index_names_includes_hnsw_and_diskann(self) -> None:
+        # The dense lane is served by either the legacy HNSW index or the
+        # pgvectorscale DiskANN index; the gate must accept both.
+        assert _vector_index_names("indus") == (
+            "idx_embed_hnsw_indus",
+            "idx_embed_diskann_indus",
+        )
+
+    def test_gate_queries_both_index_names(self) -> None:
+        # Regression: after the DiskANN cutover the gate must look for the
+        # diskann index name too, not just HNSW (mcp_server uses indexname=ANY).
+        _hnsw_index_cache.pop("diskonly", None)
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = (1,)
+        mock_conn = MagicMock()
+        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        assert _hnsw_index_exists(mock_conn, "diskonly") is True
+        # the candidate-name list passed to the query carries both names
+        passed = mock_cursor.execute.call_args[0][1][0]
+        assert "idx_embed_diskann_diskonly" in passed
+        assert "idx_embed_hnsw_diskonly" in passed
 
     def _mock_conn_with_index(self, *, exists: bool) -> MagicMock:
         mock_cursor = MagicMock()

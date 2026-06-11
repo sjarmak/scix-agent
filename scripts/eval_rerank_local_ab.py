@@ -34,7 +34,6 @@ import argparse
 import json
 import logging
 import math
-import os
 import platform
 import re
 import sys
@@ -850,11 +849,11 @@ def write_outputs(
         "`citation_edges`."
     )
     md_lines.append(
-        f"- Note: this script reads `pe.embedding` directly rather than "
-        f"calling `scix.search.hybrid_search` because that path requires "
-        f"the halfvec(768) shadow column `pe.embedding_hv` (migration 053) "
-        f"which is not yet present on the production database. RRF fusion "
-        f"and lexical search remain unchanged."
+        "- Note: this script reads `pe.embedding` directly rather than "
+        "calling `scix.search.hybrid_search` because that path requires "
+        "the halfvec(768) shadow column `pe.embedding_hv` (migration 053) "
+        "which is not yet present on the production database. RRF fusion "
+        "and lexical search remain unchanged."
     )
     md_lines.append("")
 

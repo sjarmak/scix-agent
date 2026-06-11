@@ -43,12 +43,9 @@ import argparse
 import gzip
 import json
 import logging
-import os
 import pathlib
 import sys
 from typing import Iterable, Iterator, Optional
-
-import psycopg
 
 from scix.db import DEFAULT_DSN, get_connection
 

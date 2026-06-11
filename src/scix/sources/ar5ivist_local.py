@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from scix.db import DEFAULT_DSN, is_production_dsn, redact_dsn
-from scix.sources.ar5iv import Ar5ivParser, _ARXIV_ID_RE
+from scix.sources.ar5iv import _ARXIV_ID_RE, Ar5ivParser
 
 logger = logging.getLogger(__name__)
 

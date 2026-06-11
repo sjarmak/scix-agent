@@ -2,8 +2,10 @@
 
 This module is a pure library: no DB access, no logging of side effects. It
 takes pre-fetched :class:`EntityRow` records, builds a pickleable
-:class:`ahocorasick.Automaton`, and exposes :func:`link_abstract` which scans
-a single abstract string and returns :class:`LinkCandidate` records.
+:class:`ahocorasick.Automaton`, and exposes :func:`link_text` which scans
+any text blob (abstract, paper body, section, etc.) and returns
+:class:`LinkCandidate` records. ``link_abstract`` remains as a back-compat
+alias for callers that predate the ``link_text`` rename.
 
 Ambiguity handling
 ------------------
@@ -98,8 +100,8 @@ class LinkCandidate:
 
     Tier 2 candidates are unresolved links: the writer
     (``scripts/link_tier2.py``) routes them through M13
-    ``resolve_entities`` or annotates the SQL with ``# noqa:
-    resolver-lint`` as a transitional exemption.
+    ``resolve_entities`` or annotates the SQL with
+    ``# resolver-lint: bypass`` as a transitional exemption.
     """
 
     entity_id: int
@@ -225,17 +227,18 @@ def build_automaton(entities: Iterable[EntityRow]) -> AhocorasickAutomaton:
     return automaton
 
 
-def link_abstract(
-    abstract: str,
+def link_text(
+    text: str,
     automaton: AhocorasickAutomaton,
     disambiguator: Optional[Disambiguator] = None,
 ) -> list[LinkCandidate]:
-    """Return every entity mention in ``abstract`` honoring ambiguity rules.
+    """Return every entity mention in ``text`` honoring ambiguity rules.
 
     Parameters
     ----------
-    abstract
-        Abstract text to scan. Empty / ``None``-safe.
+    text
+        Text to scan — abstract, body, or any other free-form blob.
+        Empty / ``None``-safe.
     automaton
         Built via :func:`build_automaton`.
     disambiguator
@@ -252,15 +255,15 @@ def link_abstract(
         - If the matched surface is itself a long-form, fire immediately
           (the long-form IS the disambiguator).
         - Otherwise, fire only when (a) a long-form alias of the same
-          entity is co-present in the abstract, OR (b) ``disambiguator
-          (entity_id, surface, abstract)`` returns True.
+          entity is co-present in the text, OR (b) ``disambiguator
+          (entity_id, surface, text)`` returns True.
     """
-    if not abstract:
+    if not text:
         return []
     if len(automaton) == 0:
         return []
 
-    abstract_lower = abstract.lower()
+    abstract_lower = text.lower()
 
     # Single automaton pass: collect every match AND note which entities
     # have a long-form surface co-present. O(n + matches).
@@ -285,7 +288,7 @@ def link_abstract(
                 if disambiguator is None:
                     continue
                 try:
-                    if not disambiguator(entity_id, payload.surface, abstract):
+                    if not disambiguator(entity_id, payload.surface, text):
                         continue
                 except Exception:
                     # A broken classifier must never take out the pipeline:
@@ -308,6 +311,24 @@ def link_abstract(
     return candidates
 
 
+# Back-compat alias. ``link_abstract`` was the original name when this
+# module only scanned abstracts; ``link_text`` reflects the actual
+# text-agnostic semantics. Existing callers (section_linker.py, etc.)
+# still import ``link_abstract`` and must keep working.
+def link_abstract(
+    abstract: str,
+    automaton: AhocorasickAutomaton,
+    disambiguator: Optional[Disambiguator] = None,
+) -> list[LinkCandidate]:
+    """Back-compat alias for :func:`link_text`.
+
+    Prefer :func:`link_text` in new code. This wrapper preserves the
+    original parameter name (``abstract``) for callers that pass it as a
+    keyword argument.
+    """
+    return link_text(abstract, automaton, disambiguator)
+
+
 __all__ = [
     "AhocorasickAutomaton",
     "DISAMBIGUATOR_MIN_CHARS",
@@ -318,4 +339,5 @@ __all__ = [
     "LinkCandidate",
     "build_automaton",
     "link_abstract",
+    "link_text",
 ]

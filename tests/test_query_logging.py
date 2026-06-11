@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -91,6 +91,54 @@ class TestLogQuery:
 
         # Should not raise
         _log_query(mock_conn, "test", {}, 0.0, True, None)
+
+    def test_log_query_caps_oversized_list_params(self) -> None:
+        """List-typed args longer than the canonical cap are truncated in params_json."""
+        from scix.mcp_server import MAX_WORKING_SET_BIBCODES
+
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        big = [f"bib{i}" for i in range(MAX_WORKING_SET_BIBCODES + 50)]
+        params = {"bibcodes": big, "query": "q"}
+
+        _log_query(mock_conn, "temporal_evolution", params, 1.0, True, None)
+
+        logged = json.loads(mock_cur.execute.call_args[0][1][1])
+        assert len(logged["bibcodes"]) == MAX_WORKING_SET_BIBCODES
+        assert logged["bibcodes"] == big[:MAX_WORKING_SET_BIBCODES]
+        assert logged["query"] == "q"
+
+    def test_log_query_does_not_mutate_caller_params(self) -> None:
+        """Capping must build a new dict, never mutate the caller's args."""
+        from scix.mcp_server import MAX_WORKING_SET_BIBCODES
+
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        big = [f"bib{i}" for i in range(MAX_WORKING_SET_BIBCODES + 50)]
+        params = {"bibcodes": big}
+
+        _log_query(mock_conn, "find_gaps", params, 1.0, True, None)
+
+        assert len(params["bibcodes"]) == MAX_WORKING_SET_BIBCODES + 50
+
+    def test_log_query_preserves_short_lists(self) -> None:
+        """Lists at or under the cap pass through unchanged."""
+        mock_conn = MagicMock()
+        mock_cur = MagicMock()
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cur)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        params = {"bibcodes": ["a", "b", "c"]}
+        _log_query(mock_conn, "synthesize_findings", params, 1.0, True, None)
+
+        logged = json.loads(mock_cur.execute.call_args[0][1][1])
+        assert logged["bibcodes"] == ["a", "b", "c"]
 
 
 # ---------------------------------------------------------------------------

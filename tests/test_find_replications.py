@@ -19,13 +19,11 @@ import pytest
 from scix.find_replications import (
     DEFAULT_INTENT_WEIGHT,
     INTENT_WEIGHTS,
-    Citation,
     _detect_hedge,
     _infer_relation,
     find_replications,
 )
 from scix.research_scope import ResearchScope
-
 
 # ---------------------------------------------------------------------------
 # Fake DB plumbing

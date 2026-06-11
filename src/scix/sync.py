@@ -317,7 +317,6 @@ def fill_gaps(
 
     Returns list of (year, db_count, api_count) for years with gaps.
     """
-    import psycopg
 
     from scix.db import get_connection
 

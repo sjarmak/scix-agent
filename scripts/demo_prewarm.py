@@ -34,7 +34,6 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 from scix.db import get_connection
 from scix.mcp_server import _dispatch_tool
 
-
 DEMO_QUERIES = [
     "Galaxies",
     "p53 tumor suppressor",

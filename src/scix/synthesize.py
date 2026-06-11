@@ -139,6 +139,24 @@ INTENT_TO_SECTION: Mapping[str, str] = {
     "result_comparison": "results",
 }
 
+# Single source of truth for the ``cited_papers[].signal_used`` enum
+# (bead qxcp). Both the synthesize module docstring and the MCP tool
+# description in src/scix/mcp_server.py derive their prose from this
+# tuple; adding a new signal value is a one-place change.
+#
+# Values are listed in agent-facing precedence order (Tier 1 → Tier 3):
+#   * ``override`` — caller pinned the section via section_overrides.
+#   * ``intent_modal`` — assigned from a modal citation_contexts.intent.
+#   * ``community_fallthrough`` — assigned via weighted community share.
+#   * ``citation_count_fallback`` — Tier 3 backfill from unattributed
+#     pool to keep empty sections non-empty (bead a2bk).
+SIGNAL_USED_VALUES: tuple[str, ...] = (
+    "override",
+    "intent_modal",
+    "community_fallthrough",
+    "citation_count_fallback",
+)
+
 # Maximum number of bibcodes we will accept in a single call. Mirrors
 # find_gaps' implicit cap (200) so behaviour is consistent across tools.
 MAX_WORKING_SET_BIBCODES = 200
@@ -157,8 +175,8 @@ def _classify_share_tier(share: float) -> ShareTier:
     """Classify a working-set community share into a share-tier label.
 
     Pure arithmetic — no DB, no model. The thresholds live in the
-    module-level constants :data:`_CORE_SHARE_THRESHOLD` and
-    :data:`_SUPPORTING_SHARE_THRESHOLD` so they're trivial to retune.
+    module-level constants ``_CORE_SHARE_THRESHOLD`` (0.15) and
+    ``_SUPPORTING_SHARE_THRESHOLD`` (0.05) so they're trivial to retune.
     """
     if share >= _CORE_SHARE_THRESHOLD:
         return "core"
@@ -186,7 +204,7 @@ class SectionBucket:
     """
 
     name: str
-    cited_papers: list[dict[str, Any]] = field(default_factory=list)
+    cited_papers: tuple[dict[str, Any], ...] = ()
     theme_summary: str = ""
     theme: SectionTheme = field(
         default_factory=lambda: SectionTheme(communities=[], top_papers_by_citation=[])
@@ -197,8 +215,8 @@ class SectionBucket:
 class SynthesisResult:
     """Top-level result returned by :func:`synthesize_findings`."""
 
-    sections: list[SectionBucket]
-    unattributed_bibcodes: list[str]
+    sections: tuple[SectionBucket, ...]
+    unattributed_bibcodes: tuple[str, ...]
     # int counters plus dict[str, int] for fallback_pulled_per_section.
     coverage: dict[str, Any]
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -385,18 +403,9 @@ def synthesize_findings(
 
     if not bibcodes:
         return SynthesisResult(
-            sections=[],
-            unattributed_bibcodes=[],
-            coverage={
-                "total_bibcodes": 0,
-                "assigned_bibcodes": 0,
-                "unattributed_bibcodes": 0,
-                "intent_assigned_bibcodes": 0,
-                "community_assigned_bibcodes": 0,
-                "override_assigned_bibcodes": 0,
-                "fallback_pulled_bibcodes": 0,
-                "fallback_pulled_per_section": {name: 0 for name in sections_list},
-            },
+            sections=(),
+            unattributed_bibcodes=(),
+            coverage=_empty_coverage_block(sections_list),
             metadata={
                 "message": (
                     "Empty working set. Pass working_set_bibcodes or "
@@ -480,6 +489,27 @@ def _prepare_bibcodes(raw: Sequence[str] | None) -> list[str]:
     return out
 
 
+def _empty_coverage_block(sections: Sequence[str]) -> dict[str, Any]:
+    """Build the canonical empty-coverage shape (bead ykcx).
+
+    Single source of truth for the coverage dict's key set: both the
+    empty-working-set early return in :func:`synthesize_findings` and
+    the normal-path assembly call this so that adding a new coverage
+    key is a one-place change. Returns a fresh dict on each call —
+    callers freely mutate the per-section sub-dict.
+    """
+    return {
+        "total_bibcodes": 0,
+        "assigned_bibcodes": 0,
+        "unattributed_bibcodes": 0,
+        "intent_assigned_bibcodes": 0,
+        "community_assigned_bibcodes": 0,
+        "override_assigned_bibcodes": 0,
+        "fallback_pulled_bibcodes": 0,
+        "fallback_pulled_per_section": {name: 0 for name in sections},
+    }
+
+
 # ---------------------------------------------------------------------------
 # DB queries (each kept in its own small function for readability)
 # ---------------------------------------------------------------------------
@@ -503,15 +533,6 @@ def _fetch_paper_metadata(
     bead tq0t) is sourced verbatim from ``papers.first_author``;
     production coverage is high but a small number of legacy rows have
     it as NULL.
-
-    Production rows always return 8 columns from the SELECT below; the
-    ``len(row) > 5/6/7`` guards exist *only* to keep pre-4la8/pre-tq0t
-    short-tuple test fixtures working (the test suite uses 5-tuples in
-    older suites, 7-tuples in TestSectionTheme, and 8-tuples in
-    TestAdditiveGroundingFields). Migrating those fixtures to 8-tuples
-    is tracked as bead k27h; once done, drop the guards. Do NOT take
-    inspiration from these guards for new code — the SELECT contract
-    guarantees the column count.
 
     The full ``abstract`` string is stashed under the ``abstract`` key
     (in addition to the truncated ``abstract_snippet``) so that
@@ -540,12 +561,9 @@ def _fetch_paper_metadata(
         bibcode = row[0]
         abstract = row[3] or ""
         citation_count = int(row[4])  # COALESCE in SQL guarantees non-NULL
-        # Fixture-compat guards: see docstring above. Production rows
-        # always return 8 columns; remove these once the legacy
-        # short-tuple test fixtures are migrated (bead k27h).
-        arxiv_class: list[str] = list(row[5]) if len(row) > 5 and row[5] else []
-        keywords: list[str] = list(row[6]) if len(row) > 6 and row[6] else []
-        first_author: str | None = row[7] if len(row) > 7 else None
+        arxiv_class: list[str] = list(row[5]) if row[5] else []
+        keywords: list[str] = list(row[6]) if row[6] else []
+        first_author: str | None = row[7]
         out[bibcode] = {
             "bibcode": bibcode,
             "title": row[1],
@@ -639,38 +657,54 @@ def _fetch_citation_excerpts(
 
     One row in ``citation_contexts`` per (source -> target) citation
     incident. Bead tq0t surfaces up to
-    :data:`_CITATION_EXCERPTS_MAX_PER_PAPER` rows per paper so the agent
+    ``_CITATION_EXCERPTS_MAX_PER_PAPER`` (3) rows per paper so the agent
     can ground bucket assignments on actual citing-sentence evidence.
 
-    Determinism: ORDER BY (target_bibcode ASC, intent ASC, source_bibcode
-    ASC, char_offset ASC NULLS LAST) so repeated calls return the same
-    excerpts in the same order. The leading target_bibcode key groups
-    rows contiguously per target so the cap-3 logic in this function can
-    use a simple per-target counter. Filters out rows with NULL intent
-    (they carry no signal for the synthesise output and are excluded
-    from intent-modal bucketing upstream).
+    Determinism: the per-target ORDER BY (intent ASC, source_bibcode ASC,
+    char_offset ASC NULLS LAST) returns the same excerpts in the same
+    order on repeated calls. Filters out rows with NULL intent (they
+    carry no signal for the synthesise output and are excluded from
+    intent-modal bucketing upstream).
 
     Implementation notes:
-      * One query, one IN/ANY filter, bounded by the working-set cap
-        (200 bibcodes).
-      * Top-K sliced in Python rather than via SQL ROW_NUMBER —
-        simpler, and the row count for a 200-bibcode working set is
-        tiny in practice.
+      * SQL-level bound (bead e8ac): the cap-3 slice is enforced
+        inside SQL via ``ROW_NUMBER() OVER (PARTITION BY target_bibcode
+        ORDER BY ...)`` filtered to ``rn <= 3`` so per-call row transfer
+        is bounded at ``len(bibcodes) * _CITATION_EXCERPTS_MAX_PER_PAPER``
+        (≤ 600 rows for a 200-bibcode working set) regardless of how
+        many citation_contexts rows the targets actually have. Important
+        for the post-79n.1 row-growth world (200-300M citation_contexts
+        rows), where a single mega-cited target could otherwise pull
+        tens of thousands of rows into Python before the in-process
+        cap applied — and a flat ``LIMIT N`` would mis-distribute rows
+        toward the highest-cited target, starving others.
     """
     sql = """
         SELECT target_bibcode, context_text, intent, source_bibcode
-        FROM citation_contexts
-        WHERE target_bibcode = ANY(%s)
-          AND intent IS NOT NULL
+        FROM (
+            SELECT
+                target_bibcode,
+                context_text,
+                intent,
+                source_bibcode,
+                ROW_NUMBER() OVER (
+                    PARTITION BY target_bibcode
+                    ORDER BY intent ASC,
+                             source_bibcode ASC,
+                             char_offset ASC NULLS LAST
+                ) AS rn
+            FROM citation_contexts
+            WHERE target_bibcode = ANY(%s)
+              AND intent IS NOT NULL
+        ) ranked
+        WHERE rn <= %s
         ORDER BY target_bibcode ASC,
-                 intent ASC,
-                 source_bibcode ASC,
-                 char_offset ASC NULLS LAST
+                 rn ASC
     """
     out: dict[str, list[dict[str, Any]]] = {}
     try:
         with conn.cursor() as cur:
-            cur.execute(sql, (list(bibcodes),))
+            cur.execute(sql, (list(bibcodes), _CITATION_EXCERPTS_MAX_PER_PAPER))
             rows = cur.fetchall()
     except psycopg.Error as exc:
         # Bead vm1r: see _fetch_paper_metadata for rationale.
@@ -679,8 +713,6 @@ def _fetch_citation_excerpts(
     for row in rows:
         target = row[0]
         bucket = out.setdefault(target, [])
-        if len(bucket) >= _CITATION_EXCERPTS_MAX_PER_PAPER:
-            continue  # cap reached; skip the rest for this target
         bucket.append(
             {
                 "context_text": row[1],
@@ -840,6 +872,22 @@ _TITLE_TOKEN_STOPWORDS: Final[frozenset[str]] = frozenset(
         "use",
         "used",
         "new",
+        # High-frequency, low-information modifiers commonly seen in
+        # scientific titles (e.g. "low-mass stars", "high-redshift
+        # galaxies", "two-body problem"). Without these, the
+        # title-token keyword fallback in _summarize_section_theme
+        # surfaces them as top keywords for partitions where the
+        # underlying physics is what the user actually wants.
+        "low",
+        "high",
+        "one",
+        "two",
+        "three",
+        "all",
+        "first",
+        "large",
+        "small",
+        "non",
     }
 )
 
@@ -880,7 +928,7 @@ def _theme_for(
 
     ``communities`` is sorted by ``paper_count_in_section`` desc
     (tiebreak: ``community_id`` asc) and capped at
-    :data:`_THEME_MAX_COMMUNITIES`. Each entry carries
+    ``_THEME_MAX_COMMUNITIES`` (3). Each entry carries
     ``community_id``, ``label``, ``paper_count_in_section``,
     ``top_arxiv_classes`` (Counter over the section's papers' arxiv
     arrays, top N), and ``top_keywords`` (Counter over keywords, with
@@ -888,7 +936,7 @@ def _theme_for(
 
     ``top_papers_by_citation`` is the section's papers sorted by
     ``citation_count`` desc (tiebreak: ``bibcode`` asc) and capped at
-    :data:`_THEME_MAX_TOP_PAPERS`.
+    ``_THEME_MAX_TOP_PAPERS`` (3).
 
     Pure aggregation — no DB, no model. Empty section returns
     ``{"communities": [], "top_papers_by_citation": []}`` (no crash).
@@ -921,23 +969,24 @@ def _theme_for(
             for ax in meta.get("arxiv_class") or []:
                 if isinstance(ax, str) and ax:
                     arxiv_counter[ax] += 1
-            for kw in meta.get("keywords") or []:
-                if isinstance(kw, str) and kw:
-                    keyword_counter[kw.lower()] += 1
-        # Title-token fallback when no keyword data is available across
-        # the community's section papers (papers.keywords is NULL on
-        # ~52% of prod rows per the labels-pipeline note in CLAUDE.md).
-        #
-        # Known limitation: this fires only when *all* members have empty
-        # `keywords`. Mixed-coverage communities (some papers have
-        # keywords, others don't) skip the fallback entirely — the
-        # `top_keywords` then reflect only the keyword-bearing minority.
-        # That asymmetry is acceptable for now (the keyword signal is
-        # advisory metadata, not load-bearing for routing) but worth
-        # revisiting if `papers.keywords` coverage changes materially.
-        if not keyword_counter:
-            for member in members:
-                meta = paper_meta.get(member, {})
+            # Per-paper title-token fallback (bead kmyf). Each member
+            # contributes either its keyword array (if any non-empty
+            # entries) OR its title tokens — not both. The previous
+            # all-or-nothing fallback fired only when every member had
+            # empty ``keywords``, so mixed-coverage communities (typical
+            # on prod where ~52% of papers.keywords is NULL) silently
+            # contributed zero signal from the no-keyword half. Per-paper
+            # routing recovers that signal so ``top_keywords`` reflects
+            # the whole community, not just the keyword-bearing minority.
+            paper_keywords = [
+                kw.lower()
+                for kw in (meta.get("keywords") or [])
+                if isinstance(kw, str) and kw
+            ]
+            if paper_keywords:
+                for kw in paper_keywords:
+                    keyword_counter[kw] += 1
+            else:
                 for tok in _title_tokens(meta.get("title")):
                     keyword_counter[tok] += 1
         communities_payload.append(
@@ -1003,7 +1052,7 @@ def _excerpts_for(
                      ``citation_contexts`` for this target.
       * ``list[dict]`` -> kwarg on, paper is intent_modal, and rows
                      exist (capped upstream by
-                     :data:`_CITATION_EXCERPTS_MAX_PER_PAPER`).
+                     ``_CITATION_EXCERPTS_MAX_PER_PAPER`` (3)).
     """
     if excerpts_map is None:
         return None
@@ -1147,30 +1196,31 @@ def _assemble_sections(
         out_sections.append(
             SectionBucket(
                 name=name,
-                cited_papers=cited,
+                cited_papers=tuple(cited),
                 theme_summary=theme_summary,
                 theme=theme,
             )
         )
 
     fallback_pulled_total = sum(fallback_pulled_per_section.values())
-    coverage = {
-        "total_bibcodes": len(bibcodes),
-        # ``unattributed`` was mutated in-place by the Tier-3 helper to remove
-        # any bibcode that was successfully fallback-pulled, so the
-        # ``assigned_bibcodes`` total reflects all four tiers.
-        "assigned_bibcodes": len(bibcodes) - len(unattributed),
-        "unattributed_bibcodes": len(unattributed),
-        "intent_assigned_bibcodes": intent_assigned,
-        "community_assigned_bibcodes": community_assigned,
-        "override_assigned_bibcodes": override_assigned,
-        "fallback_pulled_bibcodes": fallback_pulled_total,
-        "fallback_pulled_per_section": dict(fallback_pulled_per_section),
-    }
+    # Bead ykcx: start from the canonical empty-coverage shape so the key
+    # set is governed by ``_empty_coverage_block`` (one-place change when
+    # a new coverage key is added). ``unattributed`` was mutated in-place
+    # by the Tier-3 helper to remove any bibcode that was successfully
+    # fallback-pulled, so ``assigned_bibcodes`` reflects all four tiers.
+    coverage = _empty_coverage_block(sections)
+    coverage["total_bibcodes"] = len(bibcodes)
+    coverage["assigned_bibcodes"] = len(bibcodes) - len(unattributed)
+    coverage["unattributed_bibcodes"] = len(unattributed)
+    coverage["intent_assigned_bibcodes"] = intent_assigned
+    coverage["community_assigned_bibcodes"] = community_assigned
+    coverage["override_assigned_bibcodes"] = override_assigned
+    coverage["fallback_pulled_bibcodes"] = fallback_pulled_total
+    coverage["fallback_pulled_per_section"] = dict(fallback_pulled_per_section)
 
     return SynthesisResult(
-        sections=out_sections,
-        unattributed_bibcodes=unattributed,
+        sections=tuple(out_sections),
+        unattributed_bibcodes=tuple(unattributed),
         coverage=coverage,
         metadata={
             "sections_requested": list(sections),
@@ -1192,6 +1242,9 @@ def _apply_citation_count_fallback(
     """Fill empty sections from the unattributed pool by citation_count desc.
 
     Mutates ``buckets``, ``unattributed``, and ``signal_used`` in place.
+    These are locals (not module/instance state) — ``_assemble_sections``
+    is the sole caller and they are stack-frame-scoped, so the in-place
+    mutation has no reach beyond that frame.
     Returns a ``{section_name: int}`` map of how many papers were pulled
     per section (always populated for every section in ``sections``,
     even if zero).
@@ -1362,7 +1415,7 @@ def _paper_row(
 
     ``first_author`` is always present (bead tq0t / AC1) — populated
     from ``papers.first_author`` via :func:`_fetch_paper_metadata`. May
-    be ``None`` for legacy fixtures or rows where the column is NULL.
+    be ``None`` for rows where the column is NULL.
 
     ``abstract_full`` (bead tq0t / AC2) is added only when
     ``include_full_abstracts`` is True. Coexists with ``abstract_snippet``

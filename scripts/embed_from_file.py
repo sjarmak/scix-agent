@@ -45,7 +45,6 @@ WRITE_BUFFER = 20_000
 
 def writer_process(write_queue: mp.Queue, total: int, dsn: str | None) -> None:
     """Separate process for DB writes — has its own GIL."""
-    import psycopg
     from scix.db import get_connection
 
     logging.basicConfig(

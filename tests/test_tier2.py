@@ -29,6 +29,7 @@ from scix.aho_corasick import (
     EntityRow,
     build_automaton,
     link_abstract,
+    link_text,
 )
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -171,6 +172,33 @@ class TestAhoCorasickBoundary:
         out = link_abstract("The ACT collaboration released data.", automaton)
         assert len(out) == 1
         assert out[0].entity_id == 1
+
+
+class TestLinkTextAlias:
+    """``link_text`` is the canonical name; ``link_abstract`` stays as a
+    back-compat alias because section_linker.py and other callers still
+    import the old name. Both must do exactly the same thing."""
+
+    def test_link_text_matches_link_abstract(self) -> None:
+        automaton = build_automaton(_jwst_rows())
+        text = "JWST observations confirmed water vapor."
+        assert link_text(text, automaton) == link_abstract(text, automaton)
+
+    def test_link_text_handles_empty(self) -> None:
+        automaton = build_automaton(_jwst_rows())
+        assert link_text("", automaton) == []
+        assert link_text(None, automaton) == []  # type: ignore[arg-type]
+
+    def test_link_text_is_text_agnostic(self) -> None:
+        # Same automaton, body-shaped input. The function must not care
+        # whether the text came from an abstract or a paper body.
+        automaton = build_automaton(_jwst_rows())
+        body = (
+            "1. Introduction\n\nWe describe observations.\n\n"
+            "2. Methods\n\nJWST data were reduced with the standard pipeline."
+        )
+        out = link_text(body, automaton)
+        assert any(c.entity_id == 202 for c in out)
 
 
 class TestAhoCorasickPicklable:
@@ -529,3 +557,347 @@ class TestProductionGuard:
                 ]
             )
         assert rc != 2
+
+
+# ---------------------------------------------------------------------------
+# Body-source linking — dbl.19
+# ---------------------------------------------------------------------------
+
+# Body fixtures share the same entity pool as _SEED_ENTITIES so we can
+# reuse _seed/_cleanup. The bodies deliberately mention entities that do
+# NOT appear in the abstract for the same paper, mirroring real corpora
+# where instruments / pipelines surface in methods, not abstracts.
+
+_SEED_BODY_PAPERS: list[tuple[str, str, str, list[str], list[str]]] = [
+    # (bibcode, abstract, body, property[], arxiv_class[])
+    (
+        "test_u09b_0001",
+        # Abstract mentions JWST so the abstract-pass also produces a
+        # tier-2 row on this paper (used by the separability test).
+        "We present a multiwavelength survey including JWST imaging.",
+        (
+            "1. Introduction\n\n"
+            "We present a multiwavelength survey.\n\n"
+            "2. Methods\n\n"
+            "ALMA interferometry provided dust continuum maps. "
+            "Hubble Space Telescope imaging supplied UV photometry."
+        ),
+        ["OPENACCESS"],
+        [],
+    ),
+    (
+        "test_u09b_0002",
+        "We describe a quasar field.",
+        # Body mentions HST alone — homograph, must NOT fire (no long-form
+        # co-presence in the body itself).
+        "Methods\n\nWe used HST as a generic acronym in this body.",
+        ["OPENACCESS"],
+        [],
+    ),
+    (
+        "test_u09b_0003",
+        "Closed-access paper abstract — no instruments.",
+        # Body mentions JWST but paper is NOT OA and NOT a preprint — the
+        # OA gate must filter it out by default.
+        "Methods\n\nJWST spectra confirmed the detection.",
+        [],  # no OPENACCESS
+        [],  # no arxiv_class
+    ),
+    (
+        "test_u09b_0004",
+        "Preprint paper abstract.",
+        # Body mentions ALMA; not OA but IS a preprint, so it passes the
+        # OA gate.
+        "Methods\n\nALMA observations covered band 6.",
+        [],
+        ["astro-ph.GA"],
+    ),
+]
+
+
+def _seed_bodies(conn: psycopg.Connection) -> dict[str, int]:
+    """Seed papers WITH bodies plus the same 3 entities as the abstract
+    fixture. Reuses _cleanup() against the abstract bibcodes too so the
+    fixture is order-independent.
+    """
+    bibcodes = [p[0] for p in _SEED_BODY_PAPERS]
+    canonicals = [e[0] for e in _SEED_ENTITIES]
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM document_entities WHERE bibcode = ANY(%s)",
+            (bibcodes,),
+        )
+        cur.execute(
+            "DELETE FROM curated_entity_core "
+            " WHERE entity_id IN ("
+            "     SELECT id FROM entities "
+            "      WHERE canonical_name = ANY(%s) AND source = 'unit_test_u09'"
+            " )",
+            (canonicals,),
+        )
+        cur.execute(
+            "DELETE FROM entities " " WHERE canonical_name = ANY(%s) AND source = 'unit_test_u09'",
+            (canonicals,),
+        )
+        cur.execute(
+            "DELETE FROM papers WHERE bibcode = ANY(%s)",
+            (bibcodes,),
+        )
+    conn.commit()
+
+    name_to_id: dict[str, int] = {}
+    with conn.cursor() as cur:
+        for bibcode, abstract, body, prop, arxiv_class in _SEED_BODY_PAPERS:
+            cur.execute(
+                "INSERT INTO papers (bibcode, abstract, body, property, arxiv_class) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (bibcode, abstract, body, prop, arxiv_class),
+            )
+        for canonical, source, ambiguity in _SEED_ENTITIES:
+            cur.execute(
+                "INSERT INTO entities (canonical_name, entity_type, source, ambiguity_class) "
+                "VALUES (%s, %s, %s, %s::entity_ambiguity_class) RETURNING id",
+                (canonical, "test_type", source, ambiguity),
+            )
+            row = cur.fetchone()
+            assert row is not None
+            name_to_id[canonical] = int(row[0])
+        for canonical, alias in _SEED_ALIASES:
+            cur.execute(
+                "INSERT INTO entity_aliases (entity_id, alias, alias_source) VALUES (%s, %s, %s)",
+                (name_to_id[canonical], alias, "test_seed_u09b"),
+            )
+        for canonical in name_to_id:
+            cur.execute(
+                "INSERT INTO curated_entity_core (entity_id, query_hits_14d) VALUES (%s, %s) "
+                "ON CONFLICT (entity_id) DO NOTHING",
+                (name_to_id[canonical], 1),
+            )
+    conn.commit()
+    return name_to_id
+
+
+def _cleanup_bodies(conn: psycopg.Connection) -> None:
+    bibcodes = [p[0] for p in _SEED_BODY_PAPERS]
+    canonicals = [e[0] for e in _SEED_ENTITIES]
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM document_entities WHERE bibcode = ANY(%s)",
+            (bibcodes,),
+        )
+        cur.execute(
+            "DELETE FROM curated_entity_core "
+            " WHERE entity_id IN ("
+            "     SELECT id FROM entities "
+            "      WHERE canonical_name = ANY(%s) AND source = 'unit_test_u09'"
+            " )",
+            (canonicals,),
+        )
+        cur.execute(
+            "DELETE FROM entities " " WHERE canonical_name = ANY(%s) AND source = 'unit_test_u09'",
+            (canonicals,),
+        )
+        cur.execute(
+            "DELETE FROM papers WHERE bibcode = ANY(%s)",
+            (bibcodes,),
+        )
+    conn.commit()
+
+
+@pytest.fixture()
+def seeded_body_conn(dsn: str) -> Iterator[tuple[psycopg.Connection, dict[str, int]]]:
+    conn = psycopg.connect(dsn)
+    try:
+        ids = _seed_bodies(conn)
+        yield conn, ids
+    finally:
+        try:
+            _cleanup_bodies(conn)
+        finally:
+            conn.close()
+
+
+class TestIterPaperBatchesBody:
+    """``iter_paper_batches`` must support a body source AND honor the
+    OA gate by default."""
+
+    def test_body_source_yields_body_text(
+        self, seeded_body_conn: tuple[psycopg.Connection, dict[str, int]]
+    ) -> None:
+        conn, _ = seeded_body_conn
+        batches = list(
+            link_tier2.iter_paper_batches(
+                conn,
+                bibcode_prefix="test_u09b_",
+                text_source=link_tier2.TEXT_SOURCE_BODY,
+            )
+        )
+        flat = [pair for batch in batches for pair in batch]
+        # OA gate default: closed-access paper test_u09b_0003 is excluded.
+        bibcodes = {bc for bc, _ in flat}
+        assert "test_u09b_0001" in bibcodes
+        assert "test_u09b_0002" in bibcodes
+        assert (
+            "test_u09b_0003" not in bibcodes
+        ), "closed-access paper must be filtered by OA gate by default"
+        assert "test_u09b_0004" in bibcodes  # preprint
+        # The yielded text is the body, not the abstract.
+        for bibcode, text in flat:
+            if bibcode == "test_u09b_0001":
+                assert "Methods" in text
+                assert "ALMA" in text
+
+    def test_body_source_with_include_closed(
+        self, seeded_body_conn: tuple[psycopg.Connection, dict[str, int]]
+    ) -> None:
+        conn, _ = seeded_body_conn
+        batches = list(
+            link_tier2.iter_paper_batches(
+                conn,
+                bibcode_prefix="test_u09b_",
+                text_source=link_tier2.TEXT_SOURCE_BODY,
+                include_closed=True,
+            )
+        )
+        bibcodes = {bc for batch in batches for bc, _ in batch}
+        # All four papers when the OA gate is bypassed.
+        assert "test_u09b_0003" in bibcodes
+
+    def test_abstract_source_unchanged(
+        self, seeded_body_conn: tuple[psycopg.Connection, dict[str, int]]
+    ) -> None:
+        conn, _ = seeded_body_conn
+        # Default text_source remains "abstract" — back-compat.
+        batches = list(
+            link_tier2.iter_paper_batches(
+                conn,
+                bibcode_prefix="test_u09b_",
+            )
+        )
+        # Abstract path doesn't apply the OA gate (abstracts are
+        # universally indexable).
+        bibcodes = {bc for batch in batches for bc, _ in batch}
+        assert bibcodes == {p[0] for p in _SEED_BODY_PAPERS}
+
+
+class TestRunTier2BodyMode:
+    def test_body_mode_writes_tier3_rows(
+        self, seeded_body_conn: tuple[psycopg.Connection, dict[str, int]]
+    ) -> None:
+        conn, ids = seeded_body_conn
+        stats = link_tier2.run_tier2_link(
+            conn,
+            workers=1,
+            bibcode_prefix="test_u09b_",
+            max_per_entity=1_000,
+            text_source=link_tier2.TEXT_SOURCE_BODY,
+        )
+        # 0001 hits 2 entities (HST via long-form + ALMA);
+        # 0002 hits 0 (HST homograph alone, no long-form);
+        # 0003 is filtered by OA gate;
+        # 0004 hits 1 entity (ALMA).
+        assert stats.papers_scanned == 3
+        assert stats.rows_inserted >= 3
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT bibcode, entity_id, tier, link_type, match_method, evidence "
+                "  FROM document_entities "
+                " WHERE bibcode LIKE 'test_u09b_%'"
+            )
+            rows = cur.fetchall()
+
+        assert rows, "expected tier-3 body rows"
+        for _bibcode, _entity_id, tier, link_type, method, evidence in rows:
+            assert tier == link_tier2.TIER3_TIER == 3
+            assert link_type == link_tier2.TIER3_LINK_TYPE == "body_match"
+            assert method == link_tier2.TIER3_MATCH_METHOD
+            # evidence.source must record where the match came from so
+            # downstream readers can split abstract vs body coverage.
+            assert evidence["source"] == "body"
+
+    def test_body_mode_oa_gate_drops_closed(
+        self, seeded_body_conn: tuple[psycopg.Connection, dict[str, int]]
+    ) -> None:
+        conn, _ = seeded_body_conn
+        link_tier2.run_tier2_link(
+            conn,
+            workers=1,
+            bibcode_prefix="test_u09b_",
+            max_per_entity=1_000,
+            text_source=link_tier2.TEXT_SOURCE_BODY,
+        )
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM document_entities WHERE bibcode = 'test_u09b_0003'")
+            n = cur.fetchone()[0]
+        assert n == 0, "closed-access paper must not be linked at body source"
+
+    def test_body_mode_separable_from_abstract(
+        self, seeded_body_conn: tuple[psycopg.Connection, dict[str, int]]
+    ) -> None:
+        # Run abstract pass + body pass; both must coexist on the same
+        # paper because tier differs.
+        conn, ids = seeded_body_conn
+        link_tier2.run_tier2_link(
+            conn,
+            workers=1,
+            bibcode_prefix="test_u09b_",
+            max_per_entity=1_000,
+            text_source=link_tier2.TEXT_SOURCE_ABSTRACT,
+        )
+        link_tier2.run_tier2_link(
+            conn,
+            workers=1,
+            bibcode_prefix="test_u09b_",
+            max_per_entity=1_000,
+            text_source=link_tier2.TEXT_SOURCE_BODY,
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT tier, count(*) FROM document_entities "
+                " WHERE bibcode LIKE 'test_u09b_%' GROUP BY tier ORDER BY tier"
+            )
+            tier_counts = dict(cur.fetchall())
+        assert tier_counts.get(link_tier2.TIER2_TIER, 0) >= 1
+        assert tier_counts.get(link_tier2.TIER3_TIER, 0) >= 1
+
+
+class TestEvidenceSourceField:
+    def test_abstract_evidence_source_field(self) -> None:
+        # Pure unit test — no DB required.
+        from scix.aho_corasick import LinkCandidate
+
+        cand = LinkCandidate(
+            entity_id=1,
+            canonical_name="X",
+            matched_surface="x",
+            start=0,
+            end=1,
+            confidence=0.85,
+            ambiguity_class="unique",
+        )
+        ev_abs = link_tier2._evidence_json(cand, source=link_tier2.TEXT_SOURCE_ABSTRACT)
+        ev_body = link_tier2._evidence_json(cand, source=link_tier2.TEXT_SOURCE_BODY)
+        import json
+
+        assert json.loads(ev_abs)["source"] == "abstract"
+        assert json.loads(ev_body)["source"] == "body"
+
+
+class TestBodyModeCli:
+    def test_text_source_body_argument_parses(self) -> None:
+        parser = link_tier2._build_parser()
+        args = parser.parse_args(
+            [
+                "--text-source",
+                "body",
+                "--bibcode-prefix",
+                "test_",
+            ]
+        )
+        assert args.text_source == "body"
+
+    def test_text_source_default_abstract(self) -> None:
+        parser = link_tier2._build_parser()
+        args = parser.parse_args([])
+        assert args.text_source == link_tier2.TEXT_SOURCE_ABSTRACT

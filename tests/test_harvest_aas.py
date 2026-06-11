@@ -7,21 +7,22 @@ database with migration 013 applied.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import psycopg
 import pytest
 from helpers import DSN, is_production_dsn
-
-import sys
-from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from harvest_aas_facilities import (
-    _FacilityTableParser,
     _classify_header,
+    _FacilityTableParser,
     parse_aas_facilities,
 )
+
 from scix.dictionary import bulk_load, lookup
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SciX — Entity Source Provenance</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      main.viz-container {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 24px 20px 48px;
+      }
+      .viz-sub {
+        color: #555;
+        margin-top: -4px;
+        line-height: 1.5;
+        max-width: 780px;
+      }
+      #pv-header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      #pv-stats {
+        color: #555;
+        font-size: 13px;
+      }
+      .pv-card {
+        background: #fff;
+        border: 1px solid #e4e4e4;
+        border-radius: 6px;
+        padding: 16px 18px 18px;
+        margin-top: 18px;
+      }
+      .pv-card h2 {
+        font-size: 16px;
+        margin: 0 0 4px;
+      }
+      .pv-card p.note {
+        margin: 0 0 12px;
+        color: #666;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .pv-legend {
+        display: flex;
+        gap: 16px;
+        font-size: 12px;
+        color: #555;
+        margin: 4px 0 12px;
+        flex-wrap: wrap;
+      }
+      .pv-legend span.key {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .pv-legend i {
+        width: 12px;
+        height: 12px;
+        border-radius: 2px;
+        display: inline-block;
+      }
+      .pv-caveat {
+        margin-top: 18px;
+        padding: 12px 14px;
+        background: #fafafa;
+        border: 1px solid #eaeaea;
+        border-radius: 6px;
+        font-size: 13px;
+        color: #444;
+        line-height: 1.5;
+      }
+      #pv-status {
+        margin-top: 12px;
+        color: #b00020;
+        font-size: 13px;
+        min-height: 18px;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  </head>
+  <body>
+    <main class="viz-container">
+      <div id="pv-header">
+        <h1 style="margin: 0">Entity Source Provenance</h1>
+        <span id="pv-stats">loading&hellip;</span>
+      </div>
+      <p class="viz-sub">
+        Most of the SciX entity graph is auto-extracted by open-weight NER
+        (GLiNER, over titles and abstracts); a smaller curated slice comes from
+        trusted authorities — SSODNet for asteroids, ASCL for software, VizieR for
+        catalogues. This page maps how many entities each source contributes and,
+        crucially, how <em>trustworthy</em> each is: the precision band an agent
+        sees on the MCP entity tool, from the dbl.3 quality profile. V8 says what
+        we have; V12 says how much of it is ground-truth vs best-effort.
+      </p>
+
+      <div class="pv-card">
+        <h2>Entities by source &amp; type</h2>
+        <p class="note">
+          Treemap of entity counts; each tile is a (source, entity_type) pair,
+          area proportional to the number of distinct entities. GLiNER dominates;
+          curated authorities are the small high-trust tiles.
+        </p>
+        <div id="pv-treemap" aria-label="Entity counts by source and type"></div>
+      </div>
+
+      <div class="pv-card">
+        <h2>Precision profile by source</h2>
+        <p class="note">
+          Share of each source's mentions falling in each precision band, from
+          <code>scix.extract.ner_quality_profile</code>. GLiNER bands are estimated
+          from a representative sample of links (precision depends on entity type,
+          paper era, and the INDUS classifier verdict); curated sources carry a
+          single constant lexical precision.
+        </p>
+        <div class="pv-legend">
+          <span class="key"><i style="background:#1a9850"></i>high (&ge;0.85)</span>
+          <span class="key"><i style="background:#4e79a7"></i>medium (&ge;0.70)</span>
+          <span class="key"><i style="background:#e0a32e"></i>low (&ge;0.50)</span>
+          <span class="key"><i style="background:#d6604d"></i>noisy (&lt;0.50)</span>
+        </div>
+        <div id="pv-precision" aria-label="Precision band distribution per source"></div>
+      </div>
+
+      <div class="pv-card">
+        <h2>Ambiguity classes</h2>
+        <p class="note">
+          Entities flagged by the ambiguity classifier
+          (<code>scripts/classify_entity_ambiguity.py</code>). Only the classified
+          slice is charted; the unclassified majority is noted below.
+        </p>
+        <div id="pv-ambiguity" aria-label="Ambiguity class counts"></div>
+      </div>
+
+      <div class="pv-caveat" id="pv-caveat"></div>
+      <div id="pv-status" role="status" aria-live="polite"></div>
+    </main>
+
+    <script src="./shared.js"></script>
+    <script src="./provenance.js"></script>
+    <script>
+      // Bootstrap: fetch provenance.json (web/viz first, data/viz fallback) and
+      // render all three charts. Single static dataset — no resolution
+      // dependence, so no re-render on resolution change.
+      ;(function bootstrap() {
+        var status = document.getElementById('pv-status')
+        var statsEl = document.getElementById('pv-stats')
+        var caveatEl = document.getElementById('pv-caveat')
+        var treemapRoot = document.getElementById('pv-treemap')
+        var precisionRoot = document.getElementById('pv-precision')
+        var ambiguityRoot = document.getElementById('pv-ambiguity')
+        var lastPayload = null
+
+        var candidates = [
+          './provenance.json',
+          '/viz/provenance.json',
+          '/data/viz/provenance.json',
+        ]
+
+        function fmtM(n) {
+          if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M'
+          if (n >= 1e3) return (n / 1e3).toFixed(0) + 'K'
+          return String(n)
+        }
+        function fmtInt(n) {
+          return Number(n).toLocaleString('en-US')
+        }
+
+        async function load() {
+          status.textContent = ''
+          var payload = null
+          var lastErr = null
+          for (var i = 0; i < candidates.length; i++) {
+            try {
+              var resp = await fetch(candidates[i], { cache: 'no-store' })
+              if (!resp.ok) {
+                lastErr = new Error(candidates[i] + ' -> HTTP ' + resp.status)
+                continue
+              }
+              payload = await resp.json()
+              break
+            } catch (err) {
+              lastErr = err
+            }
+          }
+          if (!payload) {
+            status.textContent =
+              'Could not load provenance.json (' +
+              (lastErr ? lastErr.message || String(lastErr) : 'unknown error') +
+              '). Run scripts/viz/build_provenance.py to generate it.'
+            return
+          }
+
+          var totals = payload.totals || {}
+          statsEl.textContent =
+            fmtM(totals.n_entities || 0) +
+            ' entities · ' +
+            (totals.n_sources || 0) +
+            ' sources · ' +
+            fmtM(totals.n_links_estimate || 0) +
+            ' links'
+
+          var nullRow = (payload.ambiguity || []).filter(function (a) {
+            return a.ambiguity_class === null || a.ambiguity_class === undefined
+          })[0]
+          var gliner = (payload.by_source || []).filter(function (s) {
+            return s.source === 'gliner'
+          })[0]
+          caveatEl.innerHTML =
+            '<strong>Reading this:</strong> ' +
+            (gliner
+              ? fmtM(gliner.n_entities) +
+                ' of ' +
+                fmtM(totals.n_entities || 0) +
+                ' entities are GLiNER-extracted (open-weight, best-effort); '
+              : '') +
+            'curated authority sources carry a constant lexical precision and read ' +
+            'as uniformly high-trust. ' +
+            (nullRow
+              ? fmtInt(nullRow.n) +
+                ' entities are unclassified for ambiguity (not charted above); '
+              : '') +
+            'precision bands mirror <code>precision_band</code> in the dbl.3 quality ' +
+            'profile, so a band here matches what an agent sees on the MCP entity tool ' +
+            '(which additionally hides denylisted generic-word entities, so a few graph ' +
+            'entities carry a band here but never surface on the tool).'
+
+          if (typeof window.renderProvenance !== 'function') {
+            status.textContent =
+              'renderProvenance is not defined — provenance.js failed to load.'
+            return
+          }
+          lastPayload = payload
+          draw()
+        }
+
+        function draw() {
+          if (!lastPayload) return
+          try {
+            window.renderProvenance(lastPayload, {
+              treemapRoot: treemapRoot,
+              precisionRoot: precisionRoot,
+              ambiguityRoot: ambiguityRoot,
+            })
+          } catch (err) {
+            status.textContent = 'Render failed: ' + (err.message || String(err))
+          }
+        }
+
+        var resizeTimer = null
+        window.addEventListener('resize', function () {
+          if (resizeTimer) window.clearTimeout(resizeTimer)
+          resizeTimer = window.setTimeout(draw, 150)
+        })
+
+        load()
+      })()
+    </script>
+  </body>
+</html>

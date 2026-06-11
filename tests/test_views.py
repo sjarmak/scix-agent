@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
 
 import psycopg.errors
 import pytest
 
 from scix.views import AGENT_VIEWS, RefreshResult, refresh_all_views, refresh_view
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -144,7 +144,18 @@ class JudgeScore:
 
 
 class DispatcherError(Exception):
-    """Transient error from a dispatcher call. Retried by :class:`PersonaJudge`."""
+    """Transient error from a dispatcher call. Retried by :class:`PersonaJudge`.
+
+    Subprocess error output is stashed on the :attr:`stderr` attribute rather
+    than embedded in the message. ``claude -p`` may echo the research-query
+    prompt on failure, and the message propagates into WARNING logs and
+    :attr:`JudgeScore.reason`; keeping stderr off the message confines that
+    text to opt-in DEBUG logging.
+    """
+
+    def __init__(self, message: str, *, stderr: str | None = None) -> None:
+        super().__init__(message)
+        self.stderr = stderr
 
 
 # ---------------------------------------------------------------------------
@@ -252,11 +263,14 @@ def parse_judge_response(raw: str) -> JudgeScore:
     raise ValueError(f"no parseable judge JSON in response (last error: {last_error})")
 
 
+# ``\b`` (not ``\s*$``) ends each value so trailing text on the directive line
+# is tolerated — see :func:`parse_umbrela_response`. The boundary also stops a
+# value matching inside a longer token (``false`` in ``falsehood``).
 _UMBRELA_SCORE_RE = re.compile(
-    r"^\s*##\s*final\s*score\s*:\s*(\d+)\s*$", re.IGNORECASE | re.MULTILINE
+    r"^\s*##\s*final\s*score\s*:\s*(\d+)\b", re.IGNORECASE | re.MULTILINE
 )
 _UMBRELA_REVIEW_RE = re.compile(
-    r"^\s*##\s*needs[_ ]human[_ ]review\s*:\s*(true|false)\s*$",
+    r"^\s*##\s*needs[_ ]human[_ ]review\s*:\s*(true|false)\b",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -265,10 +279,11 @@ def parse_umbrela_response(raw: str) -> JudgeScore:
     """Parse the UMBRELA-formatted judge response.
 
     UMBRELA (verbatim) emits ``##final score: N``. Our pipeline adds one
-    adapter line — ``##needs_human_review: true|false`` — after it. Both
-    lines must appear on their own line; any surrounding prose is
-    tolerated but ignored. Two score lines or two review lines are
-    rejected as ambiguous — that indicates the subagent was confused
+    adapter line — ``##needs_human_review: true|false`` — after it. Each
+    directive must *begin* its own ``##``-prefixed line; trailing text
+    after the value on that line, and any surrounding prose on other
+    lines, are tolerated but ignored. Two score lines or two review lines
+    are rejected as ambiguous — that indicates the subagent was confused
     enough to double-emit.
 
     Args:
@@ -439,7 +454,8 @@ class ClaudeSubprocessDispatcher:
 
         if completed.returncode != 0:
             raise DispatcherError(
-                f"claude -p exited {completed.returncode}: " f"stderr={completed.stderr[:500]!r}"
+                f"claude -p exited {completed.returncode}",
+                stderr=completed.stderr,
             )
 
         try:
@@ -571,6 +587,12 @@ class PersonaJudge:
                         attempt + 1,
                         exc,
                     )
+                    if exc.stderr:
+                        logger.debug(
+                            "judge failure stderr for %s: %s",
+                            triple.bibcode,
+                            exc.stderr,
+                        )
                     return JudgeScore(
                         score=ERROR_SENTINEL,
                         reason=f"dispatcher error after {attempt + 1} attempts: {exc}",

@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from scix.link_entities import (
     EntityResolver,
-    ResolverMatch,
     _extract_mentions_from_payload,
     get_linking_progress,
     link_entities_batch,

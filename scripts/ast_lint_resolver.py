@@ -10,7 +10,7 @@ INTO document_entities ...")``) and assigned SQL
 (``SQL = "INSERT INTO document_entities ..."; cur.execute(SQL)``) are
 caught.
 
-Escape hatch: any line that ends with ``# noqa: resolver-lint`` is skipped.
+Escape hatch: any line that ends with ``# resolver-lint: bypass`` is skipped.
 Use this for legitimate migration tooling that must bypass M13 on purpose.
 
 Exit codes:
@@ -75,7 +75,7 @@ FORBIDDEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
 )
 
-NOQA_MARKER = "# noqa: resolver-lint"
+RESOLVER_LINT_MARKER = "# resolver-lint: bypass"
 
 # Path of the one and only file allowed to contain these patterns, expressed
 # as a POSIX suffix for cross-platform match.
@@ -165,7 +165,7 @@ def _scan_source(source: str, path: Path) -> list[Violation]:
 
     violations: list[Violation] = []
     for start_line, end_line, literal in collector.literals:
-        # A literal is exempt if ``# noqa: resolver-lint`` appears anywhere
+        # A literal is exempt if ``# resolver-lint: bypass`` appears anywhere
         # in the line range the string spans, or on the line immediately
         # before/after.
         if _has_noqa(source_lines, start_line, end_line):
@@ -183,7 +183,7 @@ def _has_noqa(lines: list[str], start_line: int, end_line: int) -> bool:
     lo = max(1, start_line - 1)
     hi = min(len(lines), end_line + 1)
     for idx_1based in range(lo, hi + 1):
-        if NOQA_MARKER in lines[idx_1based - 1]:
+        if RESOLVER_LINT_MARKER in lines[idx_1based - 1]:
             return True
     return False
 
@@ -237,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     print(
         "These files must NOT write document_entities / document_entities_jit_cache "
         "or read document_entities_canonical. All such access must go through "
-        "src/scix/resolve_entities.py. Use '# noqa: resolver-lint' to intentionally "
+        "src/scix/resolve_entities.py. Use '# resolver-lint: bypass' to intentionally "
         "bypass (e.g. migrations).",
         file=sys.stderr,
     )

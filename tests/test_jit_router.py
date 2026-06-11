@@ -18,12 +18,11 @@ import asyncio
 import pytest
 
 from scix.jit import local_ner as local_ner_mod
-from scix.jit.bulkhead import JITBulkhead
 from scix.jit.local_ner import LocalNERResult
 from scix.jit.router import (
     CANARY_SHARE,
-    LiveJITResult,
     STATIC_CORE_FALLBACK,
+    LiveJITResult,
     route_jit,
 )
 

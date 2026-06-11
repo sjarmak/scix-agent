@@ -588,6 +588,68 @@ class TestToolSmoke:
         assert data["total"] == 0
 
     @patch("scix.mcp_server._log_query")
+    @patch("scix.search.lit_review")
+    def test_lit_review(
+        self,
+        mock_lr: MagicMock,
+        _mock_log: MagicMock,
+        mock_conn: MagicMock,
+    ) -> None:
+        """Bead nn03: lit_review composite tool dispatches and returns SearchResult."""
+        mock_lr.return_value = _empty_result()
+        out = _dispatch_tool(
+            mock_conn,
+            "lit_review",
+            {"query": "dark matter halo"},
+        )
+        _assert_non_error(out, "lit_review")
+
+    @patch("scix.mcp_server._log_query")
+    @patch("scix.citation_contexts_coverage.compute_coverage")
+    def test_cited_by_intent(
+        self,
+        mock_cov: MagicMock,
+        _mock_log: MagicMock,
+        mock_conn: MagicMock,
+    ) -> None:
+        """cited_by_intent dispatch returns the papers + coverage envelope."""
+        mock_cov.return_value = {
+            "covered_seeds": 0,
+            "total_seeds": 1,
+            "coverage_pct": 0.0,
+            "note": "smoke",
+        }
+        # description is read for column names; supply a stub that maps
+        # to the eight SELECT columns the handler expects.
+        from types import SimpleNamespace
+
+        cursor = mock_conn.cursor.return_value
+        cursor.description = [
+            SimpleNamespace(name=c)
+            for c in (
+                "source_bibcode",
+                "intent",
+                "context_excerpt",
+                "title",
+                "year",
+                "first_author",
+                "citation_count",
+                "n_contexts",
+            )
+        ]
+        cursor.fetchall.return_value = []
+
+        out = _dispatch_tool(
+            mock_conn,
+            "cited_by_intent",
+            {"target_bibcode": "2024TST.....1A"},
+        )
+        data = _assert_non_error(out, "cited_by_intent")
+        assert "papers" in data
+        assert "coverage" in data
+        assert data["total"] == 0
+
+    @patch("scix.mcp_server._log_query")
     @patch("scix.search.facet_counts")
     def test_facet_counts_threads_entity_filters(
         self,
@@ -693,7 +755,19 @@ def _list_registered_tool_names() -> list[str]:
 def test_chunk_search_tool_listed_when_qdrant_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """chunk_search appears in list_tools when QDRANT_URL is set."""
+    """chunk_search appears in list_tools when QDRANT_URL is set AND the
+    default deployment _HIDDEN_TOOLS gate is opened.
+
+    Two gates control chunk_search visibility:
+    1. ``_qdrant_enabled()`` — adds chunk_search to the registered set.
+    2. ``_HIDDEN_TOOLS`` env override — ships with chunk_search hidden by
+       default because the ``scix_chunks_v1`` Qdrant collection isn't
+       populated. Operators unhide via ``SCIX_HIDDEN_TOOLS=`` once the
+       collection lands.
+
+    This test exercises gate 1 (the qdrant gate), so it must also disarm
+    gate 2 — otherwise it asserts the wrong contract.
+    """
     try:
         import mcp.types  # noqa: F401
     except ImportError:
@@ -709,6 +783,13 @@ def test_chunk_search_tool_listed_when_qdrant_enabled(
         monkeypatch.setattr(mcp_server_module._qdrant_tools, "is_enabled", lambda: True)
     else:
         monkeypatch.setattr(mcp_server_module, "_qdrant_enabled", lambda: True)
+    # Disarm the env-driven hidden-tools gate so the qdrant-enabled
+    # branch is what's under test (chunk_search ships hidden by default).
+    monkeypatch.setattr(
+        mcp_server_module,
+        "_HIDDEN_TOOLS",
+        frozenset(t for t in mcp_server_module._HIDDEN_TOOLS if t != "chunk_search"),
+    )
 
     names = _list_registered_tool_names()
     assert "chunk_search" in names

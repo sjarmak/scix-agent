@@ -91,7 +91,7 @@ def test_planted_canonical_read_is_detected(lint_module, tmp_path):
 
 def test_noqa_comment_exempts_violation(lint_module, tmp_path):
     (tmp_path / "bad.py").write_text(
-        'SQL = "INSERT INTO document_entities (bibcode) VALUES (%s)"  # noqa: resolver-lint\n',
+        'SQL = "INSERT INTO document_entities (bibcode) VALUES (%s)"  # resolver-lint: bypass\n',
         encoding="utf-8",
     )
     violations = lint_module.run_lint(tmp_path)
@@ -105,7 +105,7 @@ def test_noqa_comment_exempts_multiline_sql(lint_module, tmp_path):
         '        """\n'
         "        INSERT INTO document_entities (bibcode)\n"
         "        VALUES (%s)\n"
-        '        """,  # noqa: resolver-lint\n'
+        '        """,  # resolver-lint: bypass\n'
         '        ("x",),\n'
         "    )\n",
         encoding="utf-8",

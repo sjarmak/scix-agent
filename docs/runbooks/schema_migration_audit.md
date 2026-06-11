@@ -82,3 +82,34 @@ DiskANN path — see closed bead `scix_experiments-l1t3` for the call.
 The audit will flag them as drift; that's expected. Add to a known-
 deferred list rather than INSERTing rows for migrations that were
 never applied.
+
+## Expected `MISSING_EFFECTS`
+
+Migration `039_papers_ads_body.sql` was genuinely applied (the
+`papers_ads_body` table existed), then the table was later dropped to
+free 231 GB once full text moved into `papers.body` (see the
+`full_text_body` project memory). The `schema_migrations` row stays —
+it accurately records that 039 ran. The audit flags it as
+`MISSING_EFFECTS`; that's expected. Do **not** DELETE the row (it is
+not drift — the effect was intentionally removed after the fact).
+
+## 2026-06-01 reconciliation (bead `scix_experiments-ytjq`)
+
+Reconciled the 9 pre-l0ub `MISSING_ROW` entries in the 11–39 range
+whose effects were already present but had no `schema_migrations` row
+(foundation migrations 1–44 lost their rows when `setup_db.sh` was
+rewritten to apply `schema.sql` wholesale — see bead description).
+INSERTed rows for versions 11, 13, 15, 19, 20, 21, 22, 24, 26 using each
+file's git-add timestamp (`2026-04-20T17:02:29-04:00`, the foundation
+squash commit) as `applied_at`, per the recording convention above.
+
+Out-of-scope drift still reported after this pass (intentionally left):
+
+- `039` — expected `MISSING_EFFECTS` (table dropped; see above).
+- `053` — deferred `MISSING_ROW` (halfvec superseded; see above).
+- `068` (`papers_is_oa_or_preprint`) — `MISSING_BOTH`: genuinely
+  **unapplied on prod** (function + partial index both absent). This is
+  real pending work, not a stale probe — tracked separately, since
+  applying it runs a ~5–10 min `CREATE INDEX CONCURRENTLY` that needs
+  scix-batch and an explicit go-ahead. Body-AI scripts gate on this
+  function, so it is not merely cosmetic.

@@ -36,7 +36,6 @@ import argparse
 import json
 import logging
 import math
-import os
 import sys
 from collections.abc import Sequence
 from datetime import datetime, timezone

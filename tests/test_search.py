@@ -18,13 +18,14 @@ from helpers import (
 )
 
 from scix.search import (
+    _LEXICAL_POOL_DEFAULT,
+    _TS_CONFIG_WHITELIST,
     SELECTIVITY_THRESHOLD,
     SearchFilters,
     SearchResult,
     _elapsed_ms,
     _estimate_filter_selectivity,
-    _filter_first_vector_search,
-    _model_has_embeddings,
+    _resolve_lexical_pool,
     bibliographic_coupling,
     citation_chain,
     co_citation_analysis,
@@ -565,6 +566,50 @@ class TestOpenAISignalSkipped:
             assert result.timing_ms["openai_vector_ms"] == 0.0
 
 
+class TestLexicalSearchCandidatePool:
+    """Unit tests for the lexical_search candidate-pool cap (bead 3t37)."""
+
+    def test_default_when_env_unset(self, monkeypatch) -> None:
+        monkeypatch.delenv("SCIX_LEXICAL_POOL", raising=False)
+        assert _resolve_lexical_pool() == _LEXICAL_POOL_DEFAULT
+
+    def test_explicit_integer(self, monkeypatch) -> None:
+        monkeypatch.setenv("SCIX_LEXICAL_POOL", "250")
+        assert _resolve_lexical_pool() == 250
+
+    def test_whitespace_tolerated(self, monkeypatch) -> None:
+        monkeypatch.setenv("SCIX_LEXICAL_POOL", "  750  ")
+        assert _resolve_lexical_pool() == 750
+
+    @pytest.mark.parametrize("token", ["inf", "INF", "all", "None"])
+    def test_unbounded_tokens_return_none(self, monkeypatch, token) -> None:
+        monkeypatch.setenv("SCIX_LEXICAL_POOL", token)
+        assert _resolve_lexical_pool() is None
+
+    def test_non_integer_falls_back_to_default(self, monkeypatch) -> None:
+        monkeypatch.setenv("SCIX_LEXICAL_POOL", "lots")
+        assert _resolve_lexical_pool() == _LEXICAL_POOL_DEFAULT
+
+    @pytest.mark.parametrize("token", ["0", "-1"])
+    def test_non_positive_falls_back_to_default(self, monkeypatch, token) -> None:
+        monkeypatch.setenv("SCIX_LEXICAL_POOL", token)
+        assert _resolve_lexical_pool() == _LEXICAL_POOL_DEFAULT
+
+    def test_ts_config_whitelist_contents(self) -> None:
+        assert "scix_english" in _TS_CONFIG_WHITELIST
+        assert "english" in _TS_CONFIG_WHITELIST
+
+    def test_ts_config_injection_rejected(self) -> None:
+        # The whitelist guard runs before any DB access, so conn is never
+        # touched — passing None proves the ValueError fires first.
+        with pytest.raises(ValueError, match="ts_config must be one of"):
+            lexical_search(None, "galaxy", ts_config="english'); DROP TABLE papers--")
+
+    def test_ts_config_unknown_config_rejected(self) -> None:
+        with pytest.raises(ValueError, match="ts_config must be one of"):
+            lexical_search(None, "galaxy", ts_config="simple")
+
+
 # ---------------------------------------------------------------------------
 # Integration tests (require running scix database with data)
 # ---------------------------------------------------------------------------
@@ -615,6 +660,37 @@ class TestLexicalSearchIntegration:
             paper = result.papers[0]
             assert "bibcode" in paper
             assert "score" in paper
+
+    def test_pool_cap_bounds_result_count(self, conn, monkeypatch) -> None:
+        """A tiny SCIX_LEXICAL_POOL caps the ranked candidate set (bead 3t37)."""
+        if not has_papers(conn) or not has_tsv_column(conn):
+            pytest.skip("No papers or tsv column not available")
+        monkeypatch.setenv("SCIX_LEXICAL_POOL", "2")
+        result = lexical_search(conn, "galaxy", limit=20, ts_config="english")
+        # cand CTE caps the match set at 2 rows before ts_rank_cd runs.
+        assert result.total <= 2
+
+    def test_common_term_completes_under_default_pool(self, conn) -> None:
+        """The regression: a common single-token term must not time out.
+
+        Without the candidate-pool cap, 'galaxy' forces ts_rank_cd over the
+        full match set and exceeds the 30s statement timeout. With the default
+        pool it returns promptly.
+        """
+        if not has_papers(conn) or not has_tsv_column(conn):
+            pytest.skip("No papers or tsv column not available")
+        result = lexical_search(conn, "galaxy", ts_config="english")
+        assert isinstance(result, SearchResult)
+        assert result.timing_ms["lexical_ms"] >= 0
+
+    def test_unbounded_pool_still_returns_results(self, conn, monkeypatch) -> None:
+        """SCIX_LEXICAL_POOL=INF disables the cap (LIMIT NULL) for eval use."""
+        if not has_papers(conn) or not has_tsv_column(conn):
+            pytest.skip("No papers or tsv column not available")
+        monkeypatch.setenv("SCIX_LEXICAL_POOL", "INF")
+        result = lexical_search(conn, "copper", limit=5, ts_config="english")
+        assert isinstance(result, SearchResult)
+        assert result.total <= 5
 
 
 @pytest.mark.integration

@@ -67,9 +67,9 @@ INDUS cosine similarity in ``[-1, 1]`` mapped to ``[0, 1]`` via
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
-from typing import Any, Callable
+from typing import Any
 
 import psycopg
 

@@ -32,14 +32,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import ingest_corrections  # noqa: E402
+
 from scix.sources import (
     crossref_update_to,
     journal_errata_rss,
     openalex_corrections,
     retraction_watch,
 )
-
-import ingest_corrections  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

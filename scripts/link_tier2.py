@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tier-2 Aho-Corasick abstract linker — PRD §M6 / §S2 / u09.
+"""Tier-2 / Tier-3 Aho-Corasick text linker — PRD §M6 / §S2 / u09 + dbl.19.
 
 End-to-end pipeline:
 
@@ -7,13 +7,17 @@ End-to-end pipeline:
    filtered on ``ambiguity_class IN ('unique','domain_safe','homograph')``.
 2. Build a pickleable :class:`ahocorasick.Automaton` over every canonical
    name + alias surface form.
-3. Stream papers with non-null abstracts (optionally restricted by a
-   ``--bibcode-prefix`` for tests / shards).
-4. Fan the abstracts out to a ``multiprocessing.Pool`` that runs
-   :func:`scix.aho_corasick.link_abstract` per paper.
-5. Collect candidates, enforce a per-entity linkage cap, write tier=2
-   rows into ``document_entities`` and flip over-cap entities to
-   ``link_policy = 'llm_only'``.
+3. Stream papers with non-null abstract (default) OR non-null body
+   (``--text-source body``), optionally restricted by ``--bibcode-prefix``
+   for tests / shards. Body source applies the OA/preprint gate
+   (``papers_is_oa_or_preprint``) by default per the body-AI policy
+   (CLAUDE.md §"Architecture invariants").
+4. Fan the texts out to a ``multiprocessing.Pool`` that runs
+   :func:`scix.aho_corasick.link_text` per paper.
+5. Collect candidates, enforce a per-entity linkage cap, write rows into
+   ``document_entities`` (tier=2/abstract_match for ``--text-source
+   abstract``; tier=3/body_match for ``--text-source body``) and flip
+   over-cap entities to ``link_policy = 'llm_only'``.
 
 Usage::
 
@@ -21,8 +25,11 @@ Usage::
     SCIX_TEST_DSN=dbname=scix_test \\
       python scripts/link_tier2.py --bibcode-prefix test_u09_ --workers 1
 
+    # body-source pass (dbl.19) — OA-gated, writes tier=3/body_match rows:
+    python scripts/link_tier2.py --allow-prod --text-source body --workers 16
+
 Transitional exemption: all ``INSERT INTO document_entities`` statements
-in this file are marked ``# noqa: resolver-lint``. The real M13 resolver
+in this file are marked ``# resolver-lint: bypass``. The real M13 resolver
 (u03) only owns writes from within ``src/``; scripts under ``scripts/``
 are outside the lint's scope by design, so the annotation is for parity
 and discoverability only.
@@ -52,9 +59,10 @@ from scix.aho_corasick import (  # noqa: E402
     EntityRow,
     LinkCandidate,
     build_automaton,
-    link_abstract,
+    link_text,
 )
 from scix.db import DEFAULT_DSN, get_connection, is_production_dsn, redact_dsn  # noqa: E402
+from scix.oa_gate import SQL_FUNCTION_NAME as OA_SQL_FUNCTION_NAME  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +81,12 @@ DEFAULT_MAX_PER_ENTITY: int = 25_000
 DEFAULT_WORKERS: int = 1
 
 # Batch size for the paper stream. The parent process owns the DB cursor
-# and ships ``(bibcode, abstract)`` tuples to workers in chunks.
+# and ships ``(bibcode, text)`` tuples to workers in chunks.
 PAPER_BATCH_SIZE: int = 512
+
+# Body text is ~10-100x larger than an abstract, so we ship smaller
+# batches when ``text_source='body'`` to keep per-batch memory bounded.
+BODY_PAPER_BATCH_SIZE: int = 64
 
 # Commit and sync the pipeline every N paper batches (~this many papers).
 # Long single-transaction runs bloat WAL and lose all work on a crash.
@@ -85,6 +97,20 @@ TIER2_LINK_TYPE: str = "abstract_match"
 TIER2_TIER: int = 2
 TIER2_TIER_VERSION: int = 1
 TIER2_MATCH_METHOD: str = "aho_corasick_abstract"
+
+# Tier 3 / body_match — dbl.19. Abstract and body matches stay separable
+# in document_entities because the PK is (bibcode, entity_id, link_type,
+# tier). Tier 3 already hosts other low-confidence link types
+# (target_designation_anchored); body_match is additive.
+TIER3_LINK_TYPE: str = "body_match"
+TIER3_TIER: int = 3
+TIER3_TIER_VERSION: int = 1
+TIER3_MATCH_METHOD: str = "aho_corasick_body"
+
+# Text-source selectors for ``iter_paper_batches`` and ``run_tier2_link``.
+TEXT_SOURCE_ABSTRACT: str = "abstract"
+TEXT_SOURCE_BODY: str = "body"
+TEXT_SOURCES: tuple[str, ...] = (TEXT_SOURCE_ABSTRACT, TEXT_SOURCE_BODY)
 
 # ---------------------------------------------------------------------------
 # Entity source
@@ -209,27 +235,67 @@ def fetch_entity_rows(
 def iter_paper_batches(
     conn: psycopg.Connection,
     bibcode_prefix: Optional[str],
-    batch_size: int = PAPER_BATCH_SIZE,
+    batch_size: Optional[int] = None,
+    *,
+    text_source: str = TEXT_SOURCE_ABSTRACT,
+    include_closed: bool = False,
 ) -> Iterator[list[tuple[str, str]]]:
-    """Yield ``[(bibcode, abstract), ...]`` batches.
+    """Yield ``[(bibcode, text), ...]`` batches.
 
     A server-side cursor is used so the driver doesn't buffer the full
     papers table in memory. The optional ``bibcode_prefix`` filter is
     used by the test fixture to scope to ``test_u09_%``.
+
+    Parameters
+    ----------
+    conn
+        Open psycopg connection. Used only for reads.
+    bibcode_prefix
+        Optional ``bibcode LIKE prefix%`` filter.
+    batch_size
+        Server-side cursor itersize and yielded batch size. Defaults to
+        :data:`PAPER_BATCH_SIZE` for abstract source and the smaller
+        :data:`BODY_PAPER_BATCH_SIZE` for body source.
+    text_source
+        ``"abstract"`` (default) reads ``papers.abstract``.
+        ``"body"`` reads ``papers.body`` and applies the OA/preprint
+        gate (``papers_is_oa_or_preprint(papers)``) by default — the
+        publisher-policy guardrail for body-AI pipelines (CLAUDE.md
+        §"Architecture invariants").
+    include_closed
+        Body-source only. If True, bypass the OA gate and read every
+        paper with a non-NULL body. Requires explicit operator approval
+        for production runs.
     """
-    sql = "SELECT bibcode, abstract FROM papers WHERE abstract IS NOT NULL"
+    if text_source not in TEXT_SOURCES:
+        raise ValueError(f"unknown text_source: {text_source!r}; expected one of {TEXT_SOURCES}")
+
+    if text_source == TEXT_SOURCE_ABSTRACT:
+        if include_closed:
+            # The OA gate is a body-AI guardrail; abstracts are
+            # universally indexable. Surface a clear error rather than
+            # silently no-op the flag.
+            raise ValueError("include_closed only applies when text_source='body'")
+        effective_batch_size = batch_size if batch_size is not None else PAPER_BATCH_SIZE
+        sql = "SELECT bibcode, abstract FROM papers WHERE abstract IS NOT NULL"
+    else:  # TEXT_SOURCE_BODY
+        effective_batch_size = batch_size if batch_size is not None else BODY_PAPER_BATCH_SIZE
+        sql = "SELECT bibcode, body FROM papers p WHERE body IS NOT NULL"
+        if not include_closed:
+            sql += f" AND {OA_SQL_FUNCTION_NAME}(p)"
+
     params: list[str] = []
     if bibcode_prefix:
         sql += " AND bibcode LIKE %s"
         params.append(bibcode_prefix + "%")
 
     with conn.cursor(name="tier2_papers") as cur:
-        cur.itersize = batch_size
+        cur.itersize = effective_batch_size
         cur.execute(sql, params)
         batch: list[tuple[str, str]] = []
-        for bibcode, abstract in cur:
-            batch.append((bibcode, abstract or ""))
-            if len(batch) >= batch_size:
+        for bibcode, text in cur:
+            batch.append((bibcode, text or ""))
+            if len(batch) >= effective_batch_size:
                 yield batch
                 batch = []
         if batch:
@@ -252,10 +318,10 @@ def _worker_init(automaton: AhocorasickAutomaton) -> None:
 
 
 def _worker_link(task: tuple[str, str]) -> tuple[str, list[LinkCandidate]]:
-    """Run :func:`link_abstract` for a single ``(bibcode, abstract)``."""
-    bibcode, abstract = task
+    """Run :func:`link_text` for a single ``(bibcode, text)``."""
+    bibcode, text = task
     assert _WORKER_AUTOMATON is not None, "worker not initialized"
-    hits = link_abstract(abstract, _WORKER_AUTOMATON)
+    hits = link_text(text, _WORKER_AUTOMATON)
     return bibcode, hits
 
 
@@ -264,8 +330,8 @@ def _link_serial(
     automaton: AhocorasickAutomaton,
 ) -> Iterator[tuple[str, list[LinkCandidate]]]:
     """In-process fallback used when ``workers == 1``."""
-    for bibcode, abstract in batch:
-        yield bibcode, link_abstract(abstract, automaton)
+    for bibcode, text in batch:
+        yield bibcode, link_text(text, automaton)
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +419,7 @@ _INSERT_SQL = """
         %(confidence)s, %(match_method)s, %(evidence)s::jsonb
     )
     ON CONFLICT (bibcode, entity_id, link_type, tier) DO NOTHING
-"""  # noqa: resolver-lint (transitional; tier-2 script owns its own writes per u09)
+"""  # resolver-lint: bypass (transitional; tier-2 script owns its own writes per u09)
 
 _DEMOTE_SQL = """
     UPDATE entities
@@ -362,12 +428,20 @@ _DEMOTE_SQL = """
 """
 
 
-def _evidence_json(candidate: LinkCandidate) -> str:
+def _evidence_json(
+    candidate: LinkCandidate,
+    *,
+    source: str = TEXT_SOURCE_ABSTRACT,
+) -> str:
     """Serialize a :class:`LinkCandidate` into JSON-encoded evidence.
 
     We use the stdlib json module via an inline helper because
     ``psycopg`` can accept Python dicts for jsonb columns, but we pass a
     string so the caller can assert on the exact shape in the test.
+
+    The ``source`` field records whether the match came from
+    ``"abstract"`` or ``"body"`` so downstream readers can split
+    abstract vs body coverage without a re-scan.
     """
     import json
 
@@ -378,6 +452,7 @@ def _evidence_json(candidate: LinkCandidate) -> str:
             "end": candidate.end,
             "ambiguity_class": candidate.ambiguity_class,
             "is_alias": candidate.is_alias,
+            "source": source,
             "tier2_confidence_source": "aho_corasick+placeholder",
         },
         separators=(",", ":"),
@@ -406,6 +481,8 @@ def run_tier2_link(
     dry_run: bool = False,
     entity_source: str = ENTITY_SOURCE_CURATED,
     commit_interval_batches: int = 0,
+    text_source: str = TEXT_SOURCE_ABSTRACT,
+    include_closed: bool = False,
 ) -> Tier2Stats:
     """Run the full Tier-2 linkage pass against ``conn``.
 
@@ -414,7 +491,7 @@ def run_tier2_link(
     conn
         Open psycopg connection.
     workers
-        Parallelism for :func:`link_abstract`. 1 stays in-process; >1
+        Parallelism for :func:`link_text`. 1 stays in-process; >1
         uses ``multiprocessing.Pool(fork)``.
     bibcode_prefix
         Optional LIKE prefix to scope to a bibcode shard (used by tests).
@@ -432,12 +509,35 @@ def run_tier2_link(
         commits only at the end — preserves existing test semantics.
         Long prod runs should set e.g. 40 to cap WAL size and survive
         crashes.
+    text_source
+        ``"abstract"`` (default) → tier 2, ``link_type='abstract_match'``,
+        ``match_method='aho_corasick_abstract'``.
+        ``"body"`` → tier 3, ``link_type='body_match'``,
+        ``match_method='aho_corasick_body'`` (dbl.19). Body source
+        applies the OA gate by default; pass ``include_closed=True`` to
+        bypass it.
+    include_closed
+        Body source only. Bypass the OA gate to also link closed-access
+        bodies. Requires explicit operator approval for production.
 
     Returns
     -------
     Tier2Stats
         Aggregate counts for the run.
     """
+    if text_source not in TEXT_SOURCES:
+        raise ValueError(f"unknown text_source: {text_source!r}; expected one of {TEXT_SOURCES}")
+
+    if text_source == TEXT_SOURCE_BODY:
+        emit_link_type = TIER3_LINK_TYPE
+        emit_tier = TIER3_TIER
+        emit_tier_version = TIER3_TIER_VERSION
+        emit_match_method = TIER3_MATCH_METHOD
+    else:
+        emit_link_type = TIER2_LINK_TYPE
+        emit_tier = TIER2_TIER
+        emit_tier_version = TIER2_TIER_VERSION
+        emit_match_method = TIER2_MATCH_METHOD
     logger.info("Fetching entity rows (source=%s)...", entity_source)
     entity_rows = fetch_entity_rows(conn, source=entity_source)
     logger.info("  -> %d surface forms", len(entity_rows))
@@ -475,7 +575,12 @@ def run_tier2_link(
     batches_since_commit = 0
     try:
         with write_conn.pipeline(), write_conn.cursor() as insert_cur:
-            for batch in iter_paper_batches(conn, bibcode_prefix):
+            for batch in iter_paper_batches(
+                conn,
+                bibcode_prefix,
+                text_source=text_source,
+                include_closed=include_closed,
+            ):
                 papers_scanned += len(batch)
                 batches_since_commit += 1
                 if papers_scanned % log_interval < len(batch):
@@ -511,16 +616,16 @@ def run_tier2_link(
                             continue
 
                         insert_cur.execute(
-                            _INSERT_SQL,  # noqa: resolver-lint
+                            _INSERT_SQL,  # resolver-lint: bypass
                             {
                                 "bibcode": bibcode,
                                 "entity_id": entity_id,
-                                "link_type": TIER2_LINK_TYPE,
-                                "tier": TIER2_TIER,
-                                "tier_version": TIER2_TIER_VERSION,
+                                "link_type": emit_link_type,
+                                "tier": emit_tier,
+                                "tier_version": emit_tier_version,
                                 "confidence": cand.confidence,
-                                "match_method": TIER2_MATCH_METHOD,
-                                "evidence": _evidence_json(cand),
+                                "match_method": emit_match_method,
+                                "evidence": _evidence_json(cand, source=text_source),
                             },
                         )
                         # Under pipeline mode, rowcount isn't reliable
@@ -613,6 +718,24 @@ def _build_parser() -> argparse.ArgumentParser:
             "only at end). Long prod runs should set 40 or so."
         ),
     )
+    parser.add_argument(
+        "--text-source",
+        choices=TEXT_SOURCES,
+        default=TEXT_SOURCE_ABSTRACT,
+        help=(
+            "Which paper text to scan: 'abstract' (default → tier 2 / "
+            "abstract_match) or 'body' (→ tier 3 / body_match, OA-gated)."
+        ),
+    )
+    parser.add_argument(
+        "--include-closed",
+        action="store_true",
+        default=False,
+        help=(
+            "Body source only: bypass the OA/preprint gate and scan "
+            "closed-access bodies as well. Requires operator approval."
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true", default=False)
     parser.add_argument(
         "--allow-prod",
@@ -640,6 +763,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         )
         return 2
 
+    if args.include_closed and args.text_source != TEXT_SOURCE_BODY:
+        logger.warning(
+            "--include-closed only applies to --text-source=body; ignoring " "for --text-source=%s",
+            args.text_source,
+        )
+
+    if args.text_source == TEXT_SOURCE_BODY and args.include_closed:
+        logger.warning(
+            "--include-closed is ACTIVE: body linking will run on closed-"
+            "access papers as well as OA/preprints. Confirm operator "
+            "approval and publisher-agreement (Wiley/Springer TDM) "
+            "clearance before each run."
+        )
+
     conn = get_connection(dsn)
     t0 = time.monotonic()
     try:
@@ -651,6 +788,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             dry_run=args.dry_run,
             entity_source=args.entity_source,
             commit_interval_batches=args.commit_interval_batches,
+            text_source=args.text_source,
+            include_closed=(args.include_closed and args.text_source == TEXT_SOURCE_BODY),
         )
         wall_seconds = time.monotonic() - t0
     finally:

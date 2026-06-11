@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import json
+# Import the module under test
+import sys
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-# Import the module under test
-import sys
-from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -151,7 +149,7 @@ class TestResilientClientUsed:
     @patch.object(harvest_spdf.ResilientClient, "get", side_effect=_mock_get)
     def test_fetch_all_uses_client_get(self, mock_get: MagicMock) -> None:
         client = harvest_spdf._make_client()
-        result = harvest_spdf.fetch_all(client)
+        harvest_spdf.fetch_all(client)
 
         assert mock_get.call_count == 3
         urls = [call.args[0] for call in mock_get.call_args_list]
@@ -460,7 +458,6 @@ class TestStoreHarvest:
         cursor = conn.cursor.return_value.__enter__.return_value
 
         # Make entity insert raise an error after harvest_run creation
-        call_count = {"value": 0}
         _id_counter = {"value": 0}
 
         def failing_execute(sql: str, params: Any = None) -> None:

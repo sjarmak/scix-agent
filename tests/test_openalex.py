@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from scix.openalex import (
     _extract_topics,
     fetch_openalex_by_doi,

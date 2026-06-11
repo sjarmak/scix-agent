@@ -6,11 +6,10 @@ No network or database access required.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -19,7 +18,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from harvest_pds4 import (
     ALL_PRODUCT_TYPES,
-    PRODUCT_TYPE_MAP,
     _write_entity_graph,
     _write_relationships,
     download_pds4_context,
@@ -933,7 +931,7 @@ class TestEntityRelationships:
         ]
         mock_cursor.fetchall.return_value = urn_rows
 
-        count = _write_relationships(mock_conn, entries, harvest_run_id=1)
+        _write_relationships(mock_conn, entries, harvest_run_id=1)
 
         # Find part_of_mission INSERT calls
         execute_calls = mock_cursor.execute.call_args_list
@@ -974,7 +972,7 @@ class TestEntityRelationships:
         ]
         mock_cursor.fetchall.return_value = urn_rows
 
-        count = _write_relationships(mock_conn, entries, harvest_run_id=1)
+        _write_relationships(mock_conn, entries, harvest_run_id=1)
 
         execute_calls = mock_cursor.execute.call_args_list
         observes_calls = [

@@ -4,6 +4,7 @@
 *.jsonl.xz
 # ...except small, hand-curated gold-standard evals checked in with code.
 !eval/claim_extraction_gold_standard.jsonl
+!eval/lexical_stress_16q.jsonl
 ads_metadata_by_year_picard/
 ads_metadata_by_year_full/
 data/*
@@ -25,6 +26,7 @@ data/eval/*
 # Test eval fixtures (small, hand-authored, track with code).
 !tests/eval/
 !tests/eval/*.jsonl
+!tests/fixtures/*.jsonl
 
 # Logs
 *.log

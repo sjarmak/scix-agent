@@ -16,13 +16,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import re
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 

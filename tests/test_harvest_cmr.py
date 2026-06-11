@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
-from typing import Any
-from unittest.mock import MagicMock, call, patch
-
-import pytest
-
 import sys
 from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -475,7 +473,7 @@ class TestHarvestRunLogLifecycle:
                     "gcmd_platforms_matched": 0,
                 }
 
-                counts = harvest_cmr.run_harvest(dsn="test-dsn")
+                harvest_cmr.run_harvest(dsn="test-dsn")
 
             MockRunLog.assert_called_once_with(mock_conn, "cmr")
             mock_log.start.assert_called_once()

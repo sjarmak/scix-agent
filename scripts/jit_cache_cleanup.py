@@ -24,7 +24,6 @@ import logging
 import os
 import sys
 from datetime import date, datetime, timedelta, timezone
-from typing import Iterable
 
 import psycopg
 
@@ -87,7 +86,7 @@ def _delete_expired_default_rows(conn: psycopg.Connection, cutoff: datetime) -> 
     """
     with conn.cursor() as cur:
         cur.execute(
-            f"DELETE FROM {DEFAULT_PARTITION} WHERE expires_at < %s",  # noqa: resolver-lint
+            f"DELETE FROM {DEFAULT_PARTITION} WHERE expires_at < %s",  # resolver-lint: bypass
             (cutoff,),
         )
         deleted = cur.rowcount

@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import io
 import json
 import logging
 import sys
@@ -532,7 +531,6 @@ def parse_ssocard(data: dict[str, Any], name: str) -> dict[str, Any] | None:
     canonical_name = name
     parameters = sso_data.get("parameters", {})
     physical = parameters.get("physical", {})
-    dynamical = parameters.get("dynamical", {})
 
     properties: dict[str, Any] = {}
 

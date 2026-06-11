@@ -10,7 +10,6 @@ from __future__ import annotations
 import gzip
 import json
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -22,7 +21,7 @@ from helpers import DSN, is_production_dsn
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from harvest_pwc_methods import download_methods, load_methods, parse_methods, run_pipeline
+from harvest_pwc_methods import download_methods, parse_methods, run_pipeline
 
 # ---------------------------------------------------------------------------
 # Sample data factory

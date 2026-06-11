@@ -57,7 +57,7 @@ def _guard_not_production(dsn: str) -> None:
 def _seed_fixture(conn: psycopg.Connection) -> None:
     """Seed a small (papers, entities, document_entities) fixture.
 
-    Writes to ``document_entities`` are flagged with ``# noqa: resolver-lint``
+    Writes to ``document_entities`` are flagged with ``# resolver-lint: bypass``
     because this is a read-only analytics path test harness, not the
     resolver write path enforced by M13.
     """
@@ -102,7 +102,7 @@ def _seed_fixture(conn: psycopg.Connection) -> None:
         # Insert into document_entities. PK is (bibcode, entity_id, link_type, tier),
         # so link_type differentiates per-tier fixture rows.
         cur.executemany(
-            "INSERT INTO document_entities (bibcode, entity_id, link_type, tier, confidence) "  # noqa: resolver-lint
+            "INSERT INTO document_entities (bibcode, entity_id, link_type, tier, confidence) "  # resolver-lint: bypass
             "VALUES (%s, %s, %s, %s, %s) "
             "ON CONFLICT DO NOTHING",
             rows,
@@ -121,7 +121,7 @@ def _cleanup_fixture(conn: psycopg.Connection) -> None:
     """Drop the fixture rows we seeded."""
     with conn.cursor() as cur:
         cur.execute(
-            "DELETE FROM document_entities WHERE link_type LIKE 'm9_fixture_tier%'"  # noqa: resolver-lint
+            "DELETE FROM document_entities WHERE link_type LIKE 'm9_fixture_tier%'"  # resolver-lint: bypass
         )
         cur.execute("DELETE FROM entities WHERE source = 'm9_fixture'")
         cur.execute(

@@ -140,3 +140,18 @@ Set `needs_human_review: true` when any of the following hold:
 Otherwise set it `false`.
 
 No reasoning, no prose, no JSON. Just the two `##`-prefixed lines.
+
+### Why this matters (the most common failure mode)
+
+The four examples above print their `### Steps:` reasoning before the score.
+That reasoning teaches you **how to think**, not what to write — run the four
+steps (intent, M, T, O) **silently** and do not reproduce the step headings or
+the M/T/O analysis. This is hardest on dense biomedical, clinical, or technical
+passages, where the urge to "show your work" is strongest; resist it there too.
+
+Two specific rules the examples don't demonstrate:
+
+- Nothing follows the score integer on its line — the integer is the last
+  character on the first line.
+- `##needs_human_review` is absent from the verbatim examples; emit it anyway
+  as the second line every single time. A response missing it is a failure.

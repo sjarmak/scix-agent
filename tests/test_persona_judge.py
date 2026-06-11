@@ -141,6 +141,32 @@ class TestParseUmbrelaResponse:
         assert score.score == 0
         assert score.needs_human_review is False
 
+    def test_tolerates_trailing_text_on_score_line(self) -> None:
+        """Biomedical-jargon failure mode: the judge appends a clause after
+        the integer (``##final score: 2 (highly relevant to SARS-CoV-2)``).
+        The score is unambiguous right after the colon, so trailing text on
+        the directive line must be ignored, not rejected."""
+        raw = (
+            "##final score: 2 — highly relevant to SARS-CoV-2 transmission\n"
+            "##needs_human_review: false\n"
+        )
+        score = parse_umbrela_response(raw)
+        assert score.score == 2
+        assert score.needs_human_review is False
+
+    def test_tolerates_trailing_text_on_review_line(self) -> None:
+        raw = "##final score: 1\n" "##needs_human_review: true (borderline biomedical jargon)\n"
+        score = parse_umbrela_response(raw)
+        assert score.score == 1
+        assert score.needs_human_review is True
+
+    def test_review_flag_not_matched_inside_word(self) -> None:
+        """``false`` embedded in a longer token must not satisfy the flag —
+        the \\b guard prevents ``falsehood`` from parsing as ``false``."""
+        raw = "##final score: 2\n##needs_human_review: falsehood\n"
+        with pytest.raises(ValueError, match="##needs_human_review"):
+            parse_umbrela_response(raw)
+
     def test_rejects_missing_score_line(self) -> None:
         with pytest.raises(ValueError, match="##final score"):
             parse_umbrela_response("##needs_human_review: false")
@@ -241,6 +267,65 @@ class TestClaudeSubprocessDispatcherPersonas:
             ClaudeSubprocessDispatcher()
             mismatches = [x for x in w if "UMBRELA parser" in str(x.message)]
             assert not mismatches
+
+
+class TestDispatcherErrorStderrExposure:
+    """xz4.1.28.2: a non-zero ``claude -p`` exit must not leak subprocess
+    stderr (which may echo the research-query prompt) into the exception
+    message — and therefore into WARNING logs and JudgeScore.reason. The
+    stderr is confined to the structured ``stderr`` attribute (DEBUG-only)."""
+
+    def _failing_subprocess(self, stderr_text: str):
+        import subprocess
+
+        async def _fake_run(binary: str, prompt: str) -> subprocess.CompletedProcess:
+            return subprocess.CompletedProcess(
+                args=[binary, "-p"],
+                returncode=1,
+                stdout="",
+                stderr=stderr_text,
+            )
+
+        return _fake_run
+
+    def test_nonzero_exit_keeps_stderr_off_message(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import scix.eval.persona_judge as pj
+
+        secret_query = "CRISPR off-target effects in primate retina"
+        monkeypatch.setattr(
+            pj, "_run_claude_subprocess", self._failing_subprocess(f"echo: {secret_query}")
+        )
+        dispatcher = ClaudeSubprocessDispatcher()
+        triple = JudgeTriple(query=secret_query, bibcode="2024XYZ", snippet="Title: X.")
+
+        async def _run() -> None:
+            await dispatcher.judge(triple)
+
+        with pytest.raises(DispatcherError) as excinfo:
+            asyncio.run(_run())
+
+        exc = excinfo.value
+        assert "exited 1" in str(exc)
+        assert secret_query not in str(exc)
+        assert exc.stderr is not None and secret_query in exc.stderr
+
+    def test_reason_does_not_embed_stderr_after_retries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import scix.eval.persona_judge as pj
+
+        secret_query = "tokamak disruption precursors"
+        monkeypatch.setattr(
+            pj, "_run_claude_subprocess", self._failing_subprocess(f"prompt was: {secret_query}")
+        )
+        dispatcher = ClaudeSubprocessDispatcher()
+        judge = PersonaJudge(dispatcher=dispatcher, max_retries=0, backoff_base_s=0.0)
+        triple = JudgeTriple(query=secret_query, bibcode="2024XYZ", snippet="Title: X.")
+
+        scores = asyncio.run(judge.run([triple]))
+
+        assert len(scores) == 1
+        assert secret_query not in scores[0].reason
 
 
 # ---------------------------------------------------------------------------

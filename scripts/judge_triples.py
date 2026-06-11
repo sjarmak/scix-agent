@@ -40,9 +40,9 @@ if str(REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from scix.eval.persona_judge import (  # noqa: E402
-    ClaudeSubprocessDispatcher,
     DEFAULT_MAX_CONCURRENCY,
     DEFAULT_MAX_RETRIES,
+    ClaudeSubprocessDispatcher,
     Dispatcher,
     JudgeScore,
     JudgeTriple,

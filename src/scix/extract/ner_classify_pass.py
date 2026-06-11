@@ -63,6 +63,11 @@ _PENDING_QUERY = """
     LIMIT %(limit)s
 """
 
+# Enriches the evidence JSONB of this pass's own GLiNER tier rows in place
+# (classifier agreement metadata); writes no new links. The M13 resolver
+# (scix.resolve_entities) is a read-side resolver with no write path, so tier
+# producers write directly. u10 will route tier writes through the resolver.
+# resolver-lint: bypass
 _UPDATE_SQL = """
     UPDATE document_entities
     SET evidence = COALESCE(evidence, '{}'::jsonb)

@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import torch
 
 from scix.db import get_connection
-from scix.embed import EmbeddingInput, load_model, prepare_input, _vec_to_pgvector
+from scix.embed import EmbeddingInput, _vec_to_pgvector, load_model, prepare_input
 
 logging.basicConfig(
     level=logging.INFO,

@@ -1,5 +1,6 @@
 """Capture screenshots of SciX viz pages for slides."""
 from pathlib import Path
+
 from playwright.sync_api import sync_playwright
 
 OUT = Path("/home/ds/projects/scix_experiments/docs/slides_assets")

@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -91,7 +91,7 @@ def test_client_rate_limit() -> None:
     harvest_sbdb._client = None
     with patch.object(harvest_sbdb, "ResilientClient") as mock_cls:
         mock_cls.return_value = MagicMock()
-        client = harvest_sbdb._get_client()
+        harvest_sbdb._get_client()
         mock_cls.assert_called_once()
         kwargs = mock_cls.call_args[1]
         assert kwargs["rate_limit"] == 1.0
@@ -482,7 +482,6 @@ def test_run_harvest_resume_from_cursor(
 
     assert result == 1
     # Verify fetch_ssodnet_entities was called with after_id
-    fetchall_sql_calls = [c for c in mock_cursor.execute.call_args_list if "entities" in str(c)]
     # At least one call should have the ssodnet source and id > 50
     entity_query_found = False
     for c in mock_cursor.execute.call_args_list:

@@ -7,7 +7,6 @@ without any database or network access. Integration tests (marked with
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import psycopg

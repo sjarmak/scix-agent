@@ -34,7 +34,6 @@ import asyncio
 import csv
 import json
 import logging
-import math
 import random
 import sys
 from dataclasses import dataclass
@@ -50,7 +49,6 @@ from scix.eval.persona_judge import (  # noqa: E402
     Dispatcher,
     JudgeTriple,
     PersonaJudge,
-    StubDispatcher,
     quadratic_weighted_kappa,
 )
 

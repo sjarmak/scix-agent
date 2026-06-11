@@ -25,12 +25,11 @@ import pytest
 
 from scix import mcp_server
 from scix.mcp_server import (
+    _MAX_TRACE_BIBCODES,
     _emit_trace_event,
     _extract_bibcodes_from_result,
-    _MAX_TRACE_BIBCODES,
 )
 from scix.viz.trace_stream import TraceEvent
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

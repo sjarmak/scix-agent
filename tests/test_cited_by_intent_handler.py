@@ -21,7 +21,6 @@ import pytest
 from scix.citation_contexts_coverage import COVERAGE_DOC_PATH
 from scix.mcp_server import _handle_cited_by_intent
 
-
 # ---------------------------------------------------------------------------
 # Minimal fake DB plumbing — we recognise two query shapes:
 #   * coverage probe (COUNT(DISTINCT bib) ... v_claim_edges)

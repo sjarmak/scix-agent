@@ -1,0 +1,337 @@
+{
+  "acceptance": {
+    "baseline_pool": "INF",
+    "by_bucket": {
+      "author_specific": {
+        "n_paired": 12,
+        "ndcg_drop_pp": 0.0
+      },
+      "concept": {
+        "n_paired": 13,
+        "ndcg_drop_pp": 0.0
+      },
+      "method": {
+        "n_paired": 12,
+        "ndcg_drop_pp": 0.0
+      },
+      "title_matchable": {
+        "n_paired": 11,
+        "ndcg_drop_pp": 0.0
+      }
+    },
+    "default_pool": "5000",
+    "max_match_set": 2192,
+    "n_cap_engaged_at_default": 0,
+    "ndcg_drop_pp": 0.0,
+    "pass": true,
+    "threshold_pp": 2.0,
+    "unexercised": true
+  },
+  "bead": "scix_experiments-a2fp",
+  "match_set_sizes": {
+    "Bale et al Parker Solar Probe FIELDS instrument": 6,
+    "Bayesian retrieval of exoplanet atmospheric composition from transmission spectra": 36,
+    "Cassini Grand Finale Spilker mission summary": 0,
+    "Curiosity rover Vasavada science overview": 1,
+    "DART mission Dimorphos kinetic impact deflection": 95,
+    "Doppler tracking gravity field inversion for outer planet missions": 0,
+    "Event Horizon Telescope first M87 black hole image": 219,
+    "GRACE Follow-On terrestrial water storage anomaly": 74,
+    "Gaia Collaboration Brown 2021 EDR3 summary": 0,
+    "Gaia Data Release 3 summary content": 5,
+    "Gaussian process regression detrending of stellar variability in transit light curves": 2,
+    "Hansen GISS surface temperature analysis": 3,
+    "ICESat-2 ATL08 land vegetation product": 58,
+    "JWST PRIMER survey overview": 2,
+    "Kalman filter assimilation of magnetometer observations": 18,
+    "Kasper SWEAP solar wind plasma instrument": 2,
+    "LIGO Scientific Collaboration GW170817 binary neutron star merger": 33,
+    "Lomb-Scargle periodogram analysis of unevenly sampled photometry": 3,
+    "Markov Chain Monte Carlo sampling for exoplanet radial velocity orbit fitting": 12,
+    "NISAR mission overview L-band S-band SAR": 3,
+    "OSIRIS-REx sample return Bennu": 308,
+    "Parker Solar Probe first encounter results": 157,
+    "Perseverance rover landing site Jezero crater": 112,
+    "Planck 2018 results cosmological parameters": 262,
+    "Planck Collaboration 2018 cosmological parameter constraints": 23,
+    "Riess et al. 2022 SH0ES Hubble constant measurement": 2,
+    "Rignot Antarctic ice sheet mass balance": 16,
+    "Seager exoplanet atmosphere biosignatures": 4,
+    "Solar Orbiter EUI campfires small-scale brightenings": 15,
+    "Stokes inversion of spectropolarimetric solar observations": 170,
+    "Velicogna GRACE Greenland ice mass loss": 6,
+    "Voigt profile fitting for absorption line equivalent widths": 18,
+    "atmospheric correction of MODIS ocean color observations": 116,
+    "atmospheric escape mechanisms in sub-Neptune exoplanets": 9,
+    "convolutional neural network galaxy morphology classification": 131,
+    "dust devil contribution to Martian atmospheric dust loading": 14,
+    "emergence of life in hydrothermal vent environments": 86,
+    "feedback regulation of star formation in low mass galaxies": 253,
+    "habitability of icy moon subsurface oceans": 235,
+    "ionospheric response to geomagnetic storms": 2192,
+    "land surface temperature retrieval from thermal infrared satellite data": 365,
+    "machine learning classification of variable stars from light curves": 77,
+    "magnetic reconnection driven energy release in the solar corona": 144,
+    "ocean mesoscale eddy heat transport": 655,
+    "principal component analysis of hyperspectral imaging cubes": 89,
+    "radiative transfer modeling of CO2 column retrievals from OCO-2": 18,
+    "remote sensing of harmful algal blooms in coastal waters": 173,
+    "solar wind turbulence cascade at kinetic scales": 565,
+    "tidal disruption events as probes of supermassive black hole accretion": 105,
+    "wavelet decomposition of solar EUV intensity time series": 1
+  },
+  "n_queries": 50,
+  "n_queries_with_gold": 48,
+  "pools": {
+    "1000": {
+      "aggregate": {
+        "by_bucket": {
+          "author_specific": {
+            "n_scored": 12,
+            "ndcg_at_10": 0.0,
+            "recall_at_20": 0.0
+          },
+          "concept": {
+            "n_scored": 13,
+            "ndcg_at_10": 0.04853305796703519,
+            "recall_at_20": 0.07692307692307693
+          },
+          "method": {
+            "n_scored": 12,
+            "ndcg_at_10": 0.0,
+            "recall_at_20": 0.0
+          },
+          "title_matchable": {
+            "n_scored": 11,
+            "ndcg_at_10": 0.2255704235551102,
+            "recall_at_20": 0.2727272727272727
+          }
+        },
+        "errored_queries": [],
+        "latency_ms": {
+          "max": 131.11289963126183,
+          "mean": 28.501379881054163,
+          "total": 1425.0689940527081
+        },
+        "n_errored": 0,
+        "n_queries": 50,
+        "overall": {
+          "n_scored": 48,
+          "ndcg_at_10": 0.06483759193078478,
+          "recall_at_20": 0.08333333333333333
+        }
+      },
+      "delta_vs_baseline": {
+        "by_bucket": {
+          "author_specific": {
+            "n_paired": 12,
+            "ndcg_drop_pp": 0.0
+          },
+          "concept": {
+            "n_paired": 13,
+            "ndcg_drop_pp": 0.0
+          },
+          "method": {
+            "n_paired": 12,
+            "ndcg_drop_pp": 0.0
+          },
+          "title_matchable": {
+            "n_paired": 11,
+            "ndcg_drop_pp": 0.0
+          }
+        },
+        "n_paired": 48,
+        "ndcg_at_10_baseline": 0.06483759193078478,
+        "ndcg_at_10_pool": 0.06483759193078478,
+        "ndcg_drop_pp": 0.0,
+        "recall_at_20_baseline": 0.08333333333333333,
+        "recall_at_20_pool": 0.08333333333333333,
+        "recall_drop_pp": 0.0
+      },
+      "n_cap_engaged": 1
+    },
+    "5000": {
+      "aggregate": {
+        "by_bucket": {
+          "author_specific": {
+            "n_scored": 12,
+            "ndcg_at_10": 0.0,
+            "recall_at_20": 0.0
+          },
+          "concept": {
+            "n_scored": 13,
+            "ndcg_at_10": 0.04853305796703519,
+            "recall_at_20": 0.07692307692307693
+          },
+          "method": {
+            "n_scored": 12,
+            "ndcg_at_10": 0.0,
+            "recall_at_20": 0.0
+          },
+          "title_matchable": {
+            "n_scored": 11,
+            "ndcg_at_10": 0.2255704235551102,
+            "recall_at_20": 0.2727272727272727
+          }
+        },
+        "errored_queries": [],
+        "latency_ms": {
+          "max": 141.48673322051764,
+          "mean": 33.19585982710123,
+          "total": 1659.7929913550615
+        },
+        "n_errored": 0,
+        "n_queries": 50,
+        "overall": {
+          "n_scored": 48,
+          "ndcg_at_10": 0.06483759193078478,
+          "recall_at_20": 0.08333333333333333
+        }
+      },
+      "delta_vs_baseline": {
+        "by_bucket": {
+          "author_specific": {
+            "n_paired": 12,
+            "ndcg_drop_pp": 0.0
+          },
+          "concept": {
+            "n_paired": 13,
+            "ndcg_drop_pp": 0.0
+          },
+          "method": {
+            "n_paired": 12,
+            "ndcg_drop_pp": 0.0
+          },
+          "title_matchable": {
+            "n_paired": 11,
+            "ndcg_drop_pp": 0.0
+          }
+        },
+        "n_paired": 48,
+        "ndcg_at_10_baseline": 0.06483759193078478,
+        "ndcg_at_10_pool": 0.06483759193078478,
+        "ndcg_drop_pp": 0.0,
+        "recall_at_20_baseline": 0.08333333333333333,
+        "recall_at_20_pool": 0.08333333333333333,
+        "recall_drop_pp": 0.0
+      },
+      "n_cap_engaged": 0
+    },
+    "50000": {
+      "aggregate": {
+        "by_bucket": {
+          "author_specific": {
+            "n_scored": 12,
+            "ndcg_at_10": 0.0,
+            "recall_at_20": 0.0
+          },
+          "concept": {
+            "n_scored": 13,
+            "ndcg_at_10": 0.04853305796703519,
+            "recall_at_20": 0.07692307692307693
+          },
+          "method": {
+            "n_scored": 12,
+            "ndcg_at_10": 0.0,
+            "recall_at_20": 0.0
+          },
+          "title_matchable": {
+            "n_scored": 11,
+            "ndcg_at_10": 0.2255704235551102,
+            "recall_at_20": 0.2727272727272727
+          }
+        },
+        "errored_queries": [],
+        "latency_ms": {
+          "max": 103.66381332278252,
+          "mean": 30.018026642501354,
+          "total": 1500.9013321250677
+        },
+        "n_errored": 0,
+        "n_queries": 50,
+        "overall": {
+          "n_scored": 48,
+          "ndcg_at_10": 0.06483759193078478,
+          "recall_at_20": 0.08333333333333333
+        }
+      },
+      "delta_vs_baseline": {
+        "by_bucket": {
+          "author_specific": {
+            "n_paired": 12,
+            "ndcg_drop_pp": 0.0
+          },
+          "concept": {
+            "n_paired": 13,
+            "ndcg_drop_pp": 0.0
+          },
+          "method": {
+            "n_paired": 12,
+            "ndcg_drop_pp": 0.0
+          },
+          "title_matchable": {
+            "n_paired": 11,
+            "ndcg_drop_pp": 0.0
+          }
+        },
+        "n_paired": 48,
+        "ndcg_at_10_baseline": 0.06483759193078478,
+        "ndcg_at_10_pool": 0.06483759193078478,
+        "ndcg_drop_pp": 0.0,
+        "recall_at_20_baseline": 0.08333333333333333,
+        "recall_at_20_pool": 0.08333333333333333,
+        "recall_drop_pp": 0.0
+      },
+      "n_cap_engaged": 0
+    },
+    "INF": {
+      "aggregate": {
+        "by_bucket": {
+          "author_specific": {
+            "n_scored": 12,
+            "ndcg_at_10": 0.0,
+            "recall_at_20": 0.0
+          },
+          "concept": {
+            "n_scored": 13,
+            "ndcg_at_10": 0.04853305796703519,
+            "recall_at_20": 0.07692307692307693
+          },
+          "method": {
+            "n_scored": 12,
+            "ndcg_at_10": 0.0,
+            "recall_at_20": 0.0
+          },
+          "title_matchable": {
+            "n_scored": 11,
+            "ndcg_at_10": 0.2255704235551102,
+            "recall_at_20": 0.2727272727272727
+          }
+        },
+        "errored_queries": [],
+        "latency_ms": {
+          "max": 189.9573216214776,
+          "mean": 52.1761423163116,
+          "total": 2608.80711581558
+        },
+        "n_errored": 0,
+        "n_queries": 50,
+        "overall": {
+          "n_scored": 48,
+          "ndcg_at_10": 0.06483759193078478,
+          "recall_at_20": 0.08333333333333333
+        }
+      },
+      "n_cap_engaged": 0
+    }
+  },
+  "pools_order": [
+    "1000",
+    "5000",
+    "50000",
+    "INF"
+  ],
+  "queries_path": "eval/retrieval_50q.jsonl",
+  "retrieve_limit": 20,
+  "statement_timeout_ms": 300000
+}

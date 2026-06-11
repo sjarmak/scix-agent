@@ -248,7 +248,7 @@ class TestDiskCache:
         assert mock_get.call_count == 1
 
         # Even though file exists, TTL=0 means it's expired
-        resp2 = client.get("http://example.com/data")
+        client.get("http://example.com/data")
         assert mock_get.call_count == 2
 
     @patch("scix.http_client.requests.get")

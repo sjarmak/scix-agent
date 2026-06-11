@@ -10,9 +10,9 @@ tool, and record deprecation notes for the aliased legacy tools.
 
 | Target | Status |
 |---|---|
-| Collapse MCP tools to `≤ 15` | **Met.** 15 agent-visible tools as of 2026-04-27 (added `cited_by_intent`, expanded `entity` with `action='papers'`). 5 additional tools (`chunk_search`, `section_retrieval`, `read_paper_claims`, `find_claims`, `claim_search`) are env-hidden (`_HIDDEN_TOOLS`) because their backing data isn't yet populated; restore via `SCIX_HIDDEN_TOOLS=`. |
+| Collapse MCP tools to `≤ 15` | **Met at 2026-04-27** (15 agent-visible after adding `cited_by_intent` and expanding `entity` with `action='papers'`). Subsequent additions (`synthesize_findings` via bead `cfh9`) push the registered count higher; the visible-by-default surface is bounded by `_HIDDEN_TOOLS`. The authoritative list is ``mcp_server.py::EXPECTED_TOOLS`` minus ``_HIDDEN_TOOLS``. Env-hidden by default: `chunk_search` (registered iff Qdrant enabled), `section_retrieval`, `read_paper_claims`, `find_claims`, `claim_search` — backing data not yet populated; restore via `SCIX_HIDDEN_TOOLS=`. |
 | Deprecation notes per removed tool | **Met.** Aliases map to the new tools via `src/scix/mcp_server.py::_DEPRECATED_ALIASES`; schema transforms in `_transform_deprecated_args`; responses wrapped with `{deprecated: true, use_instead, original_tool}` by `_wrap_deprecated`. |
-| `SKILL.md` tool table reflects the new set | Stale — needs update to reflect 15-tool surface and the 4 env-hidden tools. |
+| `SKILL.md` tool table reflects the new set | Stale — needs update to reflect the current consolidated surface and the env-hidden tools. |
 
 ## 2026-04-27 — `claim_search` MCP tool added (bead `scix_experiments-c996`)
 

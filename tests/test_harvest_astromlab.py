@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,7 +21,6 @@ from harvest_astromlab import (
     _parse_csv,
     _parse_json,
     download_concepts,
-    load_concepts,
     map_category_to_entity_type,
     parse_concepts,
     run_pipeline,

@@ -1,7 +1,6 @@
 """Tests for migration 021_entity_graph.sql — entity graph schema."""
 
 import os
-import re
 
 import pytest
 

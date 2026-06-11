@@ -22,7 +22,6 @@ import pytest
 
 from tests.integration.conftest import (
     assert_all_claims_grounded,
-    collect_bibcodes,
 )
 
 # ---------------------------------------------------------------------------

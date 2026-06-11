@@ -14,8 +14,6 @@ from typing import Any, Protocol, runtime_checkable
 
 import psycopg
 
-from scix.db import get_connection
-
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------

@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import psycopg
 import pytest
-
-from helpers import DSN, is_production_dsn
+from helpers import is_production_dsn
 
 from scix.sync_manager import (
     DEFAULT_CADENCE_HOURS,

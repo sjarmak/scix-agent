@@ -24,13 +24,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scix.sources.ar5ivist_local import (
+    _AR5IVIST_DIGEST,
+    _PLACEHOLDER_DIGEST,
     AR5IVIST_IMAGE,
     ArxivLocalConfig,
     ArxivLocalConverter,
     ConversionResult,
     ProductionGuardError,
-    _AR5IVIST_DIGEST,
-    _PLACEHOLDER_DIGEST,
     _check_image_digest,
     needs_local_conversion,
 )

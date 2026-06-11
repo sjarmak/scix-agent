@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import os
 import time
 from pathlib import Path
 
@@ -258,7 +257,7 @@ class TestMaterializedView:
         with psycopg.connect(dsn) as c:
             with c.cursor() as cur:
                 cur.execute(
-                    "SELECT fused_confidence, link_count "  # noqa: resolver-lint
+                    "SELECT fused_confidence, link_count "  # resolver-lint: bypass
                     "FROM document_entities_canonical "
                     "WHERE bibcode = %s AND entity_id = %s",
                     (bibcode, entity_id),
@@ -336,7 +335,7 @@ class TestLatency:
             with c.cursor() as cur:
                 # Warm the planner / cache.
                 cur.execute(
-                    "SELECT bibcode, fused_confidence "  # noqa: resolver-lint
+                    "SELECT bibcode, fused_confidence "  # resolver-lint: bypass
                     "FROM document_entities_canonical "
                     "WHERE entity_id = %s "
                     "ORDER BY fused_confidence DESC LIMIT 20",
@@ -345,7 +344,7 @@ class TestLatency:
                 cur.fetchall()
                 start = time.perf_counter()
                 cur.execute(
-                    "SELECT bibcode, fused_confidence "  # noqa: resolver-lint
+                    "SELECT bibcode, fused_confidence "  # resolver-lint: bypass
                     "FROM document_entities_canonical "
                     "WHERE entity_id = %s "
                     "ORDER BY fused_confidence DESC LIMIT 20",

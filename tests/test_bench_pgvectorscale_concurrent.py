@@ -20,7 +20,6 @@ import pytest
 
 from scripts import bench_pgvectorscale_concurrent as mod
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "bench_pgvectorscale_concurrent.py"
 

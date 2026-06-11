@@ -21,7 +21,7 @@ Lint exemption
 ``scripts/ast_lint_resolver.py`` forbids writes to
 ``document_entities_jit_cache`` outside ``src/scix/resolve_entities.py``.
 The u10 spec (acceptance criterion 7) grants this file a transitional
-exemption via ``# noqa: resolver-lint`` on the INSERT literal. A later
+exemption via ``# resolver-lint: bypass`` on the INSERT literal. A later
 refactor will move the INSERT behind a resolver-injected handle.
 """
 
@@ -32,7 +32,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Awaitable, Callable, Iterable, Optional
+from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -297,7 +297,7 @@ class JITCache:
 
         # fmt: off
         sql = (
-            "INSERT INTO document_entities_jit_cache "  # noqa: resolver-lint
+            "INSERT INTO document_entities_jit_cache "  # resolver-lint: bypass
             "(bibcode, entity_id, link_type, confidence, match_method, "
             "tier, tier_version, candidate_set_hash, model_version, expires_at) "
             "VALUES (%s, %s, %s, %s, %s, 5, 1, %s, %s, %s) "

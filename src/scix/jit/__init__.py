@@ -22,16 +22,16 @@ The only place in the codebase permitted to write to
 ``document_entities`` / ``document_entities_jit_cache`` is
 ``src/scix/resolve_entities.py`` (enforced by
 ``scripts/ast_lint_resolver.py``). ``cache.py`` INSERTs are exempted with
-the ``# noqa: resolver-lint`` marker as the u10 spec allows — those writes
+the ``# resolver-lint: bypass`` marker as the u10 spec allows — those writes
 will move behind the resolver handle in a subsequent PR.
 """
 
 from __future__ import annotations
 
 from scix.jit.bulkhead import (
+    DEGRADED,
     BulkheadDegraded,
     BulkheadResult,
-    DEGRADED,
     JITBulkhead,
 )
 from scix.jit.cache import (

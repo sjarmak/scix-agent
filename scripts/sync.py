@@ -72,7 +72,6 @@ def main() -> None:
     client = SyncClient(batch_size=args.batch_size, throttle=args.throttle)
 
     if args.command == "harvest":
-        all_years = range(0, 0)
         for yr in args.years:
             for year in yr:
                 harvest_years(client, range(year, year + 1), args.data_dir)

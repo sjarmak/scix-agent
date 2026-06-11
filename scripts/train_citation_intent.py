@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -85,6 +84,7 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(1) from exc
 
     import json
+
     from sklearn.metrics import classification_report, precision_recall_fscore_support
 
     # Label mapping: SciCite uses 0=background, 1=method, 2=result

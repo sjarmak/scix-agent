@@ -9,7 +9,6 @@ and bulk-loads them via scix.dictionary.bulk_load().
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
 import time

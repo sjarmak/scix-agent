@@ -7,10 +7,8 @@ INDUS. All tests are pure — no DB, no network, no model load.
 
 from __future__ import annotations
 
-import math
 import re
 from collections import Counter
-from typing import Any
 
 import pytest
 
@@ -23,7 +21,6 @@ from scix.citation_grounded import (
     revise_with_gate,
     set_embedder,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test embedder: count-vector over the call's own vocab

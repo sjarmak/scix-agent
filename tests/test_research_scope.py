@@ -11,7 +11,6 @@ from scix.research_scope import (
     scope_to_sql_clauses,
 )
 
-
 # -- Acceptance criteria 4(a): empty scope ------------------------------------
 
 

@@ -25,7 +25,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scix import mcp_server
-from scix.mcp_server import _dispatch_tool, _is_unscoped_broad_query
+from scix.mcp_server import (
+    _LOG_QUERY_COLS,
+    _dispatch_tool,
+    _is_unscoped_broad_query,
+    _LogQueryConnection,
+    _LogQueryCursor,
+)
 from scix.search import SearchResult
 
 # ---------------------------------------------------------------------------
@@ -429,68 +435,71 @@ def test_description_mentions_structured_error_behavior() -> None:
 # Telemetry — _log_query surfaces the unscoped tag in error_msg
 #
 # Tests below share a single module-level _CaptureCursor/_CaptureConn pair
-# that records the full params tuple from query_log's INSERT. Each test
-# indexes into captured["params"] for the fields it cares about, using the
-# positional order documented on _CaptureCursor.execute.
+# that records the full params tuple from query_log's INSERT, plus a named
+# dict keyed by mcp_server._LOG_QUERY_COLS so assertions can index by
+# column name (captured["named"]["error_msg"]) instead of magic positional
+# indices that silently drift if a column is inserted into the middle of
+# the INSERT.
 # ---------------------------------------------------------------------------
 
 
-class _CaptureCursor:
+class _CaptureCursor(_LogQueryCursor):
     """Test double that captures the params tuple from a single execute().
 
-    Stores the raw tuple under ``captured["params"]`` so each test can pull
-    out only the fields it needs without growing this helper to match every
-    new assertion.
-    """
+    Stores both the raw tuple under ``captured["params"]`` and a named
+    mapping under ``captured["named"]`` keyed by
+    :data:`scix.mcp_server._LOG_QUERY_COLS`. Tests should prefer the named
+    form so assertions survive INSERT column reordering.
 
-    # _log_query INSERT positional order — keep in sync with mcp_server._log_query.
-    #   0: tool_name
-    #   1: params_json
-    #   2: latency_ms
-    #   3: success
-    #   4: error_msg
-    #   5: tool_name (dup, for partial-index match)
-    #   6: query
-    #   7: result_count
-    #   8: session_id
-    #   9: is_test
+    Declares :class:`_LogQueryCursor` as a structural base so the static
+    type checker accepts this double in place of ``psycopg.Cursor``.
+    """
 
     def __init__(self, captured: dict[str, Any]) -> None:
         self._captured = captured
 
-    def __enter__(self) -> "_CaptureCursor":
+    def __enter__(self) -> "_LogQueryCursor":
         return self
 
     def __exit__(self, *_a: Any) -> None:
         pass
 
-    def execute(self, _sql: str, params: tuple) -> None:
+    def execute(self, _sql: str, params: Any = (), /) -> None:
         self._captured["params"] = params
+        self._captured["named"] = dict(zip(_LOG_QUERY_COLS, params, strict=True))
 
 
-class _CaptureConn:
-    """Connection double that vends a shared :class:`_CaptureCursor`."""
+class _CaptureConn(_LogQueryConnection):
+    """Connection double that vends a shared :class:`_CaptureCursor`.
+
+    Declares :class:`_LogQueryConnection` as a structural base so the
+    static type checker accepts this double in place of
+    ``psycopg.Connection``.
+    """
 
     def __init__(self, captured: dict[str, Any]) -> None:
         self._captured = captured
 
-    def cursor(self) -> _CaptureCursor:
+    def cursor(self) -> _LogQueryCursor:
         return _CaptureCursor(self._captured)
 
     def commit(self) -> None:
         pass
 
+    def rollback(self) -> None:
+        pass
 
-def _expect_logged_params(captured: dict[str, Any]) -> tuple:
-    """Return ``captured["params"]`` with a clear message if execute() was skipped.
+
+def _expect_logged_named(captured: dict[str, Any]) -> dict[str, Any]:
+    """Return ``captured["named"]`` with a clear message if execute() was skipped.
 
     ``_log_query`` is best-effort and silently swallows exceptions on the
-    telemetry path. Using a bare ``captured["params"]`` would surface as
-    ``KeyError: 'params'`` and obscure the real failure (the telemetry call
+    telemetry path. Using a bare ``captured["named"]`` would surface as
+    ``KeyError: 'named'`` and obscure the real failure (the telemetry call
     never reached ``cur.execute()``).
     """
-    assert "params" in captured, "_log_query never reached cur.execute() — telemetry path skipped"
-    return captured["params"]
+    assert "named" in captured, "_log_query never reached cur.execute() — telemetry path skipped"
+    return captured["named"]
 
 
 def test_log_query_surfaces_unscoped_broad_tag() -> None:
@@ -520,10 +529,10 @@ def test_log_query_surfaces_unscoped_broad_tag() -> None:
         result_json=payload,
     )
 
-    params = _expect_logged_params(captured)
-    assert params[4] == "unscoped_broad_query"  # error_msg
+    named = _expect_logged_named(captured)
+    assert named["error_msg"] == "unscoped_broad_query"
     # Result count is 0 because the response carried an "error" key.
-    assert params[7] == 0  # result_count
+    assert named["result_count"] == 0
 
 
 def test_log_query_does_not_surface_tag_for_normal_results() -> None:
@@ -543,7 +552,7 @@ def test_log_query_does_not_surface_tag_for_normal_results() -> None:
     )
 
     # error_msg stays None when no unscoped marker is present.
-    assert _expect_logged_params(captured)[4] is None
+    assert _expect_logged_named(captured)["error_msg"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -600,9 +609,9 @@ def test_telemetry_convention_lifted_structured_error_logs_success_true_and_tag(
     )
 
     # Pinned convention: structured-error + lifted tag => (True, <tag>).
-    params = _expect_logged_params(captured)
-    assert params[3] is True  # success
-    assert params[4] == "unscoped_broad_query"  # error_msg
+    named = _expect_logged_named(captured)
+    assert named["success"] is True
+    assert named["error_msg"] == "unscoped_broad_query"
 
 
 def test_telemetry_convention_unlifted_structured_error_logs_success_true_and_null() -> None:
@@ -644,6 +653,6 @@ def test_telemetry_convention_unlifted_structured_error_logs_success_true_and_nu
     # Pinned convention: structured-error WITHOUT lifted tag => (True, None).
     # If a future change adds an error_code-based lift, this test breaks
     # and the convention doc + operator dashboards must be updated together.
-    params = _expect_logged_params(captured)
-    assert params[3] is True  # success
-    assert params[4] is None  # error_msg
+    named = _expect_logged_named(captured)
+    assert named["success"] is True
+    assert named["error_msg"] is None

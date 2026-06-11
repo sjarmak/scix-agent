@@ -8,8 +8,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -24,6 +23,7 @@ from eval_extraction_quality import (
     sample_papers,
     write_report,
 )
+
 from scix.entity_resolver import EntityCandidate
 
 # ---------------------------------------------------------------------------

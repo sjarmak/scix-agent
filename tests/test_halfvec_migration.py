@@ -38,7 +38,6 @@ def _captured_sql(model_name: str, *, halfvec_enabled: bool = True) -> str:
     # _HALFVEC_ENABLED is captured at module import time, so monkey-patching
     # the env var alone is insufficient — patch the module attribute instead.
     import scix.search as search
-
     from scix.search import vector_search  # local import after sys.path tweak
 
     conn = MagicMock()

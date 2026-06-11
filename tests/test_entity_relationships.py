@@ -16,9 +16,11 @@ from scix.entity_relationships import (
     extract_gcmd_edges,
     extract_spase_region_edges,
     extract_ssodnet_class_edges,
+    extract_vizier_catalog_edges,
     parse_gcmd_hierarchy,
     parse_spase_region_path,
     parse_sso_class_path,
+    parse_vizier_table_path,
 )
 
 # ---------------------------------------------------------------------------
@@ -289,6 +291,100 @@ class TestCuratedFlagshipEdges:
             )
         )
         assert edges == []
+
+
+# ---------------------------------------------------------------------------
+# parse_vizier_table_path
+# ---------------------------------------------------------------------------
+
+
+class TestParseVizierTablePath:
+    def test_journal_five_segment_path(self) -> None:
+        assert parse_vizier_table_path("J/A+A/287/990/table3a") == (
+            "J/A+A/287/990",
+            "J/A+A/287/990/table3a",
+        )
+
+    def test_three_segment_path(self) -> None:
+        assert parse_vizier_table_path("I/80/remarks") == ("I/80", "I/80/remarks")
+
+    def test_strips_json_quotes(self) -> None:
+        # external_id is stored JSON-quoted in entity_identifiers
+        assert parse_vizier_table_path('"I/80/remarks"') == ("I/80", "I/80/remarks")
+
+    def test_single_segment_meta_table_has_no_catalog(self) -> None:
+        assert parse_vizier_table_path("METAcat") is None
+        assert parse_vizier_table_path('"METAcat"') is None
+
+    def test_empty_input_returns_none(self) -> None:
+        assert parse_vizier_table_path("") is None
+        assert parse_vizier_table_path(None) is None
+
+    def test_drops_empty_segments(self) -> None:
+        # Defensive: trailing/double slashes never produce empty segments
+        assert parse_vizier_table_path("B/polarbase//polarbase") == (
+            "B/polarbase",
+            "B/polarbase/polarbase",
+        )
+
+
+# ---------------------------------------------------------------------------
+# extract_vizier_catalog_edges
+# ---------------------------------------------------------------------------
+
+
+class TestExtractVizierCatalogEdges:
+    def test_emits_catalog_parent_of_table(self) -> None:
+        edges, catalogs = extract_vizier_catalog_edges(
+            [(101, '"J/A+A/287/990/table3a"')]
+        )
+        assert catalogs == ["J/A+A/287/990"]
+        assert len(edges) == 1
+        e = edges[0]
+        assert e.subject_name == "J/A+A/287/990"
+        assert e.subject_id is None  # synthetic — resolved post-upsert
+        assert e.object_id == 101
+        assert e.predicate == "parent_of"
+        assert e.source == "vizier"
+        assert e.evidence == {
+            "method": "vizier_table_path",
+            "catalog": "J/A+A/287/990",
+            "table": "J/A+A/287/990/table3a",
+        }
+
+    def test_multiple_tables_share_one_catalog(self) -> None:
+        edges, catalogs = extract_vizier_catalog_edges(
+            [(1, '"I/239/hip_main"'), (2, '"I/239/tyc_main"')]
+        )
+        assert catalogs == ["I/239"]
+        assert {e.object_id for e in edges} == {1, 2}
+        assert all(e.subject_name == "I/239" for e in edges)
+
+    def test_skips_meta_tables_without_catalog(self) -> None:
+        edges, catalogs = extract_vizier_catalog_edges(
+            [(1, '"METAcat"'), (2, '"I/80/remarks"')]
+        )
+        assert catalogs == ["I/80"]
+        assert [e.object_id for e in edges] == [2]
+
+    def test_deduplicates_repeated_catalog_table_pairs(self) -> None:
+        # Same (catalog, entity_id) twice — only one edge.
+        edges, catalogs = extract_vizier_catalog_edges(
+            [(5, '"V/147/sdss12"'), (5, '"V/147/sdss12"')]
+        )
+        assert len(edges) == 1
+        assert catalogs == ["V/147"]
+
+    def test_catalogs_returned_sorted_and_deduplicated(self) -> None:
+        _edges, catalogs = extract_vizier_catalog_edges(
+            [(1, '"J/B/2/t1"'), (2, '"J/A/1/t1"'), (3, '"J/A/1/t2"')]
+        )
+        assert catalogs == ["J/A/1", "J/B/2"]
+
+    def test_empty_input(self) -> None:
+        edges, catalogs = extract_vizier_catalog_edges([])
+        assert edges == []
+        assert catalogs == []
 
 
 # ---------------------------------------------------------------------------

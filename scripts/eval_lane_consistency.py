@@ -35,8 +35,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scix import resolve_entities as re_mod
 from scix.eval.lane_delta import (
-    BibcodeDivergence,
     GATE_THRESHOLD,
+    BibcodeDivergence,
     LaneConsistencyAggregate,
     LaneEntitySets,
     aggregate_divergence,

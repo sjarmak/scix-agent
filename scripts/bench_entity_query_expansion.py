@@ -57,7 +57,7 @@ from scix.alias_expansion import build_alias_automaton, expand_query
 from scix.db import get_connection
 from scix.ir_metrics import ndcg_at_k
 from scix.ontology_query_parser import parse_query
-from scix.search import SearchFilters, hybrid_search
+from scix.search import hybrid_search
 
 logger = logging.getLogger(__name__)
 

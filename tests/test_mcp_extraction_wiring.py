@@ -34,7 +34,6 @@ import pytest
 from scix import mcp_server
 from scix.mcp_server import _dispatch_tool, _reset_coverage_note_cache
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -227,7 +226,6 @@ def test_entity_resolve_response_includes_coverage_note() -> None:
 def test_read_paper_response_includes_coverage_note() -> None:
     """AC4: read_paper carries top-level coverage_note (read mode)."""
     conn = MagicMock()
-    fake_result = MagicMock()
     # _result_to_json passes through non-SearchResult via json.dumps(default=str).
     # Use a plain dict to keep the test robust to the underlying implementation.
     with patch(

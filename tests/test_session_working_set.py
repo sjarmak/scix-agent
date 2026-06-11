@@ -322,14 +322,12 @@ class TestTemporalEvolutionWorkingSet:
 
 
 class TestCitationTraverseWorkingSet:
-    @patch("scix.search.get_citations")
-    def test_explicit_bibcodes_returns_per_bibcode(self, mock_get_citations: MagicMock) -> None:
-        from scix.search import SearchResult
-
-        mock_get_citations.side_effect = [
-            SearchResult(papers=[{"bibcode": "CITER_X"}], total=1, timing_ms={}),
-            SearchResult(papers=[{"bibcode": "CITER_Y"}], total=1, timing_ms={}),
-        ]
+    @patch("scix.search.get_citations_batch")
+    def test_explicit_bibcodes_returns_per_bibcode(self, mock_batch: MagicMock) -> None:
+        mock_batch.return_value = {
+            "A": [{"bibcode": "CITER_X"}],
+            "B": [{"bibcode": "CITER_Y"}],
+        }
         conn = _make_conn()
         result_json = mcp_server._dispatch_tool(
             conn,
@@ -340,14 +338,12 @@ class TestCitationTraverseWorkingSet:
         assert "by_bibcode" in result
         assert "A" in result["by_bibcode"]
         assert "B" in result["by_bibcode"]
+        # Batched: one query for the whole working set, not one per bibcode.
+        assert mock_batch.call_count == 1
 
-    @patch("scix.search.get_citations")
-    def test_falls_through_to_focused_papers(self, mock_get_citations: MagicMock) -> None:
-        from scix.search import SearchResult
-
-        mock_get_citations.return_value = SearchResult(
-            papers=[{"bibcode": "CITER"}], total=1, timing_ms={}
-        )
+    @patch("scix.search.get_citations_batch")
+    def test_falls_through_to_focused_papers(self, mock_batch: MagicMock) -> None:
+        mock_batch.return_value = {"F1": [{"bibcode": "CITER"}]}
         mcp_server._session_state.track_focused("F1")
         conn = _make_conn()
         result_json = mcp_server._dispatch_tool(conn, "citation_traverse", {"mode": "graph"})
@@ -355,6 +351,99 @@ class TestCitationTraverseWorkingSet:
         # When only one focused paper, falls back to single-bibcode response
         # OR a multi-paper by_bibcode result (implementation chooses).
         assert "by_bibcode" in result or "papers" in result
+
+    @patch("scix.search.get_citations_batch")
+    def test_large_working_set_is_one_query_not_n(self, mock_batch: MagicMock) -> None:
+        """Regression (sd71): round-trips are bounded regardless of set size.
+
+        The old per-bibcode loop fired one DB query per source paper (up to the
+        FIFO cap of 200) and timed out on large working sets. The batched path
+        must issue exactly one edge query for the whole set.
+        """
+        bibs = [f"BIB{i:04d}" for i in range(150)]
+        mock_batch.return_value = {b: [{"bibcode": f"C{b}"}] for b in bibs}
+        conn = _make_conn()
+        result_json = mcp_server._dispatch_tool(
+            conn, "citation_traverse", {"mode": "graph", "bibcodes": bibs}
+        )
+        result = json.loads(result_json)
+        assert len(result["by_bibcode"]) == 150
+        assert mock_batch.call_count == 1
+
+    @patch("scix.search.get_references_batch")
+    @patch("scix.search.get_citations_batch")
+    def test_direction_both_returns_nested_shape(
+        self, mock_fwd: MagicMock, mock_bwd: MagicMock
+    ) -> None:
+        """direction='both' preserves the per-direction nested payload shape."""
+        mock_fwd.return_value = {"A": [{"bibcode": "CITER"}]}
+        mock_bwd.return_value = {"A": [{"bibcode": "REF"}]}
+        conn = _make_conn()
+        result_json = mcp_server._dispatch_tool(
+            conn,
+            "citation_traverse",
+            {"mode": "graph", "bibcodes": ["A"], "direction": "both"},
+        )
+        entry = json.loads(result_json)["by_bibcode"]["A"]
+        assert entry["bibcode"] == "A"
+        dirs = {d["direction"]: d["result"] for d in entry["directions"]}
+        assert dirs["forward"]["papers"][0]["bibcode"] == "CITER"
+        assert dirs["backward"]["papers"][0]["bibcode"] == "REF"
+        assert mock_fwd.call_count == 1
+        assert mock_bwd.call_count == 1
+
+    def test_invalid_direction_returns_structured_error(self) -> None:
+        """An invalid direction is rejected per bibcode without touching edges."""
+        conn = _make_conn()
+        result_json = mcp_server._dispatch_tool(
+            conn,
+            "citation_traverse",
+            {"mode": "graph", "bibcodes": ["A"], "direction": "sideways"},
+        )
+        entry = json.loads(result_json)["by_bibcode"]["A"]
+        assert entry["error_code"] == "invalid_direction"
+
+
+class TestCitationEdgesBatch:
+    """search-layer batched citation-edge query (sd71)."""
+
+    def test_groups_rows_by_source_and_fills_missing(self) -> None:
+        from scix import search
+
+        rows = [
+            {
+                "bibcode": "CITER_X",
+                "title": "t",
+                "first_author": "a",
+                "year": 2020,
+                "citation_count": 5,
+                "abstract": None,
+                "src_bibcode": "A",
+                "rn": 1,
+            },
+            {
+                "bibcode": "CITER_Y",
+                "title": "t",
+                "first_author": "a",
+                "year": 2021,
+                "citation_count": 3,
+                "abstract": None,
+                "src_bibcode": "A",
+                "rn": 2,
+            },
+        ]
+        conn = _make_conn(rows)
+        out = search.get_citations_batch(conn, ["A", "B"], limit=20)
+        # 'A' gets both rows in rn order; 'B' (no edges) is present and empty.
+        assert [p["bibcode"] for p in out["A"]] == ["CITER_X", "CITER_Y"]
+        assert out["B"] == []
+
+    def test_empty_bibcodes_skips_query(self) -> None:
+        from scix import search
+
+        conn = _make_conn()
+        assert search.get_references_batch(conn, [], limit=20) == {}
+        conn.cursor.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

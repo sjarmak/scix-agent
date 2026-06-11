@@ -8,7 +8,6 @@ reference[] array, and stores results in the citation_contexts table.
 from __future__ import annotations
 
 import bisect
-import json
 import logging
 import re
 import time
@@ -102,21 +101,48 @@ def _parse_marker_numbers(inner: str) -> tuple[int, ...]:
 _WORD_RE = re.compile(r"\S+")
 
 
-def _word_offsets(text: str) -> tuple[list[int], list[int]]:
+# Hard cap on body length passed to the public extractors. _word_offsets builds
+# two list[int]s sized to the token count of the body — at ~8 chars/token, a
+# 100 MB body materialises ~12.5M ints and ~200 MB peak RAM, which OOM-kills
+# the shard worker even under scix-batch's MemoryMax. Truncate at the entry of
+# the public functions so the rest of the module can assume bounded input. The
+# 10M-char cap is well above the body-size distribution we actually see in
+# papers_fulltext (P99.9 ≈ 1.5M chars per spot-checks) so legitimate bodies
+# pass through untouched. Surfaced from wave-k6w0-u5gz-i315-3ozn1 review (bead
+# scix_experiments-2wbx).
+_MAX_BODY_CHARS: int = 10_000_000
+
+
+@dataclass(frozen=True)
+class WordOffsets:
+    """Pre-computed per-word char offsets for a body, for window lookups.
+
+    ``starts`` and ``ends`` are parallel sorted lists of half-open char ranges
+    for each whitespace-delimited token. They stay plain ``list[int]`` (rather
+    than tuples) deliberately: a worst-case body near :data:`_MAX_BODY_CHARS`
+    materialises ~12.5M ints per list, and a defensive ``tuple()`` copy would
+    double that transient footprint for no benefit — the arrays are an internal
+    cache, only ever read (via bisect), never mutated after creation.
+    """
+
+    starts: list[int]
+    ends: list[int]
+
+
+def _word_offsets(text: str) -> WordOffsets:
     """Pre-compute per-word char offsets in ``text``.
 
-    Returns parallel sorted lists ``(starts, ends)`` of half-open char ranges
-    for each whitespace-delimited token, equivalent to ``text.split()`` token
-    positions. Computed once per body so callers can resolve word-window
-    boundaries via O(log N) bisect rather than re-splitting an O(L) prefix
-    on every match.
+    Returns a :class:`WordOffsets` of half-open char ranges for each
+    whitespace-delimited token, equivalent to ``text.split()`` token positions.
+    Computed once per body so callers can resolve word-window boundaries via
+    O(log N) bisect rather than re-splitting an O(L) prefix on every match.
     """
     starts: list[int] = []
     ends: list[int] = []
     for m in _WORD_RE.finditer(text):
         starts.append(m.start())
         ends.append(m.end())
-    return starts, ends
+    return WordOffsets(starts=starts, ends=ends)
 
 
 def _word_boundary_window(
@@ -125,21 +151,21 @@ def _word_boundary_window(
     char_end: int,
     words: int = 125,
     *,
-    word_starts: list[int] | None = None,
-    word_ends: list[int] | None = None,
+    offsets: WordOffsets | None = None,
 ) -> tuple[int, int]:
     """Find a ~words-before and ~words-after window around a span.
 
     Returns (window_start, window_end) as char offsets into text.
 
-    ``word_starts`` and ``word_ends`` are optional pre-computed parallel
-    lists from :func:`_word_offsets` over ``text``. When the same body is
-    queried for many citation spans, reusing the pre-computed arrays makes
-    each lookup O(log N) instead of O(L) per call. When omitted, the
-    arrays are computed inline (caller pays O(L) once).
+    ``offsets`` is an optional pre-computed :class:`WordOffsets` over ``text``.
+    When the same body is queried for many citation spans, reusing the
+    pre-computed arrays makes each lookup O(log N) instead of O(L) per call.
+    When omitted, the offsets are computed inline (caller pays O(L) once).
     """
-    if word_starts is None or word_ends is None:
-        word_starts, word_ends = _word_offsets(text)
+    if offsets is None:
+        offsets = _word_offsets(text)
+    word_starts = offsets.starts
+    word_ends = offsets.ends
 
     # Words strictly before char_start: those whose start offset < char_start.
     # bisect_left returns the first index with value >= char_start, which is
@@ -175,7 +201,9 @@ def extract_citation_contexts(body: str) -> list[CitationMarker]:
     Parameters
     ----------
     body : str
-        Plain-text body of a paper.
+        Plain-text body of a paper. Truncated at :data:`_MAX_BODY_CHARS`
+        with a single warning log if exceeded — see the constant's
+        rationale for why.
 
     Returns
     -------
@@ -184,8 +212,15 @@ def extract_citation_contexts(body: str) -> list[CitationMarker]:
     """
     if not body:
         return []
+    if len(body) > _MAX_BODY_CHARS:
+        logger.warning(
+            "extract_citation_contexts: body length %d exceeds cap %d; truncating",
+            len(body),
+            _MAX_BODY_CHARS,
+        )
+        body = body[:_MAX_BODY_CHARS]
 
-    word_starts, word_ends = _word_offsets(body)
+    offsets = _word_offsets(body)
     markers: list[CitationMarker] = []
     for m in _CITATION_RE.finditer(body):
         inner = m.group(1)
@@ -196,7 +231,7 @@ def extract_citation_contexts(body: str) -> list[CitationMarker]:
         char_start = m.start()
         char_end = m.end()
         win_start, win_end = _word_boundary_window(
-            body, char_start, char_end, word_starts=word_starts, word_ends=word_ends
+            body, char_start, char_end, offsets=offsets
         )
         context = body[win_start:win_end]
 
@@ -319,25 +354,33 @@ _SURNAME_FALSE_POSITIVES = frozenset(
 # initial like "J." won't match — we strip leading initials separately.
 _SURNAME = r"[A-Z][a-z]+(?:-[A-Z][a-z]+)?"
 
-# Year token: 4 digits. Range is validated post-match.
-_YEAR = r"(\d{4})"
+# Year token: 4 digits. Range is validated post-match. Named so the resolver
+# reads m.group("year") and stays correct if a maintainer inserts a capturing
+# group elsewhere in a pattern.
+_YEAR = r"(?P<year>\d{4})"
 
 # Pattern A — narrative form: "Surname (YYYY)" or "Surname and Other (YYYY)".
 # The optional second author after "and" / "&" is captured but not strictly
 # required. We anchor with a word boundary so we don't match within tokens.
 _AY_NARRATIVE = re.compile(
-    rf"\b({_SURNAME})" rf"(?:\s+(?:and|&)\s+(?:{_SURNAME}))?" rf"\s*\(\s*{_YEAR}\s*\)"
+    rf"\b(?P<surname>{_SURNAME})"
+    rf"(?:\s+(?:and|&)\s+(?:{_SURNAME}))?"
+    rf"\s*\(\s*{_YEAR}\s*\)"
 )
 
 # Pattern B — "Surname et al. YYYY" / "Surname et al., YYYY".
-_AY_ET_AL = re.compile(rf"\b({_SURNAME})\s+et\s+al\.?,?\s*\(?\s*{_YEAR}\s*\)?")
+# Whitespace and parens are grouped so trailing space is consumed only when a
+# closing paren follows — otherwise m.end() inflates past the year.
+_AY_ET_AL = re.compile(
+    rf"\b(?P<surname>{_SURNAME})\s+et\s+al\.?,?\s*(?:\(\s*)?{_YEAR}(?:\s*\))?"
+)
 
 # Pattern C — fully parenthetical: "(Surname, YYYY)" / "(Surname & Other, YYYY)"
 # / "(Surname et al., YYYY)" / "(Surname, Other, & Third, YYYY)".
 # Capture only the first surname inside the parens — that's what the bibcode
 # initial encodes.
 _AY_PAREN = re.compile(
-    rf"\(\s*({_SURNAME})"
+    rf"\(\s*(?P<surname>{_SURNAME})"
     rf"(?:\s+et\s+al\.?)?"
     rf"(?:(?:\s+(?:and|&)\s+|,\s+|,\s*&\s+){_SURNAME})*"
     rf",?\s*{_YEAR}\s*\)"
@@ -346,9 +389,9 @@ _AY_PAREN = re.compile(
 # Pattern D — sub-citation inside a multi-cite paren block. Matches "Surname
 # [et al.] [& Other], YYYY" only when preceded by '(' or '; ' (i.e. inside a
 # paren-separated list like "(Adams, 2020; Smith & Jones, 2003)"). The leading
-# delimiter is consumed as part of group(0) but group(1) is the surname only.
+# delimiter is consumed as part of group(0) but group("surname") is the surname only.
 _AY_SUBCITE = re.compile(
-    rf"(?<=[\(;])\s*({_SURNAME})"
+    rf"(?<=[\(;])\s*(?P<surname>{_SURNAME})"
     rf"(?:\s+et\s+al\.?)?"
     rf"(?:\s+(?:and|&)\s+{_SURNAME})?"
     rf",\s*{_YEAR}(?=\s*[;\)])"
@@ -384,15 +427,25 @@ def extract_author_year_citations(body: str) -> list[CitationMarker]:
     whose ``[char_start, char_end)`` range intersects it is rejected. The
     pattern iteration order (et-al → narrative → paren → sub-cite) decides
     which match wins on conflict.
+
+    Body length is capped at :data:`_MAX_BODY_CHARS` with a warning log
+    when truncation fires.
     """
     if not body:
         return []
+    if len(body) > _MAX_BODY_CHARS:
+        logger.warning(
+            "extract_author_year_citations: body length %d exceeds cap %d; truncating",
+            len(body),
+            _MAX_BODY_CHARS,
+        )
+        body = body[:_MAX_BODY_CHARS]
 
     # Pre-compute word-start/word-end offsets once per body so each
     # _word_boundary_window call is O(log N) via bisect rather than
     # re-splitting an O(L) prefix per match — was ~75% of cumtime on
     # review-paper-scale bodies.
-    word_starts, word_ends = _word_offsets(body)
+    offsets = _word_offsets(body)
 
     # Accepted spans form a disjoint, sorted-by-start interval set (the
     # overlap rejection below maintains that invariant). We keep parallel
@@ -427,11 +480,11 @@ def extract_author_year_citations(body: str) -> list[CitationMarker]:
             if _overlaps(char_start, char_end):
                 continue
 
-            surname = m.group(1)
+            surname = m.group("surname")
             if not _is_surname_candidate(surname):
                 continue
             try:
-                year = int(m.group(2))
+                year = int(m.group("year"))
             except (ValueError, IndexError):
                 continue
             if not _is_valid_year(year):
@@ -441,8 +494,7 @@ def extract_author_year_citations(body: str) -> list[CitationMarker]:
                 body,
                 char_start,
                 char_end,
-                word_starts=word_starts,
-                word_ends=word_ends,
+                offsets=offsets,
             )
             context = body[win_start:win_end]
 
@@ -580,6 +632,8 @@ def process_paper(
     bibcode: str,
     body: str,
     references: list[str],
+    *,
+    ordered: bool = True,
 ) -> list[CitationContext]:
     """Extract and resolve citation contexts for a single paper.
 
@@ -588,6 +642,14 @@ def process_paper(
     Duplicate (target_bibcode, char_offset) pairs are de-duplicated so a
     single physical marker never produces two rows even if both extractors
     happen to fire on overlapping spans.
+
+    When ``ordered=False`` the references list is an unordered set (e.g.
+    assembled from ``citation_edges``, which does not store reference
+    position — ADR-011 Option B). Positional ``[N]`` resolution indexes
+    directly into the list, so running it against an unordered list would
+    silently resolve markers to wrong bibcodes; it is skipped entirely.
+    Author-year resolution matches by year prefix + surname initial and is
+    order-independent, so it always runs.
 
     Parameters
     ----------
@@ -614,7 +676,7 @@ def process_paper(
     sections = parse_sections(body)
 
     contexts: list[CitationContext] = []
-    if numbered_markers:
+    if numbered_markers and ordered:
         enriched = _enrich_with_sections(numbered_markers, sections)
         contexts.extend(resolve_citation_markers(enriched, references, bibcode))
     if author_year_markers:
@@ -647,11 +709,18 @@ def process_paper(
 _CONTEXT_TEXT_MAX_CHARS = 1000
 
 _SELECT_PAPERS_BASE = """
-    SELECT p.bibcode, p.body, p.raw
+    SELECT p.bibcode, p.body,
+           (
+               SELECT array_agg(ce.target_bibcode ORDER BY ce.target_bibcode)
+               FROM citation_edges ce
+               WHERE ce.source_bibcode = p.bibcode
+           ) AS references
     FROM papers p
     WHERE p.body IS NOT NULL
-      AND p.raw IS NOT NULL
-      AND p.raw::jsonb ? 'reference'
+      AND EXISTS (
+          SELECT 1 FROM citation_edges ce
+          WHERE ce.source_bibcode = p.bibcode
+      )
       AND NOT EXISTS (
           SELECT 1 FROM citation_contexts cc
           WHERE cc.source_bibcode = p.bibcode
@@ -793,23 +862,14 @@ def run_pipeline(
 
             batch: list[tuple[str, str, str, int, str | None, str | None]] = []
 
-            for bibcode, body, raw_val in cur:
-                # Parse references from raw JSONB
-                if isinstance(raw_val, str):
-                    try:
-                        raw_dict = json.loads(raw_val)
-                    except json.JSONDecodeError:
-                        continue
-                elif isinstance(raw_val, dict):
-                    raw_dict = raw_val
-                else:
+            for bibcode, body, refs in cur:
+                if not refs:
                     continue
 
-                refs = raw_dict.get("reference")
-                if not isinstance(refs, list):
-                    continue
-
-                contexts = process_paper(bibcode, body, refs)
+                # refs come from citation_edges (unordered — no
+                # ref_position column yet, ADR-011 Option B), so
+                # positional [N] resolution is disabled.
+                contexts = process_paper(bibcode, body, refs, ordered=False)
                 for ctx in contexts:
                     batch.append(
                         (

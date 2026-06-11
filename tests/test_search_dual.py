@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from scix.search import SearchResult, hybrid_search, rrf_fuse
+from scix.search import SearchResult, hybrid_search
 
 # ---------------------------------------------------------------------------
 # Helpers

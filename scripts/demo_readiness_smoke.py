@@ -22,7 +22,6 @@ os.environ.setdefault("QDRANT_URL", "http://127.0.0.1:6333")
 from scix.db import get_connection
 from scix.mcp_server import _dispatch_tool
 
-
 DEMO_QUERIES = [
     ("Galaxies", "astro"),
     ("p53 tumor suppressor", "biomed"),
@@ -175,7 +174,7 @@ def main() -> int:
                 all_results.append({"query": query, "tool": tool, "status": status,
                                      "ms": ms, "detail": detail, "bibcode": anchor})
         else:
-            print(f"  ⚠ no anchor bibcode found — skipping bibcode-keyed tools")
+            print("  ⚠ no anchor bibcode found — skipping bibcode-keyed tools")
 
         # Claim-keyed tools
         claim = DEMO_CLAIMS.get(query)

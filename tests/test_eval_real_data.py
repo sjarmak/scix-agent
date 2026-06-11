@@ -13,13 +13,10 @@ from scix.eval.real_data import (
     RealEvalContext,
     SeedPaper,
     baseline_retrieve,
-    citation_chain_entities,
     hybrid_enrich_entities,
     jit_rerank_retrieve,
-    static_canonical_entities,
     static_filter_retrieve,
 )
-
 
 # ---------------------------------------------------------------------------
 # SeedPaper.lexical_query

@@ -40,7 +40,6 @@ import link_catchup  # noqa: E402
 import link_incremental  # noqa: E402
 
 from scix.circuit_breaker import CircuitBreaker  # noqa: E402
-
 from tests.helpers import get_test_dsn  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -405,7 +404,6 @@ class TestCatchupBackfillsSkippedPapers:
         post_links = _count_fixture_links(conn)
         assert post_links >= 4, f"expected ≥4 links after catchup, got {post_links}"
 
-        tier1 = _count_fixture_links(conn, tier=1)
         tier2 = _count_fixture_links(conn, tier=2)
         assert tier2 >= 4, f"expected tier-2 links after catchup, got {tier2}"
 

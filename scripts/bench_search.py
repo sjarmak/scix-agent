@@ -33,8 +33,6 @@ import psycopg
 
 from scix.db import get_connection
 from scix.search import (
-    SearchFilters,
-    SearchResult,
     facet_counts,
     get_author_papers,
     get_citations,
@@ -307,12 +305,12 @@ def bench_facets(
     """Benchmark facet counting."""
     runs: list[BenchmarkRun] = []
     for _ in range(iterations):
-        for field in ["year", "doctype", "arxiv_class"]:
+        for facet_field in ["year", "doctype", "arxiv_class"]:
             t0 = time.perf_counter()
-            result = facet_counts(conn, field, limit=50)
+            result = facet_counts(conn, facet_field, limit=50)
             latency = round((time.perf_counter() - t0) * 1000, 2)
             runs.append(BenchmarkRun(
-                query=field,
+                query=facet_field,
                 mode="facet_counts",
                 latency_ms=latency,
                 result_count=result.total,

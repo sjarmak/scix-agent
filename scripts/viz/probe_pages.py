@@ -20,7 +20,6 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-
 PAGES = [
     ("sankey", "/viz/sankey.html"),
     ("umap", "/viz/umap_browser.html"),

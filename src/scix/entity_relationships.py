@@ -296,6 +296,93 @@ def extract_ssodnet_class_edges(
 
 
 # ---------------------------------------------------------------------------
+# VizieR catalog -> table hierarchy
+# ---------------------------------------------------------------------------
+
+
+VIZIER_DELIMITER = "/"
+
+
+def parse_vizier_table_path(external_id: str | None) -> tuple[str, str] | None:
+    """Split a VizieR table path into ``(catalog, table_path)``.
+
+    VizieR full table names are ``<catalog>/<table>`` where the catalog
+    designation is everything up to the final ``/`` segment::
+
+        "J/A+A/287/990/table3a" -> ("J/A+A/287/990", "J/A+A/287/990/table3a")
+        "I/80/remarks"          -> ("I/80", "I/80/remarks")
+
+    The ``external_id`` we store in ``entity_identifiers`` is JSON-quoted
+    (e.g. ``"I/80/remarks"``); surrounding double quotes are stripped.
+    Returns ``None`` for empty input or single-segment paths (VizieR
+    internal META tables like ``METAcat`` have no parent catalog).
+    """
+    if not external_id:
+        return None
+    path = external_id.strip()
+    if len(path) >= 2 and path[0] == '"' and path[-1] == '"':
+        path = path[1:-1]
+    segments = [seg for seg in path.split(VIZIER_DELIMITER) if seg]
+    if len(segments) < 2:
+        return None
+    catalog = VIZIER_DELIMITER.join(segments[:-1])
+    return catalog, VIZIER_DELIMITER.join(segments)
+
+
+def extract_vizier_catalog_edges(
+    rows: Iterable[tuple[int, str]],
+) -> tuple[list[EdgeCandidate], list[str]]:
+    """Derive VizieR ``catalog parent_of table`` edges and the catalog nodes.
+
+    Parameters
+    ----------
+    rows
+        Iterable of ``(entity_id, external_id)`` for ``source='vizier'``
+        ``entity_type='dataset'`` table entities.  ``external_id`` is the
+        JSON-quoted VizieR table path stored in ``entity_identifiers``.
+
+    Returns
+    -------
+    (edges, catalog_names)
+        ``edges`` are ``parent_of`` edges whose ``object_id`` is the
+        existing table entity id and whose ``subject_name`` is the catalog
+        designation — a synthetic node the populate script upserts into
+        ``entities`` and resolves to an id afterwards (mirrors the
+        SsODNet taxon pattern).  ``catalog_names`` is the deduplicated,
+        sorted list of catalog designations to upsert.
+    """
+    catalogs_seen: set[str] = set()
+    edges_seen: set[tuple[str, int]] = set()
+    edges: list[EdgeCandidate] = []
+
+    for entity_id, external_id in rows:
+        parsed = parse_vizier_table_path(external_id)
+        if parsed is None:
+            continue
+        catalog, table_path = parsed
+        catalogs_seen.add(catalog)
+        key = (catalog, entity_id)
+        if key in edges_seen:
+            continue
+        edges_seen.add(key)
+        edges.append(
+            EdgeCandidate(
+                subject_name=catalog,
+                object_id=entity_id,
+                predicate="parent_of",
+                source="vizier",
+                evidence={
+                    "method": "vizier_table_path",
+                    "catalog": catalog,
+                    "table": table_path,
+                },
+            )
+        )
+
+    return edges, sorted(catalogs_seen)
+
+
+# ---------------------------------------------------------------------------
 # Curated flagship mission -> instrument
 # ---------------------------------------------------------------------------
 

@@ -1,11 +1,16 @@
-"""MCP server exposing 15 consolidated tools for agent navigation of the SciX corpus.
+"""MCP server exposing the consolidated tool surface for agent navigation of the SciX corpus.
 
 Uses the `mcp` Python SDK to register tools. Each tool is a thin wrapper
 around functions in search.py. Connection pooling via psycopg.pool for
 production-grade performance.
 
+The current tool registry is enumerated in ``EXPECTED_TOOLS``; the
+agent-visible subset is gated by ``_HIDDEN_TOOLS`` (overridable via
+``SCIX_HIDDEN_TOOLS``). The premortem tool-count cap (≤ 15 visible)
+is tracked in ``docs/mcp_tool_audit_2026-04.md`` and policed by ADRs.
+
 Consolidation (v3, 2026-04-25):
-    Original 28 -> 13 -> 15 agent-facing tools + deprecated aliases.
+    Original 28 → 13 → ~15 agent-facing tools + deprecated aliases.
     The 2026-04-25 pass merged citation_graph + citation_chain into
     citation_traverse (mode enum), retired find_similar_by_examples
     (qdrant backend out of active use), and ratified the additions of
@@ -30,7 +35,7 @@ import uuid
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Generator, Sequence
+from typing import Any, Generator, Protocol, Sequence
 
 import psycopg
 
@@ -48,7 +53,19 @@ from scix.synthesize import (
     MAX_WORKING_SET_BIBCODES,
 )
 from scix.synthesize import (
+    SIGNAL_USED_VALUES as _SYNTH_SIGNAL_USED_VALUES,
+)
+from scix.synthesize import (
     synthesize_findings as _synthesize_findings,
+)
+
+# Bead qxcp: derive the signal_used enum prose from the single source of
+# truth in synthesize.py so the tool description never drifts when a new
+# signal value is added. Hand-typed before; one-place change now.
+_SIGNAL_USED_DESCRIPTION: str = (
+    "signal_used ("
+    + " | ".join(f"'{v}'" for v in _SYNTH_SIGNAL_USED_VALUES)
+    + ")"
 )
 
 # Optional Qdrant-backed discovery tool. Feature-flagged via QDRANT_URL so the
@@ -180,6 +197,11 @@ TOOL_TIMEOUTS: dict[str, float] = {
     "find_replications": float(os.environ.get("SCIX_TIMEOUT_FIND_REPLICATIONS", "15")),
     # Structural-citation lookup over citation_contexts.intent
     "cited_by_intent": float(os.environ.get("SCIX_TIMEOUT_CITED_BY_INTENT", "5")),
+    # Claim/finding extraction surface (bead c996) — split from entity tool's
+    # entity_type enum under bead mh14. Default-hidden today (extractions table
+    # has 0 rows for negative_result/quant_claim on prod); explicit timeout so
+    # operators can tune without a code change once the table is populated.
+    "claim_search": float(os.environ.get("SCIX_TIMEOUT_CLAIM_SEARCH", "10")),
     # Terminal synthesis tool — three short SELECTs against papers,
     # citation_contexts, paper_metrics; cap matches find_gaps.
     "synthesize_findings": float(os.environ.get("SCIX_TIMEOUT_SYNTHESIZE_FINDINGS", "15")),
@@ -227,8 +249,25 @@ def _hnsw_index_name(model_name: str) -> str:
     return f"idx_embed_hnsw_{model_name}"
 
 
+def _vector_index_names(model_name: str) -> tuple[str, ...]:
+    """Return the candidate ANN partial-index names for a given embedding model.
+
+    The dense lane is served by whichever ANN index exists on the per-model
+    partial: the legacy pgvector HNSW index (``idx_embed_hnsw_<model>``) or the
+    pgvectorscale StreamingDiskANN index (``idx_embed_diskann_<model>``). Both
+    are built over the same ``(embedding)::vector(768)`` expression, so the
+    dense query in ``search.py`` is index-agnostic — only this existence gate
+    needs to know about both.
+    """
+    return (f"idx_embed_hnsw_{model_name}", f"idx_embed_diskann_{model_name}")
+
+
 def _hnsw_index_exists(conn: psycopg.Connection, model_name: str) -> bool:
-    """Check whether the per-model HNSW partial index on paper_embeddings exists."""
+    """Check whether a per-model ANN partial index (HNSW or DiskANN) exists.
+
+    Name retained for caller compatibility; it now gates on either ANN index
+    so the dense lane re-enables automatically once the DiskANN index is built.
+    """
     now = time.monotonic()
     cached = _hnsw_index_cache.get(model_name)
     if cached is not None:
@@ -242,9 +281,9 @@ def _hnsw_index_exists(conn: psycopg.Connection, model_name: str) -> bool:
             SELECT 1 FROM pg_indexes
             WHERE schemaname = 'public'
               AND tablename = 'paper_embeddings'
-              AND indexname = %s
+              AND indexname = ANY(%s)
             """,
-            (_hnsw_index_name(model_name),),
+            (list(_vector_index_names(model_name)),),
         )
         exists = cur.fetchone() is not None
 
@@ -333,8 +372,88 @@ def _detect_unscoped_broad_block(result_json: str | None) -> bool:
     return isinstance(data, dict) and data.get("unscoped_broad_blocked") is True
 
 
+# Single source of truth for the query_log INSERT column order.
+# Tests use this tuple to map captured params to named fields, so adding
+# a column here automatically updates every downstream assertion that
+# indexes by name (see _CaptureCursor in tests/test_mcp_search_unscoped_guard.py).
+_LOG_QUERY_COLS: tuple[str, ...] = (
+    "tool_name",
+    "params_json",
+    "latency_ms",
+    "success",
+    "error_msg",
+    "tool",
+    "query",
+    "result_count",
+    "session_id",
+    "is_test",
+)
+
+# Per-column placeholder casts — only params_json needs the explicit jsonb cast.
+_LOG_QUERY_PLACEHOLDERS: tuple[str, ...] = tuple(
+    "%s::jsonb" if c == "params_json" else "%s" for c in _LOG_QUERY_COLS
+)
+
+_LOG_QUERY_INSERT_SQL: str = (
+    f"INSERT INTO query_log ({', '.join(_LOG_QUERY_COLS)}) "
+    f"VALUES ({', '.join(_LOG_QUERY_PLACEHOLDERS)})"
+)
+
+
+class _LogQueryCursor(Protocol):
+    """Narrow cursor Protocol — the slice :func:`_log_query` uses.
+
+    Concrete ``psycopg.Cursor[Row]`` satisfies this structurally; test
+    fakes only need to expose ``execute`` plus the context-manager dunders.
+    """
+
+    def execute(self, sql: str, params: Any = ..., /) -> Any: ...
+
+    def __enter__(self) -> "_LogQueryCursor": ...
+
+    def __exit__(self, *args: Any) -> Any: ...
+
+
+class _LogQueryConnection(Protocol):
+    """Narrow connection Protocol — the slice :func:`_log_query` uses.
+
+    Documents the actual contract :func:`_log_query` has on its connection
+    arg so test fakes can declare structural compatibility instead of
+    needing a ``# type: ignore[arg-type]`` at every call site. The
+    ``info`` attribute is read defensively via ``getattr`` so it is not
+    declared here.
+    """
+
+    def cursor(self) -> _LogQueryCursor: ...
+
+    def commit(self) -> None: ...
+
+    def rollback(self) -> None: ...
+
+
+def _cap_params_lists(params: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``params`` with oversized list values truncated.
+
+    Callers like ``temporal_evolution`` / ``find_gaps`` / ``synthesize_findings``
+    may pass hundreds of bibcodes, but the tools themselves cap working sets at
+    :data:`MAX_WORKING_SET_BIBCODES`, so storing the full list in
+    ``query_log.params_json`` records inputs the tool never used and bloats
+    telemetry over time (bead ``scix_experiments-pbh8``). Cap any list-typed
+    value at the canonical bound. A new dict is returned so the caller's live
+    arguments dict is never mutated.
+    """
+    if not any(
+        isinstance(v, list) and len(v) > MAX_WORKING_SET_BIBCODES for v in params.values()
+    ):
+        return params
+    return {
+        k: (v[:MAX_WORKING_SET_BIBCODES] if isinstance(v, list) else v)
+        for k, v in params.items()
+    }
+
+
 def _log_query(
-    conn: psycopg.Connection,
+    conn: _LogQueryConnection,
     tool_name: str,
     params: dict[str, Any],
     latency_ms: float,
@@ -355,7 +474,7 @@ def _log_query(
     payloads — see bead ``scix_experiments-uerc``.
     """
     try:
-        params_json = json.dumps(params, default=str)
+        params_json = json.dumps(_cap_params_lists(params), default=str)
         query_text = _extract_query_text(params)
         result_count = _extract_result_count(result_json) if result_json else 0
         if error_msg is None and _detect_unscoped_broad_block(result_json):
@@ -372,14 +491,7 @@ def _log_query(
             conn.rollback()
         with conn.cursor() as cur:
             cur.execute(
-                """
-                INSERT INTO query_log (
-                    tool_name, params_json, latency_ms, success, error_msg,
-                    tool, query, result_count, session_id, is_test
-                )
-                VALUES (%s, %s::jsonb, %s, %s, %s,
-                        %s, %s, %s, %s, %s)
-                """,
+                _LOG_QUERY_INSERT_SQL,
                 (
                     tool_name,
                     params_json,
@@ -1387,7 +1499,7 @@ def _smoke_call_new_tools() -> list[str]:
 
 
 def create_server(_run_self_test: bool = True):
-    """Create and configure the MCP server with the 15 consolidated tools.
+    """Create and configure the MCP server with the consolidated tool surface.
 
     Eagerly pre-loads the INDUS model so semantic_search is fast from
     the first call.
@@ -1539,11 +1651,13 @@ def create_server(_run_self_test: bool = True):
                         },
                         "year_min": {
                             "type": "integer",
-                            "description": "Earliest publication year to include in seed retrieval (inclusive).",
+                            "description": "Earliest publication year to include in "
+                            "seed retrieval (inclusive).",
                         },
                         "year_max": {
                             "type": "integer",
-                            "description": "Latest publication year to include (inclusive). Filters seeds AND citation-expanded papers.",
+                            "description": "Latest publication year to include (inclusive). "
+                            "Filters seeds AND citation-expanded papers.",
                         },
                         "top_seeds": {
                             "type": "integer",
@@ -1553,7 +1667,8 @@ def create_server(_run_self_test: bool = True):
                         "expansion_seeds": {
                             "type": "integer",
                             "default": 5,
-                            "description": "How many top seeds to expand via refs+citations (0..top_seeds).",
+                            "description": "How many top seeds to expand via "
+                            "refs+citations (0..top_seeds).",
                         },
                         "expand_per_seed": {
                             "type": "integer",
@@ -1563,11 +1678,13 @@ def create_server(_run_self_test: bool = True):
                         "sample_abstracts": {
                             "type": "integer",
                             "default": 5,
-                            "description": "Number of seeds to attach full abstracts to in the response (0..top_seeds).",
+                            "description": "Number of seeds to attach full abstracts "
+                            "to in the response (0..top_seeds).",
                         },
                         "discipline": {
                             "type": "string",
-                            "description": "Optional discipline hint (currently informational, surfaced in metadata).",
+                            "description": "Optional discipline hint (currently "
+                            "informational, surfaced in metadata).",
                         },
                     },
                     "required": ["query"],
@@ -1720,7 +1837,8 @@ def create_server(_run_self_test: bool = True):
                         },
                         "search_query": {
                             "type": "string",
-                            "description": "If provided, search within the paper body instead of reading",
+                            "description": "If provided, search within the paper "
+                            "body instead of reading",
                         },
                         "char_offset": {
                             "type": "integer",
@@ -1988,7 +2106,8 @@ def create_server(_run_self_test: bool = True):
                     "properties": {
                         "entity_id": {
                             "type": "integer",
-                            "description": "Entity ID (from entity search/resolve or document_context)",
+                            "description": "Entity ID (from entity search/resolve "
+                            "or document_context)",
                         },
                     },
                     "required": ["entity_id"],
@@ -2060,9 +2179,9 @@ def create_server(_run_self_test: bool = True):
                     "concept_search in a single call. Use citation_traverse(mode='graph') "
                     "instead when you want direct citations of a single paper rather than "
                     "cross-community gap detection. The 'signal' parameter picks which "
-                    "community partition to traverse: 'semantic' (default, INDUS k-means, full 32M-paper "
-                    "coverage) or 'citation' (currently offline — Leiden Phase B has not "
-                    "completed, so this path returns empty)."
+                    "community partition to traverse: 'semantic' (default, INDUS k-means, "
+                    "full 32M-paper coverage) or 'citation' (currently offline — Leiden "
+                    "Phase B has not completed, so this path returns empty)."
                 ),
                 inputSchema={
                     "type": "object",
@@ -2417,9 +2536,8 @@ def create_server(_run_self_test: bool = True):
                     "pool by within-set citation_count desc. Each "
                     "cited_papers entry exposes the signals that produced "
                     "its assignment so the agent can audit and re-bucket: "
-                    "signal_used ('intent_modal' | 'community_fallthrough' | "
-                    "'override' | 'citation_count_fallback'), "
-                    "section_assigned, and a signals payload "
+                    + _SIGNAL_USED_DESCRIPTION
+                    + ", section_assigned, and a signals payload "
                     "with intent_counts (Counter of intent->n_rows), "
                     "intent_total_rows, community_id, community_share "
                     "(fraction of working set in the same community), "
@@ -3035,7 +3153,7 @@ def _wrap_deprecated(result_json: str, original_name: str, use_instead: str) -> 
 
 
 def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, Any]) -> str:
-    """Dispatch to the 15 consolidated tool handlers plus legacy/health handlers."""
+    """Dispatch to the consolidated tool handlers plus legacy/health handlers."""
 
     # --- find_similar_by_examples retired 2026-04-25 ---
     if name == "find_similar_by_examples":
@@ -3474,8 +3592,8 @@ def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                     "error": "vector_index_unavailable",
                     "model_name": model_name,
                     "detail": (
-                        f"HNSW index '{_hnsw_index_name(model_name)}' is not "
-                        "available yet. Use mode='keyword' as a fallback."
+                        f"No ANN index ({' or '.join(_vector_index_names(model_name))}) "
+                        "is available yet. Use mode='keyword' as a fallback."
                     ),
                 },
                 indent=2,
@@ -3984,23 +4102,79 @@ def _handle_citation_traverse_multi(
 ) -> str:
     """Walk the citation neighborhood of multiple bibcodes.
 
-    Iterates ``_handle_citation_graph`` per source bibcode and aggregates
-    the results into a ``by_bibcode`` mapping. The per-bibcode ``limit`` is
-    preserved unchanged (so an agent passing ``limit=20`` gets up to 20
-    neighbors per source paper). Bibcodes that error out (missing paper,
-    DB error) are surfaced as ``{"error": "..."}`` entries rather than
-    aborting the whole call — keeps multi-paper exploration robust.
+    Fetches all requested neighborhoods with batched queries (one per direction
+    against ``citation_edges`` plus one per direction against
+    ``citation_contexts`` for intent) instead of looping a per-bibcode
+    ``_handle_citation_graph`` call. This bounds DB round-trips at a small
+    constant regardless of working-set size — the previous per-bibcode loop
+    could fire up to ``len(bibcodes)`` sequential queries (FIFO cap 200) and
+    reliably timed out on large working sets (bead scix_experiments-sd71). The
+    per-bibcode ``limit`` is preserved (each source paper gets up to ``limit``
+    neighbors), as is the ``by_bibcode`` output shape.
     """
+    direction = args.get("direction", "forward")
+    limit = args.get("limit", 20)
+
+    if direction not in ("forward", "backward", "both"):
+        err = {
+            "error": f"Invalid direction: {direction}. Use 'forward', 'backward', or 'both'.",
+            "error_code": "invalid_direction",
+        }
+        return json.dumps(
+            {
+                "mode": "graph",
+                "scope": "working_set",
+                "bibcodes": list(bibcodes),
+                "by_bibcode": {bib: err for bib in bibcodes},
+            },
+            indent=2,
+            default=str,
+        )
+
+    fwd_papers: dict[str, list[dict[str, Any]]] = {}
+    bwd_papers: dict[str, list[dict[str, Any]]] = {}
+    fwd_intents: dict[str, dict[str, str]] = {}
+    bwd_intents: dict[str, dict[str, str]] = {}
+
+    if direction in ("forward", "both"):
+        fwd_papers = search.get_citations_batch(conn, list(bibcodes), limit=limit)
+        fwd_intents = _enrich_citations_with_intent_batch(
+            conn, neighbors_by_bibcode=fwd_papers, direction="forward"
+        )
+    if direction in ("backward", "both"):
+        bwd_papers = search.get_references_batch(conn, list(bibcodes), limit=limit)
+        bwd_intents = _enrich_citations_with_intent_batch(
+            conn, neighbors_by_bibcode=bwd_papers, direction="backward"
+        )
+
     per_bibcode: dict[str, Any] = {}
     for bib in bibcodes:
-        per_args = dict(args)
-        per_args["bibcode"] = bib
-        per_args.pop("bibcodes", None)
-        try:
-            single_json = _handle_citation_graph(conn, per_args)
-            per_bibcode[bib] = json.loads(single_json)
-        except Exception as exc:  # pragma: no cover — surfaces tool-level error
-            per_bibcode[bib] = {"error": str(exc)}
+        if direction == "forward":
+            per_bibcode[bib] = _build_traverse_direction(
+                fwd_papers.get(bib, []), fwd_intents.get(bib)
+            )
+        elif direction == "backward":
+            per_bibcode[bib] = _build_traverse_direction(
+                bwd_papers.get(bib, []), bwd_intents.get(bib)
+            )
+        else:  # both
+            per_bibcode[bib] = {
+                "bibcode": bib,
+                "directions": [
+                    {
+                        "direction": "forward",
+                        "result": _build_traverse_direction(
+                            fwd_papers.get(bib, []), fwd_intents.get(bib)
+                        ),
+                    },
+                    {
+                        "direction": "backward",
+                        "result": _build_traverse_direction(
+                            bwd_papers.get(bib, []), bwd_intents.get(bib)
+                        ),
+                    },
+                ],
+            }
 
     return json.dumps(
         {
@@ -4012,6 +4186,21 @@ def _handle_citation_traverse_multi(
         indent=2,
         default=str,
     )
+
+
+def _build_traverse_direction(
+    papers: list[dict[str, Any]], intents: dict[str, str] | None
+) -> dict[str, Any]:
+    """Build a single-direction payload matching ``_handle_citation_graph``.
+
+    Applies working-set annotation and (where covered) citation intent, so the
+    batched working-set path returns the same per-paper shape as the
+    single-bibcode path.
+    """
+    annotated = _annotate_working_set(papers)
+    if intents:
+        _annotate_papers_with_intent(annotated, intents)
+    return {"papers": annotated, "total": len(annotated), "timing_ms": {}}
 
 
 def _enrich_citations_with_intent(
@@ -4049,6 +4238,44 @@ def _enrich_citations_with_intent(
     with conn.cursor() as cur:
         cur.execute(sql, params)
         return {row[0]: row[1] for row in cur.fetchall()}
+
+
+def _enrich_citations_with_intent_batch(
+    conn: psycopg.Connection,
+    *,
+    neighbors_by_bibcode: dict[str, list[dict[str, Any]]],
+    direction: str,
+) -> dict[str, dict[str, str]]:
+    """Batched form of ``_enrich_citations_with_intent`` for many traversed papers.
+
+    Returns ``{traversed_bibcode: {neighbor_bibcode: intent}}`` from a single
+    ``citation_contexts`` query keyed on every traversed bibcode that has
+    neighbors. Because citation_contexts coverage is sparse (~0.27% of edges,
+    bead 79n), the result set stays small even when fetching all covered
+    contexts for the queried papers; ``_annotate_papers_with_intent`` only
+    applies the entries whose neighbor bibcode is actually in the result list.
+    """
+    traversed = [bib for bib, papers in neighbors_by_bibcode.items() if papers]
+    if not traversed:
+        return {}
+    # forward: traversed paper is the cited target; neighbors are citing sources.
+    # backward: traversed paper is the citing source; neighbors are cited targets.
+    if direction == "forward":
+        sql = (
+            "SELECT target_bibcode, source_bibcode, intent FROM citation_contexts "
+            "WHERE target_bibcode = ANY(%s) AND intent IS NOT NULL"
+        )
+    else:
+        sql = (
+            "SELECT source_bibcode, target_bibcode, intent FROM citation_contexts "
+            "WHERE source_bibcode = ANY(%s) AND intent IS NOT NULL"
+        )
+    out: dict[str, dict[str, str]] = {}
+    with conn.cursor() as cur:
+        cur.execute(sql, (traversed,))
+        for traversed_bib, neighbor_bib, intent in cur.fetchall():
+            out.setdefault(traversed_bib, {})[neighbor_bib] = intent
+    return out
 
 
 def _annotate_papers_with_intent(
@@ -4267,7 +4494,7 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                 }
             )
 
-        limit = min(args.get("limit", 20), 200)
+        limit = min(args.get("limit", 20), MAX_WORKING_SET_BIBCODES)
         containment = json.dumps({entity_type: [query]})
 
         # Build WHERE clauses conditionally so backward compatibility is
@@ -4365,7 +4592,7 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         except (TypeError, ValueError):
             return json.dumps({"error": "entity_id must be an integer"})
 
-        limit = min(args.get("limit", 20), 200)
+        limit = min(args.get("limit", 20), MAX_WORKING_SET_BIBCODES)
         # Pull entity metadata (entity_type, source) and per-link
         # provenance (match_method, evidence with optional 'agreement'
         # flag from the classifier post-pass) so we can attach a
@@ -4484,7 +4711,7 @@ def _handle_claim_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
 
     raw_limit = args.get("limit", 20)
     try:
-        limit = min(int(raw_limit), 200)
+        limit = min(int(raw_limit), MAX_WORKING_SET_BIBCODES)
     except (TypeError, ValueError):
         return json.dumps(
             {
@@ -4697,7 +4924,7 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """
     signal = args.get("signal", "semantic")
     resolution = args.get("resolution", "medium")
-    limit = min(args.get("limit", 20), 200)
+    limit = min(args.get("limit", 20), MAX_WORKING_SET_BIBCODES)
     clear_first = args.get("clear_first", False)
 
     if clear_first:
@@ -4735,7 +4962,7 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     ws_bibcodes = _session_state.get_focused_papers()
     if not ws_bibcodes:
         ws_bibcodes = [e.bibcode for e in _session_state.get_working_set()]
-    ws_bibcodes = ws_bibcodes[:200]
+    ws_bibcodes = ws_bibcodes[:MAX_WORKING_SET_BIBCODES]
 
     # When no working set is populated and the caller passed a query, seed
     # the working set on-the-fly via concept_search so single-call agents
@@ -4756,6 +4983,11 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             ]
         except Exception:
             # Best-effort: fall through to the no-papers branch below.
+            logger.debug(
+                "find_gaps auto-seed via concept_search failed for query=%r",
+                seed_query,
+                exc_info=True,
+            )
             ws_bibcodes = []
 
     if not ws_bibcodes:
@@ -5234,7 +5466,7 @@ def _handle_cited_by_intent(conn: psycopg.Connection, args: dict[str, Any]) -> s
             }
         )
 
-    limit = min(int(args.get("limit", 20)), 200)
+    limit = min(int(args.get("limit", 20)), MAX_WORKING_SET_BIBCODES)
     target = target_bibcode.strip()
 
     # Window-function dedup: one row per source_bibcode, keeping the
@@ -5325,8 +5557,8 @@ def _handle_synthesize_findings(conn: psycopg.Connection, args: dict[str, Any]) 
         return json.dumps(
             {"error": "max_papers_per_section must be an integer"},
         )
-    # Hard cap to keep payload sizes sane; matches find_gaps' 200 cap.
-    max_papers = max(0, min(max_papers, 200))
+    # Hard cap to keep payload sizes sane; matches find_gaps' cap.
+    max_papers = max(0, min(max_papers, MAX_WORKING_SET_BIBCODES))
 
     raw_overrides = args.get("section_overrides")
     if raw_overrides is not None and not isinstance(raw_overrides, dict):
@@ -5480,6 +5712,61 @@ def _section_dense_retrieve(
     return rows
 
 
+# Candidate-pool cap for the section BM25 leg (scix_experiments-ynt8). Mirrors
+# the lexical_search cap (search._LEXICAL_POOL_DEFAULT, bead 3t37): without it a
+# common single-token query matches a large slice of papers_fulltext (14.4M
+# rows) and forces ts_rank over the whole match set — the same
+# ORDER-BY-ts_rank cost that times out lexical_search on broad terms. The
+# section leg is heavier per candidate (jsonb unnest + per-section to_tsvector),
+# so the cap matters even at the smaller corpus size. The cap LIMITs candidates
+# in bitmap-heap (TID) order *before* ranking, so it is a blunt recall
+# instrument — acceptable because the leg is RRF-fused with the dense leg. The
+# default borrows the lexical knee (30000) pending section-specific tuning;
+# operators retune via SCIX_SECTIONS_POOL without a restart. A separate knob
+# (not SCIX_LEXICAL_POOL) keeps the two lanes independently tunable.
+_SECTIONS_POOL_DEFAULT: int = 30000
+
+# Token values of SCIX_SECTIONS_POOL that disable the cap (rank the full match
+# set). Mirrors search._LEXICAL_POOL_UNBOUNDED; for eval harnesses only, not the
+# live server.
+_SECTIONS_POOL_UNBOUNDED: frozenset[str] = frozenset({"inf", "all", "none"})
+
+
+def _resolve_sections_pool() -> int | None:
+    """Resolve the section BM25 candidate-pool cap from ``SCIX_SECTIONS_POOL``.
+
+    Returns the row cap, or ``None`` for an unbounded pool (passed to SQL as
+    ``LIMIT NULL``, which Postgres treats as no limit). Read on every call so
+    operators can tune the running container without a restart. Misconfigured
+    values log a warning and fall back to :data:`_SECTIONS_POOL_DEFAULT`.
+    """
+    raw = os.environ.get("SCIX_SECTIONS_POOL")
+    if raw is None:
+        return _SECTIONS_POOL_DEFAULT
+    token = raw.strip().lower()
+    if token in _SECTIONS_POOL_UNBOUNDED:
+        return None
+    try:
+        value = int(token)
+    except ValueError:
+        logger.warning(
+            "SCIX_SECTIONS_POOL=%r is not an integer or one of %s; falling back to %d",
+            raw,
+            sorted(_SECTIONS_POOL_UNBOUNDED),
+            _SECTIONS_POOL_DEFAULT,
+        )
+        return _SECTIONS_POOL_DEFAULT
+    if value <= 0:
+        logger.warning(
+            "SCIX_SECTIONS_POOL=%d must be positive (use INF for unbounded); "
+            "falling back to %d",
+            value,
+            _SECTIONS_POOL_DEFAULT,
+        )
+        return _SECTIONS_POOL_DEFAULT
+    return value
+
+
 def _section_bm25_retrieve(
     conn: psycopg.Connection,
     query: str,
@@ -5497,14 +5784,20 @@ def _section_bm25_retrieve(
     """
     if fanout <= 0:
         return []
+    pool_size = _resolve_sections_pool()
     sql = f"""
-        WITH matching_papers AS (
-            SELECT pf.bibcode, pf.sections,
-                   ts_rank(pf.sections_tsv, plainto_tsquery('english', %s)) AS paper_rank
+        WITH matching_candidates AS (
+            SELECT pf.bibcode, pf.sections, pf.sections_tsv
             FROM papers_fulltext pf
             JOIN papers p ON p.bibcode = pf.bibcode
             WHERE pf.sections_tsv @@ plainto_tsquery('english', %s)
             {filter_sql}
+            LIMIT %s
+        ),
+        matching_papers AS (
+            SELECT bibcode, sections,
+                   ts_rank(sections_tsv, plainto_tsquery('english', %s)) AS paper_rank
+            FROM matching_candidates
             ORDER BY paper_rank DESC
             LIMIT %s
         ),
@@ -5531,9 +5824,10 @@ def _section_bm25_retrieve(
         LIMIT %s
     """
     params = [
-        query,  # paper_rank ts_rank
-        query,  # paper match
+        query,  # candidate match: sections_tsv @@ plainto_tsquery
         *filter_params,
+        pool_size,  # candidate-pool cap (LIMIT NULL = unbounded)
+        query,  # paper_rank ts_rank
         fanout,  # paper LIMIT
         query,  # section_rank ts_rank
         query,  # section match
@@ -5639,8 +5933,8 @@ def _handle_section_retrieval(conn: psycopg.Connection, args: dict[str, Any]) ->
     if k <= 0:
         return json.dumps({"error": "k must be positive"})
     # Cap fanout to keep blast radius bounded; matches the convention used
-    # elsewhere in this module (find_gaps caps at 200).
-    k = min(k, 200)
+    # elsewhere in this module (find_gaps caps at MAX_WORKING_SET_BIBCODES).
+    k = min(k, MAX_WORKING_SET_BIBCODES)
 
     try:
         filter_sql, filter_params = _section_filter_clauses(args.get("filters"))

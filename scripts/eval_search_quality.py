@@ -21,7 +21,6 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 # Add src/ to path for direct script execution
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -31,9 +30,6 @@ from psycopg.rows import dict_row
 
 from scix.db import get_connection
 from scix.search import (
-    STUB_COLUMNS,
-    SearchFilters,
-    SearchResult,
     _elapsed_ms,
     lexical_search,
 )

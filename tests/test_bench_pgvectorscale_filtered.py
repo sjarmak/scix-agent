@@ -25,7 +25,6 @@ import pytest
 
 from scripts import bench_pgvectorscale_filtered as mod
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 

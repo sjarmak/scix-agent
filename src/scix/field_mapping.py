@@ -89,8 +89,6 @@ COLUMN_ORDER: tuple[str, ...] = (
     "citation_count_norm",
     "cite_read_boost",
     "classic_factor",
-    # --- Always last ---
-    "raw",
 )
 
 # JSONL fields that map directly to SQL columns (same name, same type).
@@ -284,12 +282,10 @@ def transform_record(rec: dict[str, Any]) -> tuple[tuple[Any, ...], list[tuple[s
     except (ValueError, TypeError):
         row["year"] = None
 
-    # Collect unmapped fields into raw JSONB (sanitize string values before serialization)
-    raw_fields = {}
-    for k, v in rec.items():
-        if k not in _MAPPED_JSONL_FIELDS:
-            raw_fields[k] = _sanitize_text(v) if isinstance(v, str) else v
-    row["raw"] = json.dumps(raw_fields) if raw_fields else None
+    # Unmapped JSONL fields are intentionally dropped (ADR-011): the raw
+    # catch-all column is gone; the canonical upstream record lives in the
+    # NAS JSONL archive. Add a dedicated column via migration if ADS ships
+    # a new field worth keeping.
 
     # Build the tuple in COLUMN_ORDER
     paper_row = tuple(row[col] for col in COLUMN_ORDER)

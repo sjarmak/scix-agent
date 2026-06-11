@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 # Import the module under test
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -39,7 +37,7 @@ class TestExtractMetadataEntities:
             "keyword_norm": ["Monte Carlo"],
             "bibgroup": ["CfA"],
         }
-        result = extract_metadata_entities(None, columns)
+        result = extract_metadata_entities(columns)
 
         assert "instruments" in result
         assert "hubble space telescope" in result["instruments"]
@@ -49,35 +47,9 @@ class TestExtractMetadataEntities:
         assert "datasets" in result
         assert "methods" in result
 
-    def test_extracts_from_raw_jsonb(self) -> None:
-        raw = {
-            "facility": ["ALMA"],
-            "data": ["2MASS"],
-        }
-        columns = {"facility": None, "data": None, "keyword_norm": None, "bibgroup": None}
-        result = extract_metadata_entities(raw, columns)
-
-        assert "instruments" in result
-        assert "atacama large millimeter array" in result["instruments"]
-        assert "datasets" in result
-        assert "two micron all sky survey" in result["datasets"]
-
-    def test_merges_columns_and_raw(self) -> None:
-        raw = {"facility": ["VLT"]}
-        columns = {
-            "facility": ["HST"],
-            "data": None,
-            "keyword_norm": None,
-            "bibgroup": None,
-        }
-        result = extract_metadata_entities(raw, columns)
-
-        assert "hubble space telescope" in result["instruments"]
-        assert "very large telescope" in result["instruments"]
-
     def test_empty_inputs(self) -> None:
         columns = {"facility": None, "data": None, "keyword_norm": None, "bibgroup": None}
-        result = extract_metadata_entities(None, columns)
+        result = extract_metadata_entities(columns)
 
         # Should return dict with empty sets or missing keys
         for etype in result.values():
@@ -90,7 +62,7 @@ class TestExtractMetadataEntities:
             "keyword_norm": None,
             "bibgroup": None,
         }
-        result = extract_metadata_entities(None, columns)
+        result = extract_metadata_entities(columns)
 
         assert "instruments" in result
         assert "" not in result["instruments"]
@@ -103,7 +75,7 @@ class TestExtractMetadataEntities:
             "keyword_norm": None,
             "bibgroup": None,
         }
-        result = extract_metadata_entities(None, columns)
+        result = extract_metadata_entities(columns)
 
         assert "hubble space telescope" in result["instruments"]
 
@@ -327,7 +299,6 @@ class TestFetchSamplePapers:
                 ["SDSS"],
                 ["Monte Carlo"],
                 ["CfA"],
-                {"facility": ["ALMA"]},
             ),
         ]
 
@@ -336,36 +307,7 @@ class TestFetchSamplePapers:
         assert len(papers) == 1
         assert papers[0]["bibcode"] == "2024ApJ...001"
         assert papers[0]["columns"]["facility"] == ["HST"]
-        assert papers[0]["raw"]["facility"] == ["ALMA"]
-
-    def test_handles_null_raw(self) -> None:
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-
-        mock_cursor.fetchall.return_value = [
-            ("2024ApJ...002", None, None, None, None, None),
-        ]
-
-        papers = fetch_sample_papers(mock_conn, sample_size=10)
-
-        assert len(papers) == 1
-        assert papers[0]["raw"] is None
-
-    def test_handles_string_raw_json(self) -> None:
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
-
-        mock_cursor.fetchall.return_value = [
-            ("2024ApJ...003", None, None, None, None, '{"facility": ["VLT"]}'),
-        ]
-
-        papers = fetch_sample_papers(mock_conn, sample_size=10)
-
-        assert papers[0]["raw"] == {"facility": ["VLT"]}
+        assert papers[0]["columns"]["bibgroup"] == ["CfA"]
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +362,6 @@ class TestRunAnalysis:
                     None,
                     ["Monte Carlo"],
                     None,
-                    None,
                 ),
                 (
                     "2024ApJ...002",
@@ -428,7 +369,6 @@ class TestRunAnalysis:
                     ["SDSS"],
                     None,
                     ["CfA"],
-                    {"facility": ["ALMA"]},
                 ),
             ],
             # Extractions query

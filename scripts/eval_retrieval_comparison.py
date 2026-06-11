@@ -133,9 +133,7 @@ def ndcg_at_k(retrieved_bibcodes: list[str], relevant: set[str], k: int) -> floa
     actual_rel = [1 if bib in relevant else 0 for bib in retrieved_bibcodes[:k]]
     actual_dcg = dcg_at_k(actual_rel, k)
 
-    # Ideal: all relevant docs at top
-    ideal_rel = sorted(actual_rel, reverse=True)
-    # But ideal should consider ALL relevant docs, not just retrieved ones
+    # Ideal considers ALL relevant docs (not just retrieved ones) at the top
     n_relevant_possible = min(len(relevant), k)
     ideal_rel_full = [1] * n_relevant_possible + [0] * (k - n_relevant_possible)
     ideal_dcg = dcg_at_k(ideal_rel_full, k)

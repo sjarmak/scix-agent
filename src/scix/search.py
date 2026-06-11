@@ -43,6 +43,29 @@ RRF_K = 60
 # acceptance gate passes (runbook §7).
 _HALFVEC_ENABLED = os.environ.get("SCIX_USE_HALFVEC", "0") == "1"
 
+# Qdrant dense-lane gate (bead 5jtf). When QDRANT_URL is set and the model
+# has a collection here, vector_search() routes kNN to Qdrant instead of
+# pgvector. Rollback = unset QDRANT_URL and restart the MCP. REST transport
+# only: qdrant-client's gRPC path fails deserializing qdrant 1.18.2
+# responses (verified 2026-06-11, see bead pkcd).
+_QDRANT_DENSE_COLLECTIONS = {"indus": "scix_indus_v2_papers_s1"}
+_qdrant_dense_client: Any = None
+
+
+def _qdrant_dense_url() -> str | None:
+    return os.environ.get("QDRANT_URL") or None
+
+
+def _get_qdrant_dense_client() -> Any:
+    global _qdrant_dense_client
+    if _qdrant_dense_client is None:
+        from qdrant_client import QdrantClient
+
+        _qdrant_dense_client = QdrantClient(
+            url=_qdrant_dense_url(), prefer_grpc=False, timeout=30
+        )
+    return _qdrant_dense_client
+
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -419,6 +442,82 @@ def lexical_search_body(
 # ---------------------------------------------------------------------------
 
 
+def _vector_search_qdrant(
+    conn: psycopg.Connection,
+    query_embedding: list[float],
+    *,
+    model_name: str,
+    filters: SearchFilters | None,
+    limit: int,
+    ef_search: int,
+) -> SearchResult:
+    """kNN via the Qdrant dense lane; paper metadata joined from Postgres.
+
+    The v1 collection carries only ``bibcode`` payload, so SQL-side filters
+    are applied as a post-filter on the PG metadata join: we over-fetch from
+    Qdrant (10x limit, capped) when filters are present. Native payload
+    filtering arrives with the payload backfill (bead 8m0a follow-up).
+    """
+    from qdrant_client import models as qm
+
+    t0 = time.perf_counter()
+    effective = filters or SearchFilters()
+    filter_clause, filter_params = effective.to_where_clause("p")
+    entity_clause, entity_params = effective.to_entity_filter_clause("p")
+    has_filters = bool(filter_clause) or bool(entity_clause)
+    fetch_n = min(limit * 10, 500) if has_filters else limit
+
+    # SCIX_QDRANT_EXACT=1 forces exact (non-indexed) kNN — eval-only control
+    # for isolating HNSW approximation loss; far too slow for serving.
+    if os.environ.get("SCIX_QDRANT_EXACT") == "1":
+        search_params = qm.SearchParams(exact=True)
+    else:
+        search_params = qm.SearchParams(hnsw_ef=max(int(ef_search), limit))
+    client = _get_qdrant_dense_client()
+    points = client.query_points(
+        _QDRANT_DENSE_COLLECTIONS[model_name],
+        query=query_embedding,
+        limit=fetch_n,
+        search_params=search_params,
+        timeout=120,
+    ).points
+    # Cosine similarity, same semantics as the pgvector path's
+    # ``1 - (vec <=> query)``.
+    score_by_bibcode = {p.payload["bibcode"]: float(p.score) for p in points}
+    ranked_bibcodes = [p.payload["bibcode"] for p in points]
+    qdrant_ms = _elapsed_ms(t0)
+
+    query = f"""
+        SELECT {STUB_COLUMNS}
+        FROM papers p
+        WHERE p.bibcode = ANY(%s)
+        {filter_clause}
+        {entity_clause}
+    """
+    params: list[Any] = [ranked_bibcodes] + filter_params + entity_params
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(query, params)
+        rows_by_bibcode = {row["bibcode"]: row for row in cur.fetchall()}
+
+    papers = []
+    for bibcode in ranked_bibcodes:
+        row = rows_by_bibcode.get(bibcode)
+        if row is None:  # filtered out by SQL, or bibcode absent from papers
+            continue
+        stub = PaperStub.from_row(row).to_dict()
+        stub["score"] = score_by_bibcode[bibcode]
+        papers.append(stub)
+        if len(papers) >= limit:
+            break
+
+    return SearchResult(
+        papers=papers,
+        total=len(papers),
+        timing_ms={"vector_ms": _elapsed_ms(t0), "qdrant_ms": qdrant_ms},
+        metadata={"backend": "qdrant_dense", "fetch_n": fetch_n},
+    )
+
+
 def vector_search(
     conn: psycopg.Connection,
     query_embedding: list[float],
@@ -443,6 +542,16 @@ def vector_search(
             When None (default), iterative scan is auto-enabled with
             "relaxed_order" if filters are present and pgvector >= 0.8.0.
     """
+    if model_name in _QDRANT_DENSE_COLLECTIONS and _qdrant_dense_url():
+        return _vector_search_qdrant(
+            conn,
+            query_embedding,
+            model_name=model_name,
+            filters=filters,
+            limit=limit,
+            ef_search=ef_search,
+        )
+
     t0 = time.perf_counter()
 
     ndim = len(query_embedding)

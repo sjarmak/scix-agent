@@ -187,6 +187,28 @@ before committing the 32M rebuild** (new bead). Phase 2:
 - If magnitude holds and `title_matchable` recovers, flip this ADR to Accepted
   and supersede the RUM cutover (`rpjj`) for the title/abstract lane.
 
+### Phase 2 prep landed; 32M build HELD on disk (qajc, 2026-06-11)
+
+The Phase-2 harness is built but the full-corpus build is **held on NVMe
+headroom** — see `results/adr014_phase2_blocked_on_disk.md` for the disk math
+(pilot 73 MB / 52k → ~23 GB steady-state, ~40–46 GB peak for 32.4M; free disk
+49 GB at 98%, host OOM'd postgres twice today; fails the `free ≥ est + 20 GB`
+guard). Unblocks when `paper_embeddings → Qdrant-NAS` (`khug`/`dluh`) frees the
+disk. What is runnable today (no disk impact):
+
+- **Full-corpus streaming build** — `scripts/qdrant_sparse_pilot.py
+  --full-corpus` streams all 32.4M papers through a server-side cursor (one
+  batch in memory) into a throwaway `scix_sparse_full_v1`, with an ADR-013
+  smoke test. The bounded-universe pilot path is unchanged.
+- **OR-semantics attribution arm** — `lexical_search(..., tsquery_mode=
+  "plain_or")` flips the same `scix_english` lexemes from `&` to `|` (a clean
+  AND→OR control; `websearch_to_tsquery` is itself AND-by-default and would not
+  isolate the confound). The eval adds the `pg_or+dense` / `pg_or+body+dense`
+  arms, splitting BM25's win into **AND→OR parsing** vs **BM25 scoring**.
+- **Tokenizer tuning** — `scripts/_sparse_bm25.py` centralizes the FastEmbed
+  BM25 config (build and eval cannot drift); `--disable-stemmer` mirrors
+  `scix_english`'s `simple_nostem` to recover `title_matchable`.
+
 ## Consequences (if accepted)
 
 - A full 32M sparse re-index and a **collection rebuild as named vectors**

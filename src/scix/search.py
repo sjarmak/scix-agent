@@ -226,6 +226,14 @@ def _elapsed_ms(t0: float) -> float:
 # injection vector. These are the only two configs the corpus ships.
 _TS_CONFIG_WHITELIST: frozenset[str] = frozenset({"scix_english", "english"})
 
+# tsquery construction modes for lexical_search. "plain_and" is the production
+# default (plainto_tsquery ANDs all terms). "plain_or" rewrites the same
+# normalized lexemes with OR (replacing & with |), so a doc matching any term
+# scores — this mirrors BM25's additive term semantics and exists to attribute
+# BM25's pilot win between the scoring function and AND-vs-OR query parsing
+# (ADR-014 confound; bead qajc). Eval-only; production calls leave the default.
+_TSQUERY_MODES: frozenset[str] = frozenset({"plain_and", "plain_or"})
+
 # Candidate-pool cap for lexical_search. Without a cap, common single-token
 # queries (e.g. 'galaxy' → ~344K title/abstract matches) force ts_rank_cd over
 # the entire match set and blow past the 30s statement timeout at the DB level,
@@ -293,12 +301,19 @@ def lexical_search(
     filters: SearchFilters | None = None,
     limit: int = 20,
     ts_config: str = "scix_english",
+    tsquery_mode: str = "plain_and",
 ) -> SearchResult:
     """Full-text search using PostgreSQL tsvector with ts_rank_cd scoring.
 
     Uses the custom scix_english text search config by default, which handles
     scientific text (hyphens like X-ray, numeric tokens) better than built-in
     english. ``ts_config`` is whitelisted (see :data:`_TS_CONFIG_WHITELIST`).
+
+    ``tsquery_mode`` (whitelisted, see :data:`_TSQUERY_MODES`) selects term
+    combination: ``plain_and`` (production default, all terms required) or
+    ``plain_or`` (any term, mirroring BM25's additive semantics — the ADR-014
+    attribution arm). Both share the same ``ts_config`` lexeme normalization,
+    so the only thing that varies between them is the boolean operator.
 
     Query shape (candidate-pool cap, bead 3t37):
       1. ``q`` CTE materializes ``plainto_tsquery`` once.
@@ -317,6 +332,10 @@ def lexical_search(
         raise ValueError(
             f"ts_config must be one of {sorted(_TS_CONFIG_WHITELIST)}; got {ts_config!r}"
         )
+    if tsquery_mode not in _TSQUERY_MODES:
+        raise ValueError(
+            f"tsquery_mode must be one of {sorted(_TSQUERY_MODES)}; got {tsquery_mode!r}"
+        )
 
     t0 = time.perf_counter()
 
@@ -329,9 +348,16 @@ def lexical_search(
 
     # plainto_tsquery is more robust than websearch_to_tsquery for programmatic
     # use: it doesn't fail on unmatched quotes or special chars in user input.
+    # For OR semantics we rewrite its operators (& -> |) rather than switching
+    # to websearch_to_tsquery, which is also AND-by-default and would not
+    # isolate the AND-vs-OR confound. plainto only emits & (never the <-> of
+    # phraseto), so the rewrite is a clean AND->OR flip over identical lexemes.
+    tsq_expr = f"plainto_tsquery('{ts_config}', %s)"
+    if tsquery_mode == "plain_or":
+        tsq_expr = f"replace({tsq_expr}::text, '&', '|')::tsquery"
     query = f"""
         WITH q AS (
-            SELECT plainto_tsquery('{ts_config}', %s) AS tsq
+            SELECT {tsq_expr} AS tsq
         ),
         cand AS (
             SELECT {STUB_COLUMNS}, p.tsv

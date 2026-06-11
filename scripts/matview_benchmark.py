@@ -189,7 +189,6 @@ def generate_synthetic_data(cur):
         """)
 
     # Entities: 1M
-    entity_types = ['mission', 'instrument', 'telescope', 'dataset', 'object', 'facility', 'software', 'survey']
     with timed(f"entities ({N_ENTITIES:,})"):
         cur.execute(f"""
             INSERT INTO {BENCH_SCHEMA}.entities (canonical_name, entity_type, discipline, source)

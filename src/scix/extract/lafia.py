@@ -549,6 +549,12 @@ _ENTITY_UPSERT_SQL = """
     RETURNING id
 """
 
+# Tier-3 informal-mention writer: owns its own (link_type='informal_mention',
+# match_method='lafia_informal') namespace in document_entities and never
+# clobbers other producers. Mirrors scix.extract.ner_pass; the M13 resolver
+# (scix.resolve_entities) is a read-side resolver with no write path, so tier
+# producers write directly. u10 will route tier writes through the resolver.
+# resolver-lint: bypass
 _DOC_ENTITY_UPSERT_SQL = """
     INSERT INTO document_entities
         (bibcode, entity_id, link_type, confidence, match_method, tier, evidence)

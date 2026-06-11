@@ -473,7 +473,7 @@ class TestHarvestRunLogLifecycle:
                     "gcmd_platforms_matched": 0,
                 }
 
-                counts = harvest_cmr.run_harvest(dsn="test-dsn")
+                harvest_cmr.run_harvest(dsn="test-dsn")
 
             MockRunLog.assert_called_once_with(mock_conn, "cmr")
             mock_log.start.assert_called_once()

@@ -546,7 +546,7 @@ class TestPipelineCheckpointing:
         with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
             from scix.extract import run_extraction_pipeline
 
-            result = run_extraction_pipeline(
+            run_extraction_pipeline(
                 dsn="test",
                 pilot_size=10,
                 model="claude-haiku-4-5-20251001",

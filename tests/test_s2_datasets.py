@@ -124,7 +124,7 @@ class TestS2DatasetsClient:
         }
         mock_response.status_code = 200
 
-        with patch.object(client._http, "get", return_value=mock_response) as mock_get:
+        with patch.object(client._http, "get", return_value=mock_response):
             urls = client.get_dataset_partitions("s2orc", release_id="2026-04-07")
             assert len(urls) == 2
             assert all(u.startswith("https://") for u in urls)

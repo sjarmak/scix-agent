@@ -482,6 +482,8 @@ class TestTrainingScript:
         )
         mod = importlib.util.module_from_spec(spec)
         # Don't exec it fully — just verify it's importable and parseable
+        assert spec is not None
+        assert mod is not None
 
     def test_script_help_exits_cleanly(self) -> None:
         """Verify --help works without errors."""

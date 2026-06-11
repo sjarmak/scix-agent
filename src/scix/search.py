@@ -151,7 +151,7 @@ class SearchFilters:
 
         where = " AND ".join(inner_conds)
         clause = (
-            f" AND EXISTS ("
+            f" AND EXISTS ("  # resolver-lint: bypass
             f"SELECT 1 FROM document_entities_canonical dec{join} "
             f"WHERE {where})"
         )
@@ -1069,7 +1069,9 @@ def community_expand_search(
     # against ``document_entities_canonical(entity_id)`` is fast even for
     # 138k-paper hubs (the index is BTREE on entity_id).
     with conn.cursor() as cur:
-        cur.execute(
+        # Transitional canonical-MV read: u08 builds the resolver static-core
+        # lane over this MV, after which this routes through scix.resolve_entities.
+        cur.execute(  # resolver-lint: bypass
             "SELECT COUNT(*) FROM document_entities_canonical WHERE entity_id = %s",
             (seed_entity_id,),
         )
@@ -1108,6 +1110,9 @@ def community_expand_search(
     if neighbor_entity_types is not None:
         type_filter_clause = "AND e.entity_type = ANY(%s)"
         type_filter_params = [list(neighbor_entity_types)]
+    # Transitional canonical-MV read for co-occurrence neighbors; u08 routes
+    # the static-core read through scix.resolve_entities.
+    # resolver-lint: bypass
     neighbors_sql = f"""
         WITH seed_papers AS (
             SELECT bibcode
@@ -1193,6 +1198,9 @@ def community_expand_search(
     candidate_pool = max(top_k * 5, 200)
 
     t_papers = time.perf_counter()
+    # Transitional canonical-MV read for co-occurring papers; u08 routes the
+    # static-core read through scix.resolve_entities.
+    # resolver-lint: bypass
     papers_sql = f"""
         WITH neighbor_cooccur AS (
             SELECT * FROM unnest(%s::int[], %s::int[]) AS t(entity_id, cooccur_count)

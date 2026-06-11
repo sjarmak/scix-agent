@@ -476,8 +476,8 @@ class TestWriteEntityGraph:
         ]
         with (
             patch("harvest_spase.upsert_entity", return_value=1) as mock_upsert,
-            patch("harvest_spase.upsert_entity_identifier") as mock_ident,
-            patch("harvest_spase.upsert_entity_alias") as mock_alias,
+            patch("harvest_spase.upsert_entity_identifier"),
+            patch("harvest_spase.upsert_entity_alias"),
         ):
             count = _write_entity_graph(mock_conn, entries, harvest_run_id=42)
 
@@ -491,7 +491,7 @@ class TestWriteEntityGraph:
             _make_entry("MagneticField", "observable", spase_list="MeasurementType"),
         ]
         with (
-            patch("harvest_spase.upsert_entity", return_value=7) as mock_upsert,
+            patch("harvest_spase.upsert_entity", return_value=7),
             patch("harvest_spase.upsert_entity_identifier") as mock_ident,
             patch("harvest_spase.upsert_entity_alias"),
         ):
@@ -591,7 +591,7 @@ class TestRunHarvestLifecycle:
 
         from harvest_spase import run_harvest
 
-        count = run_harvest(dsn="test_dsn", vocabulary="all")
+        run_harvest(dsn="test_dsn", vocabulary="all")
 
         # HarvestRunLog created with source='spase'
         MockRunLog.assert_called_once_with(mock_conn, "spase")

@@ -435,8 +435,6 @@ def store_harvest(
 
         # --- Instruments ---
         inst_name_to_id: dict[str, int] = {}
-        # Track instrument -> observatory associations from API
-        inst_observatory_map: dict[str, set[str]] = {}
 
         for inst in instruments:
             eid = upsert_entity(

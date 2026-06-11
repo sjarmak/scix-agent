@@ -133,7 +133,9 @@ class RealEvalContext:
         if bibcode in self.entity_cache:
             return self.entity_cache[bibcode]
         with self.conn.cursor() as cur:
-            cur.execute(
+            # Eval-only read of the canonical MV (gold-set ground truth). u08
+            # exposes this read via scix.resolve_entities; until then, direct.
+            cur.execute(  # resolver-lint: bypass
                 "SELECT entity_id FROM document_entities_canonical WHERE bibcode = %s",
                 [bibcode],
             )
@@ -189,7 +191,9 @@ def sample_seed_papers(
         cur.execute("SELECT setseed(%s)", [random_seed / 2**31])
 
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(
+        # Eval-only read of the canonical MV (stratified sampler). u08 exposes
+        # this read via scix.resolve_entities; until then, direct.
+        cur.execute(  # resolver-lint: bypass
             """
             WITH seed_candidates AS (
                 SELECT p.bibcode, p.title, p.abstract, p.year, p.citation_count
@@ -439,7 +443,9 @@ def static_canonical_entities(
     confidence threshold used in downstream MCP tools.
     """
     with ctx.conn.cursor() as cur:
-        cur.execute(
+        # Eval-only read of the canonical MV (Lane C, confidence floor). u08
+        # exposes this read via scix.resolve_entities; until then, direct.
+        cur.execute(  # resolver-lint: bypass
             "SELECT entity_id FROM document_entities_canonical "
             "WHERE bibcode = %s AND fused_confidence >= %s",
             [bibcode, min_fused_confidence],
@@ -471,7 +477,9 @@ def sample_lane_consistency_bibcodes(
         cur.execute("SELECT setseed(%s)", [random_seed / 2**31])
 
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(
+        # Eval-only read of the canonical MV (§M4.5 consistency fixture). u08
+        # exposes this read via scix.resolve_entities; until then, direct.
+        cur.execute(  # resolver-lint: bypass
             """
             WITH modern_ents AS (
                 SELECT dec.bibcode

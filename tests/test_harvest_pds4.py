@@ -931,7 +931,7 @@ class TestEntityRelationships:
         ]
         mock_cursor.fetchall.return_value = urn_rows
 
-        count = _write_relationships(mock_conn, entries, harvest_run_id=1)
+        _write_relationships(mock_conn, entries, harvest_run_id=1)
 
         # Find part_of_mission INSERT calls
         execute_calls = mock_cursor.execute.call_args_list
@@ -972,7 +972,7 @@ class TestEntityRelationships:
         ]
         mock_cursor.fetchall.return_value = urn_rows
 
-        count = _write_relationships(mock_conn, entries, harvest_run_id=1)
+        _write_relationships(mock_conn, entries, harvest_run_id=1)
 
         execute_calls = mock_cursor.execute.call_args_list
         observes_calls = [

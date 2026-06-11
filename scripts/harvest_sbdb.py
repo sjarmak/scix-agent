@@ -377,7 +377,6 @@ def run_harvest(
 
         enriched = 0
         fetched = 0
-        errors = 0
 
         for entity_id, canonical_name, spk_id in entities:
             fetched += 1

@@ -314,9 +314,9 @@ class TestFacetFieldValidation:
 
         assert cursor.execute.called
         sql, params = cursor.execute.call_args.args
-        assert "document_entities_canonical" in sql, (
-            "facet_counts dropped the entity filter — the EXISTS clause is missing"
-        )
+        assert (
+            "document_entities_canonical" in sql
+        ), "facet_counts dropped the entity filter — the EXISTS clause is missing"
         assert [42] in params
         assert ["instrument"] in params
 
@@ -1291,3 +1291,150 @@ class TestMCPSearchEntityFilterSchema:
 
         with pytest.raises(ValueError, match="entity_ids"):
             _parse_filters({"entity_ids": ["abc"]})
+
+
+class TestVectorSearchQdrantLane:
+    """Internals of _vector_search_qdrant (bead 5jtf): over-fetch policy,
+    PG post-filter, exact-mode env control, and score/order mapping."""
+
+    @staticmethod
+    def _fake_client(bibcodes_scores: list[tuple[str, float]]):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        points = [SimpleNamespace(payload={"bibcode": b}, score=s) for b, s in bibcodes_scores]
+        client = MagicMock()
+        client.query_points.return_value = SimpleNamespace(points=points)
+        return client
+
+    @staticmethod
+    def _fake_conn(rows: list[dict]):
+        from unittest.mock import MagicMock
+
+        cursor = MagicMock()
+        cursor.__enter__ = MagicMock(return_value=cursor)
+        cursor.__exit__ = MagicMock(return_value=False)
+        cursor.fetchall.return_value = rows
+        conn = MagicMock()
+        conn.cursor.return_value = cursor
+        return conn, cursor
+
+    @staticmethod
+    def _row(bibcode: str) -> dict:
+        return {
+            "bibcode": bibcode,
+            "title": f"Title {bibcode}",
+            "first_author": "Author",
+            "year": 2020,
+            "citation_count": 1,
+            "abstract": None,
+        }
+
+    def test_scores_and_order_follow_qdrant_ranking(self) -> None:
+        from unittest.mock import patch
+
+        from scix.search import _vector_search_qdrant
+
+        client = self._fake_client([("B1", 0.9), ("B2", 0.8), ("B3", 0.7)])
+        # PG returns the join rows in arbitrary order; ranking must come
+        # from Qdrant, not from the SQL result order.
+        conn, cursor = self._fake_conn([self._row("B3"), self._row("B1"), self._row("B2")])
+
+        with patch("scix.search._get_qdrant_dense_client", return_value=client):
+            result = _vector_search_qdrant(
+                conn, [0.1] * 768, model_name="indus", filters=None, limit=3, ef_search=100
+            )
+
+        assert [p["bibcode"] for p in result.papers] == ["B1", "B2", "B3"]
+        assert [p["score"] for p in result.papers] == [0.9, 0.8, 0.7]
+        assert result.metadata["backend"] == "qdrant_dense"
+        # Unfiltered queries must not over-fetch.
+        assert result.metadata["fetch_n"] == 3
+        assert client.query_points.call_args.kwargs["limit"] == 3
+        # The metadata join must not touch the dropped paper_embeddings table.
+        sql, _params = cursor.execute.call_args.args
+        assert "paper_embeddings" not in sql
+        assert "ANY" in sql
+
+    def test_filters_trigger_capped_overfetch(self) -> None:
+        from unittest.mock import patch
+
+        from scix.search import _vector_search_qdrant
+
+        client = self._fake_client([])
+        conn, _cursor = self._fake_conn([])
+        filters = SearchFilters(year_min=2020)
+
+        with patch("scix.search._get_qdrant_dense_client", return_value=client):
+            result = _vector_search_qdrant(
+                conn, [0.1] * 768, model_name="indus", filters=filters, limit=20, ef_search=100
+            )
+            assert result.metadata["fetch_n"] == 200  # 10x limit
+
+            result = _vector_search_qdrant(
+                conn, [0.1] * 768, model_name="indus", filters=filters, limit=80, ef_search=100
+            )
+            assert result.metadata["fetch_n"] == 500  # capped, not 800
+
+    def test_pg_post_filter_drops_rows_and_truncates_to_limit(self) -> None:
+        from unittest.mock import patch
+
+        from scix.search import _vector_search_qdrant
+
+        client = self._fake_client(
+            [("B1", 0.9), ("B2", 0.8), ("B3", 0.7), ("B4", 0.6), ("B5", 0.5)]
+        )
+        # B2 filtered out by SQL (or absent from papers): survivors are
+        # B1, B3, B4, B5 — truncated to limit=2 in Qdrant rank order.
+        conn, _cursor = self._fake_conn(
+            [self._row("B1"), self._row("B3"), self._row("B4"), self._row("B5")]
+        )
+
+        with patch("scix.search._get_qdrant_dense_client", return_value=client):
+            result = _vector_search_qdrant(
+                conn,
+                [0.1] * 768,
+                model_name="indus",
+                filters=SearchFilters(year_min=2020),
+                limit=2,
+                ef_search=100,
+            )
+
+        assert [p["bibcode"] for p in result.papers] == ["B1", "B3"]
+        assert result.total == 2
+
+    def test_default_search_params_use_hnsw_ef_floor(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from unittest.mock import patch
+
+        from scix.search import _vector_search_qdrant
+
+        monkeypatch.delenv("SCIX_QDRANT_EXACT", raising=False)
+        client = self._fake_client([])
+        conn, _cursor = self._fake_conn([])
+
+        with patch("scix.search._get_qdrant_dense_client", return_value=client):
+            _vector_search_qdrant(
+                conn, [0.1] * 768, model_name="indus", filters=None, limit=50, ef_search=10
+            )
+
+        params = client.query_points.call_args.kwargs["search_params"]
+        assert params.exact is not True
+        # ef must never drop below the requested limit.
+        assert params.hnsw_ef == 50
+
+    def test_exact_env_forces_exact_search(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from unittest.mock import patch
+
+        from scix.search import _vector_search_qdrant
+
+        monkeypatch.setenv("SCIX_QDRANT_EXACT", "1")
+        client = self._fake_client([])
+        conn, _cursor = self._fake_conn([])
+
+        with patch("scix.search._get_qdrant_dense_client", return_value=client):
+            _vector_search_qdrant(
+                conn, [0.1] * 768, model_name="indus", filters=None, limit=5, ef_search=100
+            )
+
+        params = client.query_points.call_args.kwargs["search_params"]
+        assert params.exact is True

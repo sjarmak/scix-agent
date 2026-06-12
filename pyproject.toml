@@ -35,9 +35,11 @@ mcp = [
     "mcp>=1.2,<2.0",
 ]
 qdrant = [
-    # REST transport pinned per ADR-013 (gRPC 1.17.x fails on 1.18 responses);
-    # contract-test gap the dense-lane migration flagged. Keep <1.18 for now.
-    "qdrant-client>=1.17,<1.18",
+    # Exact pin per PRD MH-16 (minor-version drift premortem P1) + ADR-013
+    # REST-only transport (gRPC 1.17.x fails on 1.18 responses). Bump
+    # procedure: re-run tests/test_qdrant_contract.py against the candidate
+    # version, then update this pin AND PINNED_VERSION there together.
+    "qdrant-client==1.17.1",
     # Local sparse BM25 (FastEmbed Qdrant/bm25 + Modifier.IDF) — ADR-014 pilot.
     "fastembed>=0.4",
 ]

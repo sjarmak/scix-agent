@@ -25,6 +25,7 @@ from scix.search import (
     SearchResult,
     _elapsed_ms,
     _estimate_filter_selectivity,
+    _filter_first_vector_search,
     _resolve_lexical_pool,
     bibliographic_coupling,
     citation_chain,
@@ -368,10 +369,12 @@ class TestCardinalityRouting:
         result = _estimate_filter_selectivity(None, SearchFilters())  # type: ignore[arg-type]
         assert result == 1.0
 
-    def test_cardinality_routing_uses_filter_first(self) -> None:
+    def test_cardinality_routing_uses_filter_first(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When selectivity < threshold, hybrid_search should use filter-first CTE."""
         from unittest.mock import MagicMock, patch
 
+        # Filter-first is the pg lane; it only routes when the Qdrant gate is off.
+        monkeypatch.delenv("QDRANT_URL", raising=False)
         mock_conn = MagicMock()
 
         fake_embedding = [0.1] * 768
@@ -417,10 +420,13 @@ class TestCardinalityRouting:
             assert isinstance(result, SearchResult)
             assert "vector_ms" in result.timing_ms
 
-    def test_cardinality_routing_uses_hnsw_for_broad_filters(self) -> None:
+    def test_cardinality_routing_uses_hnsw_for_broad_filters(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """When selectivity >= threshold, hybrid_search should use normal vector_search."""
         from unittest.mock import MagicMock, patch
 
+        monkeypatch.delenv("QDRANT_URL", raising=False)
         mock_conn = MagicMock()
 
         fake_embedding = [0.1] * 768
@@ -454,6 +460,121 @@ class TestCardinalityRouting:
             # Normal vector_search should have been called
             mock_vs.assert_called_once()
             assert isinstance(result, SearchResult)
+
+
+class TestQdrantFilteredRouting:
+    """Filtered dense lanes must not touch the dropped paper_embeddings table
+    when the Qdrant gate is active (bead miw9, jg4a FAIL 1 follow-up)."""
+
+    def test_filter_first_delegates_to_qdrant_when_gated(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Under QDRANT_URL, _filter_first_vector_search must route to the
+        Qdrant lane and issue no SQL (paper_embeddings was dropped, ADR-013)."""
+        from unittest.mock import MagicMock, patch
+
+        monkeypatch.setenv("QDRANT_URL", "http://localhost:6333")
+        mock_conn = MagicMock()
+        fake_result = SearchResult(papers=[], total=0, timing_ms={"vector_ms": 1.0})
+
+        filters = SearchFilters(year_min=2026)
+        with patch("scix.search._vector_search_qdrant", return_value=fake_result) as mock_qdrant:
+            result = _filter_first_vector_search(
+                mock_conn,
+                [0.1] * 768,
+                model_name="indus",
+                filters=filters,
+                limit=5,
+            )
+
+        mock_qdrant.assert_called_once()
+        # model_name/filters/limit must survive the delegation handoff.
+        kwargs = mock_qdrant.call_args.kwargs
+        assert kwargs["model_name"] == "indus"
+        assert kwargs["filters"] is filters
+        assert kwargs["limit"] == 5
+        assert result is fake_result
+        mock_conn.cursor.assert_not_called()
+
+    def test_filter_first_uses_pg_when_not_gated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Without QDRANT_URL the legacy pg path is preserved (rollback lane)."""
+        from unittest.mock import MagicMock
+
+        monkeypatch.delenv("QDRANT_URL", raising=False)
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.__enter__ = MagicMock(return_value=cursor)
+        cursor.__exit__ = MagicMock(return_value=False)
+        cursor.fetchall.return_value = []
+        conn.cursor.return_value = cursor
+
+        _filter_first_vector_search(
+            conn,
+            [0.1] * 768,
+            model_name="indus",
+            filters=SearchFilters(year_min=2026),
+            limit=5,
+        )
+
+        sql, _params = cursor.execute.call_args.args
+        assert "paper_embeddings" in sql
+
+    def test_hybrid_search_skips_selectivity_probe_when_gated(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Under QDRANT_URL, hybrid_search must not run the selectivity probe
+        or the filter-first CTE — filtered dense goes through vector_search,
+        whose Qdrant lane applies filters as a PG post-filter."""
+        from unittest.mock import MagicMock, patch
+
+        monkeypatch.setenv("QDRANT_URL", "http://localhost:6333")
+        mock_conn = MagicMock()
+        selective_filters = SearchFilters(year_min=2026, year_max=2026, doctype="article")
+        fake_vec_result = SearchResult(
+            papers=[{"bibcode": "TEST"}],
+            total=1,
+            timing_ms={"vector_ms": 1.0},
+            metadata={"backend": "qdrant_dense"},
+        )
+        fake_lex_result = SearchResult(papers=[], total=0, timing_ms={"lexical_ms": 1.0})
+        fake_body_result = SearchResult(papers=[], total=0, timing_ms={"body_lexical_ms": 1.0})
+
+        with (
+            patch("scix.search._estimate_filter_selectivity") as mock_est,
+            patch("scix.search._filter_first_vector_search") as mock_ff,
+            patch("scix.search.vector_search", return_value=fake_vec_result) as mock_vs,
+            patch("scix.search.lexical_search", return_value=fake_lex_result),
+            patch("scix.search.lexical_search_body", return_value=fake_body_result),
+            patch("scix.search._model_has_embeddings", return_value=False),
+        ):
+            result = hybrid_search(
+                mock_conn,
+                "test query",
+                query_embedding=[0.1] * 768,
+                filters=selective_filters,
+            )
+
+        mock_est.assert_not_called()
+        mock_ff.assert_not_called()
+        mock_vs.assert_called_once()
+        assert mock_vs.call_args.kwargs["filters"] is selective_filters
+        assert isinstance(result, SearchResult)
+
+    def test_model_has_embeddings_false_when_table_dropped(self) -> None:
+        """_model_has_embeddings must treat the ADR-013-dropped table as
+        "no embeddings" instead of propagating UndefinedTable."""
+        from unittest.mock import MagicMock
+
+        from scix.search import _model_has_embeddings
+
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.__enter__ = MagicMock(return_value=cursor)
+        cursor.__exit__ = MagicMock(return_value=False)
+        cursor.execute.side_effect = psycopg.errors.UndefinedTable()
+        conn.cursor.return_value = cursor
+
+        assert _model_has_embeddings(conn, "text-embedding-3-large") is False
 
 
 class TestHybridSearchEntityFilterWiring:

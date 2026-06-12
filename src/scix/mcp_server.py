@@ -272,7 +272,7 @@ def _hnsw_index_exists(conn: psycopg.Connection, model_name: str) -> bool:
     and QDRANT_URL is set, the dense lane is available regardless of whether
     the legacy paper_embeddings pg index exists (it was dropped in ADR-013).
     """
-    if model_name in search._QDRANT_DENSE_COLLECTIONS and search._qdrant_dense_url():
+    if search._qdrant_dense_gated(model_name):
         return True
 
     now = time.monotonic()

@@ -20,8 +20,8 @@ Non-indexed metadata (no index, skip NULLs):
     pagerank              paper_metrics.pagerank
 
 The script streams papers in `--batch` chunks ordered by bibcode (stable,
-resumable), sets payload via bibcode filter-match (no point-ID arithmetic
-needed), and respects `--limit` to cap the pilot slice.
+resumable), sets payload via UUID5 point-ID lookup (keyed by
+uuid5(NAMESPACE_URL, bibcode)), and respects `--limit` to cap the pilot slice.
 
 Usage:
     # dry-run (no writes):
@@ -201,6 +201,7 @@ def apply_batch(
     if dry_run:
         return len(rows)
 
+    written = 0
     for row in rows:
         payload = _build_payload(row)
         if not payload:
@@ -211,11 +212,12 @@ def apply_batch(
             points=qm.PointIdsList(points=[_bibcode_to_point_id(row["bibcode"])]),
             wait=False,
         )
+        written += 1
         if samples is not None and len(samples) < sample_cap:
             samples.append((row["bibcode"], payload))
         if call_interval_ms > 0:
             time.sleep(call_interval_ms / 1000.0)
-    return len(rows)
+    return written
 
 
 def verify_sample(
@@ -236,15 +238,20 @@ def verify_sample(
     the timeout expires.
     """
     expected = dict(samples)
+    # Pre-build id→bibcode reverse map so verify loop doesn't re-compute per-poll.
+    id_to_bibcode = {_bibcode_to_point_id(b): b for b in expected}
     deadline = time.monotonic() + timeout_s
     while True:
-        ids = [_bibcode_to_point_id(b) for b in expected]
+        ids = list(id_to_bibcode)
         points = client.retrieve(collection, ids=ids, with_payload=True)
-        got = {p.payload.get("bibcode"): p.payload for p in points if p.payload}
+        # Key on point.id (always present) — not on payload bibcode, which may
+        # be absent if the collection was loaded without bibcode in payload.
+        got = {p.id: p.payload for p in points if p.payload}
         unapplied = {
             b
-            for b, payload in expected.items()
-            if b not in got or any(got[b].get(k) != v for k, v in payload.items())
+            for point_id, b in id_to_bibcode.items()
+            if point_id not in got
+            or any(got[point_id].get(k) != v for k, v in expected[b].items())
         }
         if not unapplied:
             log.info("verification passed: all %d sampled points carry their payload",

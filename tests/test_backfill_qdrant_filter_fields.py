@@ -81,7 +81,7 @@ class TestBuildPayload:
 
     def test_year_coerced_to_int(self) -> None:
         row = _make_row()
-        row["year"] = "2019"  # psycopg can return smallint as str in some modes
+        row["year"] = "2019"  # coerce defensively — year is always int in practice
         p = _build_payload(row)
         assert isinstance(p["year"], int)
 
@@ -163,10 +163,31 @@ class TestStreamPgBatches:
 
     def test_limit_stops_early(self) -> None:
         page1 = self._rows(["a", "b", "c"])
-        conn = self._mock_conn([page1])
+        conn = MagicMock()
+        cursor_cm = MagicMock()
+        conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor_cm)
+        conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        cursor_cm.fetchall.side_effect = [page1, []]
         result = list(stream_pg_batches(conn, batch=10, limit=3))
         assert len(result) == 1
         assert len(result[0]) == 3
+        # fetch=0 early-break must fire before the second execute, not after.
+        assert cursor_cm.execute.call_count == 1
+
+    def test_cursor_advances_to_last_bibcode(self) -> None:
+        page1 = self._rows(["a", "b", "c"])
+        page2 = self._rows(["d"])
+        cursor_cm = MagicMock()
+        conn = MagicMock()
+        conn.cursor.return_value.__enter__ = MagicMock(return_value=cursor_cm)
+        conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        cursor_cm.fetchall.side_effect = [page1, page2, []]
+        list(stream_pg_batches(conn, batch=3, limit=None))
+        # First call: cursor = "" (start); second call: cursor = "c" (last of page1).
+        first_cursor = cursor_cm.execute.call_args_list[0].args[1][0]
+        second_cursor = cursor_cm.execute.call_args_list[1].args[1][0]
+        assert first_cursor == ""
+        assert second_cursor == "c"
 
     def test_empty_first_page_yields_nothing(self) -> None:
         conn = self._mock_conn([[]])
@@ -201,6 +222,20 @@ class TestApplyBatch:
         rows = [_make_row("a"), _make_row("b"), _make_row("c")]
         count = apply_batch(client, "col", rows, dry_run=False)
         assert count == 3
+
+    def test_returns_written_count_excludes_empty_payload_rows(self) -> None:
+        client = MagicMock()
+        all_null = _make_row(
+            "2020A...null",
+            year=None, doctype=None, arxiv_class=[], bibstem=[],
+            community_semantic_coarse=None, community_semantic_medium=None,
+            pagerank=None, title=None, first_author=None, citation_count=None,
+            is_retracted=False,
+        )
+        rows = [all_null, _make_row("2020B...1")]
+        count = apply_batch(client, "col", rows, dry_run=False)
+        assert count == 1
+        assert client.set_payload.call_count == 1
 
     def test_set_payload_uses_point_id_list(self) -> None:
         client = MagicMock()
@@ -239,8 +274,10 @@ class TestApplyBatch:
 
 class TestVerifySample:
     def _point(self, bibcode: str, payload: dict) -> MagicMock:
+        """Build a mock PointStruct with .id set to the UUID5 for bibcode."""
         p = MagicMock()
-        p.payload = {"bibcode": bibcode, **payload}
+        p.id = _bibcode_to_point_id(bibcode)
+        p.payload = payload
         return p
 
     def test_passes_when_payload_applied(self) -> None:
@@ -252,7 +289,7 @@ class TestVerifySample:
     def test_fails_when_payload_never_applied(self) -> None:
         samples = [("2020A...1", {"year": 2020})]
         client = MagicMock()
-        client.retrieve.return_value = [self._point("2020A...1", {})]  # bibcode only
+        client.retrieve.return_value = [self._point("2020A...1", {})]  # no fields written
         assert not verify_sample(client, "col", samples, timeout_s=0.05, poll_interval_s=0.01)
 
     def test_fails_when_point_missing(self) -> None:
@@ -276,3 +313,18 @@ class TestVerifySample:
         client = MagicMock()
         client.retrieve.return_value = [self._point("2020A...1", {"year": 1999})]
         assert not verify_sample(client, "col", samples, timeout_s=0.05, poll_interval_s=0.01)
+
+    def test_is_retracted_absence_semantics_via_verify(self) -> None:
+        # is_retracted=True must be written and verified; False is omitted (absent = not retracted).
+        samples = [("2020A...2", {"is_retracted": True})]
+        client = MagicMock()
+        client.retrieve.return_value = [self._point("2020A...2", {"is_retracted": True})]
+        assert verify_sample(client, "col", samples, timeout_s=0.1, poll_interval_s=0.01)
+
+    def test_passes_without_bibcode_in_payload(self) -> None:
+        # verify_sample must not require bibcode in the point's payload — it uses p.id.
+        samples = [("2020A...3", {"year": 2022})]
+        client = MagicMock()
+        # Point has no bibcode key in payload — only the written fields.
+        client.retrieve.return_value = [self._point("2020A...3", {"year": 2022})]
+        assert verify_sample(client, "col", samples, timeout_s=0.1, poll_interval_s=0.01)

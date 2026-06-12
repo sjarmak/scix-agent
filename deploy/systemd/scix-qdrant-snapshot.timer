@@ -1,0 +1,32 @@
+# scix-qdrant-snapshot.timer — bead scix_experiments-q000 (dec-3jq)
+#
+# Weekly timer for the Qdrant snapshot-to-NAS job. Pairs with
+# scix-qdrant-snapshot.service (see header there for prerequisites and
+# install steps).
+#
+# Weekly (not daily) on purpose: the collection is a full INDUS vector
+# load that only changes on re-ingest, and is idempotently rebuildable
+# from Postgres paper_embeddings — so the snapshot is a convenience
+# rollback, not the system of record. A 78G weekly snapshot with
+# retention=4 keeps ~1 month of restore points at ~312G on a 48T NAS.
+# Tune OnCalendar / QDRANT_SNAPSHOT_KEEP to taste.
+
+[Unit]
+Description=Weekly fire for SciX Qdrant snapshot to NAS (q000)
+Documentation=https://github.com/sjarmak/scix-agent
+
+[Timer]
+# Sundays 03:00 local. Persistent=true catches a missed firing (host off,
+# suspend) on next boot rather than silently skipping a week.
+OnCalendar=Sun *-*-* 03:00:00
+Persistent=true
+
+# Spread the start so it doesn't collide with other cohabiting timers
+# (citation-contexts backfill at 02:00, daily_sync, etc.).
+RandomizedDelaySec=20min
+AccuracySec=1min
+
+Unit=scix-qdrant-snapshot.service
+
+[Install]
+WantedBy=timers.target

@@ -400,7 +400,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--top-k", type=int, default=None, help="Override default_top_k from YAML.")
     p.add_argument("--dsn", default=None, help="PostgreSQL DSN (defaults to scix.db).")
     p.add_argument("--model-name", default="indus")
-    p.add_argument("--claude-binary", default="claude")
+    p.add_argument("--claude-binary", default=os.environ.get("CLAUDE_BINARY", "claude-auto"))
     p.add_argument("--concurrency", type=int, default=DEFAULT_MAX_CONCURRENCY)
     p.add_argument(
         "--stub",

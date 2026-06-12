@@ -44,6 +44,7 @@ import asyncio
 import csv
 import json
 import logging
+import os
 import random
 import sys
 from dataclasses import dataclass
@@ -351,7 +352,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--output-csv", type=Path, default=DEFAULT_OUTPUT_CSV)
     p.add_argument("--output-json", type=Path, default=DEFAULT_OUTPUT_JSON)
     p.add_argument("--concurrency", type=int, default=DEFAULT_MAX_CONCURRENCY)
-    p.add_argument("--claude-binary", default="claude")
+    p.add_argument("--claude-binary", default=os.environ.get("CLAUDE_BINARY", "claude-auto"))
     p.add_argument("--dsn", default=None)
     p.add_argument("--model-name", default="indus")
     p.add_argument(

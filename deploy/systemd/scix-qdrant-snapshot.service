@@ -1,0 +1,56 @@
+# scix-qdrant-snapshot.service — bead scix_experiments-q000 (dec-3jq)
+#
+# User-level systemd service that takes one Qdrant collection snapshot to
+# NAS (/mnt) and prunes old snapshots to the retention count. The live
+# Qdrant runtime stays on local NVMe; only snapshot output goes to NAS —
+# per docs/prd/qdrant_nas_migration.md and the storage_tiering_policy.
+#
+# PREREQUISITE (operator, one time): the scix-qdrant-v2 container must
+# bind-mount the NAS snapshots dir. Enable the commented-out volume in
+# deploy/qdrant-compose.yml / deploy/qdrant-run.sh:
+#     -v /mnt/qdrant_snapshots:/qdrant/snapshots
+# then `mkdir -p /mnt/qdrant_snapshots` on the NAS and recreate the
+# container. Until then the script exits with a clear remediation message
+# (and `--dry-run` reports NOT READY). Verify first with:
+#     scripts/qdrant_snapshot_to_nas.sh --dry-run
+#
+# Install (one time, as user `ds` on the prod host):
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/systemd/scix-qdrant-snapshot.service ~/.config/systemd/user/
+#   cp deploy/systemd/scix-qdrant-snapshot.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now scix-qdrant-snapshot.timer
+#
+# Type=oneshot — exit code propagates to the timer journal. A failed run
+# leaves prior snapshots intact (retention only prunes AFTER a verified
+# new snapshot exists), so a failure never reduces coverage.
+#
+# Not wrapped in scix-batch on purpose: this unit is a thin trigger whose
+# own RSS is a few MB. The 78G write happens inside the Qdrant container's
+# cgroup, which scix-batch would not bound (same reasoning as the
+# CLAUDE.md note that scix-batch does not bound Postgres-side memory).
+
+[Unit]
+Description=SciX Qdrant collection snapshot to NAS (q000)
+Documentation=https://github.com/sjarmak/scix-agent
+Wants=network-online.target docker.service
+After=network-online.target docker.service remote-fs.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/scix_experiments
+ExecStart=%h/projects/scix_experiments/scripts/qdrant_snapshot_to_nas.sh
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=scix-qdrant-snapshot
+
+# Snapshot of ~78G over NFS, plus retention. 2h is a generous upper bound;
+# the create call itself caps at QDRANT_SNAPSHOT_CREATE_TIMEOUT (default 2h).
+TimeoutStartSec=3h
+KillMode=mixed
+Restart=no
+
+[Install]
+WantedBy=default.target

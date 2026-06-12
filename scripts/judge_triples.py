@@ -30,6 +30,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Iterable
@@ -163,8 +164,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Use the deterministic StubDispatcher (no subagent calls).",
     )
     parser.add_argument(
-        "--claude-binary", default="claude",
-        help="Path to the claude CLI (default 'claude').",
+        "--claude-binary", default=os.environ.get("CLAUDE_BINARY", "claude-auto"),
+        help="Claude CLI or router (default $CLAUDE_BINARY or 'claude-auto').",
     )
     parser.add_argument(
         "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"],

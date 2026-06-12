@@ -21,7 +21,10 @@ import pytest
 from scix.search import (
     BGE_RERANKER_LARGE_LOCAL_DIR,
     BGE_RERANKER_LARGE_SHA,
+    INDUS_RANKER_LOCAL_DIR,
+    INDUS_RANKER_SHA,
     CrossEncoderReranker,
+    _positive_class_scores,
 )
 
 # ---------------------------------------------------------------------------
@@ -212,3 +215,126 @@ def test_top_n_truncates_to_requested_size(
     assert len(out) == 5
     expected = [f"paper-{i:04d}" for i in range(n - 1, n - 6, -1)]
     assert [r["bibcode"] for r in out] == expected
+
+
+# ---------------------------------------------------------------------------
+# (f) INDUS ranker (nasa-smd-ibm-ranker) — 2-class seq-classification head
+# ---------------------------------------------------------------------------
+
+INDUS_MODEL = "nasa-impact/nasa-smd-ibm-ranker"
+
+
+def test_indus_ranker_prefers_local_snapshot_when_present(
+    stub_cross_encoder: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the local snapshot present, load from disk (no revision pin).
+
+    Satisfies AC1: loads from the pinned local cache, no network.
+    """
+    monkeypatch.setattr(
+        "scix.search.os.path.isdir",
+        lambda path: path == INDUS_RANKER_LOCAL_DIR,
+    )
+    # 2-class head: predict returns (N, 2) logits.
+    stub_cross_encoder.return_value.predict.return_value = [[-2.0, 2.0]]
+
+    reranker = CrossEncoderReranker(model_name=INDUS_MODEL)
+    out = reranker("query", _make_papers(1))
+
+    args, kwargs = stub_cross_encoder.call_args
+    assert args[0] == INDUS_RANKER_LOCAL_DIR
+    assert "revision" not in kwargs
+    assert len(out) == 1
+    # Relevance = softmax([-2, 2])[1] ≈ 0.982.
+    assert out[0]["rerank_score"] == pytest.approx(0.9820, abs=1e-3)
+
+
+def test_indus_ranker_falls_back_to_hub_with_pinned_sha(
+    stub_cross_encoder: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When no local snapshot exists, use the HF Hub id at the pinned SHA."""
+    monkeypatch.setattr("scix.search.os.path.isdir", lambda _: False)
+    stub_cross_encoder.return_value.predict.return_value = [[0.0, 0.0]]
+
+    reranker = CrossEncoderReranker(model_name=INDUS_MODEL)
+    reranker("query", _make_papers(1))
+
+    args, kwargs = stub_cross_encoder.call_args
+    assert args[0] == INDUS_MODEL
+    assert kwargs.get("revision") == INDUS_RANKER_SHA
+
+
+def test_indus_ranker_reorders_by_positive_class_probability(
+    stub_cross_encoder: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 2-class reranker must sort by P(relevant) = softmax(logits)[:, 1]."""
+    monkeypatch.setattr(
+        "scix.search.os.path.isdir",
+        lambda path: path == INDUS_RANKER_LOCAL_DIR,
+    )
+    # paper-0000 irrelevant (class 0 wins), paper-0001 relevant (class 1 wins).
+    stub_cross_encoder.return_value.predict.return_value = [
+        [4.0, -4.0],
+        [-3.0, 3.0],
+    ]
+    reranker = CrossEncoderReranker(model_name=INDUS_MODEL)
+    out = reranker("q", _make_papers(2))
+
+    assert [p["bibcode"] for p in out] == ["paper-0001", "paper-0000"]
+    assert out[0]["rerank_score"] > out[1]["rerank_score"]
+    # Scores are softmax probabilities in (0, 1).
+    assert all(0.0 < p["rerank_score"] < 1.0 for p in out)
+
+
+def test_indus_ranker_sha_is_a_valid_commit_hash() -> None:
+    """The pinned revision must be a full 40-char hex SHA."""
+    assert len(INDUS_RANKER_SHA) == 40
+    assert all(c in "0123456789abcdef" for c in INDUS_RANKER_SHA)
+
+
+# ---------------------------------------------------------------------------
+# (g) _positive_class_scores — score-shape normalisation
+# ---------------------------------------------------------------------------
+
+
+def test_positive_class_scores_passthrough_1d() -> None:
+    """A 1-D logit array (single-label rerankers) is returned unchanged."""
+    assert _positive_class_scores([0.1, 0.9, 0.5]) == pytest.approx([0.1, 0.9, 0.5])
+
+
+def test_positive_class_scores_squeezes_single_column() -> None:
+    """Shape (N, 1) is squeezed to a flat list."""
+    assert _positive_class_scores([[0.3], [0.7]]) == pytest.approx([0.3, 0.7])
+
+
+def test_positive_class_scores_softmax_on_two_columns() -> None:
+    """Shape (N, 2) returns softmax of the positive (index-1) class."""
+    out = _positive_class_scores([[2.0, 2.0], [-10.0, 10.0]])
+    assert out[0] == pytest.approx(0.5)  # equal logits → 0.5
+    assert out[1] == pytest.approx(1.0, abs=1e-4)  # class 1 dominates
+
+
+def test_positive_class_scores_rejects_unexpected_shape() -> None:
+    """A 3-class output is not a reranker head — fail loudly, don't guess."""
+    with pytest.raises(ValueError, match="Unexpected CrossEncoder.predict"):
+        _positive_class_scores([[0.1, 0.2, 0.7]])
+
+
+# ---------------------------------------------------------------------------
+# (h) Reranker alias dicts must stay in sync across the layering boundary
+# ---------------------------------------------------------------------------
+
+
+def test_rerank_alias_dicts_are_in_sync() -> None:
+    """``mcp_server`` and ``search`` keep duplicate alias dicts on purpose
+    (to avoid an upward import). They must never drift — a new alias added to
+    one but not the other silently breaks the env-var contract in one lane.
+    """
+    from scix.mcp_server import _RERANK_MODEL_ALIASES
+    from scix.search import _SEARCH_RERANK_MODEL_ALIASES
+
+    assert _RERANK_MODEL_ALIASES == _SEARCH_RERANK_MODEL_ALIASES
+    assert _RERANK_MODEL_ALIASES["indus-ranker"] == "nasa-impact/nasa-smd-ibm-ranker"

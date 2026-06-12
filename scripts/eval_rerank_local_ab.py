@@ -1,31 +1,43 @@
 #!/usr/bin/env python3
 """A/B eval of cross-encoder reranking on the 50-query INDUS hybrid baseline.
 
-Compares three configurations against ``results/retrieval_eval_50q.json``:
+Compares four configurations against ``results/retrieval_eval_50q.json``:
 
     1. ``hybrid_indus``  — INDUS + BM25 via RRF, no reranker (baseline).
     2. ``minilm``        — same hybrid, reranked by
        ``cross-encoder/ms-marco-MiniLM-L-12-v2``.
     3. ``bge_large``     — same hybrid, reranked by ``BAAI/bge-reranker-large``
        (HF revision pinned at :data:`BGE_RERANKER_LARGE_SHA`).
+    4. ``indus_ranker``  — same hybrid, reranked by the INDUS domain-tuned
+       cross-encoder ``nasa-impact/nasa-smd-ibm-ranker`` (bead 4skc).
 
 Reports nDCG@10, Recall@10, Recall@20, MRR, P@10 and p50/p95 of the rerank
 latency per config. Statistical significance is assessed with paired
-Wilcoxon signed-rank tests on per-query nDCG@10 deltas; we run two pairwise
+Wilcoxon signed-rank tests on per-query nDCG@10 deltas; we run three pairwise
 tests against the baseline so the Bonferroni-corrected significance
-threshold is α/2 = 0.025.
+threshold is α/3 ≈ 0.0167.
+
+POOL-COMPARABILITY DECISION (bead 4skc M3): the April run (commit 06a6cc3)
+built the dense lane from the legacy ``paper_embeddings.embedding`` pgvector
+column. That table was DROPPED in the Qdrant migration (ADR-013), so pool
+comparability with April is impossible. This script re-baselines on the
+CURRENT production stack: the candidate pool is built with
+``scix.search.hybrid_search`` (INDUS dense served from Qdrant
+``scix_indus_v2_papers_s1`` + title/abstract BM25 + body BM25, RRF). All four
+configs share ONE cached pool per seed, so the reranker A/B is airtight
+WITHIN this run; only cross-run comparison of absolute nDCG to April is lost.
+Requires ``QDRANT_URL`` to be set (else hybrid_search has no dense lane).
 
 Outputs (committed):
 
-    * ``results/retrieval_eval_50q_rerank_local.json``
-    * ``results/retrieval_eval_50q_rerank_local.md``
+    * ``results/retrieval_eval_50q_rerank_indus.json``
+    * ``results/retrieval_eval_50q_rerank_indus.md``
 
-Memory note: loading both reranker checkpoints (~80 MB MiniLM, ~1.3 GB BGE)
-plus 50 hybrid_search calls peaks well under 15 GB RSS, so the
-``scix-batch`` wrapper is **not** required. Wrap it anyway if you want
-extra safety against the systemd-oomd cgroup on this host:
+Memory note: reranker checkpoints + the INDUS encoder + 50 hybrid_search calls
+peak under the scix-batch envelope; wrap in ``scix-batch`` per CLAUDE.md:
 
-    scix-batch python scripts/eval_rerank_local_ab.py
+    QDRANT_URL=http://localhost:6633 scix-batch \\
+        .venv/bin/python scripts/eval_rerank_local_ab.py
 """
 
 from __future__ import annotations
@@ -34,6 +46,7 @@ import argparse
 import json
 import logging
 import math
+import os
 import platform
 import re
 import sys
@@ -67,29 +80,26 @@ BGE_RERANKER_LOCAL_DIR: str = "models/bge-reranker-large"
 
 MINILM_MODEL_NAME: str = "cross-encoder/ms-marco-MiniLM-L-12-v2"
 
+# INDUS domain-tuned cross-encoder (bead 4skc). HF revision pinned and local
+# snapshot resolved by scix.search.CrossEncoderReranker; this script only needs
+# the canonical model name.
+INDUS_RANKER_MODEL_NAME: str = "nasa-impact/nasa-smd-ibm-ranker"
+
 DEFAULT_GOLD_PATH = Path("results/retrieval_eval_50q.json")
 PARENT_REPO_FALLBACK = Path("/home/ds/projects/scix_experiments/results/retrieval_eval_50q.json")
-DEFAULT_OUT_JSON = Path("results/retrieval_eval_50q_rerank_local.json")
-DEFAULT_OUT_MD = Path("results/retrieval_eval_50q_rerank_local.md")
+DEFAULT_OUT_JSON = Path("results/retrieval_eval_50q_rerank_indus.json")
+DEFAULT_OUT_MD = Path("results/retrieval_eval_50q_rerank_indus.md")
 
-CONFIGS = ("hybrid_indus", "minilm", "bge_large")
+CONFIGS = ("hybrid_indus", "minilm", "bge_large", "indus_ranker")
 
 # Hybrid retrieval knobs — mirror eval_retrieval_50q.py defaults.
 TOP_N_FROM_HYBRID = 50  # how many candidates feed the reranker
-LEXICAL_LIMIT = 50
-VECTOR_LIMIT = 50
 RRF_K = 60
 K_METRIC = 10  # primary metric cutoff (nDCG@K, P@K, R@K)
 K_RECALL_WIDE = 20
 
 ALPHA = 0.05
-N_PAIRWISE_TESTS = 2  # minilm vs baseline, bge_large vs baseline
-
-# Inline copy of scix.search.STUB_COLUMNS to keep this script importable
-# even when scix.search transitively fails to load (e.g. missing
-# dependency in the editable install). Must stay aligned with that
-# constant — we read enough columns to feed the reranker stage.
-STUB_COLUMNS = "p.bibcode, p.title, p.first_author, p.year, p.citation_count, p.abstract"
+N_PAIRWISE_TESTS = 3  # minilm, bge_large, indus_ranker — each vs baseline
 
 
 # ---------------------------------------------------------------------------
@@ -301,60 +311,59 @@ def build_query_text(title: str | None, abstract: str | None, *, max_words: int 
     return title_clean or abstract_clean
 
 
-def parse_pgvector_embedding(raw: Any) -> list[float] | None:
-    """Coerce a pgvector value into a Python ``list[float]``.
+# Lazily-loaded INDUS encoder state. The legacy ``paper_embeddings`` table
+# (which stored precomputed seed vectors) was dropped in the Qdrant migration,
+# so seed query vectors are now computed on the fly with the same model and
+# mean-pooling convention used to embed the corpus (see eval_retrieval_50q.py).
+_indus_encoder: dict[str, Any] = {"loaded": False}
 
-    The driver may return either a stringified ``"[0.1,0.2,...]"`` or an
-    already-decoded sequence, depending on the registered codec.
-    """
-    if raw is None:
-        return None
-    if isinstance(raw, str):
-        cleaned = raw.strip().strip("[]")
-        if not cleaned:
-            return None
-        try:
-            return [float(x) for x in cleaned.split(",")]
-        except ValueError:
-            return None
-    try:
-        return [float(x) for x in raw]
-    except TypeError:
-        return None
+
+def _indus_encode(query: str) -> list[float]:
+    """Encode a query string with the local INDUS model (mean pooling)."""
+    if not _indus_encoder["loaded"]:
+        from scix.embed import embed_batch, load_model
+
+        model, tokenizer = load_model("indus", device="auto")
+        _indus_encoder.update(
+            loaded=True, model=model, tokenizer=tokenizer, embed_batch=embed_batch
+        )
+        logger.info("Loaded INDUS encoder for seed query embedding")
+    vectors = _indus_encoder["embed_batch"](
+        _indus_encoder["model"], _indus_encoder["tokenizer"], [query], pooling="mean"
+    )
+    if not vectors:
+        raise RuntimeError("INDUS embed_batch returned no vectors")
+    return vectors[0]
 
 
 def fetch_seed_record(conn: Any, bibcode: str) -> SeedRecord | None:
-    """Load (title, abstract, indus embedding) for one seed."""
+    """Load (title, abstract) for one seed and encode its INDUS query vector.
+
+    Reads metadata from ``papers`` only — the legacy ``paper_embeddings`` table
+    no longer exists. The query vector is recomputed with the INDUS encoder over
+    ``build_query_text(title, abstract)`` so it lives in the same space as the
+    Qdrant dense collection.
+    """
     from psycopg.rows import dict_row
 
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
-            """
-            SELECT p.bibcode,
-                   p.title,
-                   p.abstract,
-                   pe.embedding
-            FROM papers p
-            JOIN paper_embeddings pe
-              ON pe.bibcode = p.bibcode
-             AND pe.model_name = 'indus'
-            WHERE p.bibcode = %s
-            """,
+            "SELECT bibcode, title, abstract FROM papers WHERE bibcode = %s",
             [bibcode],
         )
         row = cur.fetchone()
 
-    if row is None:
+    if row is None or not (row.get("title") or row.get("abstract")):
         return None
 
-    embedding = parse_pgvector_embedding(row["embedding"])
-    if embedding is None:
-        return None
+    title = row.get("title") or ""
+    abstract = row.get("abstract") or ""
+    embedding = _indus_encode(build_query_text(title, abstract))
 
     return SeedRecord(
         bibcode=row["bibcode"],
-        title=row.get("title") or "",
-        abstract=row.get("abstract") or "",
+        title=title,
+        abstract=abstract,
         embedding=embedding,
     )
 
@@ -398,109 +407,68 @@ def _import_metric_helpers() -> tuple[Any, Any, Any, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _fetch_indus_neighbors(
-    conn: Any,
-    embedding: list[float],
-    *,
-    limit: int,
-) -> list[dict[str, Any]]:
-    """Vector-only INDUS retrieval over the legacy ``pe.embedding`` column.
+def _fetch_full_abstracts(conn: Any, bibcodes: list[str]) -> dict[str, str]:
+    """Fetch full abstracts for the pooled candidates in one round-trip.
 
-    This script intentionally does not call :func:`scix.search.hybrid_search`
-    on this branch because that path requires the halfvec(768) shadow
-    column ``pe.embedding_hv`` (introduced in migration 053). The shadow
-    column is not present on the production DB at the time of this eval,
-    so we run a bypass query that uses the legacy ``embedding`` column
-    (which both the ingest pipeline and pgvector still populate). RRF
-    fusion below mirrors what ``hybrid_search`` does internally.
+    ``hybrid_search`` returns ``PaperStub`` dicts whose ``abstract_snippet`` is
+    truncated to 150 chars — too short for a cross-encoder. We fetch the full
+    abstract and trim to 1000 chars (well inside the 512-token window) so every
+    reranker sees the same rich input the April run used.
     """
+    if not bibcodes:
+        return {}
     from psycopg.rows import dict_row
 
-    vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
-    ndim = len(embedding)
-    # IMPORTANT: ORDER BY must reference ((pe.embedding)::vector(768))
-    # exactly to match the HNSW expression index
-    # `idx_embed_hnsw_indus`. Without the cast the planner falls back
-    # to a full sequential scan over all 32M rows and a single seed
-    # takes minutes. Verified via EXPLAIN ANALYZE on production.
-    sql = (
-        f"SELECT {STUB_COLUMNS}, "
-        f"       1 - ((pe.embedding)::vector({ndim}) <=> %s::vector({ndim})) AS similarity "
-        "FROM paper_embeddings pe "
-        "JOIN papers p ON p.bibcode = pe.bibcode "
-        "WHERE pe.model_name = 'indus' "
-        f"ORDER BY (pe.embedding)::vector({ndim}) <=> %s::vector({ndim}) "
-        "LIMIT %s"
-    )
     with conn.cursor(row_factory=dict_row) as cur:
-        # Tune HNSW probe depth for this session (mirrors scix.search default).
-        # SET (without LOCAL) is safe even outside an explicit transaction.
-        cur.execute("SET hnsw.ef_search = 100")
-        cur.execute(sql, [vec_str, vec_str, limit])
-        rows = cur.fetchall()
-    out: list[dict[str, Any]] = []
-    for row in rows:
-        abstract = row.get("abstract") or ""
-        out.append(
-            {
-                "bibcode": row["bibcode"],
-                "title": row.get("title"),
-                "abstract": abstract,
-                # CrossEncoderReranker reads `abstract_snippet`. Trim to
-                # 1000 chars to stay well inside the cross-encoder's 512-
-                # token input window after tokenisation.
-                "abstract_snippet": abstract[:1000],
-                "score": float(row["similarity"]),
-            }
+        cur.execute(
+            "SELECT bibcode, abstract FROM papers WHERE bibcode = ANY(%s)",
+            [bibcodes],
         )
-    return out
+        return {r["bibcode"]: (r.get("abstract") or "") for r in cur.fetchall()}
 
 
 def _run_hybrid_for_seed(
     conn: Any,
     seed: SeedRecord,
     *,
-    vector_limit: int,
-    lexical_limit: int,
     top_n: int,
 ) -> list[dict[str, Any]]:
-    """One INDUS-hybrid (BM25 + dense, RRF k=RRF_K) retrieval for a single seed.
+    """One production hybrid retrieval (Qdrant dense + BM25 + body BM25, RRF).
 
-    Self-contained: does not touch ``hybrid_search`` because of the
-    halfvec mismatch documented in :func:`_fetch_indus_neighbors`.
-    Returns up to ``top_n`` papers with at least ``bibcode``,
-    ``title``, ``abstract`` populated for the reranker stage.
+    Uses :func:`scix.search.hybrid_search` — the same path the authoritative
+    50q retrieval harness (``eval_retrieval_50q.py``) uses — so the candidate
+    pool reflects the current production stack. The dense lane is served from
+    Qdrant (requires ``QDRANT_URL``). Each candidate is enriched with its full
+    abstract (trimmed to 1000 chars) for the reranker stage.
     """
-    from scix.search import lexical_search, rrf_fuse  # local import — heavy module
+    from scix.search import hybrid_search  # local import — heavy module
 
     query_text = build_query_text(seed.title, seed.abstract)
+    result = hybrid_search(
+        conn,
+        query_text=query_text,
+        query_embedding=seed.embedding,
+        model_name="indus",
+        top_n=top_n,
+        rrf_k=RRF_K,
+        include_body=True,
+    )
+    fused = [p for p in result.papers if p.get("bibcode")]
 
-    # BM25 / lexical lane
-    try:
-        lex = lexical_search(conn, query_text, limit=lexical_limit)
-        lex_papers = list(lex.papers)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("lexical_search failed for %s: %s", seed.bibcode, exc)
-        try:
-            conn.rollback()
-        except Exception:  # noqa: BLE001
-            pass
-        lex_papers = []
-
-    # INDUS dense lane
-    try:
-        vec_papers = _fetch_indus_neighbors(conn, seed.embedding, limit=vector_limit)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("vector retrieval failed for %s: %s", seed.bibcode, exc)
-        try:
-            conn.rollback()
-        except Exception:  # noqa: BLE001
-            pass
-        vec_papers = []
-
-    # RRF fusion (utility, no DB dependency)
-    fused = rrf_fuse([lex_papers, vec_papers], k=RRF_K, top_n=top_n)
-    return fused
+    abstracts = _fetch_full_abstracts(conn, [p["bibcode"] for p in fused])
+    enriched: list[dict[str, Any]] = []
+    for p in fused:
+        abstract = abstracts.get(p["bibcode"], "")
+        enriched.append(
+            {
+                "bibcode": p["bibcode"],
+                "title": p.get("title"),
+                "abstract": abstract,
+                "abstract_snippet": abstract[:1000],
+                "score": float(p.get("score") or 0.0),
+            }
+        )
+    return enriched
 
 
 def run_config(
@@ -769,8 +737,8 @@ def write_outputs(
     md_lines.append(f"**Generated**: {payload['generated_at']}")
     md_lines.append(f"**Queries usable**: {n_seeds_used}")
     md_lines.append(
-        f"**Hybrid stack**: INDUS dense (HNSW) + BM25 (tsvector), RRF k={RRF_K}, "
-        f"top-{TOP_N_FROM_HYBRID} candidates fed to reranker."
+        f"**Hybrid stack**: INDUS dense (Qdrant) + title/abstract BM25 + body "
+        f"BM25, RRF k={RRF_K}, top-{TOP_N_FROM_HYBRID} candidates fed to reranker."
     )
     md_lines.append("")
 
@@ -792,7 +760,8 @@ def write_outputs(
     md_lines.append("## Statistical significance")
     md_lines.append("")
     md_lines.append(
-        f"Two pairwise paired Wilcoxon signed-rank tests on per-query nDCG@10 deltas. "
+        f"{N_PAIRWISE_TESTS} pairwise paired Wilcoxon signed-rank tests on per-query "
+        f"nDCG@10 deltas. "
         f"Bonferroni-corrected significance threshold: α={ALPHA} / {N_PAIRWISE_TESTS} = "
         f"{bonferroni_threshold:.4f}."
     )
@@ -821,16 +790,20 @@ def write_outputs(
     md_lines.append("")
     md_lines.append(
         f"- For each seed bibcode (loaded from `{gold_path}`), build a single "
-        f"INDUS-hybrid candidate pool of top-{TOP_N_FROM_HYBRID} via "
-        f"`scix.search.lexical_search` (BM25) + an INDUS dense lane "
-        f"(`pe.embedding` cosine, the legacy column populated by the "
-        f"production embedding pipeline) fused with `scix.search.rrf_fuse` "
-        f"(k={RRF_K}). The pool is reused across configs so retrieval cost "
-        f"is paid once and only the rerank stage is timed."
+        f"candidate pool of top-{TOP_N_FROM_HYBRID} via "
+        f"`scix.search.hybrid_search` (the production path): INDUS dense lane "
+        f"served from Qdrant (`scix_indus_v2_papers_s1`) + title/abstract BM25 "
+        f"+ body BM25, fused with RRF (k={RRF_K}). The seed query vector is "
+        f"recomputed with the INDUS encoder (mean pooling). The pool is reused "
+        f"across all four configs so retrieval cost is paid once and only the "
+        f"rerank stage is timed."
     )
     md_lines.append(
         "- The reranker (where present) scores all candidates; baseline "
-        "returns the RRF order untouched."
+        "returns the RRF order untouched. Candidates are enriched with their "
+        "full abstract (trimmed to 1000 chars) before reranking — "
+        "`hybrid_search` returns only a 150-char snippet, too short for a "
+        "cross-encoder."
     )
     md_lines.append(
         f"- Metrics computed over the truncated ranking via `scix.ir_metrics`. "
@@ -849,11 +822,13 @@ def write_outputs(
         "`citation_edges`."
     )
     md_lines.append(
-        "- Note: this script reads `pe.embedding` directly rather than "
-        "calling `scix.search.hybrid_search` because that path requires "
-        "the halfvec(768) shadow column `pe.embedding_hv` (migration 053) "
-        "which is not yet present on the production database. RRF fusion "
-        "and lexical search remain unchanged."
+        "- **Pool-comparability note (bead 4skc M3):** the April run (06a6cc3) "
+        "built the dense lane from the legacy `paper_embeddings.embedding` "
+        "pgvector column, which was DROPPED in the ADR-013 Qdrant migration. "
+        "Pool comparability with April is therefore impossible; this is a "
+        "re-baseline on the current production stack. Absolute nDCG is NOT "
+        "comparable to the April memo, but the four-way reranker A/B is "
+        "airtight because every config shares one pool per seed."
     )
     md_lines.append("")
 
@@ -939,9 +914,17 @@ def _provenance(device: str, bge_local_dir: Path) -> dict[str, Any]:
         "bge_revision": BGE_RERANKER_LARGE_SHA,
         "bge_local_dir": str(bge_local_dir),
         "minilm_model": MINILM_MODEL_NAME,
+        "indus_ranker_model": INDUS_RANKER_MODEL_NAME,
         "rrf_k": RRF_K,
         "top_n_from_hybrid": TOP_N_FROM_HYBRID,
         "k_metric": K_METRIC,
+        "pool_source": (
+            "hybrid_search (Qdrant dense scix_indus_v2_papers_s1 + title/abstract "
+            "BM25 + body BM25, RRF) — re-baseline on production stack; "
+            "paper_embeddings pgvector column dropped in ADR-013 Qdrant migration, "
+            "so April pool comparability is not possible"
+        ),
+        "qdrant_url": os.environ.get("QDRANT_URL", ""),
     }
 
 
@@ -958,6 +941,22 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
     device = _detect_device()
     provenance = _provenance(device, args.bge_local_dir)
+
+    # The dense lane is served from Qdrant; without QDRANT_URL set,
+    # hybrid_search silently degrades to lexical-only and the pool is no
+    # longer representative of the production stack. Fail loudly instead.
+    if not os.environ.get("QDRANT_URL"):
+        write_failure_report(
+            args.out_json,
+            args.out_md,
+            reason=(
+                "QDRANT_URL not set — the INDUS dense lane is served from Qdrant "
+                "(scix_indus_v2_papers_s1) since ADR-013. Re-run with "
+                "QDRANT_URL=http://localhost:6633."
+            ),
+            extra={"phase": "preflight"},
+        )
+        return 10
 
     # Phase A: pre-download bge-reranker-large weights so the rerank-time
     # latency excludes one-off network IO.
@@ -1069,13 +1068,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     pool_failures = 0
     for seed in seeds:
         try:
-            pool = _run_hybrid_for_seed(
-                conn,
-                seed,
-                vector_limit=VECTOR_LIMIT,
-                lexical_limit=LEXICAL_LIMIT,
-                top_n=TOP_N_FROM_HYBRID,
-            )
+            pool = _run_hybrid_for_seed(conn, seed, top_n=TOP_N_FROM_HYBRID)
         except Exception as exc:  # noqa: BLE001
             logger.warning("hybrid pool build failed for %s: %s", seed.bibcode, exc)
             pool = []
@@ -1116,6 +1109,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         "hybrid_indus": None,
         "minilm": CrossEncoderReranker(model_name=MINILM_MODEL_NAME),
         "bge_large": _build_bge_reranker(args.bge_local_dir, CrossEncoderReranker),
+        "indus_ranker": CrossEncoderReranker(model_name=INDUS_RANKER_MODEL_NAME),
     }
 
     # Warm-load each reranker once with a tiny dummy pair so the first
@@ -1177,6 +1171,9 @@ def main(argv: Iterable[str] | None = None) -> int:
         wilcoxon_pairwise(baseline, summaries["minilm"], bonferroni_threshold=bonferroni_threshold),
         wilcoxon_pairwise(
             baseline, summaries["bge_large"], bonferroni_threshold=bonferroni_threshold
+        ),
+        wilcoxon_pairwise(
+            baseline, summaries["indus_ranker"], bonferroni_threshold=bonferroni_threshold
         ),
     ]
 

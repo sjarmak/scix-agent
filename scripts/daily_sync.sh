@@ -54,7 +54,7 @@ echo "════════════════════════�
 
 # ─── Step 1: Harvest new records from ADS ─────────────────────────────────────
 
-echo "[$(ts)] Step 1/5: Harvesting new records from ADS..."
+echo "[$(ts)] Step 1/7: Harvesting new records from ADS..."
 $PYTHON scripts/harvest_daily.py --output-dir "$HARVEST_DIR" -v
 
 # Find today's harvest file
@@ -72,10 +72,10 @@ fi
 # ─── Step 2: Ingest new records into PostgreSQL ───────────────────────────────
 
 if [ "$RECORD_COUNT" -gt 0 ]; then
-    echo "[$(ts)] Step 2/5: Ingesting into PostgreSQL..."
+    echo "[$(ts)] Step 2/7: Ingesting into PostgreSQL..."
     $PYTHON scripts/ingest.py --file "$HARVEST_FILE" --no-drop-indexes -v
 else
-    echo "[$(ts)] Step 2/5: Skipped (no new records)"
+    echo "[$(ts)] Step 2/7: Skipped (no new records)"
 fi
 
 # ─── Step 3: Backfill body/refs for papers ADS has since processed ────────────
@@ -86,7 +86,7 @@ fi
 # lag reference extraction by weeks. Only records that actually gained body or
 # edges are re-ingested.
 
-echo "[$(ts)] Step 3/5: Backfilling body/references from ADS (last ${BACKFILL_DAYS}d)..."
+echo "[$(ts)] Step 3/7: Backfilling body/references from ADS (last ${BACKFILL_DAYS}d)..."
 $PYTHON scripts/backfill_recent_from_ads.py --output-dir "$HARVEST_DIR" --days "$BACKFILL_DAYS" -v
 
 BACKFILL_FILE="$HARVEST_DIR/ads_backfill_${TODAY}.jsonl.gz"
@@ -96,10 +96,10 @@ BACKFILL_COUNT=0
 
 if [ -f "$BACKFILL_FILE" ]; then
     BACKFILL_COUNT=$(zcat "$BACKFILL_FILE" | wc -l)
-    echo "[$(ts)] Step 4/5: Ingesting $BACKFILL_COUNT enriched records..."
+    echo "[$(ts)] Step 4/7: Ingesting $BACKFILL_COUNT enriched records..."
     $PYTHON scripts/ingest.py --file "$BACKFILL_FILE" --no-drop-indexes -v
 else
-    echo "[$(ts)] Step 4/5: Skipped (no records gained body or edges)"
+    echo "[$(ts)] Step 4/7: Skipped (no records gained body or edges)"
 fi
 
 # ─── Step 5: Embed new papers with INDUS ─────────────────────────────────────
@@ -107,16 +107,26 @@ fi
 # unembedded papers internally, so it's a cheap no-op when there's nothing new.
 
 if [ "$RECORD_COUNT" -gt 0 ] || [ "$BACKFILL_COUNT" -gt 0 ]; then
-    echo "[$(ts)] Step 5/5: Embedding new papers (INDUS)..."
+    echo "[$(ts)] Step 5/7: Embedding new papers (INDUS)..."
     $PYTHON scripts/embed.py --model indus --batch-size 256 --device cuda -v
 else
-    echo "[$(ts)] Step 5/5: Skipped (no new records to embed)"
+    echo "[$(ts)] Step 5/7: Skipped (no new records to embed)"
 fi
 
-# ─── Step 6: Refresh v_claim_edges materialized view (MH-2) ──────────────────
+# ─── Step 6/7: Refresh v_claim_edges materialized view (MH-2) ────────────────
 # Concurrent refresh keeps reads online. Wrapped in $SCIX_BATCH per CLAUDE.md
 # memory-isolation rule (PATH fallback so cron works on hosts w/o the wrapper).
+echo "[$(ts)] Step 6/7: Refreshing v_claim_edges materialized view..."
 ${SCIX_BATCH:-} $PYTHON scripts/refresh_v_claim_edges.py --allow-prod
+
+# ─── Step 7: Sync new INDUS embeddings PG → Qdrant (outbox drain) ─────────────
+# Step 5 wrote vectors to paper_embeddings (PG-first); the serving dense lane
+# reads from Qdrant (ADR-013). This drains the migration-070 outbox so the
+# Qdrant collection doesn't go stale. Idempotent and a cheap no-op when the
+# queue is empty. QDRANT_URL comes from .env; the worker defaults to the local
+# Qdrant if unset. Light (drains ~one daily batch), so not $SCIX_BATCH-wrapped.
+echo "[$(ts)] Step 7/7: Syncing new embeddings to Qdrant (outbox drain)..."
+$PYTHON scripts/qdrant_outbox_sync.py --allow-prod
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
 

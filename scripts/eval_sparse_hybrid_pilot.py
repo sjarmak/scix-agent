@@ -202,6 +202,10 @@ def main(argv: list[str] | None = None) -> int:
     model = build_model(config)
     client = QdrantClient(url=args.url, prefer_grpc=False, timeout=120)
     conn = psycopg.connect(args.dsn)
+    # qajc operator condition: same memory bounds as the build session
+    # (host OOM'd postgres 2026-06-11/12 on parallel hash + large work_mem).
+    conn.execute("SET work_mem = '256MB'")
+    conn.execute("SET max_parallel_workers_per_gather = 0")
 
     per_query: list[dict] = []
     try:

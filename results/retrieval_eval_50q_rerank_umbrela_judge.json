@@ -1,0 +1,1296 @@
+{
+  "schema_version": 1,
+  "status": "ok",
+  "generated_at": "2026-06-12T07:12:13Z",
+  "gold_path": "results/retrieval_eval_50q.json",
+  "n_seeds_used": 50,
+  "n_judge_calls": 1069,
+  "n_judge_failed": 0,
+  "configs": {
+    "hybrid_indus": {
+      "n_queries": 50,
+      "judge_nDCG@10": 0.7108,
+      "citation_nDCG@10": 0.2242,
+      "mean_judge_score_top10": 1.96,
+      "judged_relevant@10": 7.46,
+      "score_hist_top10": {
+        "0": 26,
+        "1": 101,
+        "2": 240,
+        "3": 133
+      },
+      "per_query": [
+        {
+          "seed_bibcode": "2012AuJES..59..253J",
+          "judge_ndcg_10": 0.3836,
+          "citation_ndcg_10": 0.0851,
+          "mean_judge_score_top10": 1.0,
+          "judged_relevant_at_10": 4,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2023NuPhB.99416323D",
+          "judge_ndcg_10": 0.4628,
+          "citation_ndcg_10": 0.0694,
+          "mean_judge_score_top10": 1.8,
+          "judged_relevant_at_10": 7,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2024JSAES.14805180L",
+          "judge_ndcg_10": 0.6447,
+          "citation_ndcg_10": 0.35,
+          "mean_judge_score_top10": 1.7,
+          "judged_relevant_at_10": 6,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "2022FrASS...8..244H",
+          "judge_ndcg_10": 0.8274,
+          "citation_ndcg_10": 0.0784,
+          "mean_judge_score_top10": 2.5,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2021AngCh.13319513B",
+          "judge_ndcg_10": 0.8196,
+          "citation_ndcg_10": 0.1389,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2025JHEP...01..081A",
+          "judge_ndcg_10": 0.6375,
+          "citation_ndcg_10": 0.2122,
+          "mean_judge_score_top10": 1.7,
+          "judged_relevant_at_10": 6,
+          "n_judged_union": 22
+        },
+        {
+          "seed_bibcode": "2022arXiv220713544W",
+          "judge_ndcg_10": 0.4184,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 1.5,
+          "judged_relevant_at_10": 4,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2023arXiv230313711A",
+          "judge_ndcg_10": 0.6972,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 1.8,
+          "judged_relevant_at_10": 7,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2022PgERS..88..535C",
+          "judge_ndcg_10": 1.0,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.1,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2022JARS...16c4534W",
+          "judge_ndcg_10": 0.6148,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.1,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2022NucFu..62l6051G",
+          "judge_ndcg_10": 0.7517,
+          "citation_ndcg_10": 0.359,
+          "mean_judge_score_top10": 1.3,
+          "judged_relevant_at_10": 3,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2016JFuE...35...31S",
+          "judge_ndcg_10": 1.0,
+          "citation_ndcg_10": 0.0948,
+          "mean_judge_score_top10": 3.0,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2017Icar..290..215S",
+          "judge_ndcg_10": 0.8335,
+          "citation_ndcg_10": 0.2935,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 6,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2016ITPS...44.3445S",
+          "judge_ndcg_10": 0.9636,
+          "citation_ndcg_10": 0.2083,
+          "mean_judge_score_top10": 2.9,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "2020JHEP...12..016A",
+          "judge_ndcg_10": 0.3286,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 1.1,
+          "judged_relevant_at_10": 1,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2020Sust...12.5246S",
+          "judge_ndcg_10": 0.6893,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.0,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2021PhRvD.103a5018F",
+          "judge_ndcg_10": 0.3301,
+          "citation_ndcg_10": 0.0734,
+          "mean_judge_score_top10": 0.8,
+          "judged_relevant_at_10": 2,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2021EnInt.15606635R",
+          "judge_ndcg_10": 0.9603,
+          "citation_ndcg_10": 0.4374,
+          "mean_judge_score_top10": 2.2,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2023PhRvD.108l4075A",
+          "judge_ndcg_10": 0.3566,
+          "citation_ndcg_10": 0.1834,
+          "mean_judge_score_top10": 1.3,
+          "judged_relevant_at_10": 3,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2012A&A...547A..14Z",
+          "judge_ndcg_10": 0.7878,
+          "citation_ndcg_10": 0.3885,
+          "mean_judge_score_top10": 2.1,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 22
+        },
+        {
+          "seed_bibcode": "2022SusCS..8003755H",
+          "judge_ndcg_10": 0.9163,
+          "citation_ndcg_10": 0.2895,
+          "mean_judge_score_top10": 2.1,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2018NatSR...8.6582B",
+          "judge_ndcg_10": 0.7816,
+          "citation_ndcg_10": 0.359,
+          "mean_judge_score_top10": 1.6,
+          "judged_relevant_at_10": 5,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2020PhRvD.101k5015B",
+          "judge_ndcg_10": 0.8905,
+          "citation_ndcg_10": 0.359,
+          "mean_judge_score_top10": 1.4,
+          "judged_relevant_at_10": 4,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "2019ApJ...879..121S",
+          "judge_ndcg_10": 0.6315,
+          "citation_ndcg_10": 0.2497,
+          "mean_judge_score_top10": 1.8,
+          "judged_relevant_at_10": 6,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2013NJPh...15l5007S",
+          "judge_ndcg_10": 0.9206,
+          "citation_ndcg_10": 0.312,
+          "mean_judge_score_top10": 2.4,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 15
+        },
+        {
+          "seed_bibcode": "2015NucFu..55l3023C",
+          "judge_ndcg_10": 0.7637,
+          "citation_ndcg_10": 0.5068,
+          "mean_judge_score_top10": 2.3,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2019IJSTA..12.1905S",
+          "judge_ndcg_10": 0.8104,
+          "citation_ndcg_10": 0.3747,
+          "mean_judge_score_top10": 2.3,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "2010SoPh..263...63E",
+          "judge_ndcg_10": 0.7464,
+          "citation_ndcg_10": 0.4807,
+          "mean_judge_score_top10": 2.4,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2021PhRvD.104c5041F",
+          "judge_ndcg_10": 0.4513,
+          "citation_ndcg_10": 0.1952,
+          "mean_judge_score_top10": 1.6,
+          "judged_relevant_at_10": 5,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2021AngCh.133.2918O",
+          "judge_ndcg_10": 0.4501,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 1.5,
+          "judged_relevant_at_10": 5,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2019JHEP...12..006H",
+          "judge_ndcg_10": 0.9078,
+          "citation_ndcg_10": 0.4374,
+          "mean_judge_score_top10": 2.4,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2024JPhG...51c3001D",
+          "judge_ndcg_10": 0.5053,
+          "citation_ndcg_10": 0.3301,
+          "mean_judge_score_top10": 1.3,
+          "judged_relevant_at_10": 4,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2008Icar..197...65H",
+          "judge_ndcg_10": 0.8969,
+          "citation_ndcg_10": 0.0694,
+          "mean_judge_score_top10": 2.3,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2020NucFu..60b4001G",
+          "judge_ndcg_10": 0.7705,
+          "citation_ndcg_10": 0.3301,
+          "mean_judge_score_top10": 2.4,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2017ITGRS..55.4285J",
+          "judge_ndcg_10": 0.9424,
+          "citation_ndcg_10": 0.4226,
+          "mean_judge_score_top10": 2.5,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 22
+        },
+        {
+          "seed_bibcode": "2022CmPhy...5..215C",
+          "judge_ndcg_10": 0.5688,
+          "citation_ndcg_10": 0.2115,
+          "mean_judge_score_top10": 1.8,
+          "judged_relevant_at_10": 5,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2006SoPh..238...41E",
+          "judge_ndcg_10": 0.4789,
+          "citation_ndcg_10": 0.1331,
+          "mean_judge_score_top10": 1.8,
+          "judged_relevant_at_10": 6,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2014ITGRS..52.5122S",
+          "judge_ndcg_10": 0.6397,
+          "citation_ndcg_10": 0.4517,
+          "mean_judge_score_top10": 2.0,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2018EneEc..69...71L",
+          "judge_ndcg_10": 0.9225,
+          "citation_ndcg_10": 0.2173,
+          "mean_judge_score_top10": 2.8,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2011CQGra..28u5019R",
+          "judge_ndcg_10": 0.492,
+          "citation_ndcg_10": 0.0948,
+          "mean_judge_score_top10": 1.7,
+          "judged_relevant_at_10": 6,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2014Sust....6.3722K",
+          "judge_ndcg_10": 0.9008,
+          "citation_ndcg_10": 0.0694,
+          "mean_judge_score_top10": 1.8,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2021SusPC..27..383S",
+          "judge_ndcg_10": 0.9511,
+          "citation_ndcg_10": 0.3836,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2011JHEP...08..119P",
+          "judge_ndcg_10": 0.665,
+          "citation_ndcg_10": 0.6937,
+          "mean_judge_score_top10": 2.1,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2021SusPC..27..254D",
+          "judge_ndcg_10": 0.9409,
+          "citation_ndcg_10": 0.2122,
+          "mean_judge_score_top10": 2.2,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2001JGR...10623607S",
+          "judge_ndcg_10": 0.7168,
+          "citation_ndcg_10": 0.432,
+          "mean_judge_score_top10": 2.5,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "1996JAP....79.7324S",
+          "judge_ndcg_10": 0.8177,
+          "citation_ndcg_10": 0.0851,
+          "mean_judge_score_top10": 2.1,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "2020ScTEn.71134843W",
+          "judge_ndcg_10": 0.7958,
+          "citation_ndcg_10": 0.2201,
+          "mean_judge_score_top10": 2.0,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2013TCry....7..451Z",
+          "judge_ndcg_10": 0.5601,
+          "citation_ndcg_10": 0.3183,
+          "mean_judge_score_top10": 1.8,
+          "judged_relevant_at_10": 6,
+          "n_judged_union": 22
+        },
+        {
+          "seed_bibcode": "2000Sci...288.2330M",
+          "judge_ndcg_10": 0.5429,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.3,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2015NatCo...6.7497E",
+          "judge_ndcg_10": 0.6537,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.2,
+          "judged_relevant_at_10": 7,
+          "n_judged_union": 23
+        }
+      ]
+    },
+    "minilm": {
+      "n_queries": 50,
+      "judge_nDCG@10": 0.7766,
+      "citation_nDCG@10": 0.2731,
+      "mean_judge_score_top10": 2.1,
+      "judged_relevant@10": 8.18,
+      "score_hist_top10": {
+        "0": 0,
+        "1": 91,
+        "2": 268,
+        "3": 141
+      },
+      "per_query": [
+        {
+          "seed_bibcode": "2012AuJES..59..253J",
+          "judge_ndcg_10": 0.8312,
+          "citation_ndcg_10": 0.1389,
+          "mean_judge_score_top10": 1.8,
+          "judged_relevant_at_10": 7,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2023NuPhB.99416323D",
+          "judge_ndcg_10": 0.8203,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.1,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2024JSAES.14805180L",
+          "judge_ndcg_10": 0.644,
+          "citation_ndcg_10": 0.4499,
+          "mean_judge_score_top10": 1.7,
+          "judged_relevant_at_10": 6,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "2022FrASS...8..244H",
+          "judge_ndcg_10": 0.8173,
+          "citation_ndcg_10": 0.2201,
+          "mean_judge_score_top10": 2.4,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2021AngCh.13319513B",
+          "judge_ndcg_10": 0.6804,
+          "citation_ndcg_10": 0.1389,
+          "mean_judge_score_top10": 1.8,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2025JHEP...01..081A",
+          "judge_ndcg_10": 0.7179,
+          "citation_ndcg_10": 0.5669,
+          "mean_judge_score_top10": 1.7,
+          "judged_relevant_at_10": 6,
+          "n_judged_union": 22
+        },
+        {
+          "seed_bibcode": "2022arXiv220713544W",
+          "judge_ndcg_10": 0.7819,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.3,
+          "judged_relevant_at_10": 7,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2023arXiv230313711A",
+          "judge_ndcg_10": 0.7373,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2022PgERS..88..535C",
+          "judge_ndcg_10": 1.0,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.1,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2022JARS...16c4534W",
+          "judge_ndcg_10": 0.6446,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.2,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2022NucFu..62l6051G",
+          "judge_ndcg_10": 0.7306,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 1.4,
+          "judged_relevant_at_10": 4,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2016JFuE...35...31S",
+          "judge_ndcg_10": 1.0,
+          "citation_ndcg_10": 0.5225,
+          "mean_judge_score_top10": 3.0,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2017Icar..290..215S",
+          "judge_ndcg_10": 0.9875,
+          "citation_ndcg_10": 0.4531,
+          "mean_judge_score_top10": 2.3,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2016ITPS...44.3445S",
+          "judge_ndcg_10": 0.9636,
+          "citation_ndcg_10": 0.2743,
+          "mean_judge_score_top10": 2.9,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "2020JHEP...12..016A",
+          "judge_ndcg_10": 0.6838,
+          "citation_ndcg_10": 0.0851,
+          "mean_judge_score_top10": 1.8,
+          "judged_relevant_at_10": 7,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2020Sust...12.5246S",
+          "judge_ndcg_10": 0.6693,
+          "citation_ndcg_10": 0.2201,
+          "mean_judge_score_top10": 1.6,
+          "judged_relevant_at_10": 5,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2021PhRvD.103a5018F",
+          "judge_ndcg_10": 0.799,
+          "citation_ndcg_10": 0.5022,
+          "mean_judge_score_top10": 1.5,
+          "judged_relevant_at_10": 5,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2021EnInt.15606635R",
+          "judge_ndcg_10": 0.6307,
+          "citation_ndcg_10": 0.2201,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2023PhRvD.108l4075A",
+          "judge_ndcg_10": 0.9667,
+          "citation_ndcg_10": 0.6422,
+          "mean_judge_score_top10": 2.4,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2012A&A...547A..14Z",
+          "judge_ndcg_10": 0.7425,
+          "citation_ndcg_10": 0.5068,
+          "mean_judge_score_top10": 2.1,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 22
+        },
+        {
+          "seed_bibcode": "2022SusCS..8003755H",
+          "judge_ndcg_10": 0.7243,
+          "citation_ndcg_10": 0.0663,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2018NatSR...8.6582B",
+          "judge_ndcg_10": 0.4127,
+          "citation_ndcg_10": 0.11,
+          "mean_judge_score_top10": 1.3,
+          "judged_relevant_at_10": 3,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2020PhRvD.101k5015B",
+          "judge_ndcg_10": 0.9011,
+          "citation_ndcg_10": 0.3301,
+          "mean_judge_score_top10": 1.4,
+          "judged_relevant_at_10": 4,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "2019ApJ...879..121S",
+          "judge_ndcg_10": 0.7604,
+          "citation_ndcg_10": 0.52,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 7,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2013NJPh...15l5007S",
+          "judge_ndcg_10": 0.8969,
+          "citation_ndcg_10": 0.224,
+          "mean_judge_score_top10": 2.3,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 15
+        },
+        {
+          "seed_bibcode": "2015NucFu..55l3023C",
+          "judge_ndcg_10": 0.9165,
+          "citation_ndcg_10": 0.2999,
+          "mean_judge_score_top10": 2.4,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2019IJSTA..12.1905S",
+          "judge_ndcg_10": 0.906,
+          "citation_ndcg_10": 0.3052,
+          "mean_judge_score_top10": 2.3,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "2010SoPh..263...63E",
+          "judge_ndcg_10": 0.7011,
+          "citation_ndcg_10": 0.4815,
+          "mean_judge_score_top10": 2.2,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2021PhRvD.104c5041F",
+          "judge_ndcg_10": 0.7955,
+          "citation_ndcg_10": 0.4035,
+          "mean_judge_score_top10": 2.3,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2021AngCh.133.2918O",
+          "judge_ndcg_10": 0.7005,
+          "citation_ndcg_10": 0.2426,
+          "mean_judge_score_top10": 2.0,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2019JHEP...12..006H",
+          "judge_ndcg_10": 0.7965,
+          "citation_ndcg_10": 0.3785,
+          "mean_judge_score_top10": 2.2,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2024JPhG...51c3001D",
+          "judge_ndcg_10": 0.861,
+          "citation_ndcg_10": 0.0784,
+          "mean_judge_score_top10": 2.4,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2008Icar..197...65H",
+          "judge_ndcg_10": 0.6106,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.0,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2020NucFu..60b4001G",
+          "judge_ndcg_10": 0.638,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.2,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2017ITGRS..55.4285J",
+          "judge_ndcg_10": 0.493,
+          "citation_ndcg_10": 0.1737,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 6,
+          "n_judged_union": 22
+        },
+        {
+          "seed_bibcode": "2022CmPhy...5..215C",
+          "judge_ndcg_10": 0.8843,
+          "citation_ndcg_10": 0.7479,
+          "mean_judge_score_top10": 2.8,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2006SoPh..238...41E",
+          "judge_ndcg_10": 0.9581,
+          "citation_ndcg_10": 0.4858,
+          "mean_judge_score_top10": 2.9,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2014ITGRS..52.5122S",
+          "judge_ndcg_10": 0.5771,
+          "citation_ndcg_10": 0.2305,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2018EneEc..69...71L",
+          "judge_ndcg_10": 0.9173,
+          "citation_ndcg_10": 0.4249,
+          "mean_judge_score_top10": 2.8,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2011CQGra..28u5019R",
+          "judge_ndcg_10": 0.7993,
+          "citation_ndcg_10": 0.7846,
+          "mean_judge_score_top10": 2.3,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2014Sust....6.3722K",
+          "judge_ndcg_10": 0.9368,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2021SusPC..27..383S",
+          "judge_ndcg_10": 0.9368,
+          "citation_ndcg_10": 0.469,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2011JHEP...08..119P",
+          "judge_ndcg_10": 0.5266,
+          "citation_ndcg_10": 0.3223,
+          "mean_judge_score_top10": 1.6,
+          "judged_relevant_at_10": 4,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2021SusPC..27..254D",
+          "judge_ndcg_10": 0.8022,
+          "citation_ndcg_10": 0.2903,
+          "mean_judge_score_top10": 2.2,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2001JGR...10623607S",
+          "judge_ndcg_10": 0.8545,
+          "citation_ndcg_10": 0.5806,
+          "mean_judge_score_top10": 2.5,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "1996JAP....79.7324S",
+          "judge_ndcg_10": 0.7294,
+          "citation_ndcg_10": 0.0784,
+          "mean_judge_score_top10": 2.2,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "2020ScTEn.71134843W",
+          "judge_ndcg_10": 0.739,
+          "citation_ndcg_10": 0.2201,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2013TCry....7..451Z",
+          "judge_ndcg_10": 0.6173,
+          "citation_ndcg_10": 0.2466,
+          "mean_judge_score_top10": 1.8,
+          "judged_relevant_at_10": 4,
+          "n_judged_union": 22
+        },
+        {
+          "seed_bibcode": "2000Sci...288.2330M",
+          "judge_ndcg_10": 0.9217,
+          "citation_ndcg_10": 0.1389,
+          "mean_judge_score_top10": 2.8,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2015NatCo...6.7497E",
+          "judge_ndcg_10": 0.6647,
+          "citation_ndcg_10": 0.0784,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 5,
+          "n_judged_union": 23
+        }
+      ]
+    },
+    "indus_ranker": {
+      "n_queries": 50,
+      "judge_nDCG@10": 0.6716,
+      "citation_nDCG@10": 0.1843,
+      "mean_judge_score_top10": 1.916,
+      "judged_relevant@10": 7.24,
+      "score_hist_top10": {
+        "0": 8,
+        "1": 130,
+        "2": 258,
+        "3": 104
+      },
+      "per_query": [
+        {
+          "seed_bibcode": "2012AuJES..59..253J",
+          "judge_ndcg_10": 0.5909,
+          "citation_ndcg_10": 0.1389,
+          "mean_judge_score_top10": 0.9,
+          "judged_relevant_at_10": 4,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2023NuPhB.99416323D",
+          "judge_ndcg_10": 0.8088,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.1,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2024JSAES.14805180L",
+          "judge_ndcg_10": 0.5437,
+          "citation_ndcg_10": 0.1834,
+          "mean_judge_score_top10": 1.5,
+          "judged_relevant_at_10": 5,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "2022FrASS...8..244H",
+          "judge_ndcg_10": 0.3734,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 1.4,
+          "judged_relevant_at_10": 4,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2021AngCh.13319513B",
+          "judge_ndcg_10": 0.7111,
+          "citation_ndcg_10": 0.1584,
+          "mean_judge_score_top10": 1.8,
+          "judged_relevant_at_10": 7,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2025JHEP...01..081A",
+          "judge_ndcg_10": 0.442,
+          "citation_ndcg_10": 0.2837,
+          "mean_judge_score_top10": 1.4,
+          "judged_relevant_at_10": 3,
+          "n_judged_union": 22
+        },
+        {
+          "seed_bibcode": "2022arXiv220713544W",
+          "judge_ndcg_10": 0.7618,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.2,
+          "judged_relevant_at_10": 7,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2023arXiv230313711A",
+          "judge_ndcg_10": 0.6684,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 1.7,
+          "judged_relevant_at_10": 7,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2022PgERS..88..535C",
+          "judge_ndcg_10": 0.7731,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.0,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2022JARS...16c4534W",
+          "judge_ndcg_10": 0.8384,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.5,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2022NucFu..62l6051G",
+          "judge_ndcg_10": 0.5132,
+          "citation_ndcg_10": 0.2201,
+          "mean_judge_score_top10": 1.2,
+          "judged_relevant_at_10": 2,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2016JFuE...35...31S",
+          "judge_ndcg_10": 0.9621,
+          "citation_ndcg_10": 0.0636,
+          "mean_judge_score_top10": 2.9,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2017Icar..290..215S",
+          "judge_ndcg_10": 1.0,
+          "citation_ndcg_10": 0.3024,
+          "mean_judge_score_top10": 2.3,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2016ITPS...44.3445S",
+          "judge_ndcg_10": 0.8145,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.6,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "2020JHEP...12..016A",
+          "judge_ndcg_10": 0.3519,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 1.2,
+          "judged_relevant_at_10": 2,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2020Sust...12.5246S",
+          "judge_ndcg_10": 0.4998,
+          "citation_ndcg_10": 0.0784,
+          "mean_judge_score_top10": 1.6,
+          "judged_relevant_at_10": 5,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2021PhRvD.103a5018F",
+          "judge_ndcg_10": 0.5855,
+          "citation_ndcg_10": 0.4734,
+          "mean_judge_score_top10": 1.2,
+          "judged_relevant_at_10": 3,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2021EnInt.15606635R",
+          "judge_ndcg_10": 0.8007,
+          "citation_ndcg_10": 0.0663,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 24
+        },
+        {
+          "seed_bibcode": "2023PhRvD.108l4075A",
+          "judge_ndcg_10": 0.8627,
+          "citation_ndcg_10": 0.5885,
+          "mean_judge_score_top10": 2.2,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2012A&A...547A..14Z",
+          "judge_ndcg_10": 0.5838,
+          "citation_ndcg_10": 0.2201,
+          "mean_judge_score_top10": 1.8,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 22
+        },
+        {
+          "seed_bibcode": "2022SusCS..8003755H",
+          "judge_ndcg_10": 0.7292,
+          "citation_ndcg_10": 0.11,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2018NatSR...8.6582B",
+          "judge_ndcg_10": 0.5967,
+          "citation_ndcg_10": 0.1478,
+          "mean_judge_score_top10": 1.5,
+          "judged_relevant_at_10": 4,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2020PhRvD.101k5015B",
+          "judge_ndcg_10": 0.7691,
+          "citation_ndcg_10": 0.1635,
+          "mean_judge_score_top10": 1.3,
+          "judged_relevant_at_10": 3,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "2019ApJ...879..121S",
+          "judge_ndcg_10": 0.6554,
+          "citation_ndcg_10": 0.4284,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2013NJPh...15l5007S",
+          "judge_ndcg_10": 0.8969,
+          "citation_ndcg_10": 0.2876,
+          "mean_judge_score_top10": 2.3,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 15
+        },
+        {
+          "seed_bibcode": "2015NucFu..55l3023C",
+          "judge_ndcg_10": 0.7927,
+          "citation_ndcg_10": 0.2051,
+          "mean_judge_score_top10": 2.2,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2019IJSTA..12.1905S",
+          "judge_ndcg_10": 0.8183,
+          "citation_ndcg_10": 0.312,
+          "mean_judge_score_top10": 2.2,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "2010SoPh..263...63E",
+          "judge_ndcg_10": 0.8817,
+          "citation_ndcg_10": 0.4698,
+          "mean_judge_score_top10": 2.4,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2021PhRvD.104c5041F",
+          "judge_ndcg_10": 0.6644,
+          "citation_ndcg_10": 0.1763,
+          "mean_judge_score_top10": 2.2,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2021AngCh.133.2918O",
+          "judge_ndcg_10": 0.5039,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 1.6,
+          "judged_relevant_at_10": 6,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2019JHEP...12..006H",
+          "judge_ndcg_10": 0.5855,
+          "citation_ndcg_10": 0.4035,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2024JPhG...51c3001D",
+          "judge_ndcg_10": 0.7468,
+          "citation_ndcg_10": 0.0663,
+          "mean_judge_score_top10": 2.3,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2008Icar..197...65H",
+          "judge_ndcg_10": 0.5468,
+          "citation_ndcg_10": 0.0784,
+          "mean_judge_score_top10": 2.0,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2020NucFu..60b4001G",
+          "judge_ndcg_10": 0.6308,
+          "citation_ndcg_10": 0.0694,
+          "mean_judge_score_top10": 2.3,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2017ITGRS..55.4285J",
+          "judge_ndcg_10": 0.4621,
+          "citation_ndcg_10": 0.1884,
+          "mean_judge_score_top10": 1.7,
+          "judged_relevant_at_10": 6,
+          "n_judged_union": 22
+        },
+        {
+          "seed_bibcode": "2022CmPhy...5..215C",
+          "judge_ndcg_10": 0.6846,
+          "citation_ndcg_10": 0.2588,
+          "mean_judge_score_top10": 2.3,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2006SoPh..238...41E",
+          "judge_ndcg_10": 0.8215,
+          "citation_ndcg_10": 0.5834,
+          "mean_judge_score_top10": 2.4,
+          "judged_relevant_at_10": 7,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2014ITGRS..52.5122S",
+          "judge_ndcg_10": 0.6847,
+          "citation_ndcg_10": 0.2745,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2018EneEc..69...71L",
+          "judge_ndcg_10": 0.6646,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.4,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2011CQGra..28u5019R",
+          "judge_ndcg_10": 0.7991,
+          "citation_ndcg_10": 0.5232,
+          "mean_judge_score_top10": 2.3,
+          "judged_relevant_at_10": 10,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2014Sust....6.3722K",
+          "judge_ndcg_10": 0.8519,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 1.7,
+          "judged_relevant_at_10": 7,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2021SusPC..27..383S",
+          "judge_ndcg_10": 0.7336,
+          "citation_ndcg_10": 0.1389,
+          "mean_judge_score_top10": 1.7,
+          "judged_relevant_at_10": 7,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2011JHEP...08..119P",
+          "judge_ndcg_10": 0.2843,
+          "citation_ndcg_10": 0.0636,
+          "mean_judge_score_top10": 1.3,
+          "judged_relevant_at_10": 3,
+          "n_judged_union": 23
+        },
+        {
+          "seed_bibcode": "2021SusPC..27..254D",
+          "judge_ndcg_10": 0.6137,
+          "citation_ndcg_10": 0.0734,
+          "mean_judge_score_top10": 1.9,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2001JGR...10623607S",
+          "judge_ndcg_10": 0.8212,
+          "citation_ndcg_10": 0.6749,
+          "mean_judge_score_top10": 2.4,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "1996JAP....79.7324S",
+          "judge_ndcg_10": 0.6592,
+          "citation_ndcg_10": 0.0,
+          "mean_judge_score_top10": 2.1,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 19
+        },
+        {
+          "seed_bibcode": "2020ScTEn.71134843W",
+          "judge_ndcg_10": 0.6823,
+          "citation_ndcg_10": 0.2337,
+          "mean_judge_score_top10": 1.8,
+          "judged_relevant_at_10": 8,
+          "n_judged_union": 21
+        },
+        {
+          "seed_bibcode": "2013TCry....7..451Z",
+          "judge_ndcg_10": 0.5679,
+          "citation_ndcg_10": 0.3251,
+          "mean_judge_score_top10": 1.7,
+          "judged_relevant_at_10": 4,
+          "n_judged_union": 22
+        },
+        {
+          "seed_bibcode": "2000Sci...288.2330M",
+          "judge_ndcg_10": 0.6696,
+          "citation_ndcg_10": 0.0851,
+          "mean_judge_score_top10": 2.4,
+          "judged_relevant_at_10": 9,
+          "n_judged_union": 20
+        },
+        {
+          "seed_bibcode": "2015NatCo...6.7497E",
+          "judge_ndcg_10": 0.277,
+          "citation_ndcg_10": 0.0948,
+          "mean_judge_score_top10": 1.4,
+          "judged_relevant_at_10": 3,
+          "n_judged_union": 23
+        }
+      ]
+    }
+  },
+  "disagreement_analysis": {
+    "n_seeds_with_divergence": 50,
+    "indus_only": {
+      "n_papers": 266,
+      "mean_judge_score": 1.7519,
+      "score_hist": {
+        "0": 8,
+        "1": 84,
+        "2": 140,
+        "3": 34
+      },
+      "frac_relevant": 0.6541
+    },
+    "minilm_only": {
+      "n_papers": 266,
+      "mean_judge_score": 2.0977,
+      "score_hist": {
+        "0": 0,
+        "1": 45,
+        "2": 150,
+        "3": 71
+      },
+      "frac_relevant": 0.8308
+    },
+    "delta_mean_judge_score_indus_minus_minilm": -0.3458
+  },
+  "provenance": {
+    "host_python": "3.12.3",
+    "platform": "Linux-6.17.0-19-generic-x86_64-with-glibc2.39",
+    "device": "cuda",
+    "minilm_model": "cross-encoder/ms-marco-MiniLM-L-12-v2",
+    "indus_ranker_model": "nasa-impact/nasa-smd-ibm-ranker",
+    "judge_persona": "umbrela_judge",
+    "judge_prompt_version": "umbrela_judge-v1",
+    "rrf_k": 60,
+    "top_n_from_hybrid": 50,
+    "k_judged": 10,
+    "relevant_threshold": 2,
+    "qdrant_url": "http://localhost:6633"
+  }
+}

@@ -1439,13 +1439,60 @@ BGE_RERANKER_LARGE_SHA: str = "55611d7bca2a7133960a6d3b71e083071bbfc312"
 # never have to hit the network for the ~1.3 GB checkpoint.
 BGE_RERANKER_LARGE_LOCAL_DIR: str = "models/bge-reranker-large"
 
+# HuggingFace commit SHA pin for nasa-impact/nasa-smd-ibm-ranker (the INDUS
+# cross-encoder reranker). Resolved against
+# https://huggingface.co/nasa-impact/nasa-smd-ibm-ranker on 2026-06-11.
+# Pinning makes rerank scores reproducible and prevents silent upstream
+# weight changes from altering production ranking.
+INDUS_RANKER_SHA: str = "33a95df595b155e86581d615a17b27983e632341"
+
+# Local snapshot directory for the INDUS ranker (~480 MB, RoBERTa-base class).
+# Same pattern as BGE_RERANKER_LARGE_LOCAL_DIR.
+INDUS_RANKER_LOCAL_DIR: str = "models/nasa-smd-ibm-ranker"
+
+# Cross-encoders with a pinned HF revision and a preferred local snapshot.
+# When the local directory exists we load from disk (offline, no revision);
+# otherwise we fall back to the HF Hub identifier at the pinned SHA.
+_PINNED_RERANKERS: dict[str, tuple[str, str]] = {
+    "BAAI/bge-reranker-large": (BGE_RERANKER_LARGE_LOCAL_DIR, BGE_RERANKER_LARGE_SHA),
+    "nasa-impact/nasa-smd-ibm-ranker": (INDUS_RANKER_LOCAL_DIR, INDUS_RANKER_SHA),
+}
+
 # Public registry of supported cross-encoder model names. Anything not
 # listed here is treated as an opaque sentence-transformers identifier and
 # loaded directly (no local-cache resolution, no SHA pin).
 _SUPPORTED_RERANKER_MODELS: tuple[str, ...] = (
     "cross-encoder/ms-marco-MiniLM-L-12-v2",
     "BAAI/bge-reranker-large",
+    "nasa-impact/nasa-smd-ibm-ranker",
 )
+
+
+def _positive_class_scores(scores: Any) -> list[float]:
+    """Reduce raw ``CrossEncoder.predict`` output to one relevance score per pair.
+
+    Single-logit rerankers (``ms-marco-MiniLM``, ``bge-reranker-large``) emit a
+    1-D array used directly. Sequence-classification rerankers with a 2-class
+    head (``nasa-smd-ibm-ranker``) emit shape ``(N, 2)``; the relevance score is
+    ``P(relevant) = softmax(logits)[:, 1]`` (class index 1 is the positive
+    class). Any other shape is unexpected and raises rather than guessing.
+    """
+    import numpy as np
+
+    arr = np.asarray(scores, dtype=np.float64)
+    if arr.ndim == 1:
+        return arr.tolist()
+    if arr.ndim == 2 and arr.shape[1] == 1:
+        return arr[:, 0].tolist()
+    if arr.ndim == 2 and arr.shape[1] == 2:
+        shifted = arr - arr.max(axis=1, keepdims=True)
+        exp = np.exp(shifted)
+        softmax = exp / exp.sum(axis=1, keepdims=True)
+        return softmax[:, 1].tolist()
+    raise ValueError(
+        f"Unexpected CrossEncoder.predict output shape {arr.shape}; "
+        "expected (N,), (N, 1), or (N, 2)."
+    )
 
 
 class CrossEncoderReranker:
@@ -1454,16 +1501,19 @@ class CrossEncoderReranker:
     Lazy-loads the model on first use to avoid import overhead.
     Batches all candidates in a single forward pass.
 
-    Two model paths are first-class:
+    Three model paths are first-class:
 
     * ``cross-encoder/ms-marco-MiniLM-L-12-v2`` (default, ~80 MB) — fast,
       general-purpose MS-MARCO baseline. Loaded directly by name.
-    * ``BAAI/bge-reranker-large`` (~1.3 GB) — stronger reranker. Loaded
-      from a local snapshot under :data:`BGE_RERANKER_LARGE_LOCAL_DIR`
-      when that directory exists; otherwise falls back to the HF Hub
-      identifier pinned at :data:`BGE_RERANKER_LARGE_SHA`.
+    * ``BAAI/bge-reranker-large`` (~1.3 GB) — stronger general reranker.
+    * ``nasa-impact/nasa-smd-ibm-ranker`` (~480 MB) — the INDUS
+      domain-tuned cross-encoder (RoBERTa-base seq-classification head,
+      2-class; relevance = ``softmax(logits)[1]``).
 
-    Any other ``model_name`` is passed through to ``CrossEncoder`` as-is.
+    The latter two are loaded from a local snapshot (see
+    :data:`_PINNED_RERANKERS`) when present, otherwise from the HF Hub at a
+    pinned revision SHA. Any other ``model_name`` is passed through to
+    ``CrossEncoder`` as-is.
     """
 
     def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-12-v2") -> None:
@@ -1473,16 +1523,17 @@ class CrossEncoderReranker:
     def _resolve_model_source(self) -> tuple[str, str | None]:
         """Return ``(model_path_or_name, revision)`` for ``CrossEncoder``.
 
-        For ``BAAI/bge-reranker-large`` we prefer a local snapshot under
-        :data:`BGE_RERANKER_LARGE_LOCAL_DIR` when present (no network),
-        and otherwise fall back to the HF Hub identifier pinned at
-        :data:`BGE_RERANKER_LARGE_SHA`. All other names are returned
-        verbatim with no revision pin.
+        For a model listed in :data:`_PINNED_RERANKERS` we prefer its local
+        snapshot directory when present (no network), and otherwise fall back
+        to the HF Hub identifier pinned at its revision SHA. All other names
+        are returned verbatim with no revision pin.
         """
-        if self._model_name == "BAAI/bge-reranker-large":
-            if os.path.isdir(BGE_RERANKER_LARGE_LOCAL_DIR):
-                return BGE_RERANKER_LARGE_LOCAL_DIR, None
-            return self._model_name, BGE_RERANKER_LARGE_SHA
+        pin = _PINNED_RERANKERS.get(self._model_name)
+        if pin is not None:
+            local_dir, sha = pin
+            if os.path.isdir(local_dir):
+                return local_dir, None
+            return self._model_name, sha
         return self._model_name, None
 
     def _load(self) -> None:
@@ -1492,10 +1543,17 @@ class CrossEncoderReranker:
             from sentence_transformers import CrossEncoder
 
             source, revision = self._resolve_model_source()
+            # Cap at 512 input tokens. All three supported cross-encoders are
+            # 512-token transformers, but the INDUS ranker (RoBERTa) reports
+            # max_position_embeddings=514 (512 + a padding offset of 2). Letting
+            # CrossEncoder default to 514 lets a full-length pair push RoBERTa's
+            # position ids past the 514-row table → a CUDA device-side assert
+            # ("scatter gather index out of bounds"). 512 is the documented
+            # limit for this model and a safe no-op for MiniLM/BGE.
+            kwargs: dict[str, Any] = {"max_length": 512}
             if revision is not None:
-                self._model = CrossEncoder(source, revision=revision)
-            else:
-                self._model = CrossEncoder(source)
+                kwargs["revision"] = revision
+            self._model = CrossEncoder(source, **kwargs)
         except ImportError:
             raise ImportError(
                 "sentence-transformers is required for cross-encoder reranking. "
@@ -1520,7 +1578,7 @@ class CrossEncoderReranker:
             doc_text = (p.get("title") or "") + ". " + (p.get("abstract_snippet") or "")
             pairs.append((query, doc_text))
 
-        scores = self._model.predict(pairs)
+        scores = _positive_class_scores(self._model.predict(pairs))
 
         scored = []
         for paper, score in zip(papers, scores):
@@ -3978,6 +4036,7 @@ def read_paper_section(
 _SEARCH_RERANK_MODEL_ALIASES: dict[str, str] = {
     "minilm": "cross-encoder/ms-marco-MiniLM-L-12-v2",
     "bge-large": "BAAI/bge-reranker-large",
+    "indus-ranker": "nasa-impact/nasa-smd-ibm-ranker",
 }
 
 
@@ -3994,7 +4053,8 @@ def _resolve_section_rerank_model() -> str | None:
         return _SEARCH_RERANK_MODEL_ALIASES[raw]
     logger.warning(
         "Unknown SCIX_RERANK_DEFAULT_MODEL=%r in search_within_paper; "
-        "falling back to 'off'. Allowed values: 'off', 'minilm', 'bge-large'.",
+        "falling back to 'off'. Allowed values: 'off', 'minilm', 'bge-large', "
+        "'indus-ranker'.",
         raw,
     )
     return None

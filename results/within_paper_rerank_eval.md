@@ -1,5 +1,17 @@
 # search_within_paper section-level rerank — M5 eval
 
+> ⚠️ **SUPERSEDED / INVALID (bead scix_experiments-4skc).** This eval is
+> structurally void: it runs on synthetic IMRaD fixtures scored by a
+> Python token-count stub, which puts the baseline at nDCG@3 = 1.0000 — a
+> ceiling by construction. The negative 'delta' below measures nothing
+> about real reranking and must not be cited as evidence for or against
+> cross-encoder reranking. For a valid, real-corpus reranker eval (incl.
+> the INDUS domain-tuned cross-encoder) see
+> `results/retrieval_eval_50q_rerank_indus.md` and
+> `results/indus_ranker_benchmark_m2.json`. A real section-level rerank
+> redesign over OA bodies (gated on `papers_is_oa_or_preprint`) would be
+> a separate bead.
+
 ## Methodology
 
 - Fixture: `tests/fixtures/within_paper_rerank_gold_20.jsonl` (20 entries)
@@ -21,7 +33,7 @@
 | Baseline nDCG@3 (BM25 only) | 1.0000 |
 | Reranked nDCG@3 (MiniLM)    | 0.9815 |
 | Delta                       | -0.0185 |
-| p95 latency (rerank, MiniLM)| 16.7 ms |
+| p95 latency (rerank, MiniLM)| 8.6 ms |
 | Improvement threshold       | +0.05 |
 
 ## Recommendation

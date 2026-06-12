@@ -1028,15 +1028,18 @@ def _init_model_impl() -> None:
 # candidate cross-encoders REGRESS retrieval quality on this corpus:
 #   * ms-marco-MiniLM-L-12-v2: nDCG@10 0.3255 -> 0.2802 (Δ=-0.0453, p=0.042)
 #   * BAAI/bge-reranker-large: nDCG@10 0.3255 -> 0.2699 (Δ=-0.0556, p=0.026)
-# Bonferroni-corrected significance threshold = 0.025 — the M4 rollout gate
-# FAILS for both. Operators can still flip a non-'off' model on for
-# experimentation (e.g. when a domain-tuned cross-encoder lands), but the
-# production default stays off.
+# The domain-tuned carve-out has since been tested too (bead 4skc; see
+# results/retrieval_eval_50q_rerank_indus.md): nasa-impact/nasa-smd-ibm-ranker
+# also REGRESSES on the re-baselined Qdrant pool (nDCG@10 0.2242 -> 0.1843,
+# Δ=-0.0400, p=0.074) despite passing its own home benchmark — NO-GO. Operators
+# can still flip a non-'off' model on for experimentation, but the production
+# default stays off; no evaluated reranker has cleared the rollout gate.
 
 # Map env-var values to model_name strings consumed by CrossEncoderReranker.
 _RERANK_MODEL_ALIASES: dict[str, str] = {
     "minilm": "cross-encoder/ms-marco-MiniLM-L-12-v2",
     "bge-large": "BAAI/bge-reranker-large",
+    "indus-ranker": "nasa-impact/nasa-smd-ibm-ranker",
 }
 
 # Cap above which the reranker is bypassed even when use_rerank=True.
@@ -1064,7 +1067,7 @@ def _resolve_default_reranker_model() -> str | None:
         return _RERANK_MODEL_ALIASES[raw]
     logger.warning(
         "Unknown SCIX_RERANK_DEFAULT_MODEL=%r; falling back to 'off'. "
-        "Allowed values: 'off', 'minilm', 'bge-large'.",
+        "Allowed values: 'off', 'minilm', 'bge-large', 'indus-ranker'.",
         raw,
     )
     return None

@@ -680,7 +680,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Use StubDispatcher (no Claude calls) — wiring check only.",
     )
-    p.add_argument("--claude-binary", default="claude")
+    p.add_argument("--claude-binary", default=os.environ.get("CLAUDE_BINARY", "claude-auto"))
     return p.parse_args(list(argv) if argv is not None else None)
 
 

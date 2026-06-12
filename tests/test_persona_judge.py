@@ -29,6 +29,7 @@ from scix.eval.persona_judge import (
     JudgeScore,
     JudgeTriple,
     PersonaJudge,
+    RateLimitError,
     StubDispatcher,
     build_snippet,
     parse_judge_response,
@@ -326,6 +327,62 @@ class TestDispatcherErrorStderrExposure:
 
         assert len(scores) == 1
         assert secret_query not in scores[0].reason
+
+
+class TestRateLimitAbort:
+    """Account exhaustion must abort the whole run, not retry per triple.
+
+    Regression for 2026-06-12: a capped account turned a 1,069-pair run into
+    2,156 doomed retry sessions because 429s surfaced as generic
+    DispatcherError and burned the full retry budget on every pair.
+    """
+
+    def test_spend_limit_message_raises_rate_limit_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import subprocess
+
+        import scix.eval.persona_judge as pj
+
+        async def _fake_run(binary: str, prompt: str) -> subprocess.CompletedProcess:
+            return subprocess.CompletedProcess(
+                args=[binary, "-p"],
+                returncode=1,
+                stdout="You've hit your monthly spend limit · raise it at claude.ai",
+                stderr="",
+            )
+
+        monkeypatch.setattr(pj, "_run_claude_subprocess", _fake_run)
+        dispatcher = ClaudeSubprocessDispatcher()
+        triple = JudgeTriple(query="q", bibcode="2024XYZ", snippet="Title: X.")
+
+        with pytest.raises(RateLimitError):
+            asyncio.run(dispatcher.judge(triple))
+
+    def test_rate_limit_aborts_run_without_retrying(self) -> None:
+        calls = {"count": 0}
+
+        class _CappedDispatcher:
+            async def judge(self, triple: JudgeTriple) -> JudgeScore:
+                calls["count"] += 1
+                raise RateLimitError("claude -p exited 1: account rate/spend limit hit")
+
+        triples = [
+            JudgeTriple(query="q", bibcode=f"2024B{i}", snippet="Title: X.") for i in range(6)
+        ]
+        judge = PersonaJudge(
+            dispatcher=_CappedDispatcher(),
+            max_concurrency=2,
+            max_retries=3,
+            backoff_base_s=0.0,
+        )
+
+        with pytest.raises(RateLimitError):
+            asyncio.run(judge.run(triples))
+
+        # No retries: at most one attempt per triple, and the abort should
+        # cut in before the whole list is even attempted.
+        assert calls["count"] <= len(triples)
 
 
 # ---------------------------------------------------------------------------

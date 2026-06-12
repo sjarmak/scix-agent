@@ -29,6 +29,7 @@ import csv
 import datetime as dt
 import json
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -298,7 +299,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--stub", action="store_true",
         help="Use StubDispatcher — wiring check, does not call Claude.",
     )
-    parser.add_argument("--claude-binary", default="claude")
+    parser.add_argument("--claude-binary", default=os.environ.get("CLAUDE_BINARY", "claude-auto"))
     parser.add_argument("--dsn", default=None, help="PostgreSQL DSN (defaults to scix.db).")
     parser.add_argument(
         "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"],

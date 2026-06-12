@@ -158,6 +158,27 @@ class DispatcherError(Exception):
         self.stderr = stderr
 
 
+class RateLimitError(DispatcherError):
+    """Account-level exhaustion (rate window or spend limit). Never retried.
+
+    Once the account backing ``claude -p`` is capped, every subsequent call
+    fails identically — retrying per-triple just spawns thousands of doomed
+    sessions (observed 2026-06-12: 2,156 failed sessions on a 1,069-pair
+    run). :class:`PersonaJudge` aborts the whole run on this error; callers
+    resume cheaply once capacity returns (e.g. ``--reuse-scores``).
+    """
+
+
+RATE_LIMIT_MARKERS: tuple[str, ...] = (
+    "rate limit",
+    "rate_limit",
+    "usage limit",
+    "spend limit",
+)
+"""Lowercase substrings in failed ``claude -p`` output that mark account
+exhaustion (only checked on nonzero exit, never on successful responses)."""
+
+
 # ---------------------------------------------------------------------------
 # Snippet construction
 # ---------------------------------------------------------------------------
@@ -453,6 +474,12 @@ class ClaudeSubprocessDispatcher:
             ) from exc
 
         if completed.returncode != 0:
+            failure_text = f"{completed.stdout}\n{completed.stderr}".lower()
+            if any(marker in failure_text for marker in RATE_LIMIT_MARKERS):
+                raise RateLimitError(
+                    f"claude -p exited {completed.returncode}: account rate/spend limit hit",
+                    stderr=completed.stderr,
+                )
             raise DispatcherError(
                 f"claude -p exited {completed.returncode}",
                 stderr=completed.stderr,
@@ -572,13 +599,24 @@ class PersonaJudge:
                 return await self._judge_with_retry(triple)
 
         tasks = [asyncio.create_task(_judge_one(t)) for t in triples]
-        return list(await asyncio.gather(*tasks))
+        try:
+            return list(await asyncio.gather(*tasks))
+        except RateLimitError:
+            # The account is exhausted — every in-flight and queued call
+            # will fail the same way. Cancel the rest and surface the error.
+            for task in tasks:
+                task.cancel()
+            raise
 
     async def _judge_with_retry(self, triple: JudgeTriple) -> JudgeScore:
         attempt = 0
         while True:
             try:
                 score = await self.dispatcher.judge(triple)
+            except RateLimitError:
+                # Account exhaustion is run-fatal, not per-triple transient:
+                # propagate so run() aborts instead of retrying into a wall.
+                raise
             except DispatcherError as exc:
                 if attempt >= self.max_retries:
                     logger.warning(
@@ -778,6 +816,8 @@ __all__ = [
     "JudgeTriple",
     "PERSONA_NAME",
     "PersonaJudge",
+    "RATE_LIMIT_MARKERS",
+    "RateLimitError",
     "SCORE_MAX",
     "SCORE_MIN",
     "StubDispatcher",

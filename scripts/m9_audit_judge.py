@@ -559,7 +559,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=float, default=0.42)
     parser.add_argument("--annotator", default=ANNOTATOR_NAME)
     parser.add_argument("--output", type=pathlib.Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--claude-binary", default=os.environ.get("CLAUDE_BINARY", "claude"))
+    parser.add_argument("--claude-binary", default=os.environ.get("CLAUDE_BINARY", "claude-auto"))
     parser.add_argument("--dry-run", action="store_true",
                         help="sample + enrich only; no claude calls, no DB writes")
     parser.add_argument("--verbose", "-v", action="store_true")

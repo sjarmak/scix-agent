@@ -267,7 +267,14 @@ def _hnsw_index_exists(conn: psycopg.Connection, model_name: str) -> bool:
 
     Name retained for caller compatibility; it now gates on either ANN index
     so the dense lane re-enables automatically once the DiskANN index is built.
+
+    Qdrant short-circuit (bead jg4a): when the model has a Qdrant collection
+    and QDRANT_URL is set, the dense lane is available regardless of whether
+    the legacy paper_embeddings pg index exists (it was dropped in ADR-013).
     """
+    if model_name in search._QDRANT_DENSE_COLLECTIONS and search._qdrant_dense_url():
+        return True
+
     now = time.monotonic()
     cached = _hnsw_index_cache.get(model_name)
     if cached is not None:

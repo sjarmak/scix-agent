@@ -1260,23 +1260,44 @@ class TestHnswIndexGuard:
         mock_conn = self._mock_conn_with_index(exists=True)
         assert _hnsw_index_exists(mock_conn, "indus") is True
 
-    def test_returns_false_when_index_missing(self) -> None:
+    @patch("scix.search._qdrant_dense_url", return_value=None)
+    def test_returns_false_when_index_missing(self, _mock_url: MagicMock) -> None:
         mock_conn = self._mock_conn_with_index(exists=False)
         assert _hnsw_index_exists(mock_conn, "indus") is False
 
-    def test_positive_result_is_cached(self) -> None:
+    @patch("scix.search._qdrant_dense_url", return_value=None)
+    def test_positive_result_is_cached(self, _mock_url: MagicMock) -> None:
         mock_conn = self._mock_conn_with_index(exists=True)
         _hnsw_index_exists(mock_conn, "indus")
         _hnsw_index_exists(mock_conn, "indus")
         assert mock_conn.cursor.call_count == 1
 
-    def test_negative_result_is_rechecked(self) -> None:
+    @patch("scix.search._qdrant_dense_url", return_value=None)
+    def test_negative_result_is_rechecked(self, _mock_url: MagicMock) -> None:
         mock_conn = self._mock_conn_with_index(exists=False)
         _hnsw_index_exists(mock_conn, "indus")
         exists, _ = _hnsw_index_cache["indus"]
         _hnsw_index_cache["indus"] = (exists, 0.0)
         _hnsw_index_exists(mock_conn, "indus")
         assert mock_conn.cursor.call_count == 2
+
+    def test_qdrant_short_circuit_returns_true_without_pg(self) -> None:
+        # When QDRANT_URL is set and the model has a Qdrant collection,
+        # the gate returns True without touching pg_indexes (jg4a fix).
+        mock_conn = self._mock_conn_with_index(exists=False)
+        with patch("scix.search._qdrant_dense_url", return_value="http://localhost:6633"):
+            result = _hnsw_index_exists(mock_conn, "indus")
+        assert result is True
+        mock_conn.cursor.assert_not_called()
+
+    @patch("scix.search._qdrant_dense_url", return_value="http://localhost:6633")
+    def test_qdrant_short_circuit_only_for_known_collections(
+        self, _mock_url: MagicMock
+    ) -> None:
+        # Unknown models fall through to the pg path even when QDRANT_URL is set.
+        mock_conn = self._mock_conn_with_index(exists=False)
+        assert _hnsw_index_exists(mock_conn, "unknown_model") is False
+        mock_conn.cursor.assert_called()
 
 
 # ---------------------------------------------------------------------------

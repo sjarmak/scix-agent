@@ -14,6 +14,7 @@ and a fake INDUS embedder so they run fast and offline.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import Any
 
 import psycopg
@@ -24,6 +25,7 @@ from scix.claim_blame import (
     INTENT_WEIGHTS,
     _intent_weight,
     _lookup_retractions,
+    _seed_candidates_default,
     _walk_reverse_references,
     claim_blame,
 )
@@ -55,6 +57,7 @@ class _FakeCursor:
         self._retracted = retracted_bibcodes or set()
         self._candidate_rows = candidate_rows or []
         self._last_rows: list[tuple[Any, ...]] = []
+        self.executed: list[str] = []
 
     def __enter__(self) -> _FakeCursor:
         return self
@@ -63,6 +66,7 @@ class _FakeCursor:
         return None
 
     def execute(self, sql: str, params: Any = None) -> None:
+        self.executed.append(sql)
         sql_lower = sql.lower()
         if "count(distinct" in sql_lower and "v_claim_edges" in sql_lower:
             # citation_contexts coverage probe — return zero coverage by
@@ -95,6 +99,10 @@ class _FakeConnection:
 
     def cursor(self) -> _FakeCursor:
         return self._cursor
+
+    @contextmanager
+    def transaction(self) -> Any:
+        yield
 
 
 class _FakePool:
@@ -553,6 +561,10 @@ class _RaisingConnection:
     def cursor(self) -> _RaisingCursor:
         return _RaisingCursor()
 
+    @contextmanager
+    def transaction(self) -> Any:
+        yield
+
 
 def test_walk_reverse_references_returns_empty_on_psycopg_error(
     caplog: pytest.LogCaptureFixture,
@@ -595,3 +607,67 @@ def test_lookup_retractions_short_circuits_empty_input_without_db() -> None:
         [],
     )
     assert out == set()
+
+
+# ---------------------------------------------------------------------------
+# Default seeder query shape (bead scix_experiments-82j0)
+#
+# The ILIKE-over-title+abstract seed forced a parallel seq scan of all 32M
+# papers and OOM-killed postgres. The default seeder must use the
+# GIN-indexed tsvector lane and bound its session resources.
+# ---------------------------------------------------------------------------
+
+
+def test_seed_default_uses_tsvector_lane_not_ilike() -> None:
+    """The seed query must hit papers.tsv, never ILIKE over title/abstract."""
+    cur = _FakeCursor()
+    out = _seed_candidates_default(
+        _FakeConnection(cur),  # type: ignore[arg-type]
+        "dark matter halo concentration relation",
+        ResearchScope(),
+        limit=25,
+    )
+    assert out == []
+    seed_sql = next(s for s in cur.executed if "FROM papers p" in s)
+    assert "ILIKE" not in seed_sql
+    assert "p.tsv @@ plainto_tsquery('scix_english', %s)" in seed_sql
+    assert "ORDER BY p.year ASC" in seed_sql
+
+
+def test_seed_default_bounds_session_resources() -> None:
+    """Parallelism and work_mem caps must precede the seed query."""
+    cur = _FakeCursor()
+    _seed_candidates_default(
+        _FakeConnection(cur),  # type: ignore[arg-type]
+        "dark matter halo concentration relation",
+        ResearchScope(),
+        limit=25,
+    )
+    assert "SET LOCAL max_parallel_workers_per_gather = 0" in cur.executed
+    assert "SET LOCAL work_mem = '256MB'" in cur.executed
+
+
+def test_seed_default_returns_empty_on_psycopg_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A DB failure during seeding must degrade to [] (fail-soft)."""
+    with caplog.at_level("WARNING", logger="scix.claim_blame"):
+        out = _seed_candidates_default(
+            _RaisingConnection(),  # type: ignore[arg-type]
+            "dark matter halo concentration relation",
+            ResearchScope(),
+            limit=25,
+        )
+    assert out == []
+    assert any("seed query failed" in r.message for r in caplog.records)
+
+
+def test_seed_default_short_circuits_short_tokens_without_db() -> None:
+    """Claims with no token >= 4 chars must return [] without touching DB."""
+    out = _seed_candidates_default(
+        _RaisingConnection(),  # type: ignore[arg-type]
+        "a be cat",
+        ResearchScope(),
+        limit=25,
+    )
+    assert out == []

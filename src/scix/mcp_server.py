@@ -108,6 +108,25 @@ _is_test_session: bool = bool(os.environ.get("SCIX_TEST_DSN"))
 
 _pool = None
 
+# Session-level statement_timeout applied to every MCP connection (bead
+# scix_experiments-82j0, third postgres OOM 2026-06-12). Sent in the libpq
+# startup packet so it applies before the first statement, with no
+# per-connection round-trip. The per-tool SET LOCAL timeouts tighten this
+# inside each tool transaction; this default is the safety net for everything
+# that runs outside one (startup smoke calls, query_log writes, helpers
+# invoked before _set_timeout). Deliberately NOT an ALTER ROLE migration: the
+# MCP server shares its postgres role with multi-hour batch work (index
+# builds, backfills) that a role-level timeout would break.
+_SESSION_STATEMENT_TIMEOUT_MS = int(
+    float(os.environ.get("SCIX_SESSION_STATEMENT_TIMEOUT", "120")) * 1000
+)
+if _SESSION_STATEMENT_TIMEOUT_MS <= 0:
+    raise ValueError(
+        "SCIX_SESSION_STATEMENT_TIMEOUT must be > 0 seconds; got "
+        f"{os.environ.get('SCIX_SESSION_STATEMENT_TIMEOUT')!r}"
+    )
+_CONN_OPTIONS = f"-c statement_timeout={_SESSION_STATEMENT_TIMEOUT_MS}"
+
 
 def _get_pool():
     """Get or create the connection pool (singleton)."""
@@ -131,6 +150,7 @@ def _get_pool():
             min_size=min_size,
             max_size=max_size,
             timeout=timeout,
+            kwargs={"options": _CONN_OPTIONS},
         )
         logger.info(
             "Connection pool created: min=%d, max=%d, timeout=%.1fs",
@@ -155,7 +175,7 @@ def _get_conn() -> Generator[psycopg.Connection, None, None]:
         with pool.connection() as conn:
             yield conn
     else:
-        conn = psycopg.connect(os.environ.get("SCIX_DSN", DEFAULT_DSN))
+        conn = psycopg.connect(os.environ.get("SCIX_DSN", DEFAULT_DSN), options=_CONN_OPTIONS)
         try:
             yield conn
         finally:

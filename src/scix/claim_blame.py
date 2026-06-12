@@ -183,8 +183,8 @@ def claim_blame(
             path so we don't double-acquire). Mutually exclusive with
             ``db_pool`` in practice; if both are passed, ``conn`` wins.
         seed_candidates_fn: Optional override for candidate seeding (used by
-            tests). Production default scans ``papers.title``/``abstract``
-            with a lexical match.
+            tests). Production default matches the claim's longest tokens
+            against the GIN-indexed ``papers.tsv`` tsvector column.
         embed_query_fn: Optional override for INDUS embedding of
             ``claim_text``. Production default loads INDUS via
             :func:`scix.embed.load_model` and runs one ``embed_batch`` call.
@@ -516,14 +516,22 @@ def _seed_candidates_default(
     scope: ResearchScope,
     limit: int,
 ) -> list[tuple[str, int | None, list[float] | None]]:
-    """Seed candidate papers via lexical title/abstract match.
+    """Seed candidate papers via the title+abstract tsvector lane.
 
-    Production default: tokenise the claim into the longest few words,
-    build an ILIKE pattern, filter by scope, and return the top N by year
-    ascending. Tests override via ``seed_candidates_fn``.
+    Production default: tokenise the claim into the longest few words, AND
+    them with ``plainto_tsquery`` against the GIN-indexed ``papers.tsv``
+    column, filter by scope, and return the top N by year ascending. Tests
+    override via ``seed_candidates_fn``.
+
+    The tsv lane and SET LOCAL resource caps replaced an ILIKE seq scan
+    that OOM-killed postgres (bead scix_experiments-82j0; caps per the
+    2026-06-11 postmaster-OOM rule). Runtime is bounded by the caller's
+    statement_timeout — per-tool SET LOCAL on the MCP path, the pool-wide
+    session default for everything else from ``mcp_server._get_pool``.
     """
-    # Pick the longest ~3 tokens as a coarse keyword filter — good enough
-    # to seed candidates without introducing a heavyweight FTS dependency.
+    # Pick the longest ~3 tokens as a coarse keyword filter. plainto_tsquery
+    # ANDs them, mirroring the old ordered-substring pattern's selectivity
+    # without its full-table scan.
     tokens = sorted(
         (t for t in claim_text.split() if len(t) >= 4),
         key=len,
@@ -532,12 +540,13 @@ def _seed_candidates_default(
     if not tokens:
         return []
 
-    pattern = "%" + "%".join(tokens) + "%"
-
+    # scix_english is the config papers.tsv was built with (migration 003);
+    # the query side must match it for lexemes to line up.
     base_sql = (
-        "SELECT p.bibcode, p.year FROM papers p " "WHERE (p.title ILIKE %s OR p.abstract ILIKE %s)"
+        "SELECT p.bibcode, p.year FROM papers p "
+        "WHERE p.tsv @@ plainto_tsquery('scix_english', %s)"
     )
-    params: list[Any] = [pattern, pattern]
+    params: list[Any] = [" ".join(tokens)]
 
     scope_clause, scope_params = scope_to_sql_clauses(scope, {"papers": "p"})
     if scope_clause:
@@ -548,7 +557,9 @@ def _seed_candidates_default(
     params.append(limit)
 
     try:
-        with conn.cursor() as cur:
+        with conn.transaction(), conn.cursor() as cur:
+            cur.execute("SET LOCAL max_parallel_workers_per_gather = 0")
+            cur.execute("SET LOCAL work_mem = '256MB'")
             cur.execute(base_sql, params)
             rows = cur.fetchall()
     except psycopg.Error as exc:

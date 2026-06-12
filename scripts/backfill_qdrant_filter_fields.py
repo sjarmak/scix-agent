@@ -57,7 +57,8 @@ from qdrant_client.http import models as qm
 from scix.db import DEFAULT_DSN
 
 # Point IDs in scix_indus_v2_papers_s1 are UUID5s derived from bibcode,
-# matching scripts/qdrant_full_load.py.  Must stay byte-identical.
+# matching scripts/qdrant_full_load.py and scripts/qdrant_outbox_sync.py.
+# Must stay byte-identical to both.
 def _bibcode_to_point_id(bibcode: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, bibcode))
 
@@ -160,8 +161,7 @@ def stream_pg_batches(
     cursor = ""
     total = 0
     while True:
-        remaining = None if limit is None else limit - total
-        fetch = batch if remaining is None else min(batch, remaining)
+        fetch = batch if limit is None else min(batch, limit - total)
         if fetch <= 0:
             break
         with conn.cursor(row_factory=dict_row) as cur:
@@ -183,6 +183,8 @@ def apply_batch(
     *,
     dry_run: bool,
     call_interval_ms: float = 5.0,
+    samples: list[tuple[str, dict[str, Any]]] | None = None,
+    sample_cap: int = 10,
 ) -> int:
     """Apply payload for one batch of rows.
 
@@ -190,6 +192,9 @@ def apply_batch(
     ``call_interval_ms`` throttles individual calls within the batch to
     avoid bursting the Qdrant HTTP connection (connection reset at >~200/s
     fire-and-forget on the live 32.4M serving collection).
+
+    ``samples`` accumulates up to ``sample_cap`` (bibcode, payload) pairs
+    across the run for post-run verification via ``verify_sample``.
 
     Returns number of rows attempted.
     """
@@ -206,9 +211,54 @@ def apply_batch(
             points=qm.PointIdsList(points=[_bibcode_to_point_id(row["bibcode"])]),
             wait=False,
         )
+        if samples is not None and len(samples) < sample_cap:
+            samples.append((row["bibcode"], payload))
         if call_interval_ms > 0:
             time.sleep(call_interval_ms / 1000.0)
     return len(rows)
+
+
+def verify_sample(
+    client: QdrantClient,
+    collection: str,
+    samples: list[tuple[str, dict[str, Any]]],
+    *,
+    timeout_s: float = 60.0,
+    poll_interval_s: float = 5.0,
+) -> bool:
+    """Confirm sampled payloads actually landed on their points.
+
+    set_payload runs with wait=False: Qdrant acks the op into the WAL and
+    applies it asynchronously. A stalled update pipeline acks every write
+    and applies none (observed on the live collection 2026-06-12, bead
+    nnim) — without this check the backfill reports success while writing
+    nothing. Polls until every sampled point carries all written keys, or
+    the timeout expires.
+    """
+    expected = dict(samples)
+    deadline = time.monotonic() + timeout_s
+    while True:
+        ids = [_bibcode_to_point_id(b) for b in expected]
+        points = client.retrieve(collection, ids=ids, with_payload=True)
+        got = {p.payload.get("bibcode"): p.payload for p in points if p.payload}
+        unapplied = {
+            b
+            for b, payload in expected.items()
+            if b not in got or any(got[b].get(k) != v for k, v in payload.items())
+        }
+        if not unapplied:
+            log.info("verification passed: all %d sampled points carry their payload",
+                     len(expected))
+            return True
+        if time.monotonic() >= deadline:
+            log.error(
+                "verification FAILED: %d/%d sampled points missing payload after %.0fs "
+                "(unapplied: %s) — Qdrant acked the writes but did not apply them; "
+                "check the collection's update pipeline before re-running",
+                len(unapplied), len(expected), timeout_s, sorted(unapplied)[:5],
+            )
+            return False
+        time.sleep(poll_interval_s)
 
 
 def main() -> None:
@@ -223,8 +273,6 @@ def main() -> None:
         default=None,
         help="Cap total points processed (pilot mode; omit for full corpus)",
     )
-    ap.add_argument("--rate-limit-ms", type=float, default=0.0,
-                    help="Sleep ms between batches (default: 0; use --call-interval-ms for per-call throttle)")
     ap.add_argument("--call-interval-ms", type=float, default=5.0,
                     help="Sleep ms between individual set_payload calls within a batch (default: 5)")
     ap.add_argument("--dry-run", action="store_true")
@@ -249,6 +297,7 @@ def main() -> None:
     t0 = time.monotonic()
     total_attempted = 0
     batches = 0
+    samples: list[tuple[str, dict[str, Any]]] = []
 
     with psycopg.connect(dsn) as conn:
         for rows in stream_pg_batches(conn, batch=args.batch, limit=args.limit):
@@ -256,18 +305,16 @@ def main() -> None:
                 client, args.collection, rows,
                 dry_run=args.dry_run,
                 call_interval_ms=args.call_interval_ms,
+                samples=samples,
             )
             total_attempted += attempted
             batches += 1
-            if batches % 10 == 0:
+            if batches % 100 == 0:
                 elapsed = time.monotonic() - t0
                 rate = total_attempted / elapsed if elapsed > 0 else 0
                 log.info(
                     "progress: %d rows in %.1fs (%.0f rows/s)", total_attempted, elapsed, rate
                 )
-            if not args.dry_run and args.rate_limit_ms > 0:
-                time.sleep(args.rate_limit_ms / 1000.0)
-
     elapsed = time.monotonic() - t0
     rate = total_attempted / elapsed if elapsed > 0 else 0
     mode = "dry-run" if args.dry_run else "written"
@@ -281,6 +328,10 @@ def main() -> None:
             "throughput: %.0f rows/s → full-corpus (32.4M) projected %.1f h at this rate",
             rate, projected_full,
         )
+
+    if not args.dry_run and samples:
+        if not verify_sample(client, args.collection, samples):
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

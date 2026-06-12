@@ -1,7 +1,7 @@
 """Tests for scripts/backfill_qdrant_filter_fields.py."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -13,7 +13,26 @@ from scripts.backfill_qdrant_filter_fields import (
     apply_batch,
     ensure_indexes,
     stream_pg_batches,
+    verify_sample,
 )
+
+
+def _make_row(bibcode: str = "2020ApJ...900..100X", **overrides) -> dict:
+    return {
+        "bibcode": bibcode,
+        "year": 2020,
+        "doctype": "article",
+        "arxiv_class": ["astro-ph.HE", "astro-ph.GA"],
+        "bibstem": ["ApJ"],
+        "title": "A test paper",
+        "first_author": "Smith, A.",
+        "citation_count": 42,
+        "is_retracted": False,
+        "community_semantic_coarse": 3,
+        "community_semantic_medium": 17,
+        "pagerank": 0.00012,
+        **overrides,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -22,24 +41,8 @@ from scripts.backfill_qdrant_filter_fields import (
 
 
 class TestBuildPayload:
-    def _full_row(self) -> dict:
-        return {
-            "bibcode": "2020ApJ...900..100X",
-            "year": 2020,
-            "doctype": "article",
-            "arxiv_class": ["astro-ph.HE", "astro-ph.GA"],
-            "bibstem": ["ApJ"],
-            "title": "A test paper",
-            "first_author": "Smith, A.",
-            "citation_count": 42,
-            "is_retracted": False,
-            "community_semantic_coarse": 3,
-            "community_semantic_medium": 17,
-            "pagerank": 0.00012,
-        }
-
     def test_full_row_produces_expected_keys(self) -> None:
-        p = _build_payload(self._full_row())
+        p = _build_payload(_make_row())
         assert set(p) == {
             "year", "doctype", "arxiv_class", "bibstem",
             "community_semantic_coarse", "community_semantic_medium",
@@ -49,13 +52,13 @@ class TestBuildPayload:
         assert "is_retracted" not in p
 
     def test_is_retracted_true_is_included(self) -> None:
-        row = self._full_row()
+        row = _make_row()
         row["is_retracted"] = True
         p = _build_payload(row)
         assert p["is_retracted"] is True
 
     def test_null_fields_omitted(self) -> None:
-        row = self._full_row()
+        row = _make_row()
         row["year"] = None
         row["doctype"] = None
         row["arxiv_class"] = None
@@ -69,7 +72,7 @@ class TestBuildPayload:
             assert key not in p, f"{key} should be absent when source is NULL"
 
     def test_empty_list_fields_omitted(self) -> None:
-        row = self._full_row()
+        row = _make_row()
         row["arxiv_class"] = []
         row["bibstem"] = []
         p = _build_payload(row)
@@ -77,19 +80,19 @@ class TestBuildPayload:
         assert "bibstem" not in p
 
     def test_year_coerced_to_int(self) -> None:
-        row = self._full_row()
+        row = _make_row()
         row["year"] = "2019"  # psycopg can return smallint as str in some modes
         p = _build_payload(row)
         assert isinstance(p["year"], int)
 
     def test_citation_count_coerced_to_int(self) -> None:
-        row = self._full_row()
+        row = _make_row()
         row["citation_count"] = 7
         p = _build_payload(row)
         assert isinstance(p["citation_count"], int)
 
     def test_arxiv_class_stored_as_list(self) -> None:
-        row = self._full_row()
+        row = _make_row()
         p = _build_payload(row)
         assert isinstance(p["arxiv_class"], list)
 
@@ -182,50 +185,34 @@ class TestStreamPgBatches:
 
 
 class TestApplyBatch:
-    def _row(self, bibcode: str = "2020ApJ...900..100X") -> dict:
-        return {
-            "bibcode": bibcode,
-            "year": 2020,
-            "doctype": "article",
-            "arxiv_class": ["astro-ph.HE"],
-            "bibstem": ["ApJ"],
-            "title": "T",
-            "first_author": "S",
-            "citation_count": 1,
-            "is_retracted": False,
-            "community_semantic_coarse": 1,
-            "community_semantic_medium": 5,
-            "pagerank": 0.001,
-        }
-
     def test_calls_set_payload_for_each_row(self) -> None:
         client = MagicMock()
-        rows = [self._row("2020A...1"), self._row("2021B...2")]
+        rows = [_make_row("2020A...1"), _make_row("2021B...2")]
         apply_batch(client, "col", rows, dry_run=False)
         assert client.set_payload.call_count == 2
 
     def test_dry_run_skips_set_payload(self) -> None:
         client = MagicMock()
-        apply_batch(client, "col", [self._row()], dry_run=True)
+        apply_batch(client, "col", [_make_row()], dry_run=True)
         client.set_payload.assert_not_called()
 
     def test_returns_row_count(self) -> None:
         client = MagicMock()
-        rows = [self._row("a"), self._row("b"), self._row("c")]
+        rows = [_make_row("a"), _make_row("b"), _make_row("c")]
         count = apply_batch(client, "col", rows, dry_run=False)
         assert count == 3
 
     def test_set_payload_uses_point_id_list(self) -> None:
         client = MagicMock()
         bibcode = "2020ApJ...900..100X"
-        apply_batch(client, "col", [self._row(bibcode)], dry_run=False)
+        apply_batch(client, "col", [_make_row(bibcode)], dry_run=False)
         call_kwargs = client.set_payload.call_args.kwargs
         points = call_kwargs["points"]
         assert points.points == [_bibcode_to_point_id(bibcode)]
 
     def test_wait_false_for_throughput(self) -> None:
         client = MagicMock()
-        apply_batch(client, "col", [self._row()], dry_run=False)
+        apply_batch(client, "col", [_make_row()], dry_run=False)
         call_kwargs = client.set_payload.call_args.kwargs
         assert call_kwargs.get("wait") is False
 
@@ -234,3 +221,58 @@ class TestApplyBatch:
         bibcode = "2020ApJ...900..100X"
         expected = str(uuid.uuid5(uuid.NAMESPACE_URL, bibcode))
         assert _bibcode_to_point_id(bibcode) == expected
+
+    def test_samples_accumulate_up_to_cap(self) -> None:
+        client = MagicMock()
+        rows = [_make_row(f"2020A...{i}") for i in range(5)]
+        samples: list[tuple[str, dict]] = []
+        apply_batch(client, "col", rows, dry_run=False, samples=samples, sample_cap=3)
+        assert len(samples) == 3
+        assert samples[0][0] == "2020A...0"
+        assert samples[0][1] == _build_payload(rows[0])
+
+
+# ---------------------------------------------------------------------------
+# verify_sample
+# ---------------------------------------------------------------------------
+
+
+class TestVerifySample:
+    def _point(self, bibcode: str, payload: dict) -> MagicMock:
+        p = MagicMock()
+        p.payload = {"bibcode": bibcode, **payload}
+        return p
+
+    def test_passes_when_payload_applied(self) -> None:
+        samples = [("2020A...1", {"year": 2020, "doctype": "article"})]
+        client = MagicMock()
+        client.retrieve.return_value = [self._point("2020A...1", {"year": 2020, "doctype": "article"})]
+        assert verify_sample(client, "col", samples, timeout_s=0.1, poll_interval_s=0.01)
+
+    def test_fails_when_payload_never_applied(self) -> None:
+        samples = [("2020A...1", {"year": 2020})]
+        client = MagicMock()
+        client.retrieve.return_value = [self._point("2020A...1", {})]  # bibcode only
+        assert not verify_sample(client, "col", samples, timeout_s=0.05, poll_interval_s=0.01)
+
+    def test_fails_when_point_missing(self) -> None:
+        samples = [("2020A...1", {"year": 2020})]
+        client = MagicMock()
+        client.retrieve.return_value = []
+        assert not verify_sample(client, "col", samples, timeout_s=0.05, poll_interval_s=0.01)
+
+    def test_polls_until_applied(self) -> None:
+        samples = [("2020A...1", {"year": 2020})]
+        client = MagicMock()
+        client.retrieve.side_effect = [
+            [self._point("2020A...1", {})],
+            [self._point("2020A...1", {"year": 2020})],
+        ]
+        assert verify_sample(client, "col", samples, timeout_s=5.0, poll_interval_s=0.01)
+        assert client.retrieve.call_count == 2
+
+    def test_fails_on_value_mismatch(self) -> None:
+        samples = [("2020A...1", {"year": 2020})]
+        client = MagicMock()
+        client.retrieve.return_value = [self._point("2020A...1", {"year": 1999})]
+        assert not verify_sample(client, "col", samples, timeout_s=0.05, poll_interval_s=0.01)

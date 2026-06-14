@@ -69,15 +69,21 @@ class TestToolRegistration:
         except ImportError:
             pytest.skip("mcp SDK not installed")
 
-        with patch("scix.mcp_server._init_model_impl"):
+        # read_paper_claims/find_claims are default-hidden from tools/list
+        # (paper_claims data not populated — see mcp_server._HIDDEN_TOOLS).
+        # Registration is still asserted here by showing all tools.
+        with (
+            patch("scix.mcp_server._init_model_impl"),
+            patch("scix.mcp_server._HIDDEN_TOOLS", frozenset()),
+        ):
             from scix.mcp_server import create_server
 
             server = create_server(_run_self_test=False)
 
-        handler = server.request_handlers[ListToolsRequest]
-        result = asyncio.run(handler(ListToolsRequest(method="tools/list")))
-        tools = result.root.tools if hasattr(result, "root") else result.tools
-        names = {t.name for t in tools}
+            handler = server.request_handlers[ListToolsRequest]
+            result = asyncio.run(handler(ListToolsRequest(method="tools/list")))
+            tools = result.root.tools if hasattr(result, "root") else result.tools
+            names = {t.name for t in tools}
         assert "read_paper_claims" in names
         assert "find_claims" in names
 
@@ -89,14 +95,20 @@ class TestToolRegistration:
         except ImportError:
             pytest.skip("mcp SDK not installed")
 
-        with patch("scix.mcp_server._init_model_impl"):
+        # read_paper_claims/find_claims are default-hidden from tools/list
+        # (paper_claims data not populated — see mcp_server._HIDDEN_TOOLS).
+        # Registration is still asserted here by showing all tools.
+        with (
+            patch("scix.mcp_server._init_model_impl"),
+            patch("scix.mcp_server._HIDDEN_TOOLS", frozenset()),
+        ):
             from scix.mcp_server import create_server
 
             server = create_server(_run_self_test=False)
 
-        handler = server.request_handlers[ListToolsRequest]
-        result = asyncio.run(handler(ListToolsRequest(method="tools/list")))
-        tools = result.root.tools if hasattr(result, "root") else result.tools
+            handler = server.request_handlers[ListToolsRequest]
+            result = asyncio.run(handler(ListToolsRequest(method="tools/list")))
+            tools = result.root.tools if hasattr(result, "root") else result.tools
         by_name = {t.name: t for t in tools}
         schema = by_name["read_paper_claims"].inputSchema
 
@@ -115,14 +127,20 @@ class TestToolRegistration:
         except ImportError:
             pytest.skip("mcp SDK not installed")
 
-        with patch("scix.mcp_server._init_model_impl"):
+        # read_paper_claims/find_claims are default-hidden from tools/list
+        # (paper_claims data not populated — see mcp_server._HIDDEN_TOOLS).
+        # Registration is still asserted here by showing all tools.
+        with (
+            patch("scix.mcp_server._init_model_impl"),
+            patch("scix.mcp_server._HIDDEN_TOOLS", frozenset()),
+        ):
             from scix.mcp_server import create_server
 
             server = create_server(_run_self_test=False)
 
-        handler = server.request_handlers[ListToolsRequest]
-        result = asyncio.run(handler(ListToolsRequest(method="tools/list")))
-        tools = result.root.tools if hasattr(result, "root") else result.tools
+            handler = server.request_handlers[ListToolsRequest]
+            result = asyncio.run(handler(ListToolsRequest(method="tools/list")))
+            tools = result.root.tools if hasattr(result, "root") else result.tools
         by_name = {t.name: t for t in tools}
         schema = by_name["find_claims"].inputSchema
 

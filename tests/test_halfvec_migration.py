@@ -57,12 +57,18 @@ def _captured_sql(model_name: str, *, halfvec_enabled: bool = True) -> str:
     capture = _Capture()
     cm.__enter__.return_value = capture
 
+    # This asserts the pgvector SQL string, so the Qdrant dense lane must be
+    # off regardless of ambient QDRANT_URL (it routes INDUS to Qdrant and emits
+    # no SQL). Mirrors the delenv guard in test_search.py's pg-path tests.
     original = search._HALFVEC_ENABLED
+    original_qdrant = os.environ.pop("QDRANT_URL", None)
     search._HALFVEC_ENABLED = halfvec_enabled
     try:
         vector_search(conn, [0.1] * 768, model_name=model_name, limit=5)
     finally:
         search._HALFVEC_ENABLED = original
+        if original_qdrant is not None:
+            os.environ["QDRANT_URL"] = original_qdrant
     return capture.last_query
 
 

@@ -301,9 +301,7 @@ def test_main_returns_nonzero_on_problems(tmp_path, monkeypatch, capsys):
         def __exit__(self_inner, *exc):
             return False
 
-    monkeypatch.setattr(
-        verify_module.psycopg, "connect", lambda dsn: _ConnCtx()
-    )
+    monkeypatch.setattr(verify_module.psycopg, "connect", lambda dsn, **_kwargs: _ConnCtx())
 
     out_path = tmp_path / "report.json"
     exit_code = verify_module.main(
@@ -344,9 +342,7 @@ def test_main_returns_zero_when_healthy(tmp_path, monkeypatch):
         def __exit__(self_inner, *exc):
             return False
 
-    monkeypatch.setattr(
-        verify_module.psycopg, "connect", lambda dsn: _ConnCtx()
-    )
+    monkeypatch.setattr(verify_module.psycopg, "connect", lambda dsn, **_kwargs: _ConnCtx())
 
     exit_code = verify_module.main(
         ["--dsn", "dbname=scix", "--quiet"]

@@ -19,6 +19,7 @@ from helpers import (
 
 from scix.search import (
     _LEXICAL_POOL_DEFAULT,
+    _LEXICAL_RANK_FLAG_DEFAULT,
     _TS_CONFIG_WHITELIST,
     SELECTIVITY_THRESHOLD,
     SearchFilters,
@@ -27,6 +28,7 @@ from scix.search import (
     _estimate_filter_selectivity,
     _filter_first_vector_search,
     _resolve_lexical_pool,
+    _resolve_lexical_rank_flag,
     bibliographic_coupling,
     citation_chain,
     co_citation_analysis,
@@ -671,6 +673,33 @@ class TestLexicalSearchCandidatePool:
     def test_ts_config_unknown_config_rejected(self) -> None:
         with pytest.raises(ValueError, match="ts_config must be one of"):
             lexical_search(None, "galaxy", ts_config="simple")
+
+
+class TestLexicalRankFlag:
+    """Unit tests for the SCIX_LEXICAL_RANK_FLAG env hook (bead q9k5)."""
+
+    def test_default_when_env_unset(self, monkeypatch) -> None:
+        monkeypatch.delenv("SCIX_LEXICAL_RANK_FLAG", raising=False)
+        assert _resolve_lexical_rank_flag() == _LEXICAL_RANK_FLAG_DEFAULT
+
+    @pytest.mark.parametrize("token,expected", [("0", 0), ("32", 32), ("33", 33), ("48", 48)])
+    def test_valid_flags(self, monkeypatch, token, expected) -> None:
+        monkeypatch.setenv("SCIX_LEXICAL_RANK_FLAG", token)
+        assert _resolve_lexical_rank_flag() == expected
+
+    def test_whitespace_tolerated(self, monkeypatch) -> None:
+        monkeypatch.setenv("SCIX_LEXICAL_RANK_FLAG", "  48  ")
+        assert _resolve_lexical_rank_flag() == 48
+
+    def test_non_integer_falls_back_to_default(self, monkeypatch) -> None:
+        monkeypatch.setenv("SCIX_LEXICAL_RANK_FLAG", "dense")
+        assert _resolve_lexical_rank_flag() == _LEXICAL_RANK_FLAG_DEFAULT
+
+    @pytest.mark.parametrize("token", ["-1", "64", "100"])
+    def test_bits_outside_mask_fall_back_to_default(self, monkeypatch, token) -> None:
+        # 64 sets a bit above the defined 0..63 normalization mask; -1 is negative.
+        monkeypatch.setenv("SCIX_LEXICAL_RANK_FLAG", token)
+        assert _resolve_lexical_rank_flag() == _LEXICAL_RANK_FLAG_DEFAULT
 
 
 # ---------------------------------------------------------------------------

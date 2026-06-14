@@ -307,6 +307,50 @@ def _resolve_lexical_pool() -> int | None:
     return value
 
 
+# ts_rank_cd normalization flag (4th arg). The default 32 = rank/(rank+1), a
+# monotonic squash into [0,1) that does NOT length-normalize: a short, dense
+# doc still outranks a long one on the same term (verified, bead q9k5). The
+# length-aware bits are 1 = /(1+log(length)), 2 = /length, 16 =
+# /(1+log(unique words)); they OR with 32, e.g. 33 = 32|1, 48 = 32|16.
+# Exposed as an env hook (mirror SCIX_LEXICAL_POOL) so eval harnesses can A/B
+# the flag against the short-doc-dominates-broad-queries bias without a code
+# change. Only the six defined normalization bits are accepted (mask 0..63).
+_LEXICAL_RANK_FLAG_DEFAULT: int = 32
+_LEXICAL_RANK_FLAG_MASK: int = 63  # 1|2|4|8|16|32 — Postgres' defined bits
+
+
+def _resolve_lexical_rank_flag() -> int:
+    """Resolve the ts_rank_cd normalization flag from ``SCIX_LEXICAL_RANK_FLAG``.
+
+    Read on every call so operators/eval harnesses can tune the running process
+    without a restart. Misconfigured values (non-integer, negative, or with bits
+    outside the defined 0..63 mask) log a warning and fall back to
+    :data:`_LEXICAL_RANK_FLAG_DEFAULT`.
+    """
+    raw = os.environ.get("SCIX_LEXICAL_RANK_FLAG")
+    if raw is None:
+        return _LEXICAL_RANK_FLAG_DEFAULT
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        logger.warning(
+            "SCIX_LEXICAL_RANK_FLAG=%r is not an integer; falling back to %d",
+            raw,
+            _LEXICAL_RANK_FLAG_DEFAULT,
+        )
+        return _LEXICAL_RANK_FLAG_DEFAULT
+    if value < 0 or value & ~_LEXICAL_RANK_FLAG_MASK:
+        logger.warning(
+            "SCIX_LEXICAL_RANK_FLAG=%d has bits outside the defined 0..%d "
+            "normalization mask; falling back to %d",
+            value,
+            _LEXICAL_RANK_FLAG_MASK,
+            _LEXICAL_RANK_FLAG_DEFAULT,
+        )
+        return _LEXICAL_RANK_FLAG_DEFAULT
+    return value
+
+
 def lexical_search(
     conn: psycopg.Connection,
     query_text: str,
@@ -357,6 +401,7 @@ def lexical_search(
     entity_clause, entity_params = effective.to_entity_filter_clause("p")
 
     pool_size = _resolve_lexical_pool()
+    rank_flag = _resolve_lexical_rank_flag()
     cand_columns = STUB_COLUMNS.replace("p.", "cand.")
 
     # plainto_tsquery is more robust than websearch_to_tsquery for programmatic
@@ -381,7 +426,7 @@ def lexical_search(
             LIMIT %s
         )
         SELECT {cand_columns},
-               ts_rank_cd(cand.tsv, q.tsq, 32) AS rank
+               ts_rank_cd(cand.tsv, q.tsq, {rank_flag}) AS rank
         FROM cand, q
         ORDER BY rank DESC
         LIMIT %s
@@ -442,10 +487,11 @@ def lexical_search_body(
     effective = filters or SearchFilters()
     filter_clause, filter_params = effective.to_where_clause("p")
     entity_clause, entity_params = effective.to_entity_filter_clause("p")
+    rank_flag = _resolve_lexical_rank_flag()
 
     query = f"""
         SELECT {STUB_COLUMNS},
-               ts_rank_cd(p.tsv, plainto_tsquery('english', %s), 32) AS rank
+               ts_rank_cd(p.tsv, plainto_tsquery('english', %s), {rank_flag}) AS rank
         FROM papers p
         WHERE p.body IS NOT NULL
           AND length(p.body) <= {_BODY_TSVECTOR_MAX_BYTES}

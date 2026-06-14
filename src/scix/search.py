@@ -68,11 +68,15 @@ def _qdrant_dense_gated(model_name: str) -> bool:
 def _get_qdrant_dense_client() -> Any:
     global _qdrant_dense_client
     if _qdrant_dense_client is None:
+        url = _qdrant_dense_url()
+        if url is None:
+            raise RuntimeError(
+                "Qdrant dense client requested but QDRANT_URL is unset. "
+                "Callers must check _qdrant_dense_gated() first (ADR-013)."
+            )
         from qdrant_client import QdrantClient
 
-        _qdrant_dense_client = QdrantClient(
-            url=_qdrant_dense_url(), prefer_grpc=False, timeout=30
-        )
+        _qdrant_dense_client = QdrantClient(url=url, prefer_grpc=False, timeout=30)
     return _qdrant_dense_client
 
 
@@ -825,25 +829,6 @@ def _filter_first_vector_search(
     )
 
 
-def _model_has_embeddings(conn: psycopg.Connection, model_name: str) -> bool:
-    """Fast EXISTS check for whether a model has any rows in paper_embeddings.
-
-    paper_embeddings was dropped in ADR-013; a missing table means "no
-    embeddings". The savepoint keeps the failed statement from poisoning
-    the outer transaction.
-    """
-    try:
-        with conn.transaction():
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT EXISTS(SELECT 1 FROM paper_embeddings WHERE model_name = %s LIMIT 1)",
-                    (model_name,),
-                )
-                return cur.fetchone()[0]
-    except psycopg.errors.UndefinedTable:
-        return False
-
-
 # ---------------------------------------------------------------------------
 # Entity-aware query intent (alias expansion + ontology parsing)
 # ---------------------------------------------------------------------------
@@ -936,7 +921,6 @@ def hybrid_search(
     query_embedding: list[float] | None = None,
     *,
     model_name: str = "indus",
-    openai_embedding: list[float] | None = None,
     filters: SearchFilters | None = None,
     vector_limit: int = 60,
     lexical_limit: int = 60,
@@ -952,8 +936,6 @@ def hybrid_search(
     """Hybrid search combining vector and lexical via RRF, with optional reranking.
 
     If query_embedding is None, falls back to lexical-only mode (BM25-only).
-    If openai_embedding is provided *and* text-embedding-3-large has rows in
-    paper_embeddings, runs a second vector search and fuses via RRF.
     If reranker is provided, re-ranks the top RRF results.
 
     Cardinality-aware routing: when filters match <1% of the corpus, uses a
@@ -961,7 +943,6 @@ def hybrid_search(
 
     Args:
         model_name: Embedding model for primary vector search (default: indus).
-        openai_embedding: Optional pre-computed OpenAI text-embedding-3-large vector.
         reranker: Optional callable(query_text, papers) -> list[dict] with 'rerank_score'.
         include_body: When True (default), runs body BM25 as a 4th RRF signal
             against the GIN expression index on papers.body. Set to False to
@@ -1111,30 +1092,6 @@ def hybrid_search(
         results_lists.append(vec_result.papers)
     else:
         timing["vector_ms"] = 0.0
-
-    # OpenAI vector search — skip entirely when model has 0 rows. Savepoint
-    # for the same poisoned-connection reason as the lexical lanes above.
-    timing["openai_vector_ms"] = 0.0
-    if openai_embedding is not None and _model_has_embeddings(conn, "text-embedding-3-large"):
-        try:
-            with conn.transaction():
-                openai_vec_result = vector_search(
-                    conn,
-                    openai_embedding,
-                    model_name="text-embedding-3-large",
-                    filters=filters,
-                    limit=vector_limit,
-                    ef_search=ef_search,
-                )
-            timing["openai_vector_ms"] = openai_vec_result.timing_ms["vector_ms"]
-            results_lists.append(openai_vec_result.papers)
-        except Exception:
-            logger.warning(
-                "OpenAI vector search failed; falling back to primary+lexical only",
-                exc_info=True,
-            )
-    elif openai_embedding is not None:
-        logger.debug("Skipping OpenAI vector search: text-embedding-3-large has 0 rows")
 
     # RRF fusion
     t_fuse = time.perf_counter()

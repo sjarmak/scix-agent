@@ -80,7 +80,6 @@ class TestOntologyParserWiring:
 
         with (
             patch("scix.search.lexical_search", side_effect=fake_lex),
-            patch("scix.search._model_has_embeddings", return_value=False),
             patch(
                 "scix.search._resolve_entity_ids_for_properties",
                 return_value=(),
@@ -110,7 +109,6 @@ class TestOntologyParserWiring:
 
         with (
             patch("scix.search.lexical_search", side_effect=fake_lex),
-            patch("scix.search._model_has_embeddings", return_value=False),
             patch(
                 "scix.search._resolve_entity_ids_for_properties",
                 return_value=(101, 202),
@@ -141,7 +139,6 @@ class TestOntologyParserWiring:
 
         with (
             patch("scix.search.lexical_search", side_effect=fake_lex),
-            patch("scix.search._model_has_embeddings", return_value=False),
         ):
             hybrid_search(
                 MagicMock(),
@@ -220,7 +217,6 @@ class TestAliasExpansionWiring:
 
         with (
             patch("scix.search.lexical_search", side_effect=fake_lex),
-            patch("scix.search._model_has_embeddings", return_value=False),
         ):
             result = hybrid_search(
                 MagicMock(),
@@ -280,7 +276,6 @@ class TestAliasExpansionWiring:
 
         with (
             patch("scix.search.lexical_search", side_effect=fake_lex),
-            patch("scix.search._model_has_embeddings", return_value=False),
         ):
             hybrid_search(
                 MagicMock(),
@@ -304,7 +299,6 @@ class TestAliasExpansionWiring:
 
         with (
             patch("scix.search.lexical_search", side_effect=fake_lex),
-            patch("scix.search._model_has_embeddings", return_value=False),
         ):
             result = hybrid_search(
                 MagicMock(),
@@ -328,7 +322,6 @@ class TestFlagsDefaultOff:
         """With both flags False (default), the new code paths must be silent."""
         with (
             patch("scix.search.lexical_search") as mock_lex,
-            patch("scix.search._model_has_embeddings", return_value=False),
             patch("scix.search._resolve_entity_ids_for_properties") as mock_resolve,
         ):
             mock_lex.return_value = SearchResult(papers=[], total=0, timing_ms={"lexical_ms": 0.1})

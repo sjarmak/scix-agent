@@ -381,7 +381,6 @@ class TestCardinalityRouting:
         selective_filters = SearchFilters(year_min=2026, year_max=2026, doctype="article")
 
         # Make _estimate_filter_selectivity return very low selectivity
-        # Make _model_has_embeddings return False (skip OpenAI)
         # Make _filter_first_vector_search return a result
         # Make lexical_search return a result
         fake_search_result = SearchResult(
@@ -403,7 +402,6 @@ class TestCardinalityRouting:
                 return_value=fake_search_result,
             ) as mock_ff,
             patch("scix.search.lexical_search", return_value=fake_lex_result),
-            patch("scix.search._model_has_embeddings", return_value=False),
         ):
             result = hybrid_search(
                 mock_conn,
@@ -448,7 +446,6 @@ class TestCardinalityRouting:
             patch("scix.search._estimate_filter_selectivity", return_value=0.5),
             patch("scix.search.vector_search", return_value=fake_vec_result) as mock_vs,
             patch("scix.search.lexical_search", return_value=fake_lex_result),
-            patch("scix.search._model_has_embeddings", return_value=False),
         ):
             result = hybrid_search(
                 mock_conn,
@@ -545,7 +542,6 @@ class TestQdrantFilteredRouting:
             patch("scix.search.vector_search", return_value=fake_vec_result) as mock_vs,
             patch("scix.search.lexical_search", return_value=fake_lex_result),
             patch("scix.search.lexical_search_body", return_value=fake_body_result),
-            patch("scix.search._model_has_embeddings", return_value=False),
         ):
             result = hybrid_search(
                 mock_conn,
@@ -559,22 +555,6 @@ class TestQdrantFilteredRouting:
         mock_vs.assert_called_once()
         assert mock_vs.call_args.kwargs["filters"] is selective_filters
         assert isinstance(result, SearchResult)
-
-    def test_model_has_embeddings_false_when_table_dropped(self) -> None:
-        """_model_has_embeddings must treat the ADR-013-dropped table as
-        "no embeddings" instead of propagating UndefinedTable."""
-        from unittest.mock import MagicMock
-
-        from scix.search import _model_has_embeddings
-
-        conn = MagicMock()
-        cursor = MagicMock()
-        cursor.__enter__ = MagicMock(return_value=cursor)
-        cursor.__exit__ = MagicMock(return_value=False)
-        cursor.execute.side_effect = psycopg.errors.UndefinedTable()
-        conn.cursor.return_value = cursor
-
-        assert _model_has_embeddings(conn, "text-embedding-3-large") is False
 
 
 class TestHybridSearchEntityFilterWiring:
@@ -592,7 +572,6 @@ class TestHybridSearchEntityFilterWiring:
         with (
             patch("scix.search.lexical_search", return_value=fake_lex) as mock_lex,
             patch("scix.search.lexical_search_body", return_value=fake_body),
-            patch("scix.search._model_has_embeddings", return_value=False),
         ):
             hybrid_search(mock_conn, "jwst", filters=entity_filter)
             assert mock_lex.call_count == 1
@@ -621,7 +600,6 @@ class TestHybridSearchEntityFilterWiring:
             patch("scix.search.lexical_search_body", return_value=fake_lex),
             patch("scix.search._estimate_filter_selectivity", return_value=0.5),
             patch("scix.search.vector_search", return_value=fake_vec) as mock_vs,
-            patch("scix.search._model_has_embeddings", return_value=False),
         ):
             hybrid_search(
                 mock_conn,
@@ -644,47 +622,11 @@ class TestHybridSearchEntityFilterWiring:
         with (
             patch("scix.search.lexical_search", return_value=fake_lex) as mock_lex,
             patch("scix.search.lexical_search_body", return_value=fake_lex),
-            patch("scix.search._model_has_embeddings", return_value=False),
         ):
             hybrid_search(mock_conn, "x", filters=plain_filter)
             called = mock_lex.call_args.kwargs["filters"]
             assert called.entity_types is None
             assert called.entity_ids is None
-
-
-class TestOpenAISignalSkipped:
-    """Verify OpenAI embedding signal is skipped when model has 0 rows."""
-
-    def test_openai_skipped_when_no_rows(self) -> None:
-        from unittest.mock import MagicMock, patch
-
-        mock_conn = MagicMock()
-
-        fake_lex_result = SearchResult(
-            papers=[{"bibcode": "A"}],
-            total=1,
-            timing_ms={"lexical_ms": 1.0},
-        )
-
-        with (
-            patch("scix.search.lexical_search", return_value=fake_lex_result),
-            patch("scix.search._model_has_embeddings", return_value=False) as mock_check,
-            patch("scix.search.vector_search") as mock_vs,
-        ):
-            result = hybrid_search(
-                mock_conn,
-                "test query",
-                openai_embedding=[0.1] * 3072,
-            )
-
-            # _model_has_embeddings should be called for text-embedding-3-large
-            mock_check.assert_called_once_with(mock_conn, "text-embedding-3-large")
-
-            # vector_search should NOT be called (no primary embedding, no openai)
-            mock_vs.assert_not_called()
-
-            # OpenAI timing should be 0
-            assert result.timing_ms["openai_vector_ms"] == 0.0
 
 
 class TestLexicalSearchCandidatePool:

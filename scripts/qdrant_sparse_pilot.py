@@ -271,6 +271,10 @@ def main(argv: list[str] | None = None) -> int:
     # Connect to Postgres before dropping/recreating the collection, so a DB
     # failure doesn't leave an empty collection behind.
     conn = psycopg.connect(args.dsn)
+    # qajc operator condition: bound this session so the 32M scan can never
+    # join a parallel hash with large work_mem (host OOM'd postgres 2026-06-11/12).
+    conn.execute("SET work_mem = '256MB'")
+    conn.execute("SET max_parallel_workers_per_gather = 0")
     try:
         ensure_collection(client, collection)
         if args.full_corpus:

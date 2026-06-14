@@ -56,6 +56,15 @@ def _qdrant_dense_url() -> str | None:
     return os.environ.get("QDRANT_URL") or None
 
 
+def _qdrant_dense_gated(model_name: str) -> bool:
+    """True when the dense lane for *model_name* is served by Qdrant (ADR-013).
+
+    While gated, no dense code path may reference the dropped
+    ``paper_embeddings`` table (bead miw9).
+    """
+    return model_name in _QDRANT_DENSE_COLLECTIONS and _qdrant_dense_url() is not None
+
+
 def _get_qdrant_dense_client() -> Any:
     global _qdrant_dense_client
     if _qdrant_dense_client is None:
@@ -568,7 +577,7 @@ def vector_search(
             When None (default), iterative scan is auto-enabled with
             "relaxed_order" if filters are present and pgvector >= 0.8.0.
     """
-    if model_name in _QDRANT_DENSE_COLLECTIONS and _qdrant_dense_url():
+    if _qdrant_dense_gated(model_name):
         return _vector_search_qdrant(
             conn,
             query_embedding,
@@ -754,6 +763,18 @@ def _filter_first_vector_search(
     iterative scan would waste I/O expanding the index.  Instead we
     materialise the small filtered set and compute exact cosine distance.
     """
+    # Qdrant gate (bead miw9): the pg CTE below targets paper_embeddings,
+    # dropped in ADR-013. Delegate to vector_search, the single owner of
+    # dense-lane routing.
+    if _qdrant_dense_gated(model_name):
+        return vector_search(
+            conn,
+            query_embedding,
+            model_name=model_name,
+            filters=filters,
+            limit=limit,
+        )
+
     t0 = time.perf_counter()
 
     ndim = len(query_embedding)
@@ -805,13 +826,22 @@ def _filter_first_vector_search(
 
 
 def _model_has_embeddings(conn: psycopg.Connection, model_name: str) -> bool:
-    """Fast EXISTS check for whether a model has any rows in paper_embeddings."""
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT EXISTS(SELECT 1 FROM paper_embeddings WHERE model_name = %s LIMIT 1)",
-            (model_name,),
-        )
-        return cur.fetchone()[0]
+    """Fast EXISTS check for whether a model has any rows in paper_embeddings.
+
+    paper_embeddings was dropped in ADR-013; a missing table means "no
+    embeddings". The savepoint keeps the failed statement from poisoning
+    the outer transaction.
+    """
+    try:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT EXISTS(SELECT 1 FROM paper_embeddings WHERE model_name = %s LIMIT 1)",
+                    (model_name,),
+                )
+                return cur.fetchone()[0]
+    except psycopg.errors.UndefinedTable:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -1043,9 +1073,12 @@ def hybrid_search(
         except Exception:
             logger.warning("Body BM25 search failed; continuing without it", exc_info=True)
 
-    # Cardinality-aware routing: estimate filter selectivity once for reuse
+    # Cardinality-aware routing: estimate filter selectivity once for reuse.
+    # Skipped when the Qdrant gate is active — filter-first is a pg lane over
+    # the dropped paper_embeddings table (ADR-013), so the probe result would
+    # be ignored; filtered dense goes through vector_search's Qdrant lane.
     use_filter_first = False
-    if query_embedding is not None and filters is not None:
+    if query_embedding is not None and filters is not None and not _qdrant_dense_gated(model_name):
         selectivity = _estimate_filter_selectivity(conn, filters)
         if selectivity < SELECTIVITY_THRESHOLD:
             use_filter_first = True

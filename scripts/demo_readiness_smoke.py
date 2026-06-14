@@ -14,6 +14,8 @@ import sys
 import time
 from pathlib import Path
 
+import psycopg
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -109,6 +111,41 @@ def call_tool(tool: str, args: dict) -> tuple[str, float, str]:
             conn.close()
 
 
+# Fallback anchor lookup goes through the GIN-indexed tsvector lane
+# (papers.tsv, migration 003), never ILIKE: an unbounded `title ILIKE '%...%'`
+# is a full seq scan over 32M papers — the same query family that OOM-killed
+# postgres (beads scix_experiments-82j0 / scix_experiments-zwcq).
+FALLBACK_ANCHOR_SQL = (
+    "SELECT bibcode FROM papers "
+    "WHERE tsv @@ plainto_tsquery('scix_english', %s) "
+    "ORDER BY citation_count DESC NULLS LAST LIMIT 1"
+)
+
+# SET LOCAL resource caps per the 2026-06-11 postmaster-OOM rule; the
+# statement_timeout is the safety net because get_connection() has no
+# session-level timeout (unlike the MCP pool path).
+FALLBACK_ANCHOR_SESSION_CAPS = (
+    "SET LOCAL statement_timeout = '120s'",
+    "SET LOCAL max_parallel_workers_per_gather = 0",
+    "SET LOCAL work_mem = '256MB'",
+)
+
+
+def fallback_anchor(conn: psycopg.Connection, query: str) -> str | None:
+    """Top-cited paper matching ``query`` via the tsvector lane.
+
+    plainto_tsquery ANDs the query words — more selective than the old
+    first-word ILIKE pattern, and bounded by the GIN index instead of a
+    32M-row seq scan.
+    """
+    with conn.transaction(), conn.cursor() as cur:
+        for cap in FALLBACK_ANCHOR_SESSION_CAPS:
+            cur.execute(cap)
+        cur.execute(FALLBACK_ANCHOR_SQL, (query,))
+        row = cur.fetchone()
+    return row[0] if row else None
+
+
 def first_bibcode(tool: str, args: dict) -> str | None:
     try:
         conn = get_connection()
@@ -154,16 +191,9 @@ def main() -> int:
 
         if anchor is None:
             with get_connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT bibcode FROM papers WHERE title ILIKE %s "
-                        "ORDER BY citation_count DESC NULLS LAST LIMIT 1",
-                        (f"%{query.split()[0]}%",),
-                    )
-                    row = cur.fetchone()
-                    anchor = row[0] if row else None
-                    if anchor:
-                        print(f"  → fallback anchor bibcode={anchor} (from title match)")
+                anchor = fallback_anchor(conn, query)
+            if anchor:
+                print(f"  → fallback anchor bibcode={anchor} (from tsv match)")
 
         if anchor:
             for tool, build_args in BIBCODE_TOOLS:

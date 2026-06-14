@@ -25,6 +25,7 @@ from scix.search import (
     SearchResult,
     _elapsed_ms,
     _estimate_filter_selectivity,
+    _filter_first_vector_search,
     _resolve_lexical_pool,
     bibliographic_coupling,
     citation_chain,
@@ -313,9 +314,9 @@ class TestFacetFieldValidation:
 
         assert cursor.execute.called
         sql, params = cursor.execute.call_args.args
-        assert "document_entities_canonical" in sql, (
-            "facet_counts dropped the entity filter — the EXISTS clause is missing"
-        )
+        assert (
+            "document_entities_canonical" in sql
+        ), "facet_counts dropped the entity filter — the EXISTS clause is missing"
         assert [42] in params
         assert ["instrument"] in params
 
@@ -368,10 +369,12 @@ class TestCardinalityRouting:
         result = _estimate_filter_selectivity(None, SearchFilters())  # type: ignore[arg-type]
         assert result == 1.0
 
-    def test_cardinality_routing_uses_filter_first(self) -> None:
+    def test_cardinality_routing_uses_filter_first(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When selectivity < threshold, hybrid_search should use filter-first CTE."""
         from unittest.mock import MagicMock, patch
 
+        # Filter-first is the pg lane; it only routes when the Qdrant gate is off.
+        monkeypatch.delenv("QDRANT_URL", raising=False)
         mock_conn = MagicMock()
 
         fake_embedding = [0.1] * 768
@@ -417,10 +420,13 @@ class TestCardinalityRouting:
             assert isinstance(result, SearchResult)
             assert "vector_ms" in result.timing_ms
 
-    def test_cardinality_routing_uses_hnsw_for_broad_filters(self) -> None:
+    def test_cardinality_routing_uses_hnsw_for_broad_filters(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """When selectivity >= threshold, hybrid_search should use normal vector_search."""
         from unittest.mock import MagicMock, patch
 
+        monkeypatch.delenv("QDRANT_URL", raising=False)
         mock_conn = MagicMock()
 
         fake_embedding = [0.1] * 768
@@ -454,6 +460,121 @@ class TestCardinalityRouting:
             # Normal vector_search should have been called
             mock_vs.assert_called_once()
             assert isinstance(result, SearchResult)
+
+
+class TestQdrantFilteredRouting:
+    """Filtered dense lanes must not touch the dropped paper_embeddings table
+    when the Qdrant gate is active (bead miw9, jg4a FAIL 1 follow-up)."""
+
+    def test_filter_first_delegates_to_qdrant_when_gated(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Under QDRANT_URL, _filter_first_vector_search must route to the
+        Qdrant lane and issue no SQL (paper_embeddings was dropped, ADR-013)."""
+        from unittest.mock import MagicMock, patch
+
+        monkeypatch.setenv("QDRANT_URL", "http://localhost:6333")
+        mock_conn = MagicMock()
+        fake_result = SearchResult(papers=[], total=0, timing_ms={"vector_ms": 1.0})
+
+        filters = SearchFilters(year_min=2026)
+        with patch("scix.search._vector_search_qdrant", return_value=fake_result) as mock_qdrant:
+            result = _filter_first_vector_search(
+                mock_conn,
+                [0.1] * 768,
+                model_name="indus",
+                filters=filters,
+                limit=5,
+            )
+
+        mock_qdrant.assert_called_once()
+        # model_name/filters/limit must survive the delegation handoff.
+        kwargs = mock_qdrant.call_args.kwargs
+        assert kwargs["model_name"] == "indus"
+        assert kwargs["filters"] is filters
+        assert kwargs["limit"] == 5
+        assert result is fake_result
+        mock_conn.cursor.assert_not_called()
+
+    def test_filter_first_uses_pg_when_not_gated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Without QDRANT_URL the legacy pg path is preserved (rollback lane)."""
+        from unittest.mock import MagicMock
+
+        monkeypatch.delenv("QDRANT_URL", raising=False)
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.__enter__ = MagicMock(return_value=cursor)
+        cursor.__exit__ = MagicMock(return_value=False)
+        cursor.fetchall.return_value = []
+        conn.cursor.return_value = cursor
+
+        _filter_first_vector_search(
+            conn,
+            [0.1] * 768,
+            model_name="indus",
+            filters=SearchFilters(year_min=2026),
+            limit=5,
+        )
+
+        sql, _params = cursor.execute.call_args.args
+        assert "paper_embeddings" in sql
+
+    def test_hybrid_search_skips_selectivity_probe_when_gated(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Under QDRANT_URL, hybrid_search must not run the selectivity probe
+        or the filter-first CTE — filtered dense goes through vector_search,
+        whose Qdrant lane applies filters as a PG post-filter."""
+        from unittest.mock import MagicMock, patch
+
+        monkeypatch.setenv("QDRANT_URL", "http://localhost:6333")
+        mock_conn = MagicMock()
+        selective_filters = SearchFilters(year_min=2026, year_max=2026, doctype="article")
+        fake_vec_result = SearchResult(
+            papers=[{"bibcode": "TEST"}],
+            total=1,
+            timing_ms={"vector_ms": 1.0},
+            metadata={"backend": "qdrant_dense"},
+        )
+        fake_lex_result = SearchResult(papers=[], total=0, timing_ms={"lexical_ms": 1.0})
+        fake_body_result = SearchResult(papers=[], total=0, timing_ms={"body_lexical_ms": 1.0})
+
+        with (
+            patch("scix.search._estimate_filter_selectivity") as mock_est,
+            patch("scix.search._filter_first_vector_search") as mock_ff,
+            patch("scix.search.vector_search", return_value=fake_vec_result) as mock_vs,
+            patch("scix.search.lexical_search", return_value=fake_lex_result),
+            patch("scix.search.lexical_search_body", return_value=fake_body_result),
+            patch("scix.search._model_has_embeddings", return_value=False),
+        ):
+            result = hybrid_search(
+                mock_conn,
+                "test query",
+                query_embedding=[0.1] * 768,
+                filters=selective_filters,
+            )
+
+        mock_est.assert_not_called()
+        mock_ff.assert_not_called()
+        mock_vs.assert_called_once()
+        assert mock_vs.call_args.kwargs["filters"] is selective_filters
+        assert isinstance(result, SearchResult)
+
+    def test_model_has_embeddings_false_when_table_dropped(self) -> None:
+        """_model_has_embeddings must treat the ADR-013-dropped table as
+        "no embeddings" instead of propagating UndefinedTable."""
+        from unittest.mock import MagicMock
+
+        from scix.search import _model_has_embeddings
+
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.__enter__ = MagicMock(return_value=cursor)
+        cursor.__exit__ = MagicMock(return_value=False)
+        cursor.execute.side_effect = psycopg.errors.UndefinedTable()
+        conn.cursor.return_value = cursor
+
+        assert _model_has_embeddings(conn, "text-embedding-3-large") is False
 
 
 class TestHybridSearchEntityFilterWiring:
@@ -1170,3 +1291,150 @@ class TestMCPSearchEntityFilterSchema:
 
         with pytest.raises(ValueError, match="entity_ids"):
             _parse_filters({"entity_ids": ["abc"]})
+
+
+class TestVectorSearchQdrantLane:
+    """Internals of _vector_search_qdrant (bead 5jtf): over-fetch policy,
+    PG post-filter, exact-mode env control, and score/order mapping."""
+
+    @staticmethod
+    def _fake_client(bibcodes_scores: list[tuple[str, float]]):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        points = [SimpleNamespace(payload={"bibcode": b}, score=s) for b, s in bibcodes_scores]
+        client = MagicMock()
+        client.query_points.return_value = SimpleNamespace(points=points)
+        return client
+
+    @staticmethod
+    def _fake_conn(rows: list[dict]):
+        from unittest.mock import MagicMock
+
+        cursor = MagicMock()
+        cursor.__enter__ = MagicMock(return_value=cursor)
+        cursor.__exit__ = MagicMock(return_value=False)
+        cursor.fetchall.return_value = rows
+        conn = MagicMock()
+        conn.cursor.return_value = cursor
+        return conn, cursor
+
+    @staticmethod
+    def _row(bibcode: str) -> dict:
+        return {
+            "bibcode": bibcode,
+            "title": f"Title {bibcode}",
+            "first_author": "Author",
+            "year": 2020,
+            "citation_count": 1,
+            "abstract": None,
+        }
+
+    def test_scores_and_order_follow_qdrant_ranking(self) -> None:
+        from unittest.mock import patch
+
+        from scix.search import _vector_search_qdrant
+
+        client = self._fake_client([("B1", 0.9), ("B2", 0.8), ("B3", 0.7)])
+        # PG returns the join rows in arbitrary order; ranking must come
+        # from Qdrant, not from the SQL result order.
+        conn, cursor = self._fake_conn([self._row("B3"), self._row("B1"), self._row("B2")])
+
+        with patch("scix.search._get_qdrant_dense_client", return_value=client):
+            result = _vector_search_qdrant(
+                conn, [0.1] * 768, model_name="indus", filters=None, limit=3, ef_search=100
+            )
+
+        assert [p["bibcode"] for p in result.papers] == ["B1", "B2", "B3"]
+        assert [p["score"] for p in result.papers] == [0.9, 0.8, 0.7]
+        assert result.metadata["backend"] == "qdrant_dense"
+        # Unfiltered queries must not over-fetch.
+        assert result.metadata["fetch_n"] == 3
+        assert client.query_points.call_args.kwargs["limit"] == 3
+        # The metadata join must not touch the dropped paper_embeddings table.
+        sql, _params = cursor.execute.call_args.args
+        assert "paper_embeddings" not in sql
+        assert "ANY" in sql
+
+    def test_filters_trigger_capped_overfetch(self) -> None:
+        from unittest.mock import patch
+
+        from scix.search import _vector_search_qdrant
+
+        client = self._fake_client([])
+        conn, _cursor = self._fake_conn([])
+        filters = SearchFilters(year_min=2020)
+
+        with patch("scix.search._get_qdrant_dense_client", return_value=client):
+            result = _vector_search_qdrant(
+                conn, [0.1] * 768, model_name="indus", filters=filters, limit=20, ef_search=100
+            )
+            assert result.metadata["fetch_n"] == 200  # 10x limit
+
+            result = _vector_search_qdrant(
+                conn, [0.1] * 768, model_name="indus", filters=filters, limit=80, ef_search=100
+            )
+            assert result.metadata["fetch_n"] == 500  # capped, not 800
+
+    def test_pg_post_filter_drops_rows_and_truncates_to_limit(self) -> None:
+        from unittest.mock import patch
+
+        from scix.search import _vector_search_qdrant
+
+        client = self._fake_client(
+            [("B1", 0.9), ("B2", 0.8), ("B3", 0.7), ("B4", 0.6), ("B5", 0.5)]
+        )
+        # B2 filtered out by SQL (or absent from papers): survivors are
+        # B1, B3, B4, B5 — truncated to limit=2 in Qdrant rank order.
+        conn, _cursor = self._fake_conn(
+            [self._row("B1"), self._row("B3"), self._row("B4"), self._row("B5")]
+        )
+
+        with patch("scix.search._get_qdrant_dense_client", return_value=client):
+            result = _vector_search_qdrant(
+                conn,
+                [0.1] * 768,
+                model_name="indus",
+                filters=SearchFilters(year_min=2020),
+                limit=2,
+                ef_search=100,
+            )
+
+        assert [p["bibcode"] for p in result.papers] == ["B1", "B3"]
+        assert result.total == 2
+
+    def test_default_search_params_use_hnsw_ef_floor(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from unittest.mock import patch
+
+        from scix.search import _vector_search_qdrant
+
+        monkeypatch.delenv("SCIX_QDRANT_EXACT", raising=False)
+        client = self._fake_client([])
+        conn, _cursor = self._fake_conn([])
+
+        with patch("scix.search._get_qdrant_dense_client", return_value=client):
+            _vector_search_qdrant(
+                conn, [0.1] * 768, model_name="indus", filters=None, limit=50, ef_search=10
+            )
+
+        params = client.query_points.call_args.kwargs["search_params"]
+        assert params.exact is not True
+        # ef must never drop below the requested limit.
+        assert params.hnsw_ef == 50
+
+    def test_exact_env_forces_exact_search(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from unittest.mock import patch
+
+        from scix.search import _vector_search_qdrant
+
+        monkeypatch.setenv("SCIX_QDRANT_EXACT", "1")
+        client = self._fake_client([])
+        conn, _cursor = self._fake_conn([])
+
+        with patch("scix.search._get_qdrant_dense_client", return_value=client):
+            _vector_search_qdrant(
+                conn, [0.1] * 768, model_name="indus", filters=None, limit=5, ef_search=100
+            )
+
+        params = client.query_points.call_args.kwargs["search_params"]
+        assert params.exact is True

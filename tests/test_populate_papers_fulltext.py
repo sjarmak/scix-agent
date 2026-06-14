@@ -53,10 +53,19 @@ if TEST_DSN is None:
 elif is_production_dsn(TEST_DSN):
     _integration_skip_reason = "SCIX_TEST_DSN points at production"
 
-integration = pytest.mark.skipif(
-    _integration_skip_reason is not None,
-    reason=_integration_skip_reason or "no DSN",
-)
+def integration(func):
+    """Mark a DB-backed driver test as integration AND skip it locally when no
+    usable test DB is configured.
+
+    The integration mark is what lets CI deselect these via
+    ``-m "not integration"`` (they need a populated DB, not schema-only). The
+    skipif keeps them from erroring when SCIX_TEST_DSN is unset / points at prod.
+    """
+    func = pytest.mark.integration(func)
+    return pytest.mark.skipif(
+        _integration_skip_reason is not None,
+        reason=_integration_skip_reason or "no DSN",
+    )(func)
 
 
 # ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ date to validate the retirement contract:
 from __future__ import annotations
 
 import dataclasses
+import importlib.util
 import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -25,6 +26,15 @@ from unittest.mock import MagicMock
 import pytest
 
 from scix import mcp_server, qdrant_tools
+
+# The server self-test builds the MCP server, which imports the optional `mcp`
+# package; the rest of this module exercises qdrant_tools directly and needs no
+# such dependency. CI installs the lightweight .[dev] set without `mcp`, so gate
+# only the self-test class on it (scix_experiments-o835).
+_needs_mcp = pytest.mark.skipif(
+    importlib.util.find_spec("mcp") is None,
+    reason="mcp package not installed (CI .[dev]); MCP server self-test skipped",
+)
 
 
 @pytest.fixture
@@ -112,6 +122,7 @@ class TestRetiredToolDispatch:
         assert "find_similar_by_examples" in payload["message"]
 
 
+@_needs_mcp
 class TestMCPSelfTest:
     """The server self-test must pass at exactly the active (visible) tool
     count regardless of QDRANT_URL. Count is derived from

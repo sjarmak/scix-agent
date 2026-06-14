@@ -76,11 +76,13 @@ def clean_db(conn):
 
 
 class TestOpenJsonl:
-    def test_open_gzip(self) -> None:
-        with open_jsonl(SMALL_FILE) as f:
-            line = f.readline()
-            rec = json.loads(line)
-            assert "bibcode" in rec
+    def test_open_gzip(self, tmp_path: Path) -> None:
+        p = tmp_path / "sample.jsonl.gz"
+        with gzip.open(p, "wt", encoding="utf-8") as f:
+            f.write('{"bibcode": "2026test.gz"}\n')
+        with open_jsonl(p) as f:
+            rec = json.loads(f.readline())
+            assert rec["bibcode"] == "2026test.gz"
 
     def test_open_plain_jsonl(self, tmp_path: Path) -> None:
         p = tmp_path / "test.jsonl"
@@ -105,10 +107,15 @@ class TestOpenJsonl:
 
 
 class TestDiscoverFiles:
-    def test_finds_real_files(self) -> None:
-        files = discover_files(DATA_DIR)
-        assert len(files) >= 1
+    def test_finds_supported_extensions(self, tmp_path: Path) -> None:
+        (tmp_path / "ads_metadata_2026_full.jsonl.gz").write_bytes(b"")
+        (tmp_path / "ads_metadata_2025.jsonl").write_text("")
+        (tmp_path / "ads_metadata_2024.jsonl.xz").write_bytes(b"")
+        (tmp_path / "ignore.txt").write_text("")
+        files = discover_files(tmp_path)
+        assert len(files) == 3
         assert any("2026" in f.name for f in files)
+        assert all(f.suffix != ".txt" for f in files)
 
     def test_empty_dir(self, tmp_path: Path) -> None:
         assert discover_files(tmp_path) == []

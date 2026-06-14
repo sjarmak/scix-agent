@@ -35,31 +35,31 @@ def _make_method(
     description: str = "A deep residual learning framework.",
     introduced_year: int | None = 2015,
     source_url: str = "https://paperswithcode.com/method/resnet",
-    collection: str | dict[str, Any] | None = "Computer Vision Models",
+    collection: str | None = "Computer Vision Models",
     paper: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Create a single PWC method object for testing."""
-    method: dict[str, Any] = {
+    """Create a single PWC method row matching the HuggingFace pwc-archive
+    parquet schema that ``parse_methods`` consumes: ``collections`` is an
+    array of ``{area, collection}`` structs; ``paper`` is a ``{title, url}``
+    struct."""
+    return {
         "name": name,
         "full_name": full_name,
         "description": description,
+        "introduced_year": introduced_year,
+        "source_url": source_url,
+        "collections": [{"area": "General", "collection": collection}] if collection else [],
+        "paper": paper,
     }
-    if introduced_year is not None:
-        method["introduced_year"] = introduced_year
-    if source_url:
-        method["source_url"] = source_url
-    if collection is not None:
-        method["main_collection"] = collection
-    if paper is not None:
-        method["paper"] = paper
-    return method
 
 
-def _write_methods_gzip(methods: list[dict[str, Any]], dest: Path) -> Path:
-    """Write a list of method dicts as gzip-compressed JSON to dest."""
+def _write_methods_parquet(methods: list[dict[str, Any]], dest: Path) -> Path:
+    """Write method rows as the parquet file ``parse_methods`` reads (the real
+    upstream is the pwc-archive HuggingFace parquet, not JSON)."""
+    import pandas as pd
+
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with gzip.open(dest, "wt", encoding="utf-8") as fh:
-        json.dump(methods, fh)
+    pd.DataFrame(methods).to_parquet(dest)
     return dest
 
 
@@ -74,7 +74,7 @@ class TestParseMethods:
     def test_basic_parse(self, tmp_path: Path) -> None:
         """Parses a standard method entry correctly."""
         methods = [_make_method()]
-        data_path = _write_methods_gzip(methods, tmp_path / "methods.json.gz")
+        data_path = _write_methods_parquet(methods, tmp_path / "methods.parquet")
 
         entries = parse_methods(data_path)
         assert len(entries) == 1
@@ -90,7 +90,7 @@ class TestParseMethods:
     def test_full_name_preferred_over_name(self, tmp_path: Path) -> None:
         """canonical_name uses full_name when available."""
         methods = [_make_method(name="BERT", full_name="Bidirectional Encoder Representations")]
-        data_path = _write_methods_gzip(methods, tmp_path / "methods.json.gz")
+        data_path = _write_methods_parquet(methods, tmp_path / "methods.parquet")
 
         entries = parse_methods(data_path)
         assert entries[0]["canonical_name"] == "Bidirectional Encoder Representations"
@@ -99,7 +99,7 @@ class TestParseMethods:
     def test_name_used_when_no_full_name(self, tmp_path: Path) -> None:
         """Falls back to name when full_name is empty."""
         methods = [_make_method(name="Dropout", full_name="")]
-        data_path = _write_methods_gzip(methods, tmp_path / "methods.json.gz")
+        data_path = _write_methods_parquet(methods, tmp_path / "methods.parquet")
 
         entries = parse_methods(data_path)
         assert entries[0]["canonical_name"] == "Dropout"
@@ -108,7 +108,7 @@ class TestParseMethods:
     def test_no_alias_when_name_equals_full_name(self, tmp_path: Path) -> None:
         """No alias added when name and full_name are identical."""
         methods = [_make_method(name="Attention", full_name="Attention")]
-        data_path = _write_methods_gzip(methods, tmp_path / "methods.json.gz")
+        data_path = _write_methods_parquet(methods, tmp_path / "methods.parquet")
 
         entries = parse_methods(data_path)
         assert entries[0]["aliases"] == []
@@ -119,27 +119,27 @@ class TestParseMethods:
             _make_method(name="", full_name=""),
             _make_method(name="Valid", full_name="Valid Method"),
         ]
-        data_path = _write_methods_gzip(methods, tmp_path / "methods.json.gz")
+        data_path = _write_methods_parquet(methods, tmp_path / "methods.parquet")
 
         entries = parse_methods(data_path)
         assert len(entries) == 1
         assert entries[0]["canonical_name"] == "Valid Method"
 
-    def test_collection_as_dict(self, tmp_path: Path) -> None:
-        """Handles main_collection as a dict with 'name' key."""
-        methods = [_make_method(collection={"name": "NLP Models", "id": 42})]
-        data_path = _write_methods_gzip(methods, tmp_path / "methods.json.gz")
+    def test_collection_extracted_from_array(self, tmp_path: Path) -> None:
+        """collection metadata is taken from the first collections-array entry."""
+        methods = [_make_method(collection="NLP Models")]
+        data_path = _write_methods_parquet(methods, tmp_path / "methods.parquet")
 
         entries = parse_methods(data_path)
         assert entries[0]["metadata"]["collection"] == "NLP Models"
 
-    def test_collection_as_string(self, tmp_path: Path) -> None:
-        """Handles main_collection as a plain string."""
-        methods = [_make_method(collection="Generative Models")]
-        data_path = _write_methods_gzip(methods, tmp_path / "methods.json.gz")
+    def test_no_collection_when_array_empty(self, tmp_path: Path) -> None:
+        """No collection key when the collections array is empty."""
+        methods = [_make_method(collection=None)]
+        data_path = _write_methods_parquet(methods, tmp_path / "methods.parquet")
 
         entries = parse_methods(data_path)
-        assert entries[0]["metadata"]["collection"] == "Generative Models"
+        assert "collection" not in entries[0]["metadata"]
 
     def test_paper_metadata_extracted(self, tmp_path: Path) -> None:
         """Paper info is included in metadata when present."""
@@ -152,17 +152,18 @@ class TestParseMethods:
                 }
             )
         ]
-        data_path = _write_methods_gzip(methods, tmp_path / "methods.json.gz")
+        data_path = _write_methods_parquet(methods, tmp_path / "methods.parquet")
 
         entries = parse_methods(data_path)
         paper = entries[0]["metadata"]["paper"]
+        # parse_methods keeps only title + url from the paper struct.
         assert paper["title"] == "Deep Residual Learning"
-        assert paper["arxiv_id"] == "1512.03385"
+        assert paper["url"] == "https://arxiv.org/abs/1512.03385"
 
     def test_empty_description_omitted(self, tmp_path: Path) -> None:
         """Empty description is not included in metadata."""
         methods = [_make_method(description="")]
-        data_path = _write_methods_gzip(methods, tmp_path / "methods.json.gz")
+        data_path = _write_methods_parquet(methods, tmp_path / "methods.parquet")
 
         entries = parse_methods(data_path)
         assert "description" not in entries[0]["metadata"]
@@ -172,7 +173,7 @@ class TestParseMethods:
         methods = [
             _make_method(name=f"Method{i}", full_name=f"Full Method {i}") for i in range(1500)
         ]
-        data_path = _write_methods_gzip(methods, tmp_path / "methods.json.gz")
+        data_path = _write_methods_parquet(methods, tmp_path / "methods.parquet")
 
         entries = parse_methods(data_path)
         assert len(entries) == 1500
@@ -233,7 +234,7 @@ class TestRunPipeline:
     ) -> None:
         """Pipeline parses local file and calls bulk_load."""
         methods = [_make_method(name=f"M{i}", full_name=f"Method {i}") for i in range(5)]
-        data_path = _write_methods_gzip(methods, tmp_path / "methods.json.gz")
+        data_path = _write_methods_parquet(methods, tmp_path / "methods.parquet")
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 5
@@ -266,7 +267,7 @@ class TestRunPipeline:
     ) -> None:
         """Verify harvest_runs record is created and completed."""
         methods = [_make_method(name=f"M{i}", full_name=f"Method {i}") for i in range(5)]
-        data_path = _write_methods_gzip(methods, tmp_path / "methods.json.gz")
+        data_path = _write_methods_parquet(methods, tmp_path / "methods.parquet")
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
         mock_bulk_load.return_value = 5
@@ -337,7 +338,7 @@ class TestLoadMethodsIntegration:
         methods = [
             _make_method(name=f"TestMethod{i}", full_name=f"Test Method {i}") for i in range(10)
         ]
-        data_path = _write_methods_gzip(methods, tmp_path / "methods.json.gz")
+        data_path = _write_methods_parquet(methods, tmp_path / "methods.parquet")
         entries = parse_methods(data_path)
 
         # Override source to 'pwc-test' for cleanup

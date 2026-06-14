@@ -9,6 +9,9 @@
 RUFF  ?= ruff
 BLACK ?= black
 PYTEST ?= pytest
+# CI injects a marker filter (e.g. -m "not integration and not network") so the
+# DB/data/model-dependent tests are deselected; local `make check` runs all.
+PYTEST_ARGS ?=
 
 .PHONY: help viz-demo viz-demo-build lint fmt fmt-check test check
 
@@ -34,7 +37,7 @@ fmt-check:
 	$(BLACK) --check src/ scripts/ tests/
 
 test:
-	$(PYTEST) -q
+	$(PYTEST) -q $(PYTEST_ARGS)
 
 check: lint fmt-check test
 

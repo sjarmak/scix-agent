@@ -331,6 +331,7 @@ def seed_classify_data(conn: psycopg.Connection) -> Iterator[None]:
         conn.commit()
 
 
+@pytest.mark.integration
 def test_process_batch_writes_evidence(
     conn: psycopg.Connection, seed_classify_data: None, tmp_path: Path
 ) -> None:

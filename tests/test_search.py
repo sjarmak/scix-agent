@@ -1409,3 +1409,34 @@ class TestVectorSearchQdrantLane:
 
         params = client.query_points.call_args.kwargs["search_params"]
         assert params.exact is True
+
+    def test_points_missing_bibcode_payload_are_skipped_not_crashed(self) -> None:
+        """A Qdrant point whose payload lacks 'bibcode' (transitional
+        payload-backfill window, bead 8m0a) must be skipped + logged, not
+        raise KeyError that crashes the whole search request (bead lq32)."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock, patch
+
+        from scix.search import _vector_search_qdrant
+
+        # Mix of well-formed points and degenerate ones: a None payload, an
+        # empty-dict payload, and a payload with unrelated keys only.
+        points = [
+            SimpleNamespace(payload={"bibcode": "B1"}, score=0.9),
+            SimpleNamespace(payload=None, score=0.85),
+            SimpleNamespace(payload={}, score=0.8),
+            SimpleNamespace(payload={"other": "x"}, score=0.75),
+            SimpleNamespace(payload={"bibcode": "B2"}, score=0.7),
+        ]
+        client = MagicMock()
+        client.query_points.return_value = SimpleNamespace(points=points)
+        conn, _cursor = self._fake_conn([self._row("B1"), self._row("B2")])
+
+        with patch("scix.search._get_qdrant_dense_client", return_value=client):
+            result = _vector_search_qdrant(
+                conn, [0.1] * 768, model_name="indus", filters=None, limit=10, ef_search=100
+            )
+
+        # Only the two bibcode-bearing points survive, in Qdrant rank order.
+        assert [p["bibcode"] for p in result.papers] == ["B1", "B2"]
+        assert [p["score"] for p in result.papers] == [0.9, 0.7]

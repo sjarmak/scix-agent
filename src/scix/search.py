@@ -564,9 +564,25 @@ def _vector_search_qdrant(
         timeout=120,
     ).points
     # Cosine similarity, same semantics as the pgvector path's
-    # ``1 - (vec <=> query)``.
-    score_by_bibcode = {p.payload["bibcode"]: float(p.score) for p in points}
-    ranked_bibcodes = [p.payload["bibcode"] for p in points]
+    # ``1 - (vec <=> query)``. Points missing a ``bibcode`` payload (possible
+    # during the payload-backfill window, bead 8m0a) are skipped rather than
+    # crashing the request — we cannot join them to PG metadata anyway.
+    score_by_bibcode: dict[str, float] = {}
+    ranked_bibcodes: list[str] = []
+    skipped = 0
+    for p in points:
+        bibcode = (p.payload or {}).get("bibcode")
+        if bibcode is None:
+            skipped += 1
+            continue
+        score_by_bibcode[bibcode] = float(p.score)
+        ranked_bibcodes.append(bibcode)
+    if skipped:
+        logger.warning(
+            "Skipped %d Qdrant point(s) missing 'bibcode' payload in %s",
+            skipped,
+            _QDRANT_DENSE_COLLECTIONS[model_name],
+        )
     qdrant_ms = _elapsed_ms(t0)
 
     query = f"""

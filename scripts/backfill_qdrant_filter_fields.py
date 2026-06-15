@@ -202,7 +202,9 @@ def apply_batch(
     Returns number of rows attempted.
     """
     if dry_run:
-        return len(rows)
+        # Mirror the live skip below: only rows with a non-empty payload would
+        # produce a set_payload call, so count those — not every fetched row.
+        return sum(1 for row in rows if _build_payload(row))
 
     written = 0
     for row in rows:

@@ -252,6 +252,31 @@ class TestApplyBatch:
         assert count == 1
         assert client.set_payload.call_count == 1
 
+    def test_dry_run_count_excludes_empty_payload_rows(self) -> None:
+        # Regression: dry-run must mirror the live skip (empty payload → no
+        # set_payload call), so its count matches actual write throughput
+        # instead of inflating it with rows the live path drops.
+        client = MagicMock()
+        all_null = _make_row(
+            "2020A...null",
+            year=None,
+            doctype=None,
+            arxiv_class=[],
+            bibstem=[],
+            community_semantic_coarse=None,
+            community_semantic_medium=None,
+            pagerank=None,
+            title=None,
+            first_author=None,
+            citation_count=None,
+            is_retracted=False,
+        )
+        rows = [all_null, _make_row("2020B...1")]
+        dry_count = apply_batch(client, "col", rows, dry_run=True)
+        live_count = apply_batch(client, "col", rows, dry_run=False)
+        assert dry_count == 1
+        assert dry_count == live_count
+
     def test_set_payload_uses_point_id_list(self) -> None:
         client = MagicMock()
         bibcode = "2020ApJ...900..100X"

@@ -462,18 +462,22 @@ class TestEntityToolSchema:
         for et in ("methods", "datasets", "instruments", "materials"):
             assert et in enum_values, f"{et} dropped from entity_type enum"
 
-    def test_action_enum_distinguishes_three_workflows(self) -> None:
-        """The action enum lists the three distinct workflows the tool
-        supports; the description must distinguish them so an agent can
-        pick correctly."""
+    def test_action_enum_distinguishes_four_workflows(self) -> None:
+        """The action enum lists the distinct workflows the tool supports; the
+        description must distinguish them so an agent can pick correctly.
+
+        Bead 9afa folded the former entity_context tool in as a fourth action
+        ('profile'); the prior three (search / resolve / papers) are unchanged.
+        """
         schema = self._entity_tool_schema()
         action_prop = schema["properties"]["action"]
-        assert set(action_prop["enum"]) == {"search", "resolve", "papers"}
-        # The description should call out all three to steer the agent.
+        assert set(action_prop["enum"]) == {"search", "resolve", "papers", "profile"}
+        # The description should call out all four to steer the agent.
         desc = action_prop["description"].lower()
         assert "resolve" in desc
         assert "papers" in desc
         assert "search" in desc
+        assert "profile" in desc
 
 
 # ---------------------------------------------------------------------------

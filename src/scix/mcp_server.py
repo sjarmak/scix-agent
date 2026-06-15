@@ -214,7 +214,11 @@ TOOL_TIMEOUTS: dict[str, float] = {
     # PRD MH-4 — Deep Search v1 provenance tools.
     "claim_blame": float(os.environ.get("SCIX_TIMEOUT_CLAIM_BLAME", "15")),
     "find_replications": float(os.environ.get("SCIX_TIMEOUT_FIND_REPLICATIONS", "15")),
-    # Structural-citation lookup over citation_contexts.intent
+    # forward_citations (bead 9afa): merges cited_by_intent + find_replications
+    # behind an ``annotate`` enum. Cap matches the slower (relation) leg.
+    "forward_citations": float(os.environ.get("SCIX_TIMEOUT_FORWARD_CITATIONS", "15")),
+    # Structural-citation lookup over citation_contexts.intent — retained as a
+    # deprecated alias of forward_citations(annotate='intent').
     "cited_by_intent": float(os.environ.get("SCIX_TIMEOUT_CITED_BY_INTENT", "5")),
     # Claim/finding extraction surface (bead c996) — split from entity tool's
     # entity_type enum under bead mh14. Default-hidden today (extractions table
@@ -225,6 +229,14 @@ TOOL_TIMEOUTS: dict[str, float] = {
     # citation_contexts, paper_metrics; cap matches find_gaps.
     "synthesize_findings": float(os.environ.get("SCIX_TIMEOUT_SYNTHESIZE_FINDINGS", "15")),
 }
+
+# Result-limit convention (bead 9afa / docs/mcp_tool_audit_2026-06.md §5):
+# tools default to DEFAULT_RESULT_LIMIT results and cap at MAX_WORKING_SET_BIBCODES
+# (=200) unless a tool documents a justified exception. Documented exceptions:
+# ``search`` (default 10 — established page size, eval-baseline-pinned),
+# ``facet_counts`` (default 50 — distribution buckets), and ``lit_review``'s
+# composite sub-counts (top_seeds / expansion_seeds — domain-specific knobs).
+DEFAULT_RESULT_LIMIT = 20
 
 # Tools whose backing data is missing on this deployment. Default-hidden so
 # agents don't waste calls on tools that can't return real results. Override
@@ -237,11 +249,20 @@ TOOL_TIMEOUTS: dict[str, float] = {
 #     quant_claim on prod (bead c996); unhide once an M3/M4 extraction run
 #     populates them. Tool is registered + tested unconditionally; only the
 #     tools/list visibility is gated.
+# The default-configuration hidden set. Kept as a named constant (not inlined
+# into the env lookup) so the import-time visible-surface guard near
+# ``EXPECTED_TOOLS`` can compute the as-shipped visible count independently of
+# any ``SCIX_HIDDEN_TOOLS`` override — operators who unhide tools for testing
+# must not trip the cap assert.
+_DEFAULT_HIDDEN_TOOLS_STR = (
+    "chunk_search,section_retrieval,read_paper_claims,find_claims,claim_search"
+)
+
 _HIDDEN_TOOLS: frozenset[str] = frozenset(
     t.strip()
     for t in os.environ.get(
         "SCIX_HIDDEN_TOOLS",
-        "chunk_search,section_retrieval,read_paper_claims,find_claims,claim_search",
+        _DEFAULT_HIDDEN_TOOLS_STR,
     ).split(",")
     if t.strip()
 )
@@ -1005,6 +1026,12 @@ _DEPRECATED_ALIASES: dict[str, str] = {
     "bibliographic_coupling": "citation_similarity",
     "entity_search": "entity",
     "resolve_entity": "entity",
+    # entity_context folded into entity(action='profile') (bead 9afa, 2026-06).
+    "entity_context": "entity",
+    # cited_by_intent + find_replications merged into forward_citations
+    # (bead 9afa, 2026-06) behind annotate='intent' | 'relation'.
+    "cited_by_intent": "forward_citations",
+    "find_replications": "forward_citations",
     # entity_profile has a unique schema (raw extractions table rows). It
     # is routed to a dedicated handler via _transform_deprecated_args, but
     # use_instead points at get_paper(include_entities=true) as the modern
@@ -1288,22 +1315,23 @@ EXPECTED_TOOLS: tuple[str, ...] = (
     "citation_traverse",
     "citation_similarity",
     "entity",
-    "entity_context",
+    # entity_context folded into entity(action='profile') (bead 9afa, 2026-06);
+    # the old name stays callable as a deprecated alias.
     "graph_context",
     "find_gaps",
     "temporal_evolution",
     "facet_counts",
-    # PRD MH-4 — Deep Search v1: provenance walk + replication enumeration
+    # PRD MH-4 — Deep Search v1: provenance walk back to a claim's origin.
     "claim_blame",
-    "find_replications",
+    # forward_citations (bead 9afa, 2026-06): merges cited_by_intent +
+    # find_replications behind an ``annotate`` enum (intent | relation). Both
+    # legacy names stay callable as deprecated aliases.
+    "forward_citations",
     # PRD section-embeddings-mcp-consolidation — section-grain hybrid retrieval
     "section_retrieval",
     # PRD nanopub-claim-extraction — paper_claims retrieval (migration 062)
     "read_paper_claims",
     "find_claims",
-    # Structural-citation lookup — exploits citation_contexts.intent
-    # (method / background / result_comparison) classification.
-    "cited_by_intent",
     # Claim/finding extraction surface (bead c996) — split out from the
     # entity tool's entity_type enum under bead mh14. Default-hidden
     # because the extractions table has 0 rows for negative_result /
@@ -1327,6 +1355,35 @@ def _expected_tool_set() -> set[str]:
     # data isn't yet populated — see _HIDDEN_TOOLS comment).
     tools -= _HIDDEN_TOOLS
     return tools
+
+
+# ---------------------------------------------------------------------------
+# Visible-surface cap guard (ADR-pinned; bead 9afa / xjqi)
+# ---------------------------------------------------------------------------
+#
+# The premortem tool-count concern caps the *agent-visible* surface at 15 to
+# protect tool-selection accuracy (see docs/mcp_tool_audit_2026-06.md). This
+# import-time assert pins the as-shipped default surface so a future addition
+# that pushes it past 15 fails loudly at import rather than silently drifting
+# (the 15→17 drift that motivated bead xjqi went unnoticed for two months).
+#
+# It evaluates the DEFAULT hidden set, not the live ``_HIDDEN_TOOLS`` — an
+# operator who sets ``SCIX_HIDDEN_TOOLS=`` to unhide tools for testing must not
+# trip the guard. ``chunk_search`` is optional (Qdrant-only) and also hidden by
+# default, so it never counts toward the default surface.
+VISIBLE_TOOL_CAP = 15
+
+_DEFAULT_HIDDEN_TOOLS = frozenset(
+    t.strip() for t in _DEFAULT_HIDDEN_TOOLS_STR.split(",") if t.strip()
+)
+_DEFAULT_VISIBLE_TOOLS = set(EXPECTED_TOOLS) - _DEFAULT_HIDDEN_TOOLS
+if len(_DEFAULT_VISIBLE_TOOLS) > VISIBLE_TOOL_CAP:
+    raise RuntimeError(
+        f"MCP visible tool surface ({len(_DEFAULT_VISIBLE_TOOLS)}) exceeds the "
+        f"ADR-pinned cap of {VISIBLE_TOOL_CAP}: {sorted(_DEFAULT_VISIBLE_TOOLS)}. "
+        f"Consolidate (merge real overlaps) or raise the cap via ADR — see "
+        f"docs/mcp_tool_audit_2026-06.md §6."
+    )
 
 
 def startup_self_test(server: Any = None) -> dict[str, Any]:
@@ -2034,15 +2091,17 @@ def create_server(_run_self_test: bool = True):
                     "narrower path that scans the older extractions table "
                     "for one of four containment-payload entity types "
                     "(methods/datasets/instruments/materials). "
-                    "Use entity_context once you have an entity_id and need "
-                    "its full profile and relationships."
+                    "action='profile' (entity_id->full profile): you have an "
+                    "entity_id and want its canonical name, type, discipline, "
+                    "external ids, aliases, related entities, and mention "
+                    "count (this is the former entity_context tool, folded in)."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["search", "resolve", "papers"],
+                            "enum": ["search", "resolve", "papers", "profile"],
                             "description": (
                                 "resolve: text mention -> canonical entity records "
                                 "(cross-discipline disambiguation). "
@@ -2052,12 +2111,19 @@ def create_server(_run_self_test: bool = True):
                                 "search: legacy narrow scan of the extractions "
                                 "table for one of the four containment-payload "
                                 "entity types (methods/datasets/instruments/"
-                                "materials)."
+                                "materials). "
+                                "profile: entity_id -> full entity profile "
+                                "(name, type, discipline, external ids, aliases, "
+                                "related entities, paper count) — formerly the "
+                                "entity_context tool."
                             ),
                         },
                         "entity_id": {
                             "type": "integer",
-                            "description": ("Entity id (from resolve). Used by action='papers'."),
+                            "description": (
+                                "Entity id (from resolve). Used by action='papers' "
+                                "and required by action='profile'."
+                            ),
                         },
                         "entity_type": {
                             "type": "string",
@@ -2116,28 +2182,8 @@ def create_server(_run_self_test: bool = True):
                     "required": ["action"],
                 },
             ),
-            # --- entity_context (unchanged) ---
-            Tool(
-                name="entity_context",
-                description=(
-                    "Fetch the full profile of a known entity by its entity_id: canonical "
-                    "name, type, discipline, external identifiers, aliases, related "
-                    "entities, and the count of papers that mention it. Use entity with "
-                    "action='resolve' instead when you only have a text mention and need "
-                    "to find the entity_id first. Requires a numeric entity_id as input."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "entity_id": {
-                            "type": "integer",
-                            "description": "Entity ID (from entity search/resolve "
-                            "or document_context)",
-                        },
-                    },
-                    "required": ["entity_id"],
-                },
-            ),
+            # entity_context folded into entity(action='profile') (bead 9afa);
+            # the old name remains callable via _DEPRECATED_ALIASES.
             # --- S2: graph_context (merges get_paper_metrics + explore_community) ---
             Tool(
                 name="graph_context",
@@ -2270,12 +2316,14 @@ def create_server(_run_self_test: bool = True):
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "bibcode_or_query": {
+                        "query": {
                             "type": "string",
                             "description": (
                                 "A bibcode (citation trends) or search terms "
                                 "(pub volume). Optional when bibcodes=[...] or "
-                                "the session has focused papers."
+                                "the session has focused papers. (The legacy "
+                                "param name 'bibcode_or_query' is still accepted "
+                                "for backward compatibility.)"
                             ),
                         },
                         "bibcodes": {
@@ -2385,88 +2433,75 @@ def create_server(_run_self_test: bool = True):
                     "required": ["claim_text"],
                 },
             ),
-            # --- PRD MH-4: find_replications ---
+            # --- forward_citations (bead 9afa): merges find_replications + cited_by_intent ---
             Tool(
-                name="find_replications",
+                name="forward_citations",
                 description=(
-                    "Return forward citations to a target paper, ranked by intent_weight, "
-                    "with each citation annotated with citation intent, an inferred "
-                    "replication relation (replicates / refutes / qualifies / partial / "
-                    "unknown), and a hedge_present flag. Relation and hedge are derived "
-                    "from a documented heuristic substitute for NegBERT (see module "
-                    "docstring); NegBERT is the future drop-in. Use "
+                    "Enumerate forward citations to a paper (papers that cite it), "
+                    "annotated by one of two axes selected with the 'annotate' param. "
+                    "annotate='intent' (default) surfaces the citation_contexts.intent "
+                    "classification (method / background / result_comparison) so you can "
+                    "ask 'which papers used X as their method?' or 'which papers compared "
+                    "their results to X?' — each result carries the citing bibcode, the "
+                    "intent label, and a 400-char excerpt; optional 'intent' filters to one "
+                    "class. annotate='relation' surfaces an inferred replication relation "
+                    "(replicates / refutes / qualifies / partial / unknown) plus a "
+                    "hedge_present flag, derived from a documented heuristic substitute for "
+                    "NegBERT; optional 'relation' filters, and 'scope' applies ResearchScope "
+                    "filters (year_window applies to the citing paper's year). Coverage of "
+                    "the intent axis is partial (~825K contexts across 30K source / 250K "
+                    "cited papers); uncovered papers return empty cleanly. Use "
                     "citation_traverse(mode='graph', direction='forward') instead when you "
-                    "want raw forward citations without relation inference; use claim_blame "
-                    "when you want the earliest origin of a claim rather than its replications."
+                    "want raw forward citations with no annotation; use claim_blame for the "
+                    "earliest origin of a claim rather than its forward citations."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "target_bibcode": {
+                        "bibcode": {
                             "type": "string",
-                            "description": "ADS bibcode whose forward citations to enumerate.",
-                        },
-                        "relation": {
-                            "type": "string",
-                            "enum": ["replicates", "refutes", "qualifies", "partial"],
                             "description": (
-                                "Optional filter on relation_inferred. Omit to "
-                                "return all relations including unknown."
+                                "ADS bibcode whose forward citations (incoming "
+                                "citations) to enumerate. 'target_bibcode' is "
+                                "accepted as a synonym for backward compatibility."
                             ),
                         },
-                        "scope": {
-                            "type": "object",
-                            "description": (
-                                "Optional ResearchScope filters; year_window applies to "
-                                "the citing paper's year."
-                            ),
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "default": 50,
-                            "description": "Max citations to return.",
-                        },
-                    },
-                    "required": ["target_bibcode"],
-                },
-            ),
-            # --- Structural-citation lookup (intent-aware) ---
-            Tool(
-                name="cited_by_intent",
-                description=(
-                    "Find papers that cite a target paper for a specific reason. "
-                    "Surfaces the citation_contexts.intent classification "
-                    "(method / background / result_comparison) — letting agents "
-                    "ask 'which papers used X as their method?' or 'which "
-                    "papers compared their results to X?' — questions that "
-                    "vanilla retrieval cannot answer because they require "
-                    "understanding *why* one paper cites another, not just "
-                    "that it does. Each result includes the source bibcode, "
-                    "the intent label, and a 400-char excerpt of the citation "
-                    "context. Coverage is partial (~825K contexts across 30K "
-                    "source papers and 250K cited papers); papers without "
-                    "context coverage return empty cleanly. Use "
-                    "citation_traverse instead when you want raw forward "
-                    "citations regardless of intent."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "target_bibcode": {
+                        "annotate": {
                             "type": "string",
-                            "description": ("ADS bibcode whose incoming citations to filter."),
+                            "enum": ["intent", "relation"],
+                            "default": "intent",
+                            "description": (
+                                "Annotation axis. 'intent' = citation-intent "
+                                "classification + excerpt (former cited_by_intent); "
+                                "'relation' = inferred replication relation + hedge "
+                                "flag (former find_replications)."
+                            ),
                         },
                         "intent": {
                             "type": "string",
                             "enum": ["method", "background", "result_comparison"],
                             "description": (
-                                "Citation intent. 'method' = papers that used "
-                                "this work's method; 'background' = papers "
-                                "citing this as background context "
-                                "(introductions, motivation); "
-                                "'result_comparison' = papers comparing "
-                                "their results to this work's. Omit for "
-                                "any-intent."
+                                "(annotate='intent' only) Filter to one citation "
+                                "intent: 'method' = papers that used this work's "
+                                "method; 'background' = papers citing it as "
+                                "background; 'result_comparison' = papers comparing "
+                                "results to it. Omit for any-intent."
+                            ),
+                        },
+                        "relation": {
+                            "type": "string",
+                            "enum": ["replicates", "refutes", "qualifies", "partial"],
+                            "description": (
+                                "(annotate='relation' only) Filter on "
+                                "relation_inferred. Omit to return all relations "
+                                "including unknown."
+                            ),
+                        },
+                        "scope": {
+                            "type": "object",
+                            "description": (
+                                "(annotate='relation' only) Optional ResearchScope "
+                                "filters; year_window applies to the citing paper's year."
                             ),
                         },
                         "limit": {
@@ -2475,7 +2510,7 @@ def create_server(_run_self_test: bool = True):
                             "description": "Max papers to return (1..200).",
                         },
                     },
-                    "required": ["target_bibcode"],
+                    "required": ["bibcode"],
                 },
             ),
             # --- Claim/finding extraction surface (bead c996) ---
@@ -2757,8 +2792,13 @@ def create_server(_run_self_test: bool = True):
                         },
                         "limit": {
                             "type": "integer",
-                            "default": 50,
-                            "description": "Max claims to return (1..500).",
+                            "default": 20,
+                            "description": (
+                                "Max claims to return. Default 20 (shared "
+                                "convention); cap 500 — a single paper can carry "
+                                "many claims, so bulk per-paper reads justify the "
+                                "higher ceiling (audit §5 exception)."
+                            ),
                         },
                     },
                     "required": ["bibcode"],
@@ -2811,8 +2851,12 @@ def create_server(_run_self_test: bool = True):
                         },
                         "limit": {
                             "type": "integer",
-                            "default": 25,
-                            "description": "Max claims to return (1..500).",
+                            "default": 20,
+                            "description": (
+                                "Max claims to return. Default 20 (shared "
+                                "convention); cap 500 (audit §5 exception — "
+                                "bulk claim search)."
+                            ),
                         },
                     },
                     "required": ["query"],
@@ -3107,6 +3151,23 @@ def _transform_deprecated_args(
         new_args["action"] = "resolve"
         return "entity", new_args
 
+    if old_name == "entity_context":
+        # entity_context(entity_id) -> entity(action='profile', entity_id).
+        new_args["action"] = "profile"
+        return "entity", new_args
+
+    if old_name == "cited_by_intent":
+        # cited_by_intent(target_bibcode, intent) ->
+        # forward_citations(target_bibcode, annotate='intent', intent).
+        new_args["annotate"] = "intent"
+        return "forward_citations", new_args
+
+    if old_name == "find_replications":
+        # find_replications(target_bibcode, relation, scope) ->
+        # forward_citations(target_bibcode, annotate='relation', relation, scope).
+        new_args["annotate"] = "relation"
+        return "forward_citations", new_args
+
     if old_name == "document_context":
         new_args["include_entities"] = True
         return "get_paper", new_args
@@ -3294,11 +3355,17 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
     if name == "claim_blame":
         return _handle_claim_blame(conn, args)
 
-    # --- PRD MH-4: find_replications ---
+    # --- forward_citations (bead 9afa): merges find_replications + cited_by_intent ---
+    if name == "forward_citations":
+        return _handle_forward_citations(conn, args)
+
+    # --- PRD MH-4: find_replications (legacy direct dispatch; agent surface is
+    #     forward_citations(annotate='relation')) ---
     if name == "find_replications":
         return _handle_find_replications(conn, args)
 
-    # --- Structural-citation lookup (intent-aware) ---
+    # --- Structural-citation lookup (intent-aware; legacy direct dispatch,
+    #     agent surface is forward_citations(annotate='intent')) ---
     if name == "cited_by_intent":
         return _handle_cited_by_intent(conn, args)
 
@@ -3984,7 +4051,8 @@ def _handle_temporal_evolution(conn: psycopg.Connection, args: dict[str, Any]) -
     Resolution order for the bibcode set:
         1. ``args["bibcodes"]`` if non-empty.
         2. session focused papers (multi-paper aggregate citations mode).
-        3. ``args["bibcode_or_query"]`` (legacy single-paper / query path).
+        3. ``args["query"]`` (single-paper / query path; the legacy param name
+           ``bibcode_or_query`` is still accepted as a synonym — bead 9afa).
 
     Returns a clean JSON error when none of the three sources is provided.
     """
@@ -3997,15 +4065,17 @@ def _handle_temporal_evolution(conn: psycopg.Connection, args: dict[str, Any]) -
     # FIFO at 500 (bead u0j1) and explicit args["bibcodes"] is unbounded,
     # so without this cap the ANY(%s) array could grow past the ceiling.
     bibcodes = _resolve_working_set_bibcodes(args)[:MAX_WORKING_SET_BIBCODES]
-    bibcode_or_query = args.get("bibcode_or_query")
+    # Canonical key is ``query`` (bead 9afa); accept the legacy
+    # ``bibcode_or_query`` name as a synonym so existing callers don't break.
+    bibcode_or_query = args.get("query") or args.get("bibcode_or_query")
 
     if not bibcodes and not bibcode_or_query:
         return json.dumps(
             {
                 "error": (
-                    "temporal_evolution requires either bibcode_or_query, an "
-                    "explicit bibcodes=[...] list, or a non-empty working set "
-                    "(call get_paper on one or more papers first)."
+                    "temporal_evolution requires either query (bibcode or search "
+                    "terms), an explicit bibcodes=[...] list, or a non-empty "
+                    "working set (call get_paper on one or more papers first)."
                 ),
                 "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
             }
@@ -4483,6 +4553,30 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             }
         )
 
+    # action='profile' (folded-in entity_context, bead 9afa): full profile of
+    # one entity by numeric entity_id. Handled before the query gate because
+    # it takes an id, not text.
+    if action == "profile":
+        entity_id = args.get("entity_id")
+        if entity_id is None:
+            return json.dumps(
+                {
+                    "error": "entity_id is required for action='profile'",
+                    "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
+                }
+            )
+        try:
+            entity_id = int(entity_id)
+        except (TypeError, ValueError):
+            return json.dumps(
+                {
+                    "error": "entity_id must be an integer",
+                    "error_code": ErrorCode.INVALID_PARAM_TYPE,
+                }
+            )
+        result = search.get_entity_context(conn, entity_id)
+        return _result_to_json(result)
+
     # action='papers' accepts entity_id directly, no query needed when given.
     is_papers_with_id = action == "papers" and args.get("entity_id") is not None
     if not is_papers_with_id and (not query or not query.strip()):
@@ -4735,7 +4829,7 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
 
     return json.dumps(
         {
-            "error": f"Invalid action: {action}. Use 'search', 'resolve', or 'papers'.",
+            "error": f"Invalid action: {action}. Use 'search', 'resolve', 'papers', or 'profile'.",
             "error_code": ErrorCode.INVALID_ACTION,
         }
     )
@@ -5426,6 +5520,67 @@ def _handle_claim_blame(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         lineage_limit=lineage_limit,
     )
     return json.dumps(result, indent=2, default=str)
+
+
+#: Annotation axes accepted by the ``forward_citations`` MCP tool (bead 9afa).
+_FORWARD_CITATION_ANNOTATIONS: frozenset[str] = frozenset({"intent", "relation"})
+
+
+def _handle_forward_citations(conn: psycopg.Connection, args: dict[str, Any]) -> str:
+    """Enumerate forward citations to a paper, annotated by intent or relation.
+
+    Merges the former ``cited_by_intent`` and ``find_replications`` tools
+    (bead 9afa). The ``annotate`` enum selects the annotation axis and the
+    response shape is delegated verbatim to the original handler so the two
+    deprecated aliases return byte-for-byte what they used to:
+
+        * annotate='intent'   -> _handle_cited_by_intent  (intent label +
+          400-char excerpt per citing paper; ``intent`` filter applies)
+        * annotate='relation' -> _handle_find_replications (inferred
+          replication relation + hedge flag; ``relation`` / ``scope`` apply)
+
+    Anchor param is ``bibcode`` (consistent with ``citation_traverse``);
+    ``target_bibcode`` is accepted as a synonym so the alias layer and any
+    direct callers of the old tools keep working. ``limit`` follows the
+    DEFAULT_RESULT_LIMIT / MAX_WORKING_SET_BIBCODES convention (audit §5).
+    """
+    annotate = args.get("annotate", "intent")
+    if annotate not in _FORWARD_CITATION_ANNOTATIONS:
+        return json.dumps(
+            {
+                "error": (
+                    f"annotate must be one of {sorted(_FORWARD_CITATION_ANNOTATIONS)}; "
+                    f"got {annotate!r}"
+                ),
+                "error_code": ErrorCode.INVALID_PARAM_VALUE,
+            }
+        )
+
+    # Normalize the anchor to the key the delegate handlers read.
+    delegated = dict(args)
+    anchor = args.get("bibcode") or args.get("target_bibcode")
+    if anchor is not None:
+        delegated["target_bibcode"] = anchor
+
+    # Apply the shared limit convention (default 20, cap 200) before delegating
+    # so both legs share one policy regardless of their historical defaults.
+    raw_limit = args.get("limit", DEFAULT_RESULT_LIMIT)
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        return json.dumps(
+            {
+                "error": f"limit must be an integer, got {raw_limit!r}",
+                "error_code": ErrorCode.INVALID_LIMIT,
+            }
+        )
+    if limit < 1:
+        limit = DEFAULT_RESULT_LIMIT
+    delegated["limit"] = min(limit, MAX_WORKING_SET_BIBCODES)
+
+    if annotate == "relation":
+        return _handle_find_replications(conn, delegated)
+    return _handle_cited_by_intent(conn, delegated)
 
 
 def _handle_find_replications(conn: psycopg.Connection, args: dict[str, Any]) -> str:
@@ -6138,7 +6293,7 @@ def _handle_read_paper_claims(conn: psycopg.Connection, args: dict[str, Any]) ->
             }
         )
 
-    limit = args.get("limit", 50)
+    limit = args.get("limit", DEFAULT_RESULT_LIMIT)
 
     try:
         rows = read_paper_claims(
@@ -6201,7 +6356,7 @@ def _handle_find_claims(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                 }
             )
 
-    limit = args.get("limit", 25)
+    limit = args.get("limit", DEFAULT_RESULT_LIMIT)
 
     try:
         rows = find_claims(

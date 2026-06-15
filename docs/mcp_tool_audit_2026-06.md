@@ -255,6 +255,25 @@ redundancies §4 identifies, preserves every capability, and directly serves the
 selection-accuracy rationale behind the cap — whereas B trades that rationale for
 speed and C needs an ADR. **Decision deferred to xjqi / Stephanie.**
 
+### Status — Option A implemented (bead `scix_experiments-9afa`, 2026-06-15)
+Stephanie chose Option A ("go with A, and do the refinement"). Implemented on
+branch `scix_experiments-lq32/qdrant-missing-bibcode-keyfix` (branch-ready, not
+yet published):
+- `entity_context` → `entity(action='profile')` (A1); `cited_by_intent` +
+  `find_replications` → `forward_citations(bibcode, annotate='intent'|'relation')`
+  (A2). Agent-visible surface back at **15** (`EXPECTED_TOOLS` 21→19 minus 4
+  default-hidden).
+- Non-breaking: `entity_context`, `cited_by_intent`, `find_replications` retained
+  as deprecated aliases (verified byte-for-byte parity modulo timing/dep-meta).
+- §5 refinement: `DEFAULT_RESULT_LIMIT=20` convention applied (claims-tool default
+  drift 50/25→20; 500 cap kept as a documented per-paper-bulk exception);
+  `temporal_evolution.bibcode_or_query` → `query` (synonym retained);
+  `forward_citations` anchors on `bibcode` (consistent with `citation_traverse`).
+- Guard: import-time assert `len(default-visible) ≤ VISIBLE_TOOL_CAP (15)` in
+  `mcp_server.py`; conformance expectations updated (pairs with x2dp). In-repo
+  consumers realigned (`deep_search_investigator` agent allow-list, `scix-mcp`
+  SKILL.md).
+
 ---
 
 ## 7. Acceptance checklist (this audit)

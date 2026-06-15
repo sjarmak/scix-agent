@@ -375,19 +375,34 @@ def test_persona_frontmatter_is_valid_yaml() -> None:
     assert isinstance(parsed.get("tools"), list) and len(parsed["tools"]) >= 13
 
 
-def test_persona_lists_15_tools() -> None:
+def test_persona_lists_consolidated_tools() -> None:
     yaml = pytest.importorskip("yaml")
     fm, _ = _split_frontmatter(_PERSONA_PATH.read_text())
     parsed = yaml.safe_load(fm)
     tools = parsed["tools"]
-    # 13 existing + claim_blame + find_replications = 15
-    assert len(tools) == 15
     names = [t.split("__")[-1] for t in tools]
+    # Bead 9afa: the allow-list names only advertised tools. The Option-A
+    # consolidation folded entity_context into entity and merged
+    # cited_by_intent + find_replications into forward_citations; the prior
+    # citation_graph + citation_chain were already merged into
+    # citation_traverse. Net allow-list = 13 advertised tools.
+    assert len(tools) == 13
     assert "claim_blame" in names
-    assert "find_replications" in names
-    # Sample of existing tools must be present
-    for expected in ("search", "concept_search", "citation_chain", "read_paper"):
+    assert "forward_citations" in names
+    assert "citation_traverse" in names
+    # Sample of existing tools must be present.
+    for expected in ("search", "concept_search", "citation_traverse", "read_paper", "entity"):
         assert expected in names
+    # Retired / alias names must NOT be in the allow-list (they are not
+    # advertised by the server, so listing them would be dead config).
+    for retired in (
+        "citation_graph",
+        "citation_chain",
+        "entity_context",
+        "cited_by_intent",
+        "find_replications",
+    ):
+        assert retired not in names
 
 
 def test_persona_body_contains_required_sections() -> None:

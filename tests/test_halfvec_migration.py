@@ -145,9 +145,7 @@ def test_migration_053_054_apply_idempotently() -> None:
                 text=True,
                 check=False,
             )
-            assert result.returncode == 0, (
-                f"{migration} failed: {result.stderr}"
-            )
+            assert result.returncode == 0, f"{migration} failed: {result.stderr}"
 
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute(
@@ -158,10 +156,7 @@ def test_migration_053_054_apply_idempotently() -> None:
         row = cur.fetchone()
         assert row is not None and row[0] == "halfvec(768)", row
 
-        cur.execute(
-            "SELECT indexdef FROM pg_indexes "
-            "WHERE indexname='idx_embed_hnsw_indus_hv'"
-        )
+        cur.execute("SELECT indexdef FROM pg_indexes " "WHERE indexname='idx_embed_hnsw_indus_hv'")
         idx = cur.fetchone()
         assert idx is not None
         assert "halfvec_cosine_ops" in idx[0]

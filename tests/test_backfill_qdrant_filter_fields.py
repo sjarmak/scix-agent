@@ -1,12 +1,10 @@
 """Tests for scripts/backfill_qdrant_filter_fields.py."""
+
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from scripts.backfill_qdrant_filter_fields import (
-    COLLECTION_DEFAULT,
     INDEXED_FIELDS,
     _bibcode_to_point_id,
     _build_payload,
@@ -44,9 +42,16 @@ class TestBuildPayload:
     def test_full_row_produces_expected_keys(self) -> None:
         p = _build_payload(_make_row())
         assert set(p) == {
-            "year", "doctype", "arxiv_class", "bibstem",
-            "community_semantic_coarse", "community_semantic_medium",
-            "title", "first_author", "citation_count", "pagerank",
+            "year",
+            "doctype",
+            "arxiv_class",
+            "bibstem",
+            "community_semantic_coarse",
+            "community_semantic_medium",
+            "title",
+            "first_author",
+            "citation_count",
+            "pagerank",
         }
         # is_retracted=False → absent (absence semantics per ADR-008)
         assert "is_retracted" not in p
@@ -67,8 +72,15 @@ class TestBuildPayload:
         row["community_semantic_medium"] = None
         row["pagerank"] = None
         p = _build_payload(row)
-        for key in ("year", "doctype", "arxiv_class", "bibstem",
-                    "community_semantic_coarse", "community_semantic_medium", "pagerank"):
+        for key in (
+            "year",
+            "doctype",
+            "arxiv_class",
+            "bibstem",
+            "community_semantic_coarse",
+            "community_semantic_medium",
+            "pagerank",
+        ):
             assert key not in p, f"{key} should be absent when source is NULL"
 
     def test_empty_list_fields_omitted(self) -> None:
@@ -115,18 +127,14 @@ class TestEnsureIndexes:
         client = self._mock_client(existing_schema={})
         ensure_indexes(client, "col", dry_run=False)
         assert client.create_payload_index.call_count == len(INDEXED_FIELDS)
-        created_names = {
-            c.kwargs["field_name"] for c in client.create_payload_index.call_args_list
-        }
+        created_names = {c.kwargs["field_name"] for c in client.create_payload_index.call_args_list}
         assert created_names == {name for name, _ in INDEXED_FIELDS}
 
     def test_skips_fields_already_in_schema(self) -> None:
         # If "year" already exists, it should not be recreated.
         client = self._mock_client(existing_schema={"year": object()})
         ensure_indexes(client, "col", dry_run=False)
-        created_names = {
-            c.kwargs["field_name"] for c in client.create_payload_index.call_args_list
-        }
+        created_names = {c.kwargs["field_name"] for c in client.create_payload_index.call_args_list}
         assert "year" not in created_names
         assert len(created_names) == len(INDEXED_FIELDS) - 1
 
@@ -227,9 +235,16 @@ class TestApplyBatch:
         client = MagicMock()
         all_null = _make_row(
             "2020A...null",
-            year=None, doctype=None, arxiv_class=[], bibstem=[],
-            community_semantic_coarse=None, community_semantic_medium=None,
-            pagerank=None, title=None, first_author=None, citation_count=None,
+            year=None,
+            doctype=None,
+            arxiv_class=[],
+            bibstem=[],
+            community_semantic_coarse=None,
+            community_semantic_medium=None,
+            pagerank=None,
+            title=None,
+            first_author=None,
+            citation_count=None,
             is_retracted=False,
         )
         rows = [all_null, _make_row("2020B...1")]
@@ -253,6 +268,7 @@ class TestApplyBatch:
 
     def test_bibcode_to_point_id_matches_full_load_scheme(self) -> None:
         import uuid
+
         bibcode = "2020ApJ...900..100X"
         expected = str(uuid.uuid5(uuid.NAMESPACE_URL, bibcode))
         assert _bibcode_to_point_id(bibcode) == expected
@@ -283,7 +299,9 @@ class TestVerifySample:
     def test_passes_when_payload_applied(self) -> None:
         samples = [("2020A...1", {"year": 2020, "doctype": "article"})]
         client = MagicMock()
-        client.retrieve.return_value = [self._point("2020A...1", {"year": 2020, "doctype": "article"})]
+        client.retrieve.return_value = [
+            self._point("2020A...1", {"year": 2020, "doctype": "article"})
+        ]
         assert verify_sample(client, "col", samples, timeout_s=0.1, poll_interval_s=0.01)
 
     def test_fails_when_payload_never_applied(self) -> None:

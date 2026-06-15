@@ -28,7 +28,9 @@ def _fmt(x: float | None) -> str:
     return f"{x:.2f}" if x is not None else "—"
 
 
-def render(summary: dict[str, Any], scored: list[dict[str, Any]], queries: list[dict[str, Any]]) -> str:
+def render(
+    summary: dict[str, Any], scored: list[dict[str, Any]], queries: list[dict[str, Any]]
+) -> str:
     variants = sorted(summary["variants"].keys())
     if not variants:
         return "# Tool-Surface Eval\n\n_No data._\n"
@@ -36,9 +38,8 @@ def render(summary: dict[str, Any], scored: list[dict[str, Any]], queries: list[
     out: list[str] = []
     out.append("# Tool-Surface Eval — V0 (current 18) vs V1 (consolidated 8) vs V2 (terse v1)")
     out.append("")
-    runs_per_q = (
-        summary["variants"][variants[0]]["n_runs"]
-        // max(summary["variants"][variants[0]]["n_queries"], 1)
+    runs_per_q = summary["variants"][variants[0]]["n_runs"] // max(
+        summary["variants"][variants[0]]["n_queries"], 1
     )
     out.append(
         "Compares agent tool-selection across three MCP surface variants. Each "
@@ -51,7 +52,9 @@ def render(summary: dict[str, Any], scored: list[dict[str, Any]], queries: list[
     # ---- Headline table
     out.append("## Headline")
     out.append("")
-    out.append("| variant | n_runs | tool_accuracy | param_accuracy | avg_mcp_calls | selection_consistency |")
+    out.append(
+        "| variant | n_runs | tool_accuracy | param_accuracy | avg_mcp_calls | selection_consistency |"
+    )
     out.append("|---|---:|---:|---:|---:|---:|")
     for v in variants:
         agg = summary["variants"][v]
@@ -72,7 +75,9 @@ def render(summary: dict[str, Any], scored: list[dict[str, Any]], queries: list[
     out.append(sep)
     for intent in intents:
         # N queries for this intent (count unique query_ids in the per-intent rows of any variant)
-        sample_variant = next((v for v in variants if intent in summary["variants"][v]["by_intent"]), None)
+        sample_variant = next(
+            (v for v in variants if intent in summary["variants"][v]["by_intent"]), None
+        )
         if sample_variant is None:
             continue
         n_q = summary["variants"][sample_variant]["by_intent"][intent]["n"]
@@ -110,7 +115,9 @@ def render(summary: dict[str, Any], scored: list[dict[str, Any]], queries: list[
         out.append("_No disagreements — all variants agreed on every query._")
         out.append("")
     else:
-        out.append(f"_{len(disagreements)} of {len(all_qids)} queries had at least one variant disagree on majority correctness._")
+        out.append(
+            f"_{len(disagreements)} of {len(all_qids)} queries had at least one variant disagree on majority correctness._"
+        )
         out.append("")
         out.append("| query_id | intent | query | " + " | ".join(variants) + " |")
         out.append("|---|---|---|" + "|".join("---" for _ in variants) + "|")
@@ -121,7 +128,10 @@ def render(summary: dict[str, Any], scored: list[dict[str, Any]], queries: list[
                 f"| {qid} | {q_intent.get(qid, '')} | {qtext_short} | " + " | ".join(cells) + " |"
             )
         if len(disagreements) > 25:
-            out.append(f"| _… {len(disagreements) - 25} more rows omitted; see scored.jsonl_ |||" + "|" * len(variants))
+            out.append(
+                f"| _… {len(disagreements) - 25} more rows omitted; see scored.jsonl_ |||"
+                + "|" * len(variants)
+            )
         out.append("")
 
     # ---- Verdict
@@ -133,12 +143,18 @@ def render(summary: dict[str, Any], scored: list[dict[str, Any]], queries: list[
     for v in variants[1:]:
         d = summary["variants"][v]["tool_accuracy"] - base
         deltas.append(f"{v} vs {variants[0]}: {d:+.1%}")
-    out.append(f"- Highest tool accuracy: **{best}** ({_pct(summary['variants'][best]['tool_accuracy'])})")
+    out.append(
+        f"- Highest tool accuracy: **{best}** ({_pct(summary['variants'][best]['tool_accuracy'])})"
+    )
     out.append(f"- Deltas vs {variants[0]}: " + ", ".join(deltas))
     consistency_best = max(variants, key=lambda v: summary["variants"][v]["selection_consistency"])
-    out.append(f"- Most consistent across runs: **{consistency_best}** ({_pct(summary['variants'][consistency_best]['selection_consistency'])})")
+    out.append(
+        f"- Most consistent across runs: **{consistency_best}** ({_pct(summary['variants'][consistency_best]['selection_consistency'])})"
+    )
     avg_calls_min = min(variants, key=lambda v: summary["variants"][v]["avg_mcp_calls"])
-    out.append(f"- Fewest MCP calls per query: **{avg_calls_min}** ({_fmt(summary['variants'][avg_calls_min]['avg_mcp_calls'])})")
+    out.append(
+        f"- Fewest MCP calls per query: **{avg_calls_min}** ({_fmt(summary['variants'][avg_calls_min]['avg_mcp_calls'])})"
+    )
     out.append("")
     out.append(
         "_Interpretation: a >5pt advantage on tool_accuracy with comparable or "
@@ -151,15 +167,21 @@ def render(summary: dict[str, Any], scored: list[dict[str, Any]], queries: list[
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Render tool-surface eval report")
-    parser.add_argument("--summary", type=Path, default=REPO_ROOT / "results/tool_surface_eval/summary.json")
-    parser.add_argument("--scored", type=Path, default=REPO_ROOT / "results/tool_surface_eval/scored.jsonl")
-    parser.add_argument("--queries", type=Path, default=REPO_ROOT / "eval/tool_surface/queries.jsonl")
+    parser.add_argument(
+        "--summary", type=Path, default=REPO_ROOT / "results/tool_surface_eval/summary.json"
+    )
+    parser.add_argument(
+        "--scored", type=Path, default=REPO_ROOT / "results/tool_surface_eval/scored.jsonl"
+    )
+    parser.add_argument(
+        "--queries", type=Path, default=REPO_ROOT / "eval/tool_surface/queries.jsonl"
+    )
     parser.add_argument("--out", type=Path, default=REPO_ROOT / "docs/eval/tool_surface_eval.md")
     args = parser.parse_args()
 
     summary = json.loads(args.summary.read_text())
-    scored = [json.loads(l) for l in args.scored.read_text().splitlines() if l.strip()]
-    queries = [json.loads(l) for l in args.queries.read_text().splitlines() if l.strip()]
+    scored = [json.loads(ln) for ln in args.scored.read_text().splitlines() if ln.strip()]
+    queries = [json.loads(ln) for ln in args.queries.read_text().splitlines() if ln.strip()]
 
     md = render(summary, scored, queries)
     args.out.parent.mkdir(parents=True, exist_ok=True)

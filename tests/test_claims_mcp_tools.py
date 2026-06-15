@@ -189,9 +189,7 @@ class TestDispatchErrorEnvelopes:
         assert "error" in data
 
     def test_read_paper_claims_unknown_claim_type(self) -> None:
-        out = _handle_read_paper_claims(
-            _NoOpConn(), {"bibcode": "x", "claim_type": "bogus"}
-        )
+        out = _handle_read_paper_claims(_NoOpConn(), {"bibcode": "x", "claim_type": "bogus"})
         data = json.loads(out)
         assert "error" in data
 
@@ -207,9 +205,7 @@ class TestDispatchErrorEnvelopes:
         assert "error" in data
 
     def test_find_claims_non_int_entity_id(self) -> None:
-        out = _handle_find_claims(
-            _NoOpConn(), {"query": "x", "entity_id": "abc"}
-        )
+        out = _handle_find_claims(_NoOpConn(), {"query": "x", "entity_id": "abc"})
         data = json.loads(out)
         assert "error" in data
         assert "entity_id" in data["error"]
@@ -262,9 +258,7 @@ def applied_migration(dsn: str) -> str:
         text=True,
         check=False,
     )
-    assert result.returncode == 0, (
-        f"migration 062 failed to apply: stderr=\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"migration 062 failed to apply: stderr=\n{result.stderr}"
     return dsn
 
 
@@ -278,8 +272,7 @@ def _ensure_test_bibcode(dsn: str) -> str:
             return row[0]
         synthetic = "9999paper_claims_mcp_X"
         cur.execute(
-            "INSERT INTO papers (bibcode) VALUES (%s) "
-            "ON CONFLICT (bibcode) DO NOTHING",
+            "INSERT INTO papers (bibcode) VALUES (%s) " "ON CONFLICT (bibcode) DO NOTHING",
             (synthetic,),
         )
         conn.commit()
@@ -361,9 +354,7 @@ class TestDispatchReadPaperClaims:
     """End-to-end ``_dispatch_tool('read_paper_claims', ...)``."""
 
     @patch("scix.mcp_server._log_query")
-    def test_returns_seeded_rows(
-        self, _mock_log: Any, seeded_claims: dict[str, Any]
-    ) -> None:
+    def test_returns_seeded_rows(self, _mock_log: Any, seeded_claims: dict[str, Any]) -> None:
         import psycopg
 
         dsn = seeded_claims["dsn"]
@@ -397,9 +388,7 @@ class TestDispatchReadPaperClaims:
             assert required_keys <= set(claim.keys()), claim
 
     @patch("scix.mcp_server._log_query")
-    def test_claim_type_filter(
-        self, _mock_log: Any, seeded_claims: dict[str, Any]
-    ) -> None:
+    def test_claim_type_filter(self, _mock_log: Any, seeded_claims: dict[str, Any]) -> None:
         import psycopg
 
         dsn = seeded_claims["dsn"]
@@ -438,14 +427,10 @@ class TestDispatchFindClaims:
         seeded = [c for c in data["claims"] if c["bibcode"] == bibcode]
         # The seed contains exactly one row mentioning "Hubble tension".
         assert len(seeded) >= 1
-        assert any(
-            "Hubble tension" in c["claim_text"] for c in seeded
-        )
+        assert any("Hubble tension" in c["claim_text"] for c in seeded)
 
     @patch("scix.mcp_server._log_query")
-    def test_limit_is_honored(
-        self, _mock_log: Any, seeded_claims: dict[str, Any]
-    ) -> None:
+    def test_limit_is_honored(self, _mock_log: Any, seeded_claims: dict[str, Any]) -> None:
         import psycopg
 
         dsn = seeded_claims["dsn"]

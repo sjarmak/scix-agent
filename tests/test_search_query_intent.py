@@ -137,9 +137,7 @@ class TestOntologyParserWiring:
             captured.setdefault("first", filters)
             return SearchResult(papers=[], total=0, timing_ms={"lexical_ms": 0.1})
 
-        with (
-            patch("scix.search.lexical_search", side_effect=fake_lex),
-        ):
+        with (patch("scix.search.lexical_search", side_effect=fake_lex),):
             hybrid_search(
                 MagicMock(),
                 "dark matter haloes",
@@ -215,9 +213,7 @@ class TestAliasExpansionWiring:
                 timing_ms={"lexical_ms": 0.1},
             )
 
-        with (
-            patch("scix.search.lexical_search", side_effect=fake_lex),
-        ):
+        with (patch("scix.search.lexical_search", side_effect=fake_lex),):
             result = hybrid_search(
                 MagicMock(),
                 "JWST MIRI imaging",
@@ -274,9 +270,7 @@ class TestAliasExpansionWiring:
             lane_queries.append(q)
             return SearchResult(papers=[], total=0, timing_ms={"lexical_ms": 0.1})
 
-        with (
-            patch("scix.search.lexical_search", side_effect=fake_lex),
-        ):
+        with (patch("scix.search.lexical_search", side_effect=fake_lex),):
             hybrid_search(
                 MagicMock(),
                 query,
@@ -297,9 +291,7 @@ class TestAliasExpansionWiring:
             lane_queries.append(q)
             return SearchResult(papers=[], total=0, timing_ms={"lexical_ms": 0.1})
 
-        with (
-            patch("scix.search.lexical_search", side_effect=fake_lex),
-        ):
+        with (patch("scix.search.lexical_search", side_effect=fake_lex),):
             result = hybrid_search(
                 MagicMock(),
                 "dark matter haloes",

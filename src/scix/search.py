@@ -298,8 +298,7 @@ def _resolve_lexical_pool() -> int | None:
         return _LEXICAL_POOL_DEFAULT
     if value <= 0:
         logger.warning(
-            "SCIX_LEXICAL_POOL=%d must be positive (use INF for unbounded); "
-            "falling back to %d",
+            "SCIX_LEXICAL_POOL=%d must be positive (use INF for unbounded); " "falling back to %d",
             value,
             _LEXICAL_POOL_DEFAULT,
         )
@@ -431,9 +430,7 @@ def lexical_search(
         ORDER BY rank DESC
         LIMIT %s
     """
-    params: list[Any] = (
-        [query_text] + filter_params + entity_params + [pool_size, limit]
-    )
+    params: list[Any] = [query_text] + filter_params + entity_params + [pool_size, limit]
 
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(query, params)
@@ -1072,9 +1069,7 @@ def hybrid_search(
         for lane_query in alias_lane_queries:
             try:
                 with conn.transaction():
-                    lane = lexical_search(
-                        conn, lane_query, filters=filters, limit=lexical_limit
-                    )
+                    lane = lexical_search(conn, lane_query, filters=filters, limit=lexical_limit)
             except Exception:
                 logger.warning(
                     "Alias lexical lane failed for %r; continuing", lane_query, exc_info=True

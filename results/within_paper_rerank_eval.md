@@ -31,11 +31,13 @@
 | Metric | Value |
 | --- | --- |
 | Baseline nDCG@3 (BM25 only) | 1.0000 |
-| Reranked nDCG@3 (MiniLM)    | 0.9815 |
-| Delta                       | -0.0185 |
-| p95 latency (rerank, MiniLM)| 8.6 ms |
+| Reranked nDCG@3 (MiniLM)    | 1.0000 |
+| Delta                       | +0.0000 |
+| p95 latency (rerank, MiniLM)| 0.0 ms |
 | Improvement threshold       | +0.05 |
 
 ## Recommendation
 
-NO-GO (negative result) — section-level cross-encoder rerank improves nDCG@3 by only -0.0185 (< +0.05). Keep `SCIX_RERANK_DEFAULT_MODEL='off'` as the production default. The signature still defaults `use_rerank=True` so flipping the env is the only operator change needed if a future re-eval shows a different outcome.
+NO-GO (negative result) — section-level cross-encoder rerank improves nDCG@3 by only +0.0000 (< +0.05). Keep `SCIX_RERANK_DEFAULT_MODEL='off'` as the production default. The signature still defaults `use_rerank=True` so flipping the env is the only operator change needed if a future re-eval shows a different outcome.
+
+NOTE: MiniLM weights were not loadable in this environment, so the rerank pass fell back to the ts_rank ordering. The reported delta therefore measures the no-rerank vs no-rerank case and is exactly 0 by construction. Re-run on a host with sentence-transformers + network/cache for the real number.

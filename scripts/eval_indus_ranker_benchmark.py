@@ -28,7 +28,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Iterable
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("eval_indus_ranker_benchmark")
@@ -121,14 +121,12 @@ class BM25Index:
 def _download(filename: str) -> str:
     from huggingface_hub import hf_hub_download
 
-    return hf_hub_download(
-        BENCHMARK_REPO, filename, repo_type="dataset", revision=BENCHMARK_SHA
-    )
+    return hf_hub_download(BENCHMARK_REPO, filename, repo_type="dataset", revision=BENCHMARK_SHA)
 
 
-def load_benchmark(qrels_split: str) -> tuple[
-    dict[str, dict[str, str]], dict[str, str], dict[str, set[str]]
-]:
+def load_benchmark(
+    qrels_split: str,
+) -> tuple[dict[str, dict[str, str]], dict[str, str], dict[str, set[str]]]:
     """Return (corpus by id, queries by id, qrels: query_id -> {relevant doc ids})."""
     corpus: dict[str, dict[str, str]] = {}
     for line in open(_download("corpus.jsonl")):
@@ -211,7 +209,11 @@ def evaluate(qrels_split: str, max_queries: int | None, out_json: Path) -> int:
         pool_recall.append(recall_at_k(pool, relevant, k=FIRST_STAGE_K))
 
         candidates = [
-            {"bibcode": d, "title": corpus[d]["title"], "abstract_snippet": corpus[d]["text"][:1000]}
+            {
+                "bibcode": d,
+                "title": corpus[d]["title"],
+                "abstract_snippet": corpus[d]["text"][:1000],
+            }
             for d in pool
         ]
         t_r = time.perf_counter()
@@ -230,8 +232,16 @@ def evaluate(qrels_split: str, max_queries: int | None, out_json: Path) -> int:
     def mean(xs: list[float]) -> float:
         return sum(xs) / len(xs)
 
-    bm25_m = StageMetrics("bm25", n, round(mean(bm25_ndcg), 4), round(mean(bm25_mrr), 4), round(mean(pool_recall), 4))
-    rr_m = StageMetrics("bm25+indus_ranker", n, round(mean(rr_ndcg), 4), round(mean(rr_mrr), 4), round(mean(pool_recall), 4))
+    bm25_m = StageMetrics(
+        "bm25", n, round(mean(bm25_ndcg), 4), round(mean(bm25_mrr), 4), round(mean(pool_recall), 4)
+    )
+    rr_m = StageMetrics(
+        "bm25+indus_ranker",
+        n,
+        round(mean(rr_ndcg), 4),
+        round(mean(rr_mrr), 4),
+        round(mean(pool_recall), 4),
+    )
 
     sorted_lat = sorted(rerank_latencies)
     p50 = sorted_lat[len(sorted_lat) // 2] if sorted_lat else 0.0
@@ -242,9 +252,21 @@ def evaluate(qrels_split: str, max_queries: int | None, out_json: Path) -> int:
     passed = ndcg_delta > 0 and mrr_delta > 0
 
     logger.info("=== M2 sanity check (%s, n=%d) ===", qrels_split, n)
-    logger.info("BM25            nDCG@10=%.4f MRR@10=%.4f recall@%d=%.4f", bm25_m.ndcg_10, bm25_m.mrr_10, FIRST_STAGE_K, bm25_m.recall_pool)
+    logger.info(
+        "BM25            nDCG@10=%.4f MRR@10=%.4f recall@%d=%.4f",
+        bm25_m.ndcg_10,
+        bm25_m.mrr_10,
+        FIRST_STAGE_K,
+        bm25_m.recall_pool,
+    )
     logger.info("BM25+INDUS rank nDCG@10=%.4f MRR@10=%.4f", rr_m.ndcg_10, rr_m.mrr_10)
-    logger.info("Δ nDCG@10=%+.4f  Δ MRR@10=%+.4f  rerank p50=%.0fms p95=%.0fms", ndcg_delta, mrr_delta, p50, p95)
+    logger.info(
+        "Δ nDCG@10=%+.4f  Δ MRR@10=%+.4f  rerank p50=%.0fms p95=%.0fms",
+        ndcg_delta,
+        mrr_delta,
+        p50,
+        p95,
+    )
     logger.info("M2 GATE: %s", "PASS — reranker beats BM25" if passed else "FAIL — wiring suspect")
 
     payload = {
@@ -271,7 +293,9 @@ def evaluate(qrels_split: str, max_queries: int | None, out_json: Path) -> int:
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--qrels-split", default="test", choices=["test", "dev"])
-    p.add_argument("--max-queries", type=int, default=None, help="Cap evaluable queries (default: all).")
+    p.add_argument(
+        "--max-queries", type=int, default=None, help="Cap evaluable queries (default: all)."
+    )
     p.add_argument("--out-json", type=Path, default=DEFAULT_OUT_JSON)
     return p.parse_args(list(argv) if argv is not None else None)
 

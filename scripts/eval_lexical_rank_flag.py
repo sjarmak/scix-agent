@@ -136,9 +136,7 @@ SHORT_DOCTYPES: frozenset[str] = frozenset(
 MIN_MEM_AVAILABLE_GIB: float = 6.0
 MAX_PSI_FULL_AVG10: float = 10.0
 PG_UNIT: str = "postgresql@16-main"
-_PSI_PATH = Path(
-    "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/memory.pressure"
-)
+_PSI_PATH = Path("/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/memory.pressure")
 
 # Bound the eval connection. Uncapped ts_rank_cd over the largest match set
 # (~850k rows for "spectroscopy", single-threaded at work_mem=256MB) runs
@@ -181,7 +179,9 @@ def _pg_active() -> bool:
     try:
         out = subprocess.run(
             ["systemctl", "is-active", PG_UNIT],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         return out.stdout.strip() == "active"
     except (OSError, subprocess.SubprocessError):
@@ -205,9 +205,7 @@ def preflight(min_mem_gib: float) -> list[str]:
         reasons.append(f"MemAvailable {mem:.1f}GiB < {min_mem_gib:.0f}GiB floor")
     psi = _psi_full_avg10()
     if psi is not None and psi > MAX_PSI_FULL_AVG10:
-        reasons.append(
-            f"cgroup memory.pressure full avg10 {psi:.1f} > {MAX_PSI_FULL_AVG10:.0f}"
-        )
+        reasons.append(f"cgroup memory.pressure full avg10 {psi:.1f} > {MAX_PSI_FULL_AVG10:.0f}")
     return reasons
 
 
@@ -220,9 +218,16 @@ class FlagQueryResult:
     """Top-20 quality of one (query, flag) pair on the prod corpus."""
 
     __slots__ = (
-        "query", "n_hits", "article_fraction", "short_doc_fraction",
-        "n_seminal", "median_citation", "mean_citation", "top1_citation",
-        "latency_ms", "error",
+        "query",
+        "n_hits",
+        "article_fraction",
+        "short_doc_fraction",
+        "n_seminal",
+        "median_citation",
+        "mean_citation",
+        "top1_citation",
+        "latency_ms",
+        "error",
     )
 
     def __init__(
@@ -337,9 +342,7 @@ def run_flag(
             try:
                 sr = lexical_search(conn, q.query, limit=RETRIEVE_LIMIT)
                 latency_ms = (time.perf_counter() - t0) * 1000.0
-                doctypes = _fetch_doctypes(
-                    conn, [p["bibcode"] for p in sr.papers]
-                )
+                doctypes = _fetch_doctypes(conn, [p["bibcode"] for p in sr.papers])
                 results.append(_score_top20(q.query, sr.papers, doctypes, latency_ms))
             except Exception as exc:  # noqa: BLE001 — record, don't score
                 try:
@@ -350,10 +353,16 @@ def run_flag(
                 logger.warning("flag=%d query=%r failed: %s", flag, q.query, exc)
                 results.append(
                     FlagQueryResult(
-                        query=q.query, n_hits=0, article_fraction=None,
-                        short_doc_fraction=None, n_seminal=0, median_citation=None,
-                        mean_citation=None, top1_citation=None,
-                        latency_ms=latency_ms, error=f"{type(exc).__name__}: {exc}",
+                        query=q.query,
+                        n_hits=0,
+                        article_fraction=None,
+                        short_doc_fraction=None,
+                        n_seminal=0,
+                        median_citation=None,
+                        mean_citation=None,
+                        top1_citation=None,
+                        latency_ms=latency_ms,
+                        error=f"{type(exc).__name__}: {exc}",
                     )
                 )
     finally:
@@ -389,9 +398,7 @@ def aggregate(results: Sequence[FlagQueryResult]) -> dict[str, Any]:
         "median_citation": _mean(
             [r.median_citation for r in scored if r.median_citation is not None]
         ),
-        "mean_citation": _mean(
-            [r.mean_citation for r in scored if r.mean_citation is not None]
-        ),
+        "mean_citation": _mean([r.mean_citation for r in scored if r.mean_citation is not None]),
         "latency_ms_max": max((r.latency_ms for r in results), default=0.0),
     }
 
@@ -411,7 +418,9 @@ def decide(by_flag: dict[int, dict[str, Any]]) -> dict[str, Any]:
             continue
         d = {
             "article_fraction_delta": _delta(agg["article_fraction"], base["article_fraction"]),
-            "short_doc_fraction_delta": _delta(agg["short_doc_fraction"], base["short_doc_fraction"]),
+            "short_doc_fraction_delta": _delta(
+                agg["short_doc_fraction"], base["short_doc_fraction"]
+            ),
             "n_seminal_delta": _delta(agg["n_seminal_mean"], base["n_seminal_mean"]),
             "median_citation_delta": _delta(agg["median_citation"], base["median_citation"]),
         }
@@ -420,7 +429,8 @@ def decide(by_flag: dict[int, dict[str, Any]]) -> dict[str, Any]:
         sem = d["n_seminal_delta"]
         med = d["median_citation_delta"]
         eligible = (
-            af is not None and af > 0.0
+            af is not None
+            and af > 0.0
             and (sem is None or sem >= 0.0)
             and (med is None or med >= 0.0)
         )
@@ -494,8 +504,10 @@ def render_report(payload: dict[str, Any]) -> str:
         )
     lines.append("")
     dec = payload["decision"]
-    lines.append(f"Deltas vs baseline flag {dec['baseline_flag']} "
-                 "(article_frac↑ good, short_frac↓ good, seminal↑ good, med_cit↑ good):")
+    lines.append(
+        f"Deltas vs baseline flag {dec['baseline_flag']} "
+        "(article_frac↑ good, short_frac↓ good, seminal↑ good, med_cit↑ good):"
+    )
     for flag_str, d in sorted(dec["deltas_vs_baseline"].items(), key=lambda kv: int(kv[0])):
         lines.append(
             f"  flag {flag_str}: article {_fmt_pp(d['article_fraction_delta'])}  "
@@ -505,7 +517,9 @@ def render_report(payload: dict[str, Any]) -> str:
         )
     lines.append("")
     rec = dec["recommended_flag"]
-    verdict = f"ADOPT flag {rec}" if rec is not None else f"KEEP flag {BASELINE_FLAG} (negative result)"
+    verdict = (
+        f"ADOPT flag {rec}" if rec is not None else f"KEEP flag {BASELINE_FLAG} (negative result)"
+    )
     lines.append(f"DECISION [{verdict}]: {dec['rationale']}")
     lines.append("=" * 78)
     return "\n".join(lines)
@@ -546,22 +560,42 @@ def _build_parser() -> argparse.ArgumentParser:
         description="ts_rank_cd normalization flag A/B for broad-query lexical quality",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--queries", type=Path, default=Path(DEFAULT_QUERIES),
-                   help="Path to the JSONL query set")
-    p.add_argument("--output", type=Path, default=Path(DEFAULT_OUTPUT),
-                   help="Path to write the JSON results")
-    p.add_argument("--flags", type=_parse_flags, default=list(DEFAULT_FLAGS),
-                   help="Comma-separated ts_rank_cd flags to sweep (must include 32)")
-    p.add_argument("--pool", type=str, default=DEFAULT_POOL,
-                   help="SCIX_LEXICAL_POOL held fixed across flags "
-                        "(INF = rank full match set, isolates ranking from the cap)")
-    p.add_argument("--statement-timeout-ms", type=int,
-                   default=DEFAULT_STATEMENT_TIMEOUT_MS,
-                   help="statement_timeout for the eval connection")
-    p.add_argument("--min-mem-gib", type=float, default=MIN_MEM_AVAILABLE_GIB,
-                   help="Preflight MemAvailable floor; eval refuses below this")
-    p.add_argument("--quiet", action="store_true",
-                   help="Suppress the human-readable report (still writes JSON)")
+    p.add_argument(
+        "--queries", type=Path, default=Path(DEFAULT_QUERIES), help="Path to the JSONL query set"
+    )
+    p.add_argument(
+        "--output", type=Path, default=Path(DEFAULT_OUTPUT), help="Path to write the JSON results"
+    )
+    p.add_argument(
+        "--flags",
+        type=_parse_flags,
+        default=list(DEFAULT_FLAGS),
+        help="Comma-separated ts_rank_cd flags to sweep (must include 32)",
+    )
+    p.add_argument(
+        "--pool",
+        type=str,
+        default=DEFAULT_POOL,
+        help="SCIX_LEXICAL_POOL held fixed across flags "
+        "(INF = rank full match set, isolates ranking from the cap)",
+    )
+    p.add_argument(
+        "--statement-timeout-ms",
+        type=int,
+        default=DEFAULT_STATEMENT_TIMEOUT_MS,
+        help="statement_timeout for the eval connection",
+    )
+    p.add_argument(
+        "--min-mem-gib",
+        type=float,
+        default=MIN_MEM_AVAILABLE_GIB,
+        help="Preflight MemAvailable floor; eval refuses below this",
+    )
+    p.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress the human-readable report (still writes JSON)",
+    )
     return p
 
 
@@ -612,7 +646,9 @@ def main(argv: list[str] | None = None) -> int:
         for flag in flags:
             logger.info(
                 "running flag=%d over %d queries (pool=%s)",
-                flag, len(queries), args.pool,
+                flag,
+                len(queries),
+                args.pool,
             )
             by_flag_results[flag] = run_flag(conn, flag, queries, args.pool)
     finally:
@@ -656,9 +692,7 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
-        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
-    )
+    args.output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     logger.info("results written to %s", args.output)
 
     if not args.quiet:

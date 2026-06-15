@@ -40,6 +40,7 @@ Env:
 Idempotent: set_payload overwrites; re-running a batch applies the same
 values again — safe.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -56,11 +57,13 @@ from qdrant_client.http import models as qm
 
 from scix.db import DEFAULT_DSN
 
+
 # Point IDs in scix_indus_v2_papers_s1 are UUID5s derived from bibcode,
 # matching scripts/qdrant_full_load.py and scripts/qdrant_outbox_sync.py.
 # Must stay byte-identical to both.
 def _bibcode_to_point_id(bibcode: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, bibcode))
+
 
 log = logging.getLogger("backfill_qdrant_filter_fields")
 
@@ -250,19 +253,22 @@ def verify_sample(
         unapplied = {
             b
             for point_id, b in id_to_bibcode.items()
-            if point_id not in got
-            or any(got[point_id].get(k) != v for k, v in expected[b].items())
+            if point_id not in got or any(got[point_id].get(k) != v for k, v in expected[b].items())
         }
         if not unapplied:
-            log.info("verification passed: all %d sampled points carry their payload",
-                     len(expected))
+            log.info(
+                "verification passed: all %d sampled points carry their payload", len(expected)
+            )
             return True
         if time.monotonic() >= deadline:
             log.error(
                 "verification FAILED: %d/%d sampled points missing payload after %.0fs "
                 "(unapplied: %s) — Qdrant acked the writes but did not apply them; "
                 "check the collection's update pipeline before re-running",
-                len(unapplied), len(expected), timeout_s, sorted(unapplied)[:5],
+                len(unapplied),
+                len(expected),
+                timeout_s,
+                sorted(unapplied)[:5],
             )
             return False
         time.sleep(poll_interval_s)
@@ -280,8 +286,12 @@ def main() -> None:
         default=None,
         help="Cap total points processed (pilot mode; omit for full corpus)",
     )
-    ap.add_argument("--call-interval-ms", type=float, default=5.0,
-                    help="Sleep ms between individual set_payload calls within a batch (default: 5)")
+    ap.add_argument(
+        "--call-interval-ms",
+        type=float,
+        default=5.0,
+        help="Sleep ms between individual set_payload calls within a batch (default: 5)",
+    )
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -296,7 +306,10 @@ def main() -> None:
 
     log.info(
         "starting backfill on %s (batch=%d, limit=%s, dry_run=%s)",
-        args.collection, args.batch, args.limit, args.dry_run,
+        args.collection,
+        args.batch,
+        args.limit,
+        args.dry_run,
     )
     ensure_indexes(client, args.collection, dry_run=args.dry_run)
 
@@ -309,7 +322,9 @@ def main() -> None:
     with psycopg.connect(dsn) as conn:
         for rows in stream_pg_batches(conn, batch=args.batch, limit=args.limit):
             attempted = apply_batch(
-                client, args.collection, rows,
+                client,
+                args.collection,
+                rows,
                 dry_run=args.dry_run,
                 call_interval_ms=args.call_interval_ms,
                 samples=samples,
@@ -319,21 +334,23 @@ def main() -> None:
             if batches % 100 == 0:
                 elapsed = time.monotonic() - t0
                 rate = total_attempted / elapsed if elapsed > 0 else 0
-                log.info(
-                    "progress: %d rows in %.1fs (%.0f rows/s)", total_attempted, elapsed, rate
-                )
+                log.info("progress: %d rows in %.1fs (%.0f rows/s)", total_attempted, elapsed, rate)
     elapsed = time.monotonic() - t0
     rate = total_attempted / elapsed if elapsed > 0 else 0
     mode = "dry-run" if args.dry_run else "written"
     log.info(
         "done — %d rows %s in %.1fs (%.0f rows/s)",
-        total_attempted, mode, elapsed, rate,
+        total_attempted,
+        mode,
+        elapsed,
+        rate,
     )
     if total_attempted > 0:
         projected_full = 32_383_535 / rate / 3600 if rate > 0 else float("inf")
         log.info(
             "throughput: %.0f rows/s → full-corpus (32.4M) projected %.1f h at this rate",
-            rate, projected_full,
+            rate,
+            projected_full,
         )
 
     if not args.dry_run and samples:

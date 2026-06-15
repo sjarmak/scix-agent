@@ -62,7 +62,10 @@ def _candidate_oracles(oracle_for_variant: dict[str, Any]) -> list[dict[str, Any
     """The oracle entry for a variant has a primary tool/args plus optional
     alt_ok list of equally-acceptable alternatives. Return the full
     candidate list."""
-    primary = {"tool": oracle_for_variant["tool"], "args_subset": oracle_for_variant.get("args_subset", {})}
+    primary = {
+        "tool": oracle_for_variant["tool"],
+        "args_subset": oracle_for_variant.get("args_subset", {}),
+    }
     out = [primary]
     for alt in oracle_for_variant.get("alt_ok", []):
         if isinstance(alt, str):
@@ -101,9 +104,8 @@ def score_run(run: dict[str, Any], oracle: dict[str, Any]) -> dict[str, Any]:
     tool_correct = any(first["name"] == c["tool"] for c in candidates)
     # Params: only check args against the candidate(s) that matched on tool name
     matching = [c for c in candidates if c["tool"] == first["name"]]
-    params_correct = (
-        tool_correct
-        and any(_args_subset_match(first["input"], c["args_subset"]) for c in matching)
+    params_correct = tool_correct and any(
+        _args_subset_match(first["input"], c["args_subset"]) for c in matching
     )
 
     return {
@@ -167,8 +169,12 @@ def aggregate(scored: list[dict[str, Any]], oracle: dict[str, dict[str, Any]]) -
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Score tool-surface eval runs")
-    parser.add_argument("--runs", type=Path, default=REPO_ROOT / "results/tool_surface_eval/runs.jsonl")
-    parser.add_argument("--queries", type=Path, default=REPO_ROOT / "eval/tool_surface/queries.jsonl")
+    parser.add_argument(
+        "--runs", type=Path, default=REPO_ROOT / "results/tool_surface_eval/runs.jsonl"
+    )
+    parser.add_argument(
+        "--queries", type=Path, default=REPO_ROOT / "eval/tool_surface/queries.jsonl"
+    )
     parser.add_argument("--out-dir", type=Path, default=REPO_ROOT / "results/tool_surface_eval")
     args = parser.parse_args()
 
@@ -185,7 +191,7 @@ def main() -> None:
         }
 
     # Load + score runs
-    runs = [json.loads(l) for l in args.runs.read_text().splitlines() if l.strip()]
+    runs = [json.loads(ln) for ln in args.runs.read_text().splitlines() if ln.strip()]
     scored = [score_run(r, oracle.get(r["query_id"], {})) for r in runs]
 
     args.out_dir.mkdir(parents=True, exist_ok=True)

@@ -61,9 +61,7 @@ class FakeSchema:
     table_totals: dict[str, int] = field(default_factory=dict)
     # Communities breakdown rows: list of (signal, resolution, count).
     # ``signal`` may be None if the signal column is absent.
-    communities_breakdown: list[tuple[str | None, str, int]] = field(
-        default_factory=list
-    )
+    communities_breakdown: list[tuple[str | None, str, int]] = field(default_factory=list)
 
 
 class _FakeCursor:
@@ -89,18 +87,14 @@ class _FakeCursor:
             return
         if "information_schema.tables" in text_norm:
             (candidate_tables,) = params
-            self._result = [
-                (t,) for t in candidate_tables if t in self._schema.tables
-            ]
+            self._result = [(t,) for t in candidate_tables if t in self._schema.tables]
             return
         if "is not null" in text_norm:
             # Parse ``SELECT count(*) FROM "tbl" WHERE "col" IS NOT NULL``.
             parts = text.split('"')
             table = parts[1]
             column = parts[3]
-            self._result = [
-                (self._schema.non_null_counts.get((table, column), 0),)
-            ]
+            self._result = [(self._schema.non_null_counts.get((table, column), 0),)]
             return
         if "select count(*) from" in text_norm:
             parts = text.split('"')
@@ -195,9 +189,7 @@ def test_verify_flags_missing_semantic_migration_and_empty_communities():
     assert "communities table empty: 0 rows (M4 labels not generated)" in problems
 
     # Citation counts are non-zero so no citation-empty problem raised.
-    assert not any(
-        p.startswith("citation community empty") for p in problems
-    )
+    assert not any(p.startswith("citation community empty") for p in problems)
 
 
 def test_verify_healthy_when_full_state_present():
@@ -245,9 +237,7 @@ def test_verify_flags_missing_citation_data():
     conn = _FakeConnection(schema)
     report = verify_module.verify(conn, dsn_redacted="dbname=scix_test")
 
-    citation_problems = [
-        p for p in report.problems if p.startswith("citation community empty")
-    ]
+    citation_problems = [p for p in report.problems if p.startswith("citation community empty")]
     assert len(citation_problems) == 3
 
 
@@ -277,9 +267,7 @@ def test_verify_ignores_missing_paper_communities_table():
     report = verify_module.verify(conn, dsn_redacted="x")
 
     # paper_communities reported absent in tables[], but no problem raised.
-    paper_communities_rows = [
-        t for t in report.tables if t.table == "paper_communities"
-    ]
+    paper_communities_rows = [t for t in report.tables if t.table == "paper_communities"]
     assert paper_communities_rows == [
         verify_module.TableCheck(table="paper_communities", present=False)
     ]
@@ -304,9 +292,7 @@ def test_main_returns_nonzero_on_problems(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(verify_module.psycopg, "connect", lambda dsn, **_kwargs: _ConnCtx())
 
     out_path = tmp_path / "report.json"
-    exit_code = verify_module.main(
-        ["--dsn", "dbname=scix", "--output", str(out_path), "--quiet"]
-    )
+    exit_code = verify_module.main(["--dsn", "dbname=scix", "--output", str(out_path), "--quiet"])
     assert exit_code == 1
     assert out_path.exists()
     payload = json.loads(out_path.read_text())
@@ -344,9 +330,7 @@ def test_main_returns_zero_when_healthy(tmp_path, monkeypatch):
 
     monkeypatch.setattr(verify_module.psycopg, "connect", lambda dsn, **_kwargs: _ConnCtx())
 
-    exit_code = verify_module.main(
-        ["--dsn", "dbname=scix", "--quiet"]
-    )
+    exit_code = verify_module.main(["--dsn", "dbname=scix", "--quiet"])
     assert exit_code == 0
 
 

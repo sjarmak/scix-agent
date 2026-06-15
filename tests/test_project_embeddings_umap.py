@@ -332,11 +332,7 @@ def test_build_points_rejects_unknown_resolution() -> None:
 
 
 def test_serialize_writes_valid_json(tmp_path: Path) -> None:
-    points = (
-        ProjectedPoint(
-            bibcode="a", x=1.0, y=2.0, community_id=0, resolution="coarse"
-        ),
-    )
+    points = (ProjectedPoint(bibcode="a", x=1.0, y=2.0, community_id=0, resolution="coarse"),)
     out = tmp_path / "nested" / "out.json"
     serialize(points, out)
     assert out.exists()

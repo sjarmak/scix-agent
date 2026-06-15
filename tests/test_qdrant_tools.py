@@ -15,6 +15,7 @@ date to validate the retirement contract:
   4. The dispatch path for the retired name returns a clear
      "tool_removed" error.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -95,9 +96,9 @@ class TestExpectedToolSet:
         # any default-hidden tools removed. The retired tool is gone from
         # both groups.
         tools = mcp_server._expected_tool_set()
-        expected = (
-            set(mcp_server.EXPECTED_TOOLS) | set(mcp_server._OPTIONAL_TOOLS)
-        ) - set(mcp_server._HIDDEN_TOOLS)
+        expected = (set(mcp_server.EXPECTED_TOOLS) | set(mcp_server._OPTIONAL_TOOLS)) - set(
+            mcp_server._HIDDEN_TOOLS
+        )
         assert tools == expected
         assert "find_similar_by_examples" not in tools
 
@@ -139,9 +140,9 @@ class TestMCPSelfTest:
     def test_self_test_passes_with_qdrant(self, fake_qdrant):
         status = mcp_server.startup_self_test()
         assert status["ok"] is True
-        expected = (
-            set(mcp_server.EXPECTED_TOOLS) | set(mcp_server._OPTIONAL_TOOLS)
-        ) - set(mcp_server._HIDDEN_TOOLS)
+        expected = (set(mcp_server.EXPECTED_TOOLS) | set(mcp_server._OPTIONAL_TOOLS)) - set(
+            mcp_server._HIDDEN_TOOLS
+        )
         assert status["tool_count"] == len(expected)
         assert "find_similar_by_examples" not in status["tool_names"]
 
@@ -299,15 +300,11 @@ class TestChunkSearchByText:
     def test_returns_chunk_hits_with_snippet_none(self, monkeypatch):
         points = [
             _scored_point(
-                _stub_payload(
-                    bibcode="2023ApJ...111A", chunk_id=10, section_idx=2
-                ),
+                _stub_payload(bibcode="2023ApJ...111A", chunk_id=10, section_idx=2),
                 score=0.91,
             ),
             _scored_point(
-                _stub_payload(
-                    bibcode="2023ApJ...222B", chunk_id=20, section_idx=0
-                ),
+                _stub_payload(bibcode="2023ApJ...222B", chunk_id=20, section_idx=0),
                 score=0.83,
             ),
         ]

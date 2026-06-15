@@ -41,9 +41,9 @@ _REPO_ROOT: Path = Path(__file__).resolve().parent.parent.parent
 _SDS_PATH: Path = _REPO_ROOT / "scripts" / "scix_deep_search.py"
 
 _spec = importlib.util.spec_from_file_location("scix_deep_search", _SDS_PATH)
-assert _spec is not None and _spec.loader is not None, (
-    f"could not load scix_deep_search from {_SDS_PATH}"
-)
+assert (
+    _spec is not None and _spec.loader is not None
+), f"could not load scix_deep_search from {_SDS_PATH}"
 _sds = importlib.util.module_from_spec(_spec)
 sys.modules.setdefault("scix_deep_search", _sds)
 _spec.loader.exec_module(_sds)
@@ -67,9 +67,7 @@ class MockDispatcher:
         self.last_prompt: str | None = None
         self.last_max_turns: int | None = None
 
-    async def __call__(
-        self, prompt: str, max_turns: int
-    ) -> AsyncIterator[dict[str, Any]]:
+    async def __call__(self, prompt: str, max_turns: int) -> AsyncIterator[dict[str, Any]]:
         self.last_prompt = prompt
         self.last_max_turns = max_turns
         for ev in self._events:
@@ -114,9 +112,7 @@ def run_flagship(
 
     def _run(question: str, fixture: dict[str, Any]):
         if not mock_mode_enabled:
-            pytest.skip(
-                "SCIX_FLAGSHIP_MOCK=0; live runs are operator-triggered"
-            )
+            pytest.skip("SCIX_FLAGSHIP_MOCK=0; live runs are operator-triggered")
         events = fixture["events"]
         dispatcher = MockDispatcher(events)
         return sds_module.run_deep_search(
@@ -199,9 +195,7 @@ def assert_all_claims_grounded(
     finally:
         citation_grounded.set_embedder(None)
 
-    assert report.grounded, (
-        f"ungrounded sentences found in answer: {list(report.unmatched)}"
-    )
+    assert report.grounded, f"ungrounded sentences found in answer: {list(report.unmatched)}"
 
 
 __all__ = [

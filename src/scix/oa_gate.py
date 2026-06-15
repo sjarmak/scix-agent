@@ -45,13 +45,9 @@ def is_oa_or_preprint(
     wrap), so a paper with both fields NULL is considered closed-access.
     """
     if property_ is not None and not isinstance(property_, list):
-        raise TypeError(
-            f"property_ must be list[str] or None, got {type(property_).__name__}"
-        )
+        raise TypeError(f"property_ must be list[str] or None, got {type(property_).__name__}")
     if arxiv_class is not None and not isinstance(arxiv_class, list):
-        raise TypeError(
-            f"arxiv_class must be list[str] or None, got {type(arxiv_class).__name__}"
-        )
+        raise TypeError(f"arxiv_class must be list[str] or None, got {type(arxiv_class).__name__}")
 
     has_openaccess = property_ is not None and "OPENACCESS" in property_
     has_arxiv_class = arxiv_class is not None and len(arxiv_class) > 0

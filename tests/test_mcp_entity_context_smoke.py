@@ -428,7 +428,8 @@ def _prod_has_real_jwst_relationships() -> bool:
     """Return True when prod has a JWST entity with has_instrument edges."""
     try:
         with psycopg.connect(_PROD_DSN_FOR_READONLY) as conn, conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT EXISTS (
                     SELECT 1
                       FROM entities e
@@ -437,7 +438,8 @@ def _prod_has_real_jwst_relationships() -> bool:
                        AND er.predicate = 'has_instrument'
                      LIMIT 1
                 )
-                """)
+                """
+            )
             row = cur.fetchone()
             return bool(row and row[0])
     except psycopg.Error:
@@ -463,13 +465,15 @@ def test_prod_jwst_returns_instruments_as_has_instrument_relationships() -> None
     """
     with psycopg.connect(_PROD_DSN_FOR_READONLY) as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT id FROM entities
                  WHERE canonical_name = 'James Webb Space Telescope'
                    AND entity_type = 'mission'
                  ORDER BY id
                  LIMIT 1
-                """)
+                """
+            )
             row = cur.fetchone()
         assert row is not None, "expected a JWST mission entity on prod"
         jwst_id = row[0]

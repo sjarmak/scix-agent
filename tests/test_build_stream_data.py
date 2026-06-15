@@ -168,7 +168,11 @@ def test_load_labels_parses_compute_community_labels_schema(tmp_path: Path) -> N
             {
                 "resolution": "coarse",
                 "communities": [
-                    {"community_id": 0, "n_sampled": 100, "terms": ["energy", "heat", "thermal", "x", "y"]},
+                    {
+                        "community_id": 0,
+                        "n_sampled": 100,
+                        "terms": ["energy", "heat", "thermal", "x", "y"],
+                    },
                     {"community_id": 1, "n_sampled": 50, "terms": []},  # filtered out
                     {"community_id": 2, "terms": ["plant", "soil", "water"]},
                 ],

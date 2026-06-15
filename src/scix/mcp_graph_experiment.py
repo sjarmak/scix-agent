@@ -32,9 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 _DEFAULT_SNAPSHOT = Path(
-    os.environ.get(
-        "SCIX_GRAPH_EXP_SNAPSHOT", "data/graph_experiment/astronomy_1hop.pkl.gz"
-    )
+    os.environ.get("SCIX_GRAPH_EXP_SNAPSHOT", "data/graph_experiment/astronomy_1hop.pkl.gz")
 )
 _DEFAULT_TRACE_DIR = Path(
     os.environ.get("SCIX_GRAPH_EXP_TRACE_DIR", "results/graph_experiment_traces")
@@ -249,9 +247,7 @@ def _build_server():
         ]
 
     @server.call_tool()
-    async def call_tool_handler(
-        name: str, arguments: dict[str, Any]
-    ) -> list[TextContent]:
+    async def call_tool_handler(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         trace = _ServerState.trace()
         with trace.record(name, arguments) as ev:
             payload = _dispatch(name, arguments)

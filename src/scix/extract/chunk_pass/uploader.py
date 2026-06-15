@@ -15,6 +15,7 @@ Idempotency is structural: the point id is a stable hash of
 ``(bibcode, parser_version, chunk_id)``, so re-uploading the same chunk
 overwrites the existing point — never duplicates it.
 """
+
 from __future__ import annotations
 
 import logging
@@ -113,9 +114,7 @@ def upsert_chunks(
     zipped index-wise into one ``PointStruct`` per chunk.
     """
     if qm is None:
-        raise RuntimeError(
-            "qdrant-client is not installed — install it via the 'search' extra"
-        )
+        raise RuntimeError("qdrant-client is not installed — install it via the 'search' extra")
     if not (len(chunks) == len(vectors) == len(payloads)):
         raise ValueError(
             "chunks, vectors, and payloads must all have the same length "

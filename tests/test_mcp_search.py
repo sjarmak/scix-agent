@@ -107,10 +107,7 @@ class _ReverseStubReranker:
         type(self).constructed.append(model_name)
 
     def __call__(self, query: str, papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [
-            {**p, "rerank_score": float(idx)}
-            for idx, p in enumerate(reversed(papers))
-        ]
+        return [{**p, "rerank_score": float(idx)} for idx, p in enumerate(reversed(papers))]
 
 
 @pytest.fixture
@@ -151,9 +148,7 @@ def test_default_env_off_passes_no_reranker(monkeypatch: pytest.MonkeyPatch) -> 
     data = json.loads(result_json)
     assert data["total"] == 5
     # Order is the un-reranked candidate ordering.
-    assert [p["bibcode"] for p in data["papers"]] == [
-        c["bibcode"] for c in _FIXTURE_CANDIDATES[:5]
-    ]
+    assert [p["bibcode"] for p in data["papers"]] == [c["bibcode"] for c in _FIXTURE_CANDIDATES[:5]]
 
 
 def test_use_rerank_false_skips_reranker(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -225,9 +220,7 @@ def test_top_k_above_20_skips_rerank(monkeypatch: pytest.MonkeyPatch) -> None:
     """AC6: limit > 20 bypasses the reranker even when a model is configured."""
     monkeypatch.setenv("SCIX_RERANK_DEFAULT_MODEL", "minilm")
     # Provide 30 fixtures so limit=25 has room.
-    candidates = [
-        {"bibcode": f"2024ApJ...{i:03d}A", "title": f"Paper {i}"} for i in range(30)
-    ]
+    candidates = [{"bibcode": f"2024ApJ...{i:03d}A", "title": f"Paper {i}"} for i in range(30)]
     stub_hybrid = _make_hybrid_stub(candidates=candidates)
     mock_conn = MagicMock()
 

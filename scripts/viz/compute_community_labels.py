@@ -153,7 +153,9 @@ def run(config: Config) -> dict:
     # percentage that's expected to yield >= samples_per_community per bucket.
     # With 32M rows and 20 coarse communities, 0.25% yields ~80K rows total
     # ~~ 4000/community, plenty of headroom.
-    sample_pct = 0.25 if config.resolution == "coarse" else (1.0 if config.resolution == "medium" else 3.0)
+    sample_pct = (
+        0.25 if config.resolution == "coarse" else (1.0 if config.resolution == "medium" else 3.0)
+    )
     select_cols = "p.title, p.abstract" if config.use_abstract else "p.title, ''"
     buckets: dict[int, list[tuple[str, str | None]]] = {}
 

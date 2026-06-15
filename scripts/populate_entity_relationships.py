@@ -81,14 +81,16 @@ class SourceStats:
 # ---------------------------------------------------------------------------
 
 
-_INSERT_SQL = sql.SQL("""
+_INSERT_SQL = sql.SQL(
+    """
     INSERT INTO entity_relationships (
         subject_entity_id, predicate, object_entity_id,
         source, harvest_run_id, confidence, evidence
     )
     VALUES (%s, %s, %s, %s, %s, %s, %s)
     ON CONFLICT (subject_entity_id, predicate, object_entity_id) DO NOTHING
-    """)
+    """
+)
 
 
 def bulk_insert_edges(
@@ -148,14 +150,16 @@ def populate_gcmd(conn: psycopg.Connection, *, harvest_run_id: int) -> SourceSta
     """Extract and insert GCMD parent_of edges."""
     logger.info("gcmd: loading entities with gcmd_hierarchy...")
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT id, canonical_name,
                    properties->>'gcmd_scheme' AS scheme,
                    properties->>'gcmd_hierarchy' AS hierarchy
               FROM entities
              WHERE source = 'gcmd'
                AND properties ? 'gcmd_hierarchy'
-            """)
+            """
+        )
         rows = cur.fetchall()
 
     # Build (canonical_name, scheme) -> id lookup from the same set.
@@ -191,13 +195,15 @@ def populate_spase(conn: psycopg.Connection, *, harvest_run_id: int) -> SourceSt
     """Extract SPASE ObservedRegion parent_of edges."""
     logger.info("spase: loading ObservedRegion entities...")
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT id, canonical_name
               FROM entities
              WHERE source = 'spase'
                AND entity_type = 'observable'
                AND properties->>'spase_list' = 'ObservedRegion'
-            """)
+            """
+        )
         rows = cur.fetchall()
 
     by_name = {canonical: entity_id for entity_id, canonical in rows}
@@ -372,23 +378,27 @@ def populate_curated_flagship(conn: psycopg.Connection, *, harvest_run_id: int) 
     logger.info("curated_flagship: loading flagship missions and known instruments...")
     with conn.cursor() as cur:
         # Flagship missions live under source='curated_flagship_v1'
-        cur.execute("""
+        cur.execute(
+            """
             SELECT canonical_name, id FROM entities
              WHERE source = 'curated_flagship_v1'
                AND entity_type = 'mission'
-            """)
+            """
+        )
         missions_by_name = {name: eid for name, eid in cur.fetchall()}
 
         # Instruments can come from any source (GCMD, AAS, SPASE) — pick
         # the first id per canonical_name.  We don't try to
         # disambiguate because the curated table uses canonical short
         # names that should be unique across the flagship suite.
-        cur.execute("""
+        cur.execute(
+            """
             SELECT DISTINCT ON (canonical_name) canonical_name, id
               FROM entities
              WHERE entity_type = 'instrument'
              ORDER BY canonical_name, id
-            """)
+            """
+        )
         instruments_by_name = {name: eid for name, eid in cur.fetchall()}
 
     edges = list(extract_curated_flagship_edges(missions_by_name, instruments_by_name))
@@ -421,14 +431,16 @@ def populate_vizier(conn: psycopg.Connection, *, harvest_run_id: int) -> SourceS
     """
     logger.info("vizier: loading dataset entities with external ids...")
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT e.id, ei.external_id
               FROM entities e
               JOIN entity_identifiers ei ON ei.entity_id = e.id
              WHERE e.source = 'vizier'
                AND e.entity_type = 'dataset'
                AND ei.id_scheme = 'vizier'
-            """)
+            """
+        )
         rows = cur.fetchall()
 
     edges, catalog_names = extract_vizier_catalog_edges(rows)

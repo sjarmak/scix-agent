@@ -14,6 +14,7 @@ Env:
     QDRANT_URL   default http://127.0.0.1:6333
     SCIX_DSN     Postgres DSN
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,6 +36,7 @@ VECTOR_DIM = 768
 def bibcode_to_point_id(bibcode: str) -> int:
     """Stable 63-bit int derived from bibcode (Qdrant accepts int or UUID)."""
     import hashlib
+
     h = hashlib.blake2b(bibcode.encode("utf-8"), digest_size=8).digest()
     return struct.unpack(">Q", h)[0] >> 1  # keep positive
 
@@ -128,27 +130,42 @@ def stream_rows(conn, limit: int, batch: int) -> Iterator[list[dict]]:
         cur.execute(sql)
         buf: list[dict] = []
         for row in cur:
-            (bibcode, title, year, doctype, first_author, arxiv_class,
-             bibstem, citation_count, is_retracted, pagerank, sem_c, sem_m, vec_text) = row
+            (
+                bibcode,
+                title,
+                year,
+                doctype,
+                first_author,
+                arxiv_class,
+                bibstem,
+                citation_count,
+                is_retracted,
+                pagerank,
+                sem_c,
+                sem_m,
+                vec_text,
+            ) = row
             # pgvector `::text` serializes as "[0.1,0.2,...]"
             vec = [float(x) for x in vec_text.strip("[]").split(",")]
             if len(vec) != VECTOR_DIM:
                 continue
-            buf.append({
-                "bibcode": bibcode,
-                "title": title,
-                "year": int(year) if year is not None else None,
-                "doctype": doctype,
-                "first_author": first_author,
-                "arxiv_class": list(arxiv_class) if arxiv_class else [],
-                "bibstem": list(bibstem) if bibstem else [],
-                "citation_count": int(citation_count) if citation_count is not None else 0,
-                "is_retracted": bool(is_retracted),
-                "pagerank": float(pagerank) if pagerank is not None else None,
-                "community_semantic_coarse": int(sem_c) if sem_c is not None else None,
-                "community_semantic_medium": int(sem_m) if sem_m is not None else None,
-                "_vector": vec,
-            })
+            buf.append(
+                {
+                    "bibcode": bibcode,
+                    "title": title,
+                    "year": int(year) if year is not None else None,
+                    "doctype": doctype,
+                    "first_author": first_author,
+                    "arxiv_class": list(arxiv_class) if arxiv_class else [],
+                    "bibstem": list(bibstem) if bibstem else [],
+                    "citation_count": int(citation_count) if citation_count is not None else 0,
+                    "is_retracted": bool(is_retracted),
+                    "pagerank": float(pagerank) if pagerank is not None else None,
+                    "community_semantic_coarse": int(sem_c) if sem_c is not None else None,
+                    "community_semantic_medium": int(sem_m) if sem_m is not None else None,
+                    "_vector": vec,
+                }
+            )
             if len(buf) >= batch:
                 yield buf
                 buf = []
@@ -161,11 +178,13 @@ def rows_to_points(rows: list[dict]) -> list[qm.PointStruct]:
     for r in rows:
         vec = r.pop("_vector")
         payload = {k: v for k, v in r.items() if v is not None}
-        points.append(qm.PointStruct(
-            id=bibcode_to_point_id(r["bibcode"]),
-            vector={VECTOR_NAME: vec},
-            payload=payload,
-        ))
+        points.append(
+            qm.PointStruct(
+                id=bibcode_to_point_id(r["bibcode"]),
+                vector={VECTOR_NAME: vec},
+                payload=payload,
+            )
+        )
     return points
 
 

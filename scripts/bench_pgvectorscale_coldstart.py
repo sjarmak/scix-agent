@@ -95,6 +95,7 @@ DEFAULT_INDEXES: tuple[str, ...] = (
 # DSN safety (mirrors build_hnsw_baseline.assert_pilot_dsn)
 # ---------------------------------------------------------------------------
 
+
 def assert_pilot_dsn(dsn: str) -> None:
     """Raise ValueError if ``dsn`` points at a production database.
 
@@ -104,9 +105,7 @@ def assert_pilot_dsn(dsn: str) -> None:
     'refuse' so callers that grep for either substring work.
     """
     if not dsn or not dsn.strip():
-        raise ValueError(
-            "Empty DSN — refuse to run without an explicit pilot DSN."
-        )
+        raise ValueError("Empty DSN — refuse to run without an explicit pilot DSN.")
     try:
         params = conninfo_to_dict(dsn)
     except psycopg.ProgrammingError as exc:
@@ -124,6 +123,7 @@ def assert_pilot_dsn(dsn: str) -> None:
 # Pure helpers (no DB required) — testable in isolation.
 # ---------------------------------------------------------------------------
 
+
 def compute_cold_warm_ratio(cold_ms_list: list[float], warm_p50_ms: float) -> float:
     """Return ``cold_ms_list[0] / warm_p50_ms``.
 
@@ -133,9 +133,7 @@ def compute_cold_warm_ratio(cold_ms_list: list[float], warm_p50_ms: float) -> fl
     if not cold_ms_list:
         raise ValueError("cold_ms_list must contain at least one measurement")
     if warm_p50_ms <= 0:
-        raise ValueError(
-            f"warm_p50_ms must be > 0 to compute a ratio, got {warm_p50_ms!r}"
-        )
+        raise ValueError(f"warm_p50_ms must be > 0 to compute a ratio, got {warm_p50_ms!r}")
     return float(cold_ms_list[0]) / float(warm_p50_ms)
 
 
@@ -176,9 +174,7 @@ def build_query_sql() -> str:
     )
 
 
-def summarise_index_results(
-    cold_ms: list[float], warm_ms: list[float]
-) -> dict[str, Any]:
+def summarise_index_results(cold_ms: list[float], warm_ms: list[float]) -> dict[str, Any]:
     """Compute warm p50/p95 and the cold-vs-warm ratio for one index."""
     warm_p50 = percentile(warm_ms, 50.0)
     warm_p95 = percentile(warm_ms, 95.0)
@@ -186,15 +182,14 @@ def summarise_index_results(
         "cold_query_latencies_ms": [round(float(x), 3) for x in cold_ms],
         "warm_p50_ms": round(float(warm_p50), 3),
         "warm_p95_ms": round(float(warm_p95), 3),
-        "cold_warm_ratio": round(
-            compute_cold_warm_ratio(cold_ms, warm_p50), 3
-        ),
+        "cold_warm_ratio": round(compute_cold_warm_ratio(cold_ms, warm_p50), 3),
     }
 
 
 # ---------------------------------------------------------------------------
 # DB helpers
 # ---------------------------------------------------------------------------
+
 
 def _sample_halfvec(conn: psycopg.Connection) -> str | None:
     """Fetch one indus embedding cast to text for use as the query vector."""
@@ -224,9 +219,7 @@ def _force_index(conn: psycopg.Connection, index_name: str) -> None:
         _ = index_name  # recorded in output; no direct pin available
 
 
-def _run_query_once(
-    conn: psycopg.Connection, qvec: str
-) -> float:
+def _run_query_once(conn: psycopg.Connection, qvec: str) -> float:
     """Execute one k-NN query and return wall-clock latency in ms."""
     sql = build_query_sql()
     t0 = time.perf_counter()
@@ -244,9 +237,7 @@ def measure_index(
     The caller is responsible for ensuring Postgres has been restarted before
     the first call of this function for a given run.
     """
-    logger.info(
-        "Measuring index %s (cold=%d, warm=%d)", index_name, n_cold, n_warm
-    )
+    logger.info("Measuring index %s (cold=%d, warm=%d)", index_name, n_cold, n_warm)
     with psycopg.connect(dsn, autocommit=True) as conn:
         qvec = _sample_halfvec(conn)
         if qvec is None:
@@ -281,6 +272,7 @@ def measure_index(
 # Optional environment metadata (best-effort import of pgvs_bench_env).
 # ---------------------------------------------------------------------------
 
+
 def _capture_env_best_effort(dsn: str) -> dict[str, Any]:
     """Call ``scripts.pgvs_bench_env.capture_env`` if importable; else {}.
 
@@ -305,6 +297,7 @@ def _capture_env_best_effort(dsn: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Result writers
 # ---------------------------------------------------------------------------
+
 
 def build_result_document(
     indexes: list[dict[str, Any]],
@@ -353,8 +346,7 @@ def write_markdown(path: Path, payload: dict[str, Any]) -> None:
     lines.append(f"- timestamp: `{payload.get('timestamp', '')}`")
     lines.append(f"- dsn: `{payload.get('dsn', '')}`")
     lines.append(
-        f"- n_cold = {payload.get('n_cold', N_COLD)}, "
-        f"n_warm = {payload.get('n_warm', N_WARM)}"
+        f"- n_cold = {payload.get('n_cold', N_COLD)}, " f"n_warm = {payload.get('n_warm', N_WARM)}"
     )
     if payload.get("dry_run"):
         lines.append("- **DRY RUN** — no database queries were executed.")
@@ -365,9 +357,7 @@ def write_markdown(path: Path, payload: dict[str, Any]) -> None:
         "| Index | Cold q1 (ms) | Cold q10 (ms) | Warm p50 (ms) | "
         "Warm p95 (ms) | Cold q1 / Warm p50 |"
     )
-    lines.append(
-        "| --- | ---: | ---: | ---: | ---: | ---: |"
-    )
+    lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
     for entry in payload.get("indexes", []):
         colds = entry.get("cold_query_latencies_ms") or []
         cold_q1 = colds[0] if colds else float("nan")
@@ -405,6 +395,7 @@ def _fmt(v: Any) -> str:
 # ---------------------------------------------------------------------------
 # Dry-run shell
 # ---------------------------------------------------------------------------
+
 
 def dry_run_indexes(index_names: list[str]) -> list[dict[str, Any]]:
     """Return zero-metric per-index entries with schema-complete keys."""
@@ -461,10 +452,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--indexes",
         nargs="+",
         default=list(DEFAULT_INDEXES),
-        help=(
-            "Names of indexes to benchmark (space-separated). "
-            "Default: %(default)s"
-        ),
+        help=("Names of indexes to benchmark (space-separated). " "Default: %(default)s"),
     )
     parser.add_argument(
         "--out-json",
@@ -514,9 +502,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         logger.info("DRY RUN — no Postgres queries will be executed.")
         indexes = dry_run_indexes(list(args.indexes))
-        payload = build_result_document(
-            indexes, dsn=args.dsn, env={}, dry_run=True
-        )
+        payload = build_result_document(indexes, dsn=args.dsn, env={}, dry_run=True)
         write_json(args.out_json, payload)
         write_markdown(args.out_md, payload)
         return 0
@@ -538,9 +524,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         results.append(entry)
 
-    payload = build_result_document(
-        results, dsn=args.dsn, env=env, dry_run=False
-    )
+    payload = build_result_document(results, dsn=args.dsn, env=env, dry_run=False)
     write_json(args.out_json, payload)
     write_markdown(args.out_md, payload)
     return 0

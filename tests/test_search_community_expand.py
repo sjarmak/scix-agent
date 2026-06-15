@@ -156,9 +156,7 @@ class TestCommunityExpandSearch:
         papers_cur = _make_cursor([{"fetchall": _PAPER_ROWS}])
         conn = _make_conn([seed_count_cur, neighbors_cur, papers_cur])
 
-        result = community_expand_search(
-            conn, seed_entity_id=999, top_k=20, min_cooccurrence=2
-        )
+        result = community_expand_search(conn, seed_entity_id=999, top_k=20, min_cooccurrence=2)
 
         assert isinstance(result, SearchResult)
         assert result.total == len(_PAPER_ROWS)
@@ -287,9 +285,7 @@ class TestCommunityExpandSearch:
         papers_cur = _make_cursor([{"fetchall": _PAPER_ROWS}])
         conn = _make_conn([seed_count_cur, neighbors_cur, papers_cur])
 
-        result = community_expand_search(
-            conn, seed_entity_id=999, seed_paper_cap=5_000
-        )
+        result = community_expand_search(conn, seed_entity_id=999, seed_paper_cap=5_000)
 
         assert result.metadata["truncated_seed_papers"] is True
         assert result.metadata["seed_paper_count"] == 7_500
@@ -351,8 +347,7 @@ class TestCommunityExpandSearch:
         # The list of allowed types must show up in the params for the same query.
         neighbors_params = _captured_params(neighbors_cur)
         assert any(
-            isinstance(p, list)
-            and set(p) == {"instrument", "mission", "observatory"}
+            isinstance(p, list) and set(p) == {"instrument", "mission", "observatory"}
             for p in neighbors_params
         )
 

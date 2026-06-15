@@ -51,6 +51,7 @@ DSN = os.environ.get("SCIX_DSN", "dbname=scix")
 # Result types
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class ScenarioResult:
     """Immutable result of a single test scenario."""
@@ -81,6 +82,7 @@ class IngestStats:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _count(conn: psycopg.Connection, table: str) -> int:
     with conn.cursor() as cur:
@@ -132,17 +134,18 @@ def _ann_query(conn: psycopg.Connection) -> tuple[bool, float]:
 # Setup / cleanup
 # ---------------------------------------------------------------------------
 
+
 def setup_test_tables(conn: psycopg.Connection, base_rows: int, ingest_rows: int) -> None:
     """Create test table with base_rows and staging table with ingest_rows."""
-    logger.info("Setting up: %d base + %d ingest rows from paper_embeddings (indus)", base_rows, ingest_rows)
+    logger.info(
+        "Setting up: %d base + %d ingest rows from paper_embeddings (indus)", base_rows, ingest_rows
+    )
 
     conn.execute(f"DROP TABLE IF EXISTS {TABLE_INGEST} CASCADE")
     conn.execute(f"DROP TABLE IF EXISTS {TABLE} CASCADE")
 
     # Main test table — base rows only
-    conn.execute(
-        f"CREATE TABLE {TABLE} (bibcode text NOT NULL, embedding vector(768) NOT NULL)"
-    )
+    conn.execute(f"CREATE TABLE {TABLE} (bibcode text NOT NULL, embedding vector(768) NOT NULL)")
     conn.execute(
         f"INSERT INTO {TABLE} (bibcode, embedding) "
         f"SELECT bibcode, embedding FROM paper_embeddings "
@@ -181,6 +184,7 @@ def cleanup(conn: psycopg.Connection) -> None:
 # ---------------------------------------------------------------------------
 # HNSW build
 # ---------------------------------------------------------------------------
+
 
 def _build_hnsw(workers: int | None, use_concurrently: bool = False) -> float:
     """Build HNSW index. Returns wall-clock seconds."""
@@ -225,6 +229,7 @@ def _build_hnsw_thread(workers: int, use_concurrently: bool, result: dict[str, A
 # Concurrent COPY-based ingestion (matches embed_fast.py pattern)
 # ---------------------------------------------------------------------------
 
+
 def _concurrent_ingest(batch_size: int, stats: IngestStats) -> None:
     """INSERT rows from staging into test table in batches (simulates COPY pipeline)."""
     conn = get_connection(DSN)
@@ -246,7 +251,9 @@ def _concurrent_ingest(batch_size: int, stats: IngestStats) -> None:
                 conn.commit()
                 stats.rows_inserted += inserted
                 offset += batch_size
-                logger.info("Ingested batch: +%d (total: %d/%d)", inserted, stats.rows_inserted, total)
+                logger.info(
+                    "Ingested batch: +%d (total: %d/%d)", inserted, stats.rows_inserted, total
+                )
             except Exception as e:
                 conn.rollback()
                 err = str(e)
@@ -267,6 +274,7 @@ def _concurrent_ingest(batch_size: int, stats: IngestStats) -> None:
 # ---------------------------------------------------------------------------
 # Scenarios
 # ---------------------------------------------------------------------------
+
 
 def scenario_serial(conn: psycopg.Connection) -> ScenarioResult:
     """Scenario 1: Serial HNSW build, no concurrent writes."""
@@ -332,9 +340,7 @@ def scenario_parallel_concurrent(
 
     # Remove any previously ingested rows
     with conn.cursor() as cur:
-        cur.execute(
-            f"DELETE FROM {TABLE} t USING {TABLE_INGEST} s WHERE t.bibcode = s.bibcode"
-        )
+        cur.execute(f"DELETE FROM {TABLE} t USING {TABLE_INGEST} s WHERE t.bibcode = s.bibcode")
     conn.commit()
     _drop_index(conn)
 
@@ -391,6 +397,7 @@ def scenario_parallel_concurrent(
 # Report
 # ---------------------------------------------------------------------------
 
+
 def print_report(results: list[ScenarioResult]) -> dict[str, Any]:
     """Print summary and return JSON-serializable dict."""
     print("\n" + "=" * 72)
@@ -418,19 +425,21 @@ def print_report(results: list[ScenarioResult]) -> dict[str, Any]:
             for e in r.ingest_errors[:5]:
                 print(f"    - {e[:120]}")
 
-        report["scenarios"].append({
-            "name": r.name,
-            "build_seconds": r.build_seconds,
-            "rows_before": r.rows_before,
-            "rows_after": r.rows_after,
-            "ingest_seconds": r.ingest_seconds,
-            "ingest_rows": r.ingest_rows,
-            "deadlocks": r.deadlocks,
-            "index_valid": r.index_valid,
-            "ann_query_ok": r.ann_query_ok,
-            "ann_latency_ms": r.ann_latency_ms,
-            "errors": r.ingest_errors,
-        })
+        report["scenarios"].append(
+            {
+                "name": r.name,
+                "build_seconds": r.build_seconds,
+                "rows_before": r.rows_before,
+                "rows_after": r.rows_after,
+                "ingest_seconds": r.ingest_seconds,
+                "ingest_rows": r.ingest_rows,
+                "deadlocks": r.deadlocks,
+                "index_valid": r.index_valid,
+                "ann_query_ok": r.ann_query_ok,
+                "ann_latency_ms": r.ann_latency_ms,
+                "errors": r.ingest_errors,
+            }
+        )
 
     # Speedup comparison
     if len(results) >= 2 and results[0].build_seconds > 0:
@@ -472,6 +481,7 @@ def print_report(results: list[ScenarioResult]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Stress-test parallel HNSW rebuild")

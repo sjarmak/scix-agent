@@ -82,9 +82,7 @@ def iter_paper_batches(
     while True:
         if max_papers is not None and n_yielded >= max_papers:
             return
-        remaining = (
-            None if max_papers is None else max_papers - n_yielded
-        )
+        remaining = None if max_papers is None else max_papers - n_yielded
         chunk = batch_size if remaining is None else min(batch_size, remaining)
 
         sql_text = (

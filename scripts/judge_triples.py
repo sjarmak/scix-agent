@@ -144,31 +144,45 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Score (query, paper) triples via the in-domain researcher persona."
     )
     parser.add_argument(
-        "--in", dest="input_path", type=Path, required=True,
+        "--in",
+        dest="input_path",
+        type=Path,
+        required=True,
         help="Input JSONL with {query, bibcode, paper_snippet} rows.",
     )
     parser.add_argument(
-        "--out", dest="output_path", type=Path, required=True,
+        "--out",
+        dest="output_path",
+        type=Path,
+        required=True,
         help="Output JSONL with {query, bibcode, score, reason} rows.",
     )
     parser.add_argument(
-        "--concurrency", type=int, default=DEFAULT_MAX_CONCURRENCY,
+        "--concurrency",
+        type=int,
+        default=DEFAULT_MAX_CONCURRENCY,
         help=f"Max parallel subagent calls (default {DEFAULT_MAX_CONCURRENCY}).",
     )
     parser.add_argument(
-        "--max-retries", type=int, default=DEFAULT_MAX_RETRIES,
+        "--max-retries",
+        type=int,
+        default=DEFAULT_MAX_RETRIES,
         help=f"Retry budget per triple (default {DEFAULT_MAX_RETRIES}).",
     )
     parser.add_argument(
-        "--stub", action="store_true",
+        "--stub",
+        action="store_true",
         help="Use the deterministic StubDispatcher (no subagent calls).",
     )
     parser.add_argument(
-        "--claude-binary", default=os.environ.get("CLAUDE_BINARY", "claude-auto"),
+        "--claude-binary",
+        default=os.environ.get("CLAUDE_BINARY", "claude-auto"),
         help="Claude CLI or router (default $CLAUDE_BINARY or 'claude-auto').",
     )
     parser.add_argument(
-        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
     return parser.parse_args(argv)
 

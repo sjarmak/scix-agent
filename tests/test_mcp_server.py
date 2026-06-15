@@ -830,9 +830,7 @@ class TestEntityDenylistOnGetPaper:
         return conn
 
     @patch("scix.search.get_document_context")
-    def test_denylisted_entity_dropped_from_get_paper(
-        self, mock_fn: MagicMock
-    ) -> None:
+    def test_denylisted_entity_dropped_from_get_paper(self, mock_fn: MagicMock) -> None:
         from scix.search import SearchResult
 
         mock_fn.return_value = SearchResult(
@@ -862,9 +860,7 @@ class TestEntityDenylistOnGetPaper:
         )
 
         result = json.loads(
-            _dispatch_tool(
-                conn, "get_paper", {"bibcode": "2024X", "include_entities": True}
-            )
+            _dispatch_tool(conn, "get_paper", {"bibcode": "2024X", "include_entities": True})
         )
         names = {e["name"] for e in result["papers"][0]["linked_entities"]}
         assert names == {"JWST"}
@@ -875,9 +871,7 @@ class TestEntityDenylistOnResolveAndPapers:
     auto-picked when entity_id is omitted on action='papers'."""
 
     @patch("scix.mcp_server.EntityResolver")
-    def test_resolve_drops_denylisted_candidates(
-        self, mock_resolver_cls: MagicMock
-    ) -> None:
+    def test_resolve_drops_denylisted_candidates(self, mock_resolver_cls: MagicMock) -> None:
         from scix.entity_resolver import EntityCandidate
 
         # Two candidates — one real, one denylisted.
@@ -905,11 +899,7 @@ class TestEntityDenylistOnResolveAndPapers:
         mock_resolver_cls.return_value = mock_resolver
 
         conn = MagicMock()
-        result = json.loads(
-            _dispatch_tool(
-                conn, "entity", {"action": "resolve", "query": "JWST"}
-            )
-        )
+        result = json.loads(_dispatch_tool(conn, "entity", {"action": "resolve", "query": "JWST"}))
         names = {c["canonical_name"] for c in result["candidates"]}
         assert names == {"JWST"}
         assert result["total"] == 1
@@ -970,17 +960,39 @@ class TestEntityDenylistOnResolveAndPapers:
             )
         ]
         cur.description = [
-            MagicMock(name=f) for f in [
-                "bibcode", "link_type", "confidence", "match_method",
-                "evidence", "entity_name", "entity_type", "entity_source",
-                "title", "year", "first_author", "citation_count",
+            MagicMock(name=f)
+            for f in [
+                "bibcode",
+                "link_type",
+                "confidence",
+                "match_method",
+                "evidence",
+                "entity_name",
+                "entity_type",
+                "entity_source",
+                "title",
+                "year",
+                "first_author",
+                "citation_count",
             ]
         ]
-        for d, n in zip(cur.description, [
-            "bibcode", "link_type", "confidence", "match_method",
-            "evidence", "entity_name", "entity_type", "entity_source",
-            "title", "year", "first_author", "citation_count",
-        ]):
+        for d, n in zip(
+            cur.description,
+            [
+                "bibcode",
+                "link_type",
+                "confidence",
+                "match_method",
+                "evidence",
+                "entity_name",
+                "entity_type",
+                "entity_source",
+                "title",
+                "year",
+                "first_author",
+                "citation_count",
+            ],
+        ):
             d.name = n
         conn.cursor.return_value = cur
 
@@ -1073,9 +1085,7 @@ class TestFindGaps:
         conn.cursor.return_value = cur
 
         with caplog.at_level("DEBUG", logger="scix.mcp_server"):
-            result = json.loads(
-                _dispatch_tool(conn, "find_gaps", {"query": "dark matter halos"})
-            )
+            result = json.loads(_dispatch_tool(conn, "find_gaps", {"query": "dark matter halos"}))
 
         # Graceful fall-through to the no-papers branch.
         assert result["total"] == 0
@@ -1083,11 +1093,11 @@ class TestFindGaps:
 
         # The swallowed exception was logged at DEBUG with a traceback.
         seed_logs = [
-            r
-            for r in caplog.records
-            if "auto-seed" in r.message and r.levelname == "DEBUG"
+            r for r in caplog.records if "auto-seed" in r.message and r.levelname == "DEBUG"
         ]
-        assert seed_logs, f"expected DEBUG auto-seed log; got: {[r.message for r in caplog.records]}"
+        assert (
+            seed_logs
+        ), f"expected DEBUG auto-seed log; got: {[r.message for r in caplog.records]}"
         assert seed_logs[0].exc_info is not None, "auto-seed log must carry exc_info"
 
 
@@ -1291,9 +1301,7 @@ class TestHnswIndexGuard:
         mock_conn.cursor.assert_not_called()
 
     @patch("scix.search._qdrant_dense_url", return_value="http://localhost:6633")
-    def test_qdrant_short_circuit_only_for_known_collections(
-        self, _mock_url: MagicMock
-    ) -> None:
+    def test_qdrant_short_circuit_only_for_known_collections(self, _mock_url: MagicMock) -> None:
         # Unknown models fall through to the pg path even when QDRANT_URL is set.
         mock_conn = self._mock_conn_with_index(exists=False)
         assert _hnsw_index_exists(mock_conn, "unknown_model") is False

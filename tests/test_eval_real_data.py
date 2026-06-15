@@ -193,12 +193,14 @@ def test_jit_rerank_lifts_overlapping_candidate(monkeypatch, stub_seed):
     ]
     monkeypatch.setattr("scix.eval.real_data.hybrid_search", _StubHybridSearch(papers))
 
-    conn = _mock_conn_for_entities({
-        "2024SEED": [10, 20],
-        "2024A": [99],
-        "2024B": [10],
-        "2024C": [10, 20],
-    })
+    conn = _mock_conn_for_entities(
+        {
+            "2024SEED": [10, 20],
+            "2024A": [99],
+            "2024B": [10],
+            "2024C": [10, 20],
+        }
+    )
     ctx = RealEvalContext(conn=conn)
     ctx.embedding_cache["2024SEED::indus"] = [0.1]
 

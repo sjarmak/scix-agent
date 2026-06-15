@@ -47,9 +47,7 @@ JOURNAL_FEEDS: dict[str, str] = {
     "Science": "https://www.science.org/rss/news_current.xml",
     "Icarus": "https://rss.sciencedirect.com/publication/science/00191035",
     "Solar Physics": "https://link.springer.com/search.rss?facet-journal-id=11207",
-    "JGR Space Physics": (
-        "https://agupubs.onlinelibrary.wiley.com/feed/21699402/most-recent"
-    ),
+    "JGR Space Physics": ("https://agupubs.onlinelibrary.wiley.com/feed/21699402/most-recent"),
     "Space Sci. Rev.": "https://link.springer.com/search.rss?facet-journal-id=11214",
     "PASP": "https://iopscience.iop.org/journal/1538-3873/rss/recent",
     "Living Reviews": "https://link.springer.com/search.rss?facet-journal-id=41114",
@@ -155,18 +153,18 @@ def parse_rss_feed(
         local = item.tag.split("}", 1)[-1].lower()
         if local not in ("item", "entry"):
             continue
-        title = item.findtext("title") or item.findtext(
-            "{http://www.w3.org/2005/Atom}title"
-        )
+        title = item.findtext("title") or item.findtext("{http://www.w3.org/2005/Atom}title")
         event_type = _classify_title(title)
         if event_type is None:
             continue
         doi = _extract_doi(item)
         if not doi:
             continue
-        pubdate = item.findtext("pubDate") or item.findtext(
-            "{http://www.w3.org/2005/Atom}published"
-        ) or item.findtext("{http://purl.org/dc/elements/1.1/}date")
+        pubdate = (
+            item.findtext("pubDate")
+            or item.findtext("{http://www.w3.org/2005/Atom}published")
+            or item.findtext("{http://purl.org/dc/elements/1.1/}date")
+        )
         date = _normalize_pubdate(pubdate)
         if not date:
             continue

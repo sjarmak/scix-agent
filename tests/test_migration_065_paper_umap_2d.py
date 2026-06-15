@@ -61,9 +61,7 @@ class TestMigrationSQLFile:
             "CREATE INDEX IF NOT EXISTS ix_paper_umap_2d_resolution_community",
         ]
         for fragment in expected_fragments:
-            assert fragment in text, (
-                f"migration 065 missing expected fragment: {fragment!r}"
-            )
+            assert fragment in text, f"migration 065 missing expected fragment: {fragment!r}"
 
     def test_wrapped_in_transaction(self) -> None:
         text = MIGRATION_FILE.read_text()
@@ -110,8 +108,7 @@ def ensure_migration_applied(dsn: str) -> Iterator[None]:
         assert path.exists(), f"missing migration file: {fname}"
         result = _apply_sql_file(dsn, path)
         assert result.returncode == 0, (
-            f"failed to apply {fname}:\nstdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
+            f"failed to apply {fname}:\nstdout:\n{result.stdout}\n" f"stderr:\n{result.stderr}"
         )
 
     try:
@@ -124,9 +121,7 @@ def ensure_migration_applied(dsn: str) -> Iterator[None]:
 
 
 @pytest.fixture(scope="module")
-def conn(
-    dsn: str, ensure_migration_applied: None
-) -> Iterator[psycopg.Connection]:
+def conn(dsn: str, ensure_migration_applied: None) -> Iterator[psycopg.Connection]:
     """Autocommit connection for schema inspection.
 
     Depends on `ensure_migration_applied` so integration tests that request
@@ -206,17 +201,15 @@ class TestPaperUmap2dSchema:
         # 'c' == CASCADE in pg_constraint.confdeltype
         assert on_delete == "c", f"expected ON DELETE CASCADE ('c'), got {on_delete!r}"
 
-    def test_required_columns_present_with_types(
-        self, conn: psycopg.Connection
-    ) -> None:
+    def test_required_columns_present_with_types(self, conn: psycopg.Connection) -> None:
         expected = {
             # column_name: (data_type, is_nullable)
-            "bibcode":       ("text",                        "NO"),
-            "x":             ("double precision",            "NO"),
-            "y":             ("double precision",            "NO"),
-            "community_id":  ("integer",                     "YES"),
-            "resolution":    ("text",                        "NO"),
-            "projected_at":  ("timestamp with time zone",    "NO"),
+            "bibcode": ("text", "NO"),
+            "x": ("double precision", "NO"),
+            "y": ("double precision", "NO"),
+            "community_id": ("integer", "YES"),
+            "resolution": ("text", "NO"),
+            "projected_at": ("timestamp with time zone", "NO"),
         }
         with conn.cursor() as cur:
             cur.execute(
@@ -232,8 +225,7 @@ class TestPaperUmap2dSchema:
         for col, (dtype, nullable) in expected.items():
             assert col in actual, f"missing column {col}. got: {sorted(actual)}"
             assert actual[col] == (dtype, nullable), (
-                f"column {col}: expected ({dtype}, nullable={nullable}), "
-                f"got {actual[col]}"
+                f"column {col}: expected ({dtype}, nullable={nullable}), " f"got {actual[col]}"
             )
 
     def test_projected_at_default_is_now(self, conn: psycopg.Connection) -> None:
@@ -250,13 +242,9 @@ class TestPaperUmap2dSchema:
             row = cur.fetchone()
         assert row is not None
         default = row[0] or ""
-        assert "now()" in default.lower(), (
-            f"projected_at should default to now(), got {default!r}"
-        )
+        assert "now()" in default.lower(), f"projected_at should default to now(), got {default!r}"
 
-    def test_resolution_community_index_exists(
-        self, conn: psycopg.Connection
-    ) -> None:
+    def test_resolution_community_index_exists(self, conn: psycopg.Connection) -> None:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -268,21 +256,17 @@ class TestPaperUmap2dSchema:
                 """
             )
             row = cur.fetchone()
-        assert row is not None, (
-            "ix_paper_umap_2d_resolution_community index missing"
-        )
+        assert row is not None, "ix_paper_umap_2d_resolution_community index missing"
         indexdef = row[0]
         # Guard against typos where only one column made it into the index.
-        assert "resolution" in indexdef and "community_id" in indexdef, (
-            f"index does not cover (resolution, community_id): {indexdef}"
-        )
+        assert (
+            "resolution" in indexdef and "community_id" in indexdef
+        ), f"index does not cover (resolution, community_id): {indexdef}"
 
 
 @pytest.mark.integration
 class TestMigrationIdempotency:
-    def test_reapplying_migration_is_a_noop(
-        self, dsn: str, ensure_migration_applied: None
-    ) -> None:
+    def test_reapplying_migration_is_a_noop(self, dsn: str, ensure_migration_applied: None) -> None:
         # ensure_migration_applied already ran the migration once.
         # Running it a second time must not raise.
         result = _apply_sql_file(dsn, MIGRATION_FILE)

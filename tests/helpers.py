@@ -66,12 +66,14 @@ def has_papers(conn: psycopg.Connection) -> bool:
 def has_tsv_column(conn: psycopg.Connection) -> bool:
     """Check if the tsv column exists on papers (migration 003 applied)."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT EXISTS(
                 SELECT 1 FROM information_schema.columns
                 WHERE table_name = 'papers' AND column_name = 'tsv'
             )
-        """)
+        """
+        )
         return cur.fetchone()[0]
 
 

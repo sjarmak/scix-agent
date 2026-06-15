@@ -60,9 +60,7 @@ def _resolve_publisher(
     return None
 
 
-def _apply_cross_bibcode_snippet_cap(
-    response: dict[str, Any], requested_bibcode: str
-) -> None:
+def _apply_cross_bibcode_snippet_cap(response: dict[str, Any], requested_bibcode: str) -> None:
     if response.get("source") not in LATEX_DERIVED_SOURCES:
         return
     if requested_bibcode == response.get("source_bibcode"):

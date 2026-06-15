@@ -163,9 +163,7 @@ class TestBuildVariantDryRun:
     @pytest.mark.parametrize("variant", ["v1", "v2", "v3"])
     def test_dry_run_returns_all_required_keys(self, variant: str) -> None:
         entry = mod.build_variant("dbname=scix_pilot", variant, dry_run=True)
-        assert REQUIRED_KEYS.issubset(entry.keys()), (
-            f"missing keys: {REQUIRED_KEYS - entry.keys()}"
-        )
+        assert REQUIRED_KEYS.issubset(entry.keys()), f"missing keys: {REQUIRED_KEYS - entry.keys()}"
         assert entry["variant"] == variant
         assert entry["build_wall_seconds"] == 0.0
         assert isinstance(entry["params"], dict)
@@ -251,10 +249,13 @@ class TestMainDryRun:
 
         rc = mod.main(
             [
-                "--dsn", "dbname=scix_pilot",
-                "--variant", "all",
+                "--dsn",
+                "dbname=scix_pilot",
+                "--variant",
+                "all",
                 "--dry-run",
-                "--results-path", str(path),
+                "--results-path",
+                str(path),
             ]
         )
         assert rc == 0
@@ -271,17 +272,21 @@ class TestMainDryRun:
     ) -> None:
         path = tmp_path / "out.json"
         monkeypatch.setattr(
-            mod.psycopg, "connect",
+            mod.psycopg,
+            "connect",
             lambda *a, **kw: (_ for _ in ()).throw(
                 AssertionError("psycopg.connect not expected in --dry-run")
             ),
         )
         rc = mod.main(
             [
-                "--dsn", "dbname=scix_pilot",
-                "--variant", "v2",
+                "--dsn",
+                "dbname=scix_pilot",
+                "--variant",
+                "v2",
                 "--dry-run",
-                "--results-path", str(path),
+                "--results-path",
+                str(path),
             ]
         )
         assert rc == 0

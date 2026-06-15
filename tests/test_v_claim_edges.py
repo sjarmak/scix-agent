@@ -158,9 +158,9 @@ class TestViewSchema:
             )
             rows = cur.fetchall()
         actual = {name: dtype for name, dtype in rows}
-        assert actual == EXPECTED_COLUMNS, (
-            f"column set mismatch:\nexpected={EXPECTED_COLUMNS}\nactual={actual}"
-        )
+        assert (
+            actual == EXPECTED_COLUMNS
+        ), f"column set mismatch:\nexpected={EXPECTED_COLUMNS}\nactual={actual}"
 
 
 @requires_test_dsn
@@ -224,6 +224,6 @@ class TestSingleBibcodeQueryUsesIndex:
         if isinstance(plan_json, str):
             plan_json = json.loads(plan_json)
         plan_text = json.dumps(plan_json)
-        assert "Index Scan" in plan_text or "Bitmap" in plan_text, (
-            f"single-bibcode lookup did not use an index — plan was:\n{plan_text}"
-        )
+        assert (
+            "Index Scan" in plan_text or "Bitmap" in plan_text
+        ), f"single-bibcode lookup did not use an index — plan was:\n{plan_text}"

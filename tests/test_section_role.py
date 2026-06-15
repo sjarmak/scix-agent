@@ -155,9 +155,7 @@ def test_accuracy_on_fixture() -> None:
         else:
             misses.append((p["header"], p["role"], predicted))
     accuracy = correct / len(pairs)
-    assert accuracy >= 0.80, (
-        f"Accuracy {accuracy:.2f} < 0.80 — misses ({len(misses)}): {misses}"
-    )
+    assert accuracy >= 0.80, f"Accuracy {accuracy:.2f} < 0.80 — misses ({len(misses)}): {misses}"
 
 
 # ---------------------------------------------------------------------------
@@ -167,9 +165,7 @@ def test_accuracy_on_fixture() -> None:
 
 def test_read_paper_section_accepts_role_param() -> None:
     sig = inspect.signature(search.read_paper_section)
-    assert "role" in sig.parameters, (
-        "read_paper_section must accept a 'role' keyword argument"
-    )
+    assert "role" in sig.parameters, "read_paper_section must accept a 'role' keyword argument"
     param = sig.parameters["role"]
     assert param.default is None, "role must default to None to preserve behavior"
 

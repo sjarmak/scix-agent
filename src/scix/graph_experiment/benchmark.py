@@ -108,10 +108,7 @@ BENCHMARK_TEMPLATES: tuple[QuestionTemplate, ...] = (
     QuestionTemplate(
         template_id="t1_direct_citations",
         tier="one_hop_control",
-        prompt_template=(
-            "List the papers cited by {seeds}. For each, give the title "
-            "and year."
-        ),
+        prompt_template=("List the papers cited by {seeds}. For each, give the title " "and year."),
         expected_hop_depth=1,
         rubric=(
             "FULL credit if the agent enumerates direct citations of the "
@@ -125,9 +122,7 @@ BENCHMARK_TEMPLATES: tuple[QuestionTemplate, ...] = (
     QuestionTemplate(
         template_id="t1_recent_citers",
         tier="one_hop_control",
-        prompt_template=(
-            "Which papers from 2023 or later cite {seeds}? Return up to 10."
-        ),
+        prompt_template=("Which papers from 2023 or later cite {seeds}? Return up to 10."),
         expected_hop_depth=1,
         rubric=(
             "FULL if agent returns recent citing papers with year filter "
@@ -140,9 +135,7 @@ BENCHMARK_TEMPLATES: tuple[QuestionTemplate, ...] = (
     QuestionTemplate(
         template_id="t1_topical_search",
         tier="one_hop_control",
-        prompt_template=(
-            "Find recent papers about exoplanet atmospheric retrievals."
-        ),
+        prompt_template=("Find recent papers about exoplanet atmospheric retrievals."),
         expected_hop_depth=0,
         rubric=(
             "FULL if agent uses search/concept_search to return on-topic "

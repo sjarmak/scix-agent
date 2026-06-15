@@ -143,9 +143,7 @@ class TestArgparse:
     def test_filter_rejects_garbage(self) -> None:
         parser = mod.build_parser()
         with pytest.raises(SystemExit):
-            parser.parse_args(
-                ["--dsn", "dbname=scix_pilot", "--filter", "garbage"]
-            )
+            parser.parse_args(["--dsn", "dbname=scix_pilot", "--filter", "garbage"])
 
     def test_filter_default_is_both(self) -> None:
         parser = mod.build_parser()
@@ -240,9 +238,7 @@ class TestDryRunSchema:
         p = self._dry_run_payload_both()
         assert len(p["results"]) == 8  # 4 indexes × 2 filters
         pairs = {(c["index"], c["filter"]) for c in p["results"]}
-        expected = {
-            (idx, f) for idx in ["hnsw", "v1", "v2", "v3"] for f in ["f1", "f2"]
-        }
+        expected = {(idx, f) for idx in ["hnsw", "v1", "v2", "v3"] for f in ["f1", "f2"]}
         assert pairs == expected
 
     def test_cell_schema(self) -> None:
@@ -425,9 +421,7 @@ class TestMetricsSmoke:
 
     def test_ndcg_perfect_ranking(self) -> None:
         ranked = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
-        assert mod.ndcg_at_10(ranked, {"a", "b", "c"}) == pytest.approx(
-            1.0, abs=1e-9
-        )
+        assert mod.ndcg_at_10(ranked, {"a", "b", "c"}) == pytest.approx(1.0, abs=1e-9)
 
     def test_recall_at_k(self) -> None:
         assert mod.recall_at_k(["a", "b", "c"], {"a", "b"}, 10) == 1.0

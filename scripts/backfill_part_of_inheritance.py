@@ -271,9 +271,7 @@ def is_mission_disambiguated_surface(
             return True
 
     # Long-form descriptive alias that isn't the mission itself.
-    if len(s) >= DISAMBIGUATOR_MIN_CHARS and (
-        any(ch.isspace() for ch in s) or "-" in s
-    ):
+    if len(s) >= DISAMBIGUATOR_MIN_CHARS and (any(ch.isspace() for ch in s) or "-" in s):
         return True
 
     return False
@@ -608,8 +606,7 @@ def run_backfill(
         parent_rows_inserted += parent_inserted
 
         logger.info(
-            "%s -> %s: %d instrument rows + %d inherited parent rows "
-            "(surfaces: %s)",
+            "%s -> %s: %d instrument rows + %d inherited parent rows " "(surfaces: %s)",
             edge.instrument_name,
             edge.mission_name,
             instr_inserted,

@@ -10,6 +10,7 @@ This module exposes a single capability that pgvector can't cleanly replicate
 in SQL: the discovery / recommendation API — "more like these, less like
 those" — with optional payload filtering.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -39,9 +40,7 @@ def is_enabled() -> bool:
 
 def _client(timeout: float = 10.0) -> QdrantClient:
     if not is_enabled():
-        raise RuntimeError(
-            "Qdrant not configured — set QDRANT_URL and install qdrant-client"
-        )
+        raise RuntimeError("Qdrant not configured — set QDRANT_URL and install qdrant-client")
     return QdrantClient(url=os.environ["QDRANT_URL"], timeout=timeout)
 
 
@@ -59,28 +58,36 @@ def _filter_from_kwargs(
 ):
     must: list[Any] = []
     if year_min is not None or year_max is not None:
-        must.append(qm.FieldCondition(
-            key="year",
-            range=qm.Range(
-                gte=year_min if year_min is not None else None,
-                lte=year_max if year_max is not None else None,
-            ),
-        ))
+        must.append(
+            qm.FieldCondition(
+                key="year",
+                range=qm.Range(
+                    gte=year_min if year_min is not None else None,
+                    lte=year_max if year_max is not None else None,
+                ),
+            )
+        )
     if doctype:
-        must.append(qm.FieldCondition(
-            key="doctype",
-            match=qm.MatchAny(any=list(doctype)),
-        ))
+        must.append(
+            qm.FieldCondition(
+                key="doctype",
+                match=qm.MatchAny(any=list(doctype)),
+            )
+        )
     if community_semantic is not None:
-        must.append(qm.FieldCondition(
-            key="community_semantic_coarse",
-            match=qm.MatchValue(value=int(community_semantic)),
-        ))
+        must.append(
+            qm.FieldCondition(
+                key="community_semantic_coarse",
+                match=qm.MatchValue(value=int(community_semantic)),
+            )
+        )
     if arxiv_class:
-        must.append(qm.FieldCondition(
-            key="arxiv_class",
-            match=qm.MatchAny(any=list(arxiv_class)),
-        ))
+        must.append(
+            qm.FieldCondition(
+                key="arxiv_class",
+                match=qm.MatchAny(any=list(arxiv_class)),
+            )
+        )
     return qm.Filter(must=must) if must else None
 
 
@@ -159,9 +166,11 @@ def find_similar_by_examples(
 
     # Exclude the positive / negative examples themselves from results.
     exclude_ids = pos_ids + neg_ids
-    exclude_filter = qm.Filter(must_not=[
-        qm.HasIdCondition(has_id=exclude_ids),
-    ])
+    exclude_filter = qm.Filter(
+        must_not=[
+            qm.HasIdCondition(has_id=exclude_ids),
+        ]
+    )
     combined: qm.Filter
     if flt is None:
         combined = exclude_filter
@@ -176,11 +185,13 @@ def find_similar_by_examples(
     # RecommendQuery wrapper. Older .recommend() was removed.
     resp = client.query_points(
         collection_name=COLLECTION,
-        query=qm.RecommendQuery(recommend=qm.RecommendInput(
-            positive=pos_ids,
-            negative=neg_ids or None,
-            strategy=qm.RecommendStrategy.AVERAGE_VECTOR,
-        )),
+        query=qm.RecommendQuery(
+            recommend=qm.RecommendInput(
+                positive=pos_ids,
+                negative=neg_ids or None,
+                strategy=qm.RecommendStrategy.AVERAGE_VECTOR,
+            )
+        ),
         using=VECTOR_NAME,
         limit=limit,
         query_filter=combined,
@@ -293,33 +304,43 @@ def _chunks_filter_from_kwargs(
     """
     must: list[Any] = []
     if year_min is not None or year_max is not None:
-        must.append(qm.FieldCondition(
-            key="year",
-            range=qm.Range(
-                gte=year_min if year_min is not None else None,
-                lte=year_max if year_max is not None else None,
-            ),
-        ))
+        must.append(
+            qm.FieldCondition(
+                key="year",
+                range=qm.Range(
+                    gte=year_min if year_min is not None else None,
+                    lte=year_max if year_max is not None else None,
+                ),
+            )
+        )
     if arxiv_class:
-        must.append(qm.FieldCondition(
-            key="arxiv_class",
-            match=qm.MatchAny(any=list(arxiv_class)),
-        ))
+        must.append(
+            qm.FieldCondition(
+                key="arxiv_class",
+                match=qm.MatchAny(any=list(arxiv_class)),
+            )
+        )
     if community_id_med:
-        must.append(qm.FieldCondition(
-            key="community_id_med",
-            match=qm.MatchAny(any=[int(c) for c in community_id_med]),
-        ))
+        must.append(
+            qm.FieldCondition(
+                key="community_id_med",
+                match=qm.MatchAny(any=[int(c) for c in community_id_med]),
+            )
+        )
     if section_heading_norm:
-        must.append(qm.FieldCondition(
-            key="section_heading_norm",
-            match=qm.MatchAny(any=list(section_heading_norm)),
-        ))
+        must.append(
+            qm.FieldCondition(
+                key="section_heading_norm",
+                match=qm.MatchAny(any=list(section_heading_norm)),
+            )
+        )
     if bibcode:
-        must.append(qm.FieldCondition(
-            key="bibcode",
-            match=qm.MatchAny(any=list(bibcode)),
-        ))
+        must.append(
+            qm.FieldCondition(
+                key="bibcode",
+                match=qm.MatchAny(any=list(bibcode)),
+            )
+        )
     return qm.Filter(must=must) if must else None
 
 

@@ -250,12 +250,14 @@ def get_stats(conn: psycopg.Connection) -> dict[str, Any]:
         cur.execute("SELECT COUNT(*) FROM entity_dictionary")
         total = cur.fetchone()[0]
 
-        cur.execute("""
+        cur.execute(
+            """
             SELECT entity_type, COUNT(*) AS cnt
             FROM entity_dictionary
             GROUP BY entity_type
             ORDER BY cnt DESC
-            """)
+            """
+        )
         by_type = {row[0]: row[1] for row in cur.fetchall()}
 
     return {"total": total, "by_type": by_type}

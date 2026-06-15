@@ -362,9 +362,7 @@ class TestCLI:
         with (
             patch("scripts.link_datasets.get_connection") as mock_conn,
             patch("scripts.link_datasets.link_datasets_batch") as mock_link,
-            patch(
-                "scripts.link_datasets.get_dataset_linking_progress"
-            ) as mock_progress,
+            patch("scripts.link_datasets.get_dataset_linking_progress") as mock_progress,
         ):
             mock_link.return_value = {
                 "bibcodes_processed": 0,
@@ -393,9 +391,7 @@ class TestCLI:
         with (
             patch("scripts.link_datasets.get_connection") as mock_conn,
             patch("scripts.link_datasets.link_datasets_batch") as mock_link,
-            patch(
-                "scripts.link_datasets.get_dataset_linking_progress"
-            ) as mock_progress,
+            patch("scripts.link_datasets.get_dataset_linking_progress") as mock_progress,
         ):
             mock_link.return_value = {
                 "bibcodes_processed": 0,

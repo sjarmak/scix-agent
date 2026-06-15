@@ -6,6 +6,7 @@ out to a running Qdrant — every test uses :class:`unittest.mock.MagicMock` so
 the assertions stay focused on the schema parameters the module passes
 through.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -69,9 +70,7 @@ def test_ensure_collection_creates_with_prd_params() -> None:
     result = ensure_collection(client)
 
     assert result["created"] is True
-    assert result["payload_indexes_created"] == [
-        name for name, _ in INDEXED_PAYLOAD_FIELDS
-    ]
+    assert result["payload_indexes_created"] == [name for name, _ in INDEXED_PAYLOAD_FIELDS]
 
     # create_collection called exactly once with the PRD params.
     assert client.create_collection.call_count == 1
@@ -114,12 +113,9 @@ def test_ensure_collection_creates_each_payload_index() -> None:
     # Every (field, schema) tuple from the PRD list is forwarded to
     # create_payload_index — once each, in declared order.
     expected_calls = [
-        ((CHUNKS_COLLECTION, name, schema), {})
-        for name, schema in INDEXED_PAYLOAD_FIELDS
+        ((CHUNKS_COLLECTION, name, schema), {}) for name, schema in INDEXED_PAYLOAD_FIELDS
     ]
-    actual_calls = [
-        (call.args, call.kwargs) for call in client.create_payload_index.call_args_list
-    ]
+    actual_calls = [(call.args, call.kwargs) for call in client.create_payload_index.call_args_list]
     assert actual_calls == expected_calls
 
 
@@ -128,9 +124,7 @@ def test_ensure_collection_honours_custom_collection_name() -> None:
 
     ensure_collection(client, collection_name="scix_chunks_test")
 
-    assert client.create_collection.call_args.kwargs["collection_name"] == (
-        "scix_chunks_test"
-    )
+    assert client.create_collection.call_args.kwargs["collection_name"] == ("scix_chunks_test")
     for call in client.create_payload_index.call_args_list:
         assert call.args[0] == "scix_chunks_test"
 
@@ -152,9 +146,7 @@ def test_ensure_collection_is_idempotent_when_present() -> None:
     # Payload indexes are still ensured (no-op on the server) so the
     # post-condition guarantee holds even on re-run.
     assert client.create_payload_index.call_count == len(INDEXED_PAYLOAD_FIELDS)
-    assert result["payload_indexes_created"] == [
-        name for name, _ in INDEXED_PAYLOAD_FIELDS
-    ]
+    assert result["payload_indexes_created"] == [name for name, _ in INDEXED_PAYLOAD_FIELDS]
 
 
 def test_ensure_collection_payload_index_swallows_already_exists() -> None:
@@ -168,9 +160,7 @@ def test_ensure_collection_payload_index_swallows_already_exists() -> None:
     assert result["created"] is False
     # Every field is still recorded — the post-condition is what we promise,
     # not "newly created" vs "already there".
-    assert result["payload_indexes_created"] == [
-        name for name, _ in INDEXED_PAYLOAD_FIELDS
-    ]
+    assert result["payload_indexes_created"] == [name for name, _ in INDEXED_PAYLOAD_FIELDS]
 
 
 # ---------------------------------------------------------------------------

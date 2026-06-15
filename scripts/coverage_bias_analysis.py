@@ -399,7 +399,8 @@ def get_citation_completeness(
         # Estimate sample percentage to get approximately sample_size rows
         sample_pct = min(100.0 * sample_size / total_edges * 1.2, 100.0)
         with conn.cursor() as cur:
-            cur.execute(f"""
+            cur.execute(
+                f"""
                 WITH sample AS (
                     SELECT target_bibcode
                     FROM citation_edges TABLESAMPLE SYSTEM ({sample_pct})
@@ -415,7 +416,8 @@ def get_citation_completeness(
                         WHERE EXISTS (SELECT 1 FROM papers p WHERE p.bibcode = sample.target_bibcode)
                     ) AS unique_in_corpus
                 FROM sample
-            """)
+            """
+            )
             row = cur.fetchone()
 
         if row is None or row[0] == 0:
@@ -461,7 +463,8 @@ def get_citation_completeness(
 
     # Exact computation for small tables or when sample_size=0
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT
                 COUNT(*) AS total,
                 COUNT(*) FILTER (
@@ -472,7 +475,8 @@ def get_citation_completeness(
                     WHERE EXISTS (SELECT 1 FROM papers p WHERE p.bibcode = ce.target_bibcode)
                 ) AS unique_in_corpus
             FROM citation_edges ce
-        """)
+        """
+        )
         row = cur.fetchone()
 
     if row is None:

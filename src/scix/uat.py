@@ -464,20 +464,24 @@ def map_keywords_exact(conn: psycopg.Connection, batch_size: int = 10_000) -> in
     with conn.cursor() as cur:
         # Build a materialized lookup table of all UAT labels (preferred + alternate)
         # so we can join efficiently against papers.keywords.
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TEMP TABLE IF NOT EXISTS _uat_labels (
                 concept_id TEXT NOT NULL,
                 label_lower TEXT NOT NULL
             ) ON COMMIT PRESERVE ROWS
-        """)
+        """
+        )
         cur.execute("TRUNCATE _uat_labels")
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO _uat_labels (concept_id, label_lower)
             SELECT concept_id, lower(preferred_label) FROM uat_concepts
             UNION ALL
             SELECT concept_id, lower(al)
             FROM uat_concepts, LATERAL unnest(alternate_labels) AS al
-        """)
+        """
+        )
         cur.execute("CREATE INDEX IF NOT EXISTS _idx_uat_labels ON _uat_labels (label_lower)")
         conn.commit()
         logger.info("Built UAT label lookup table (%d entries)", cur.rowcount)

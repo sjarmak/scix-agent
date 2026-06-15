@@ -157,7 +157,9 @@ class TestFindGapsImplicit:
 
         # Now find_gaps should use it. Row shape: (bibcode, title, pagerank,
         # community_id, community_label, community_top_keywords).
-        rows = [("2024GAP1", "Gap Paper", 0.05, 42, "cs.LG · agents / rag", ["agents", "rag", "llm"])]
+        rows = [
+            ("2024GAP1", "Gap Paper", 0.05, 42, "cs.LG · agents / rag", ["agents", "rag", "llm"])
+        ]
         conn2 = _make_conn(rows)
         result_json = mcp_server._dispatch_tool(conn2, "find_gaps", {"resolution": "coarse"})
         result = json.loads(result_json)
@@ -190,9 +192,7 @@ class TestFindGapsImplicit:
     def test_invalid_signal_returns_error(self) -> None:
         mcp_server._session_state.track_focused("2024WS1")
         conn = _make_conn()
-        result_json = mcp_server._dispatch_tool(
-            conn, "find_gaps", {"signal": "bogus"}
-        )
+        result_json = mcp_server._dispatch_tool(conn, "find_gaps", {"signal": "bogus"})
         result = json.loads(result_json)
         assert "error" in result
 
@@ -216,9 +216,7 @@ class TestFindGapsImplicit:
         mcp_server._session_state.track_focused("2024WS1")
         rows = [("2024GAPC", "Citation Gap Paper", 0.05, 42, None, None)]
         conn = _make_conn(rows)
-        result_json = mcp_server._dispatch_tool(
-            conn, "find_gaps", {"signal": "citation"}
-        )
+        result_json = mcp_server._dispatch_tool(conn, "find_gaps", {"signal": "citation"})
         result = json.loads(result_json)
         assert result["signal"] == "citation"
         executed_sql = conn.cursor.return_value.execute.call_args[0][0]
@@ -240,7 +238,7 @@ class TestFindGapsImplicit:
         # Parameters must bind signal + resolution to communities JOIN
         executed_params = conn.cursor.return_value.execute.call_args[0][1]
         assert executed_params[0] == "semantic"  # default signal
-        assert executed_params[1] == "medium"    # default resolution (CS-readable labels)
+        assert executed_params[1] == "medium"  # default resolution (CS-readable labels)
 
     def test_missing_community_label_tolerated(self) -> None:
         """LEFT JOIN returns NULL for unlabeled communities — the handler

@@ -15,6 +15,7 @@ how chunks are *stored*, not how they are produced.
 Postgres remains the source of truth for chunk text, metadata, and provenance;
 Qdrant holds the dense vectors plus a small filterable payload subset.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -146,9 +147,7 @@ def ensure_collection(
         post-condition guarantee, not a "newly created" claim.
     """
     if qm is None:
-        raise RuntimeError(
-            "qdrant-client is not installed — install it via the 'search' extra"
-        )
+        raise RuntimeError("qdrant-client is not installed — install it via the 'search' extra")
 
     created = False
     if not _collection_exists(client, collection_name):

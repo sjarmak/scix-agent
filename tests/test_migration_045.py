@@ -102,7 +102,8 @@ class TestLoggedness:
 class TestCitationDiffSchema:
     def test_primary_key_is_composite(self, conn: psycopg.Connection) -> None:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT a.attname
                 FROM pg_constraint c
                 JOIN pg_class t ON t.oid = c.conrelid
@@ -110,7 +111,8 @@ class TestCitationDiffSchema:
                     AND a.attnum = ANY(c.conkey)
                 WHERE t.relname = 'citation_diff' AND c.contype = 'p'
                 ORDER BY array_position(c.conkey, a.attnum)
-                """)
+                """
+            )
             cols = [r[0] for r in cur.fetchall()]
             assert cols == ["source_bibcode", "target_bibcode"]
 
@@ -123,11 +125,13 @@ class TestCitationDiffSchema:
             "source_attrs": "jsonb",
         }
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT column_name, data_type
                 FROM information_schema.columns
                 WHERE table_name = 'citation_diff'
-                """)
+                """
+            )
             actual = dict(cur.fetchall())
         for col, dtype in expected.items():
             assert col in actual, f"Missing column {col}"
@@ -135,12 +139,14 @@ class TestCitationDiffSchema:
 
     def test_boolean_defaults(self, conn: psycopg.Connection) -> None:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT column_name, column_default, is_nullable
                 FROM information_schema.columns
                 WHERE table_name = 'citation_diff'
                   AND column_name IN ('in_ads', 'in_openalex')
-                """)
+                """
+            )
             rows = cur.fetchall()
         assert len(rows) == 2
         for name, default, nullable in rows:
@@ -151,11 +157,13 @@ class TestCitationDiffSchema:
 
     def test_indexes_exist(self, conn: psycopg.Connection) -> None:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT indexname, indexdef
                 FROM pg_indexes
                 WHERE tablename = 'citation_diff'
-                """)
+                """
+            )
             indexes = {r[0]: r[1] for r in cur.fetchall()}
 
         # Check for source, target, and provenance indexes
@@ -178,12 +186,14 @@ class TestCitationDiffSchema:
 class TestMaterializedViews:
     def test_by_year_view_exists(self, conn: psycopg.Connection) -> None:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT relname, relkind
                 FROM pg_class
                 WHERE relname = 'citation_diff_by_year'
                   AND relnamespace = 'public'::regnamespace
-                """)
+                """
+            )
             row = cur.fetchone()
             assert row is not None, "citation_diff_by_year materialized view missing"
             assert row[1] == "m", (
@@ -193,12 +203,14 @@ class TestMaterializedViews:
 
     def test_by_journal_view_exists(self, conn: psycopg.Connection) -> None:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT relname, relkind
                 FROM pg_class
                 WHERE relname = 'citation_diff_by_journal'
                   AND relnamespace = 'public'::regnamespace
-                """)
+                """
+            )
             row = cur.fetchone()
             assert row is not None, "citation_diff_by_journal materialized view missing"
             assert row[1] == "m", (
@@ -209,11 +221,13 @@ class TestMaterializedViews:
     def test_by_year_has_unique_index(self, conn: psycopg.Connection) -> None:
         """REFRESH CONCURRENTLY requires a unique index."""
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT indexname
                 FROM pg_indexes
                 WHERE tablename = 'citation_diff_by_year'
-                """)
+                """
+            )
             names = [r[0] for r in cur.fetchall()]
             assert any("pk" in n or "year" in n for n in names), (
                 f"citation_diff_by_year needs a unique index for REFRESH CONCURRENTLY. "
@@ -223,11 +237,13 @@ class TestMaterializedViews:
     def test_by_journal_has_unique_index(self, conn: psycopg.Connection) -> None:
         """REFRESH CONCURRENTLY requires a unique index."""
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT indexname
                 FROM pg_indexes
                 WHERE tablename = 'citation_diff_by_journal'
-                """)
+                """
+            )
             names = [r[0] for r in cur.fetchall()]
             assert any("pk" in n or "journal" in n for n in names), (
                 f"citation_diff_by_journal needs a unique index for REFRESH CONCURRENTLY. "
@@ -238,7 +254,8 @@ class TestMaterializedViews:
         # Materialized views don't appear in information_schema.columns;
         # query pg_attribute instead.
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT a.attname
                 FROM pg_attribute a
                 JOIN pg_class c ON c.oid = a.attrelid
@@ -246,7 +263,8 @@ class TestMaterializedViews:
                   AND c.relnamespace = 'public'::regnamespace
                   AND a.attnum > 0
                   AND NOT a.attisdropped
-                """)
+                """
+            )
             cols = {r[0] for r in cur.fetchall()}
         expected = {
             "pub_year",
@@ -263,7 +281,8 @@ class TestMaterializedViews:
         # Materialized views don't appear in information_schema.columns;
         # query pg_attribute instead.
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT a.attname
                 FROM pg_attribute a
                 JOIN pg_class c ON c.oid = a.attrelid
@@ -271,7 +290,8 @@ class TestMaterializedViews:
                   AND c.relnamespace = 'public'::regnamespace
                   AND a.attnum > 0
                   AND NOT a.attisdropped
-                """)
+                """
+            )
             cols = {r[0] for r in cur.fetchall()}
         expected = {
             "journal",

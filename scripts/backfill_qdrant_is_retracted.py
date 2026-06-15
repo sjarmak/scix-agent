@@ -25,6 +25,7 @@ Env:
     QDRANT_URL   default http://127.0.0.1:6333
     SCIX_DSN     Postgres DSN
 """
+
 from __future__ import annotations
 
 import argparse
@@ -55,9 +56,7 @@ def bibcode_to_point_id(bibcode: str) -> int:
 def fetch_retracted_bibcodes(conn) -> list[str]:
     """All bibcodes currently flagged retracted in Postgres."""
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT bibcode FROM papers WHERE retracted_at IS NOT NULL ORDER BY bibcode"
-        )
+        cur.execute("SELECT bibcode FROM papers WHERE retracted_at IS NOT NULL ORDER BY bibcode")
         return [row[0] for row in cur.fetchall()]
 
 
@@ -109,13 +108,7 @@ def set_is_retracted(
         client.set_payload(
             collection_name=collection,
             payload={"is_retracted": True},
-            points=qm.Filter(
-                must=[
-                    qm.FieldCondition(
-                        key="bibcode", match=qm.MatchAny(any=chunk)
-                    )
-                ]
-            ),
+            points=qm.Filter(must=[qm.FieldCondition(key="bibcode", match=qm.MatchAny(any=chunk))]),
             wait=True,
         )
         attempted += len(chunk)
@@ -176,9 +169,7 @@ def main() -> None:
     elapsed = time.time() - t0
 
     if args.dry_run:
-        print(
-            f"done — would attempt {attempted} bibcodes in {elapsed:.1f}s (dry-run)"
-        )
+        print(f"done — would attempt {attempted} bibcodes in {elapsed:.1f}s (dry-run)")
         return
 
     matched = count_is_retracted_true(client, args.collection)

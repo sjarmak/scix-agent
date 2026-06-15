@@ -310,9 +310,7 @@ def test_seed_too_broad_envelope_lifted_from_function(conn: MagicMock) -> None:
 
 def test_community_expand_default_off_runs_normal_hybrid(conn: MagicMock) -> None:
     """Without community_expand=true, the lane is NOT invoked even if entity_ids is set."""
-    fake_hybrid = SearchResult(
-        papers=[{"bibcode": "TEST"}], total=1, timing_ms={"total_ms": 1.0}
-    )
+    fake_hybrid = SearchResult(papers=[{"bibcode": "TEST"}], total=1, timing_ms={"total_ms": 1.0})
     with (
         patch.object(mcp_server.search, "community_expand_search") as expand_fn,
         patch.object(mcp_server.search, "hybrid_search", return_value=fake_hybrid),

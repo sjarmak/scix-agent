@@ -67,14 +67,18 @@ def main() -> None:
         client.create_collection(
             collection_name=COLLECTION,
             vectors_config=qm.VectorParams(
-                size=DIM, distance=qm.Distance.COSINE,
-                datatype=qm.Datatype.FLOAT16, on_disk=True,
+                size=DIM,
+                distance=qm.Distance.COSINE,
+                datatype=qm.Datatype.FLOAT16,
+                on_disk=True,
             ),
             hnsw_config=qm.HnswConfigDiff(m=32, on_disk=False),
             # always_ram=False: ~25GB quantized layer stays mmap'd so Qdrant
             # coexists with PG(16G)+gascity on the 62G host; revisit post-cutover.
             quantization_config=qm.ScalarQuantization(
-                scalar=qm.ScalarQuantizationConfig(type=qm.ScalarType.INT8, quantile=0.99, always_ram=False)
+                scalar=qm.ScalarQuantizationConfig(
+                    type=qm.ScalarType.INT8, quantile=0.99, always_ram=False
+                )
             ),
             optimizers_config=qm.OptimizersConfigDiff(default_segment_number=8),
         )
@@ -128,7 +132,9 @@ def main() -> None:
                             raise RuntimeError(f"DISK FLOOR: only {free:.1f}G free — aborting load")
                     if n % 512_000 == 0:
                         el = now - t0
-                        log.info("queued %d (%.0f pts/s, disk_free=%.0fG)", n, n / el, disk_free_gb())
+                        log.info(
+                            "queued %d (%.0f pts/s, disk_free=%.0fG)", n, n / el, disk_free_gb()
+                        )
             if pts:
                 q.put(pts)
                 n += len(pts)
@@ -148,8 +154,12 @@ def main() -> None:
         time.sleep(30)
     log.info(
         "INDEX DONE: points=%s indexed=%s | load=%.0fs index_tail=%.0fs total=%.1f min | disk_free=%.0fG",
-        info.points_count, info.indexed_vectors_count,
-        t_load, time.monotonic() - t1, (time.monotonic() - t0) / 60, disk_free_gb(),
+        info.points_count,
+        info.indexed_vectors_count,
+        t_load,
+        time.monotonic() - t1,
+        (time.monotonic() - t0) / 60,
+        disk_free_gb(),
     )
 
 

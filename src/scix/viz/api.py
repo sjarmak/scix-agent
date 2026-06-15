@@ -433,7 +433,6 @@ def demo_lit_review(payload: DemoSearchRequest) -> dict:
     }
 
 
-
 # ---------------------------------------------------------------------------
 # Composite multi-step demo endpoints — each runs a real MCP tool sequence
 # and relies entirely on the instrumentation hook inside
@@ -885,9 +884,7 @@ def demo_disambig(payload: DemoSearchRequest) -> dict:
     # 1 — resolve.
     resolve_args: dict = {"action": "resolve", "query": query, "fuzzy": True}
     resolved_res, ms = _call_mcp("entity", resolve_args)
-    resolved_candidates = (
-        resolved_res.get("candidates") if isinstance(resolved_res, dict) else None
-    )
+    resolved_candidates = resolved_res.get("candidates") if isinstance(resolved_res, dict) else None
     if not isinstance(resolved_candidates, list):
         resolved_candidates = []
     resolved_ids = [
@@ -912,9 +909,7 @@ def demo_disambig(payload: DemoSearchRequest) -> dict:
         "limit": 10,
     }
     typed_res, ms = _call_mcp("entity", type_args)
-    typed_candidates = (
-        typed_res.get("candidates") if isinstance(typed_res, dict) else None
-    )
+    typed_candidates = typed_res.get("candidates") if isinstance(typed_res, dict) else None
     if isinstance(typed_candidates, list):
         for c in typed_candidates:
             if isinstance(c, dict) and isinstance(c.get("entity_id"), int):
@@ -1125,15 +1120,13 @@ def _fetch_ego_network(
 
             # --- 2. Direct refs + cites (one indexed lookup each) ----------
             cur.execute(
-                "SELECT target_bibcode FROM citation_edges "
-                "WHERE source_bibcode = %s LIMIT %s",
+                "SELECT target_bibcode FROM citation_edges " "WHERE source_bibcode = %s LIMIT %s",
                 (center_bibcode, max_refs),
             )
             ref_bibs = [r[0] for r in cur.fetchall()]
 
             cur.execute(
-                "SELECT source_bibcode FROM citation_edges "
-                "WHERE target_bibcode = %s LIMIT %s",
+                "SELECT source_bibcode FROM citation_edges " "WHERE target_bibcode = %s LIMIT %s",
                 (center_bibcode, max_cites),
             )
             cite_bibs = [r[0] for r in cur.fetchall()]
@@ -1195,10 +1188,7 @@ def _fetch_ego_network(
             # --- 4. Hydrate titles + community for every node in one shot -
             all_bibs: list[str] = list(
                 dict.fromkeys(
-                    [center_bibcode]
-                    + ref_bibs
-                    + cite_bibs
-                    + [hop for hop, _ in second_hop_rows]
+                    [center_bibcode] + ref_bibs + cite_bibs + [hop for hop, _ in second_hop_rows]
                 )
             )
             cur.execute(
@@ -1240,9 +1230,7 @@ def _fetch_ego_network(
     # Fill in community_id on the center from the hydrated metadata (prefer
     # the just-fetched value, which may be richer than the quick lookup above).
     if center_bibcode in meta:
-        center["community_id"] = meta[center_bibcode].get(
-            "community_id", center["community_id"]
-        )
+        center["community_id"] = meta[center_bibcode].get("community_id", center["community_id"])
         if meta[center_bibcode].get("title"):
             center["title"] = meta[center_bibcode]["title"]
 

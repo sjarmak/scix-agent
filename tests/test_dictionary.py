@@ -39,11 +39,13 @@ EXPECTED_KEYS = {
 def _has_entity_dictionary(conn: psycopg.Connection) -> bool:
     """Check if entity_dictionary table exists (migration 013 applied)."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT COUNT(*) FROM information_schema.tables
             WHERE table_schema = 'public'
               AND table_name = 'entity_dictionary'
-        """)
+        """
+        )
         return cur.fetchone()[0] == 1
 
 

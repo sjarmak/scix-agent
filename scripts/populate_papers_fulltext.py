@@ -830,8 +830,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return int(exc.code) if exc.code is not None else 2
 
     logger.info(
-        "starting driver: dsn=%s chunk_size=%d resume_from=%r limit=%r"
-        " reparse_from_version=%r",
+        "starting driver: dsn=%s chunk_size=%d resume_from=%r limit=%r" " reparse_from_version=%r",
         redact_dsn(config.dsn),
         config.chunk_size,
         config.resume_from,

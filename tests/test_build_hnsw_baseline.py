@@ -38,9 +38,7 @@ REQUIRED_PARAM_KEYS = {"m", "ef_construction", "opclass"}
 
 def _load_module():
     """Import the script as a module without executing main()."""
-    spec = importlib.util.spec_from_file_location(
-        "build_hnsw_baseline", SCRIPT_PATH
-    )
+    spec = importlib.util.spec_from_file_location("build_hnsw_baseline", SCRIPT_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -55,6 +53,7 @@ def module():
 # ---------------------------------------------------------------------------
 # Production-DSN refusal
 # ---------------------------------------------------------------------------
+
 
 class TestAssertPilotDsn:
     def test_refuses_production_keyvalue_dsn(self, module) -> None:
@@ -103,10 +102,9 @@ class TestAssertPilotDsn:
 # JSON schema shape via --dry-run
 # ---------------------------------------------------------------------------
 
+
 class TestDryRunJsonSchema:
-    def test_dry_run_writes_schema_complete_json(
-        self, module, tmp_path: Path
-    ) -> None:
+    def test_dry_run_writes_schema_complete_json(self, module, tmp_path: Path) -> None:
         out = tmp_path / "baseline.json"
         rc = module.main(
             [
@@ -147,9 +145,7 @@ class TestDryRunJsonSchema:
         # timestamp parseable
         assert isinstance(payload["timestamp"], str) and payload["timestamp"]
 
-    def test_dry_run_creates_parent_dir(
-        self, module, tmp_path: Path
-    ) -> None:
+    def test_dry_run_creates_parent_dir(self, module, tmp_path: Path) -> None:
         """--out nested in a missing dir should be auto-created."""
         out = tmp_path / "a" / "b" / "c" / "baseline.json"
         assert not out.parent.exists()
@@ -167,9 +163,7 @@ class TestDryRunJsonSchema:
         assert written.exists()
         assert written.parent.is_dir()
 
-    def test_dry_run_suffix_applied(
-        self, module, tmp_path: Path
-    ) -> None:
+    def test_dry_run_suffix_applied(self, module, tmp_path: Path) -> None:
         """Dry-run appends '-dry-run' before the extension."""
         out = tmp_path / "baseline.json"
         rc = module.main(
@@ -189,6 +183,7 @@ class TestDryRunJsonSchema:
 # ---------------------------------------------------------------------------
 # argparse wiring
 # ---------------------------------------------------------------------------
+
 
 class TestArgparse:
     def test_help_exits_zero(self) -> None:
@@ -241,6 +236,7 @@ class TestArgparse:
 # ---------------------------------------------------------------------------
 # DDL / EXPLAIN helpers (pure functions — no DB required)
 # ---------------------------------------------------------------------------
+
 
 class TestDdlHelpers:
     def test_ddl_contains_required_clauses(self, module) -> None:

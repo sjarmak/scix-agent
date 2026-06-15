@@ -52,9 +52,7 @@ def _fake_search(query: str) -> dict:
 
 def _fake_co_citation(bib: str) -> dict:
     return {
-        "papers": [
-            {"bibcode": f"{bib}-cc{i}", "title": f"co-cited {i}"} for i in range(3)
-        ],
+        "papers": [{"bibcode": f"{bib}-cc{i}", "title": f"co-cited {i}"} for i in range(3)],
         "total": 3,
         "timing_ms": {"query_ms": 4.0},
     }
@@ -62,10 +60,7 @@ def _fake_co_citation(bib: str) -> dict:
 
 def _fake_coupling(bib: str) -> dict:
     return {
-        "papers": [
-            {"bibcode": f"Coupled{i}", "title": f"coupled paper {i}"}
-            for i in range(5)
-        ],
+        "papers": [{"bibcode": f"Coupled{i}", "title": f"coupled paper {i}"} for i in range(5)],
         "total": 5,
         "timing_ms": {"query_ms": 4.0},
     }
@@ -129,9 +124,7 @@ def _fake_entity_search(query: str) -> dict:
 
 def _fake_entity_context(entity_id: int) -> dict:
     return {
-        "papers": [
-            {"bibcode": f"Entity-{entity_id}-paper{i}"} for i in range(2)
-        ],
+        "papers": [{"bibcode": f"Entity-{entity_id}-paper{i}"} for i in range(2)],
         "total": 2,
     }
 
@@ -245,9 +238,7 @@ class TestDemoSurvey:
         assert response.status_code == 200, response.text
         publish_spy.assert_not_called()
 
-    def test_tolerates_intermediate_tool_failure(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_tolerates_intermediate_tool_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A raising citation_similarity must not break the rest of the sequence."""
         calls: list[str] = []
 
@@ -369,9 +360,7 @@ class TestDemoDisambig:
             json={"query": "JWST NIRCam", "top_n": 4},
         )
 
-        search_call = next(
-            args for name, args in captured_calls if name == "search"
-        )
+        search_call = next(args for name, args in captured_calls if name == "search")
         assert search_call["filters"]["entity_ids"] == [101, 102, 103]
 
     def test_no_hand_coded_publish_trace(

@@ -60,12 +60,12 @@ def _assert_envelope(payload: dict[str, Any], expected_code: str) -> None:
     """Assert the documented envelope contract for a structured error."""
     assert "error" in payload, f"missing 'error' field: {payload}"
     assert "error_code" in payload, f"missing 'error_code' field: {payload}"
-    assert isinstance(payload["error"], str) and payload["error"].strip(), (
-        f"'error' must be a non-empty string: {payload}"
-    )
-    assert payload["error_code"] == expected_code, (
-        f"expected error_code={expected_code!r}, got {payload.get('error_code')!r}"
-    )
+    assert (
+        isinstance(payload["error"], str) and payload["error"].strip()
+    ), f"'error' must be a non-empty string: {payload}"
+    assert (
+        payload["error_code"] == expected_code
+    ), f"expected error_code={expected_code!r}, got {payload.get('error_code')!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -113,9 +113,7 @@ def test_entity_invalid_action_envelope() -> None:
     is out of scope for this bead.
     """
     conn = _make_conn()
-    out = _dispatch_tool(
-        conn, "entity", {"action": "not_a_real_action", "query": "x"}
-    )
+    out = _dispatch_tool(conn, "entity", {"action": "not_a_real_action", "query": "x"})
     data = json.loads(out)
     _assert_envelope(data, "invalid_action")
 
@@ -208,9 +206,7 @@ def test_claim_blame_invalid_scope_envelope() -> None:
     """claim_blame rejects malformed scope payload with error_code='invalid_scope'."""
     conn = _make_conn()
     # scope=42 fails scope_from_dict's TypeError path before any DB call.
-    out = _dispatch_tool(
-        conn, "claim_blame", {"claim_text": "x", "scope": 42}
-    )
+    out = _dispatch_tool(conn, "claim_blame", {"claim_text": "x", "scope": 42})
     data = json.loads(out)
     _assert_envelope(data, "invalid_scope")
 
@@ -283,8 +279,7 @@ def test_documented_error_codes_in_audit_doc() -> None:
         "invalid_scope",
     }
     missing = {
-        code for code in expected_codes
-        if not re.search(r"`" + re.escape(code) + r"`", text)
+        code for code in expected_codes if not re.search(r"`" + re.escape(code) + r"`", text)
     }
     assert not missing, (
         f"audit doc is missing stable error_codes (backtick-quoted form): "

@@ -179,9 +179,7 @@ class TestLinkPaperSections:
         sections = [Section(section_index=0, heading="Methods", text="")]
         assert link_paper_sections(sections, jwst_automaton) == []
 
-    def test_section_with_no_match_yields_no_candidate(
-        self, jwst_automaton
-    ) -> None:
+    def test_section_with_no_match_yields_no_candidate(self, jwst_automaton) -> None:
         sections = [
             Section(
                 section_index=0,
@@ -191,9 +189,7 @@ class TestLinkPaperSections:
         ]
         assert link_paper_sections(sections, jwst_automaton) == []
 
-    def test_single_match_returns_candidate_with_section_provenance(
-        self, jwst_automaton
-    ) -> None:
+    def test_single_match_returns_candidate_with_section_provenance(self, jwst_automaton) -> None:
         sections = [
             Section(
                 section_index=2,
@@ -211,9 +207,7 @@ class TestLinkPaperSections:
         assert cand.entity_id == 202
         assert cand.candidate.matched_surface == "JWST"
 
-    def test_multiple_surface_forms_in_one_section_dedupe_to_earliest(
-        self, jwst_automaton
-    ) -> None:
+    def test_multiple_surface_forms_in_one_section_dedupe_to_earliest(self, jwst_automaton) -> None:
         # Both "James Webb Space Telescope" (alias=False) and "JWST"
         # (alias=True) hit the same entity_id=202 in this section. Dedupe
         # should keep the earliest start offset (the long-form, position 0).
@@ -223,9 +217,7 @@ class TestLinkPaperSections:
         assert len(candidates) == 1
         # Earliest mention wins — the long-form starts at offset 0.
         assert candidates[0].candidate.start == 0
-        assert candidates[0].candidate.matched_surface == (
-            "James Webb Space Telescope"
-        )
+        assert candidates[0].candidate.matched_surface == ("James Webb Space Telescope")
 
     def test_cross_section_duplicates_preserved(self, jwst_automaton) -> None:
         # Same entity in two sections — both kept; the whole point of
@@ -246,9 +238,7 @@ class TestLinkPaperSections:
             (2, "result"),
         }
 
-    def test_two_entities_in_one_section_each_gets_own_row(
-        self, two_entity_automaton
-    ) -> None:
+    def test_two_entities_in_one_section_each_gets_own_row(self, two_entity_automaton) -> None:
         sections = [
             Section(
                 section_index=0,
@@ -260,9 +250,7 @@ class TestLinkPaperSections:
         assert {c.entity_id for c in candidates} == {202, 303}
         assert {c.section_index for c in candidates} == {0}
 
-    def test_section_role_falls_back_to_other_for_unknown_heading(
-        self, jwst_automaton
-    ) -> None:
+    def test_section_role_falls_back_to_other_for_unknown_heading(self, jwst_automaton) -> None:
         sections = [
             Section(
                 section_index=0,
@@ -281,9 +269,7 @@ class TestLinkPaperSections:
         assert candidates[0].section_role == "other"
         assert candidates[0].section_heading is None
 
-    def test_numbered_heading_is_classified_after_numbering_strip(
-        self, jwst_automaton
-    ) -> None:
+    def test_numbered_heading_is_classified_after_numbering_strip(self, jwst_automaton) -> None:
         sections = [
             Section(
                 section_index=0,
@@ -295,9 +281,7 @@ class TestLinkPaperSections:
         assert len(candidates) == 1
         assert candidates[0].section_role == "method"
 
-    def test_results_and_discussion_resolves_to_conclusion(
-        self, jwst_automaton
-    ) -> None:
+    def test_results_and_discussion_resolves_to_conclusion(self, jwst_automaton) -> None:
         # section_role priority: conclusion > method > result > background.
         sections = [
             Section(
@@ -317,9 +301,7 @@ class TestLinkPaperSections:
 
 
 class TestSectionLinkCandidateProperty:
-    def test_entity_id_property_proxies_underlying_candidate(
-        self, jwst_automaton
-    ) -> None:
+    def test_entity_id_property_proxies_underlying_candidate(self, jwst_automaton) -> None:
         sections = [Section(section_index=4, heading="Methods", text="JWST works")]
         candidates = link_paper_sections(sections, jwst_automaton)
         assert len(candidates) == 1
@@ -398,8 +380,7 @@ def _cleanup(conn: psycopg.Connection) -> None:
             (canonicals,),
         )
         cur.execute(
-            "DELETE FROM entities "
-            " WHERE canonical_name = ANY(%s) AND source = 'unit_test_67e'",
+            "DELETE FROM entities " " WHERE canonical_name = ANY(%s) AND source = 'unit_test_67e'",
             (canonicals,),
         )
         cur.execute(
@@ -505,8 +486,7 @@ class TestSectionLinkerEndToEnd:
         # the test bibcodes.
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT count(*) FROM section_entities "
-                " WHERE bibcode = ANY(%s)",
+                "SELECT count(*) FROM section_entities " " WHERE bibcode = ANY(%s)",
                 (list(_SEED_BIBCODES),),
             )
             row = cur.fetchone()
@@ -543,9 +523,7 @@ class TestSectionLinkerEndToEnd:
             rows = cur.fetchall()
 
         # Cross-section preservation: paper 1 mentions JWST in 3 sections.
-        paper1_jwst_sections = {
-            r[1] for r in rows if r[0] == "test_67e_001" and r[2] == jwst_id
-        }
+        paper1_jwst_sections = {r[1] for r in rows if r[0] == "test_67e_001" and r[2] == jwst_id}
         assert paper1_jwst_sections == {0, 1, 2}
 
         # Role classification flows through to the row.
@@ -579,8 +557,7 @@ class TestSectionLinkerEndToEnd:
         )
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT count(*) FROM section_entities "
-                " WHERE bibcode = ANY(%s)",
+                "SELECT count(*) FROM section_entities " " WHERE bibcode = ANY(%s)",
                 (list(_SEED_BIBCODES),),
             )
             row = cur.fetchone()
@@ -593,8 +570,7 @@ class TestSectionLinkerEndToEnd:
         )
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT count(*) FROM section_entities "
-                " WHERE bibcode = ANY(%s)",
+                "SELECT count(*) FROM section_entities " " WHERE bibcode = ANY(%s)",
                 (list(_SEED_BIBCODES),),
             )
             row = cur.fetchone()

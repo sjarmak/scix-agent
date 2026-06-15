@@ -43,9 +43,7 @@ REQUIRED_PAYLOAD_KEYS = {
 
 def _load_module():
     """Import the script as a module without executing main()."""
-    spec = importlib.util.spec_from_file_location(
-        "bench_pgvectorscale_coldstart", SCRIPT_PATH
-    )
+    spec = importlib.util.spec_from_file_location("bench_pgvectorscale_coldstart", SCRIPT_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -60,6 +58,7 @@ def module():
 # ---------------------------------------------------------------------------
 # Production-DSN refusal
 # ---------------------------------------------------------------------------
+
 
 class TestAssertPilotDsn:
     def test_refuses_production_keyvalue_dsn(self, module) -> None:
@@ -84,9 +83,7 @@ class TestAssertPilotDsn:
     def test_allows_test_dsn(self, module) -> None:
         module.assert_pilot_dsn("dbname=scix_test")
 
-    def test_main_refuses_production_dry_run(
-        self, module, tmp_path: Path
-    ) -> None:
+    def test_main_refuses_production_dry_run(self, module, tmp_path: Path) -> None:
         """End-to-end: invoking main(--dry-run) with production DSN exits 2."""
         out_json = tmp_path / "cold.json"
         out_md = tmp_path / "cold.md"
@@ -106,9 +103,7 @@ class TestAssertPilotDsn:
         assert not out_json.exists()
         assert not out_md.exists()
 
-    def test_main_refuses_production_non_dry_run(
-        self, module, tmp_path: Path
-    ) -> None:
+    def test_main_refuses_production_non_dry_run(self, module, tmp_path: Path) -> None:
         """Non-dry-run with production DSN also exits 2 without touching DB."""
         out_json = tmp_path / "cold.json"
         out_md = tmp_path / "cold.md"
@@ -131,6 +126,7 @@ class TestAssertPilotDsn:
 # Pure math — compute_cold_warm_ratio + percentile
 # ---------------------------------------------------------------------------
 
+
 class TestComputeColdWarmRatio:
     def test_simple_ratio_10x(self, module) -> None:
         # cold_ms_list[0] = 100 ms, warm_p50 = 10 ms → ratio = 10.0
@@ -138,9 +134,7 @@ class TestComputeColdWarmRatio:
 
     def test_ratio_uses_only_first_cold(self, module) -> None:
         # Only cold[0] feeds the ratio; later values are ignored.
-        assert module.compute_cold_warm_ratio(
-            [50.0, 5.0, 5.0, 5.0], 25.0
-        ) == pytest.approx(2.0)
+        assert module.compute_cold_warm_ratio([50.0, 5.0, 5.0, 5.0], 25.0) == pytest.approx(2.0)
 
     def test_ratio_one_when_cold_equals_warm(self, module) -> None:
         assert module.compute_cold_warm_ratio([7.5], 7.5) == pytest.approx(1.0)
@@ -197,6 +191,7 @@ class TestSummariseIndexResults:
 # ---------------------------------------------------------------------------
 # argparse wiring + dry-run
 # ---------------------------------------------------------------------------
+
 
 class TestArgparse:
     def test_help_exits_zero(self) -> None:
@@ -320,9 +315,7 @@ class TestDryRunOutputs:
             assert entry["warm_p95_ms"] == 0.0
             assert entry["cold_warm_ratio"] == 0.0
 
-    def test_dry_run_md_mentions_restart(
-        self, module, tmp_path: Path
-    ) -> None:
+    def test_dry_run_md_mentions_restart(self, module, tmp_path: Path) -> None:
         out_json = tmp_path / "cold.json"
         out_md = tmp_path / "cold.md"
         rc = module.main(
@@ -341,9 +334,7 @@ class TestDryRunOutputs:
         assert "systemctl restart postgresql" in md
         assert "important" in md
 
-    def test_dry_run_creates_parent_dir(
-        self, module, tmp_path: Path
-    ) -> None:
+    def test_dry_run_creates_parent_dir(self, module, tmp_path: Path) -> None:
         out_json = tmp_path / "a" / "b" / "cold.json"
         out_md = tmp_path / "a" / "b" / "cold.md"
         rc = module.main(

@@ -46,57 +46,53 @@ TOOL_TESTS: list[tuple[str, dict]] = [
     ("keyword_search", {"terms": "dark matter halo", "limit": 5}),
     # semantic_search requires model loading — test separately if GPU is free
     # ("semantic_search", {"query": "dark matter halo", "limit": 5}),
-
     # -- Paper lookup --
     ("get_paper", {"bibcode": CITED_BIBCODE}),
-
     # -- Citation graph --
     ("get_citations", {"bibcode": CITED_BIBCODE, "limit": 5}),
     ("get_references", {"bibcode": CITED_BIBCODE, "limit": 5}),
     ("co_citation_analysis", {"bibcode": CITED_BIBCODE, "min_overlap": 2, "limit": 5}),
     ("bibliographic_coupling", {"bibcode": CITED_BIBCODE, "min_overlap": 2, "limit": 5}),
-    ("citation_chain", {"source_bibcode": CITE_PAIR_SRC, "target_bibcode": CITE_PAIR_TGT, "max_depth": 3}),
-
+    (
+        "citation_chain",
+        {"source_bibcode": CITE_PAIR_SRC, "target_bibcode": CITE_PAIR_TGT, "max_depth": 3},
+    ),
     # -- Author & facet --
     ("get_author_papers", {"author_name": "Einstein, A.", "year_min": 1905, "year_max": 1920}),
     ("facet_counts", {"field": "year", "limit": 10}),
-
     # -- Temporal --
     ("temporal_evolution", {"bibcode_or_query": CITED_BIBCODE}),
-
     # -- Graph metrics --
     ("get_paper_metrics", {"bibcode": METRICS_BIBCODE}),
     ("explore_community", {"bibcode": METRICS_BIBCODE, "resolution": "coarse", "limit": 5}),
-
     # -- Entity/extraction tools --
-    ("entity_search", {"entity_type": "methods", "entity_name": "Generalized gradient approximation", "limit": 5}),
+    (
+        "entity_search",
+        {"entity_type": "methods", "entity_name": "Generalized gradient approximation", "limit": 5},
+    ),
     ("entity_profile", {"bibcode": EXTRACT_BIBCODE}),
     ("concept_search", {"query": "Astronomy", "include_subtopics": False, "limit": 5}),
-
     # -- Citation context --
     ("get_citation_context", {"source_bibcode": CTX_SRC, "target_bibcode": CTX_TGT}),
-
     # -- Full-text tools (may return empty if no paper_bodies) --
     ("read_paper_section", {"bibcode": CITED_BIBCODE, "section": "full", "limit": 500}),
     ("search_within_paper", {"bibcode": CITED_BIBCODE, "query": "solar"}),
-
     # -- OpenAlex --
     ("get_openalex_topics", {"bibcode": CITED_BIBCODE}),
-
     # -- Document context (matview) --
     ("document_context", {"bibcode": DOC_CTX_BIBCODE}),
-
     # -- Entity graph tools --
     ("entity_context", {"entity_id": ENTITY_ID}),
     ("resolve_entity", {"query": "Dopplergram"}),
-
     # -- Working set tools (session-scoped) --
-    ("add_to_working_set", {"bibcodes": [CITED_BIBCODE], "source_tool": "smoke_test", "source_context": "testing"}),
+    (
+        "add_to_working_set",
+        {"bibcodes": [CITED_BIBCODE], "source_tool": "smoke_test", "source_context": "testing"},
+    ),
     ("get_working_set", {}),
     ("get_session_summary", {}),
     ("find_gaps", {"resolution": "coarse", "limit": 5}),
     ("clear_working_set", {}),
-
     # -- Health --
     ("health_check", {}),
 ]
@@ -131,7 +127,9 @@ def main() -> None:
                 elif "entries" in result:
                     detail = f"{len(result['entries'])} entries"
                 elif "path" in result:
-                    detail = f"path length {len(result['path'])}" if result["path"] else "no path found"
+                    detail = (
+                        f"path length {len(result['path'])}" if result["path"] else "no path found"
+                    )
                 elif "years" in result:
                     detail = f"{len(result['years'])} years"
                 elif "facets" in result:
@@ -158,12 +156,14 @@ def main() -> None:
             detail = f"{type(e).__name__}: {str(e)[:50]}"
             failed += 1
 
-        results.append({
-            "tool": tool_name,
-            "status": status,
-            "elapsed_ms": round(elapsed_ms, 1),
-            "detail": detail,
-        })
+        results.append(
+            {
+                "tool": tool_name,
+                "status": status,
+                "elapsed_ms": round(elapsed_ms, 1),
+                "detail": detail,
+            }
+        )
         print(f"{tool_name:<30} {status:<8} {elapsed_ms:>8.1f} ms  {detail}")
 
     print("-" * 90)
@@ -173,7 +173,11 @@ def main() -> None:
     out_path = Path(__file__).resolve().parent.parent / "results" / "mcp_smoke_test.json"
     out_path.parent.mkdir(exist_ok=True)
     with open(out_path, "w") as f:
-        json.dump({"passed": passed, "failed": failed, "total": len(TOOL_TESTS), "results": results}, f, indent=2)
+        json.dump(
+            {"passed": passed, "failed": failed, "total": len(TOOL_TESTS), "results": results},
+            f,
+            indent=2,
+        )
     print(f"\nResults written to {out_path}")
 
     conn.close()

@@ -57,9 +57,7 @@ class _FakeCursor:
             self._last_rows = self._conn.insert_entity(params)
         elif normalized.startswith("SELECT id FROM entities WHERE canonical_name"):
             self._last_rows = self._conn.lookup_entity_by_key(params)
-        elif normalized.startswith(
-            "SELECT id, source FROM entities WHERE canonical_name"
-        ):
+        elif normalized.startswith("SELECT id, source FROM entities WHERE canonical_name"):
             self._last_rows = self._conn.lookup_entity_any_source(params)
         elif normalized.startswith("INSERT INTO entity_aliases"):
             self._last_rows = self._conn.insert_alias(params)
@@ -117,15 +115,9 @@ class FakeConnection:
         # The seeder only commits once (at the end of seed()), so rolling
         # back here models the dry-run path precisely.
         self.rollbacks += 1
-        self.entities = [
-            e for e in self.entities if e.get("_committed", False)
-        ]
-        self.aliases = [
-            a for a in self.aliases if a.get("_committed", False)
-        ]
-        self.relationships = [
-            r for r in self.relationships if r.get("_committed", False)
-        ]
+        self.entities = [e for e in self.entities if e.get("_committed", False)]
+        self.aliases = [a for a in self.aliases if a.get("_committed", False)]
+        self.relationships = [r for r in self.relationships if r.get("_committed", False)]
 
     def close(self) -> None:
         self.closed = True
@@ -168,9 +160,7 @@ class FakeConnection:
         )
         return [(existing["id"],)] if existing else []
 
-    def lookup_entity_any_source(
-        self, params: dict[str, Any]
-    ) -> list[tuple[Any, ...]]:
+    def lookup_entity_any_source(self, params: dict[str, Any]) -> list[tuple[Any, ...]]:
         matches = [
             e
             for e in self.entities
@@ -186,10 +176,7 @@ class FakeConnection:
 
     def insert_alias(self, params: dict[str, Any]) -> list[tuple[Any, ...]]:
         for a in self.aliases:
-            if (
-                a["entity_id"] == params["entity_id"]
-                and a["alias"] == params["alias"]
-            ):
+            if a["entity_id"] == params["entity_id"] and a["alias"] == params["alias"]:
                 return []
         self.aliases.append(
             {
@@ -301,8 +288,7 @@ class TestSeed:
         jwst_rows = [
             e
             for e in conn.entities
-            if e["canonical_name"] == "James Webb Space Telescope"
-            and e["entity_type"] == "mission"
+            if e["canonical_name"] == "James Webb Space Telescope" and e["entity_type"] == "mission"
         ]
         assert len(jwst_rows) == 1
         jwst_id = jwst_rows[0]["id"]
@@ -340,8 +326,7 @@ class TestSeed:
         jwst_rows = [
             e
             for e in conn.entities
-            if e["canonical_name"] == "James Webb Space Telescope"
-            and e["entity_type"] == "mission"
+            if e["canonical_name"] == "James Webb Space Telescope" and e["entity_type"] == "mission"
         ]
         sources = {e["source"] for e in jwst_rows}
         assert sources == {"curated_flagship_v1"}
@@ -384,13 +369,7 @@ class TestCli:
         assert seed_mod._resolve_dsn("scix_test") == "dbname=scix_test"
 
     def test_resolve_dsn_full_keyvalue(self) -> None:
-        assert (
-            seed_mod._resolve_dsn("dbname=foo host=bar")
-            == "dbname=foo host=bar"
-        )
+        assert seed_mod._resolve_dsn("dbname=foo host=bar") == "dbname=foo host=bar"
 
     def test_resolve_dsn_uri(self) -> None:
-        assert (
-            seed_mod._resolve_dsn("postgresql://u:p@h/db")
-            == "postgresql://u:p@h/db"
-        )
+        assert seed_mod._resolve_dsn("postgresql://u:p@h/db") == "postgresql://u:p@h/db"

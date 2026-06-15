@@ -145,8 +145,7 @@ def _populate_seed_table(conn: psycopg.Connection, config: SliceConfig) -> int:
     with conn.cursor() as cur:
         cur.execute("DROP TABLE IF EXISTS tmp_slice_seed")
         cur.execute(
-            "CREATE TEMP TABLE tmp_slice_seed (bibcode TEXT PRIMARY KEY) "
-            "ON COMMIT PRESERVE ROWS"
+            "CREATE TEMP TABLE tmp_slice_seed (bibcode TEXT PRIMARY KEY) " "ON COMMIT PRESERVE ROWS"
         )
         sql = (
             "INSERT INTO tmp_slice_seed (bibcode) "
@@ -173,9 +172,7 @@ def _expand_neighborhood(conn: psycopg.Connection, hop_depth: int) -> int:
             "CREATE TEMP TABLE tmp_slice_nodes (bibcode TEXT PRIMARY KEY) "
             "ON COMMIT PRESERVE ROWS"
         )
-        cur.execute(
-            "INSERT INTO tmp_slice_nodes (bibcode) SELECT bibcode FROM tmp_slice_seed"
-        )
+        cur.execute("INSERT INTO tmp_slice_nodes (bibcode) SELECT bibcode FROM tmp_slice_seed")
 
         for hop in range(1, hop_depth + 1):
             t0 = time.time()

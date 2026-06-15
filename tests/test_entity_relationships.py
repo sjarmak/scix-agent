@@ -335,9 +335,7 @@ class TestParseVizierTablePath:
 
 class TestExtractVizierCatalogEdges:
     def test_emits_catalog_parent_of_table(self) -> None:
-        edges, catalogs = extract_vizier_catalog_edges(
-            [(101, '"J/A+A/287/990/table3a"')]
-        )
+        edges, catalogs = extract_vizier_catalog_edges([(101, '"J/A+A/287/990/table3a"')])
         assert catalogs == ["J/A+A/287/990"]
         assert len(edges) == 1
         e = edges[0]
@@ -361,9 +359,7 @@ class TestExtractVizierCatalogEdges:
         assert all(e.subject_name == "I/239" for e in edges)
 
     def test_skips_meta_tables_without_catalog(self) -> None:
-        edges, catalogs = extract_vizier_catalog_edges(
-            [(1, '"METAcat"'), (2, '"I/80/remarks"')]
-        )
+        edges, catalogs = extract_vizier_catalog_edges([(1, '"METAcat"'), (2, '"I/80/remarks"')])
         assert catalogs == ["I/80"]
         assert [e.object_id for e in edges] == [2]
 

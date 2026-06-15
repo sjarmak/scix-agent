@@ -67,9 +67,7 @@ def pick_top_cited(
             continue
         if max_year is not None and (y is None or y > max_year):
             continue
-        if title_contains and not any(
-            tok in titles_lower[vid] for tok in title_contains
-        ):
+        if title_contains and not any(tok in titles_lower[vid] for tok in title_contains):
             continue
         cands.append((vid, cc))
     cands.sort(key=lambda t: t[1], reverse=True)
@@ -139,9 +137,7 @@ def build_pickers(graph) -> dict[str, Callable[[QuestionTemplate], tuple[str, ..
                     if b == a:
                         continue
                     if b in a_neighbors:
-                        return tuple(
-                            _bibcode(graph, x) for x in (head_id, a, b)
-                        )
+                        return tuple(_bibcode(graph, x) for x in (head_id, a, b))
         return tuple(_bibcode(graph, vid) for vid in top[:3])
 
     def t3_subgraph_communities(_: QuestionTemplate) -> tuple[str, ...]:
@@ -157,9 +153,7 @@ def build_pickers(graph) -> dict[str, Callable[[QuestionTemplate], tuple[str, ..
         return tuple(_bibcode(graph, vid) for vid in ids[:2])
 
     def t3_method_then_application(_: QuestionTemplate) -> tuple[str, ...]:
-        ids = pick_top_cited(
-            graph, min_count=200, title_contains=_METHOD_TOKENS
-        )
+        ids = pick_top_cited(graph, min_count=200, title_contains=_METHOD_TOKENS)
         if not ids:
             ids = pick_top_cited(graph, min_count=200)
         return (_bibcode(graph, ids[0]),) if ids else ()
@@ -188,9 +182,7 @@ def materialize_questions(graph) -> list[Question]:
     def picker(template: QuestionTemplate) -> tuple[str, ...]:
         fn = pickers.get(template.template_id)
         if fn is None:
-            logger.warning(
-                "no picker for template %s — skipping", template.template_id
-            )
+            logger.warning("no picker for template %s — skipping", template.template_id)
             return ()
         return fn(template)
 
@@ -223,9 +215,7 @@ def run_all(
     return results
 
 
-def summaries_by_variant(
-    results: list[RunResult], trace_dir: Path
-) -> dict[str, TraceSummary]:
+def summaries_by_variant(results: list[RunResult], trace_dir: Path) -> dict[str, TraceSummary]:
     out: dict[str, TraceSummary] = {}
     for variant in ("control", "treatment"):
         sessions = [r.session_id for r in results if r.variant == variant]
@@ -309,13 +299,9 @@ def render_markdown(
     lines.append("")
     lines.append("## Headline metrics")
     lines.append("")
-    lines.append(
-        f"- Depth shift (median): {comparison['depth_shift_median']:+.2f}"
-    )
+    lines.append(f"- Depth shift (median): {comparison['depth_shift_median']:+.2f}")
     lines.append(f"- Depth shift (max):    {comparison['depth_shift_max']:+.0f}")
-    lines.append(
-        f"- Freeform queries (treatment): {comparison['freeform_query_emergence']}"
-    )
+    lines.append(f"- Freeform queries (treatment): {comparison['freeform_query_emergence']}")
     if new_tools:
         lines.append("- New primitives used in treatment:")
         for tool, n in sorted(new_tools.items(), key=lambda kv: -kv[1]):
@@ -327,15 +313,10 @@ def render_markdown(
     lines.append("")
     lines.append("| metric | control | treatment |")
     lines.append("|--------|---------|-----------|")
+    lines.append(f"| events | {control['event_count']} | {treatment['event_count']} |")
+    lines.append(f"| max depth | {control['max_depth']} | {treatment['max_depth']} |")
     lines.append(
-        f"| events | {control['event_count']} | {treatment['event_count']} |"
-    )
-    lines.append(
-        f"| max depth | {control['max_depth']} | {treatment['max_depth']} |"
-    )
-    lines.append(
-        f"| median depth | {control['median_depth']:.2f} | "
-        f"{treatment['median_depth']:.2f} |"
+        f"| median depth | {control['median_depth']:.2f} | " f"{treatment['median_depth']:.2f} |"
     )
     lines.append("")
     lines.append("## Per-question runs")
@@ -357,8 +338,6 @@ def render_markdown(
         tc = f"${trt.cost_usd:.4f}" if trt and trt.cost_usd else "-"
         ce = (ctrl.error if ctrl and ctrl.error else "-")[:40]
         te = (trt.error if trt and trt.error else "-")[:40]
-        lines.append(
-            f"| `{qid}` | {tiers.get(qid, '-')} | {cc} | {tc} | {ce} | {te} |"
-        )
+        lines.append(f"| `{qid}` | {tiers.get(qid, '-')} | {cc} | {tc} | {ce} | {te} |")
     lines.append("")
     return "\n".join(lines) + "\n"

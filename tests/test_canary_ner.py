@@ -9,6 +9,7 @@ Schema contract note: ``scripts/eval_ner_wiesp.py`` writes
 so ``model_revision`` is nested under ``meta`` — these fixtures must
 match that exact schema.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -154,10 +155,7 @@ def test_load_baseline_happy_path(canary, tmp_path: Path):
     assert "per_entity" in payload
     assert payload["per_entity"]["Mission"]["f1"] == 0.9
     # model_revision is nested under `meta`, matching eval_ner_wiesp.py.
-    assert (
-        payload["meta"]["model_revision"]
-        == "87ce76dbc8c3b1e3f2bbe2c64fee5d25bc03c03d"
-    )
+    assert payload["meta"]["model_revision"] == "87ce76dbc8c3b1e3f2bbe2c64fee5d25bc03c03d"
 
 
 def test_load_baseline_tolerates_missing_meta(canary, tmp_path: Path):
@@ -179,18 +177,8 @@ def test_baseline_model_revision_extracts_from_meta(canary):
 
 
 def test_baseline_model_revision_returns_none_when_absent(canary):
-    assert (
-        canary.baseline_model_revision(
-            {"per_entity": {}, "summary": {}}
-        )
-        is None
-    )
-    assert (
-        canary.baseline_model_revision(
-            {"per_entity": {}, "summary": {}, "meta": {}}
-        )
-        is None
-    )
+    assert canary.baseline_model_revision({"per_entity": {}, "summary": {}}) is None
+    assert canary.baseline_model_revision({"per_entity": {}, "summary": {}, "meta": {}}) is None
 
 
 def test_load_baseline_missing_file_raises_clear_error(canary, tmp_path: Path):
@@ -200,9 +188,7 @@ def test_load_baseline_missing_file_raises_clear_error(canary, tmp_path: Path):
     assert str(missing) in str(excinfo.value)
 
 
-def test_load_baseline_malformed_missing_per_entity(
-    canary, tmp_path: Path
-):
+def test_load_baseline_malformed_missing_per_entity(canary, tmp_path: Path):
     path = tmp_path / "bad.json"
     path.write_text(json.dumps({"summary": {}, "meta": {"model_revision": "x"}}))
     with pytest.raises(canary.FileFormatError) as excinfo:
@@ -357,10 +343,9 @@ def _run_main(
     # Safety: if the test is NOT using --mock-model, ensure load_model
     # never actually runs (this would hit the network).
     if monkeypatch_model and monkeypatch is not None:
+
         def _boom(revision: str):
-            raise AssertionError(
-                "load_model should not be called when --mock-model is set"
-            )
+            raise AssertionError("load_model should not be called when --mock-model is set")
 
         monkeypatch.setattr(canary, "load_model", _boom)
 
@@ -382,9 +367,7 @@ def _run_main(
     return exit_code, log_path
 
 
-def test_main_exit_zero_within_threshold(
-    canary, tmp_path: Path, monkeypatch
-):
+def test_main_exit_zero_within_threshold(canary, tmp_path: Path, monkeypatch):
     # Mock model path produces gold predictions → perfect F1 (1.0) vs baseline
     # F1 of 0.9 and 0.8 → drift 0.1 and 0.2 which WOULD fail. We set baseline
     # to 1.0 so drift is zero and exit code is 0.
@@ -402,9 +385,7 @@ def test_main_exit_zero_within_threshold(
     assert log_path.exists()
 
 
-def test_main_exit_one_when_drift_exceeds(
-    canary, tmp_path: Path, monkeypatch
-):
+def test_main_exit_one_when_drift_exceeds(canary, tmp_path: Path, monkeypatch):
     # Mock model = perfect F1 (1.0). Baseline set very low → drift > 0.05.
     low_baseline = {
         "Mission": {"precision": 0.3, "recall": 0.3, "f1": 0.3},
@@ -420,9 +401,7 @@ def test_main_exit_one_when_drift_exceeds(
     assert log_path.exists()
 
 
-def test_main_writes_log_with_expected_schema(
-    canary, tmp_path: Path, monkeypatch
-):
+def test_main_writes_log_with_expected_schema(canary, tmp_path: Path, monkeypatch):
     perfect_baseline = {
         "Mission": {"precision": 1.0, "recall": 1.0, "f1": 1.0},
         "CelestialObject": {"precision": 1.0, "recall": 1.0, "f1": 1.0},
@@ -454,10 +433,7 @@ def test_main_writes_log_with_expected_schema(
     assert payload["model_name"] == canary.MODEL_NAME
     assert payload["model_revision"] == canary.MODEL_REVISION
     # baseline_revision is sourced from meta.model_revision in the baseline
-    assert (
-        payload["baseline_revision"]
-        == "87ce76dbc8c3b1e3f2bbe2c64fee5d25bc03c03d"
-    )
+    assert payload["baseline_revision"] == "87ce76dbc8c3b1e3f2bbe2c64fee5d25bc03c03d"
     assert payload["paper_count"] == 2
     assert payload["threshold"] == canary.DRIFT_THRESHOLD
     assert payload["exceeded"] is False
@@ -469,9 +445,7 @@ def test_main_writes_log_with_expected_schema(
         assert "drift" in entry
 
 
-def test_main_log_path_follows_date_convention(
-    canary, tmp_path: Path, monkeypatch
-):
+def test_main_log_path_follows_date_convention(canary, tmp_path: Path, monkeypatch):
     perfect_baseline = {
         "Mission": {"precision": 1.0, "recall": 1.0, "f1": 1.0},
         "CelestialObject": {"precision": 1.0, "recall": 1.0, "f1": 1.0},
@@ -518,9 +492,7 @@ def test_mock_model_flag_skips_real_loader(canary, tmp_path: Path, monkeypatch):
     assert called["n"] == 0
 
 
-def test_main_raises_file_format_error_when_baseline_missing(
-    canary, tmp_path: Path
-):
+def test_main_raises_file_format_error_when_baseline_missing(canary, tmp_path: Path):
     fixture_path = _make_fixture(tmp_path)
     missing_baseline = tmp_path / "nope.json"
     with pytest.raises(canary.FileFormatError):
@@ -537,9 +509,7 @@ def test_main_raises_file_format_error_when_baseline_missing(
         )
 
 
-def test_main_runs_against_committed_baseline_and_fixture(
-    canary, tmp_path: Path, monkeypatch
-):
+def test_main_runs_against_committed_baseline_and_fixture(canary, tmp_path: Path, monkeypatch):
     """End-to-end regression: the script should run cleanly against the
     committed baseline and fixture without raising FileFormatError.
 

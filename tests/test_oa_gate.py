@@ -21,9 +21,7 @@ from scix.oa_gate import (
 )
 
 _MIGRATION_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "migrations"
-    / "068_papers_is_oa_or_preprint.sql"
+    Path(__file__).resolve().parent.parent / "migrations" / "068_papers_is_oa_or_preprint.sql"
 )
 
 
@@ -71,9 +69,7 @@ class TestIsOaOrPreprintPredicate:
         assert is_oa_or_preprint(property_=["OPENACCESS"], arxiv_class=[]) is True
 
     def test_arxiv_class_qualifies_with_no_oa_property(self) -> None:
-        assert (
-            is_oa_or_preprint(property_=["TOC"], arxiv_class=["astro-ph"]) is True
-        )
+        assert is_oa_or_preprint(property_=["TOC"], arxiv_class=["astro-ph"]) is True
 
     def test_both_none_returns_false(self) -> None:
         assert is_oa_or_preprint(property_=None, arxiv_class=None) is False
@@ -119,15 +115,10 @@ class TestMigrationFileContract:
         sql = _MIGRATION_PATH.read_text()
         assert "OPENACCESS" in sql, "migration must check for OPENACCESS property"
         assert "property" in sql, "migration must reference the property column"
-        assert "arxiv_class" in sql, (
-            "migration must reference the arxiv_class column"
-        )
-        assert "array_length" in sql, (
-            "migration must use array_length for the arxiv_class branch"
-        )
+        assert "arxiv_class" in sql, "migration must reference the arxiv_class column"
+        assert "array_length" in sql, "migration must use array_length for the arxiv_class branch"
         assert "COALESCE" in sql, (
-            "migration must wrap branches in COALESCE so the result is "
-            "BOOLEAN (not tri-valued)"
+            "migration must wrap branches in COALESCE so the result is " "BOOLEAN (not tri-valued)"
         )
 
     def test_migration_creates_partial_index_on_body_not_null(self) -> None:
@@ -148,9 +139,7 @@ class TestMigrationFileContract:
         # Allow BEGIN/COMMIT inside DO blocks if any future revision needs
         # them, but the file should not start the script with BEGIN.
         body = "\n".join(
-            line
-            for line in sql.splitlines()
-            if not line.lstrip().startswith("--") and line.strip()
+            line for line in sql.splitlines() if not line.lstrip().startswith("--") and line.strip()
         )
         assert not re.match(r"\s*BEGIN\s*;", body, re.IGNORECASE), (
             "migration must not wrap the whole file in a transaction "

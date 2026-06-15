@@ -196,8 +196,7 @@ def _import_docling() -> Any:
         return DocumentConverter
     except ImportError as exc:
         raise ImportError(
-            "Docling is required for PDF parsing. "
-            "Install it with: pip install 'docling>=2.0'"
+            "Docling is required for PDF parsing. " "Install it with: pip install 'docling>=2.0'"
         ) from exc
 
 
@@ -225,10 +224,7 @@ def parse_pdf_with_docling(pdf_path_or_url: str) -> DoclingResult:
     if "://" in pdf_path_or_url:
         scheme = pdf_path_or_url.split("://", 1)[0].lower()
         if scheme not in _ALLOWED_SCHEMES:
-            raise ValueError(
-                f"Disallowed URL scheme {scheme!r}. "
-                "Only http/https are permitted."
-            )
+            raise ValueError(f"Disallowed URL scheme {scheme!r}. " "Only http/https are permitted.")
     DocumentConverter = _import_docling()
     converter = DocumentConverter()
     result = converter.convert(pdf_path_or_url)
@@ -248,40 +244,42 @@ def parse_pdf_with_docling(pdf_path_or_url: str) -> DoclingResult:
 
         if type_name == "SectionHeaderItem":
             heading = obj.text if hasattr(obj, "text") else ""
-            sections.append({
-                "heading": heading,
-                "level": getattr(obj, "level", 1),
-                "text": "",
-                "offset": offset,
-            })
+            sections.append(
+                {
+                    "heading": heading,
+                    "level": getattr(obj, "level", 1),
+                    "text": "",
+                    "offset": offset,
+                }
+            )
 
         elif type_name == "TextItem":
             text = obj.text if hasattr(obj, "text") else ""
-            sections.append({
-                "heading": "",
-                "level": 1,
-                "text": text,
-                "offset": offset,
-            })
+            sections.append(
+                {
+                    "heading": "",
+                    "level": 1,
+                    "text": text,
+                    "offset": offset,
+                }
+            )
             offset += len(text)
 
         elif type_name == "PictureItem":
-            caption = "".join(
-                getattr(cap, "text", "") for cap in getattr(obj, "captions", [])
-            )
+            caption = "".join(getattr(cap, "text", "") for cap in getattr(obj, "captions", []))
             figures.append({"id": str(getattr(obj, "self_ref", "")), "caption": caption})
 
         elif type_name == "TableItem":
-            caption = "".join(
-                getattr(cap, "text", "") for cap in getattr(obj, "captions", [])
-            )
+            caption = "".join(getattr(cap, "text", "") for cap in getattr(obj, "captions", []))
             tables.append({"id": str(getattr(obj, "self_ref", "")), "caption": caption})
 
         elif type_name == "FormulaItem":
-            equations.append({
-                "id": str(getattr(obj, "self_ref", "")),
-                "latex": getattr(obj, "text", ""),
-            })
+            equations.append(
+                {
+                    "id": str(getattr(obj, "self_ref", "")),
+                    "latex": getattr(obj, "text", ""),
+                }
+            )
 
     page_count = len(doc.pages) if hasattr(doc, "pages") else 0
 

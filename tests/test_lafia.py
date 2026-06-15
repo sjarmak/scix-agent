@@ -35,9 +35,7 @@ from scix.extract.lafia import (
     insert_mentions,
 )
 
-_FIXTURE_PATH = (
-    Path(__file__).resolve().parent / "fixtures" / "lafia_informal_gold.jsonl"
-)
+_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "lafia_informal_gold.jsonl"
 
 
 # ---------------------------------------------------------------------------
@@ -48,21 +46,21 @@ _FIXTURE_PATH = (
 @pytest.mark.parametrize(
     "token,expected",
     [
-        ("SExtractor", True),    # capitalised
-        ("CASA", True),          # acronym
+        ("SExtractor", True),  # capitalised
+        ("CASA", True),  # acronym
         ("scikit-learn", True),  # internal punctuation
-        ("word2vec", True),      # internal digit
-        ("2MASS", True),         # leading digit
-        ("the", False),          # stopword
-        ("The", False),          # stopword, sentence-initial
-        ("method", False),       # common noun
-        ("a", False),            # too short
-        ("data", False),         # stopword
-        ("emcee", False),        # pure lowercase, no digit/punct (known limitation)
-        ("Obf~", False),         # OCR garbage (non-name punctuation)
-        ("i8óO", False),         # OCR garbage (non-ASCII)
-        ("Wolbach", False),      # ADS digitization-footer provenance
-        ("HARVARD", False),      # institutional provenance
+        ("word2vec", True),  # internal digit
+        ("2MASS", True),  # leading digit
+        ("the", False),  # stopword
+        ("The", False),  # stopword, sentence-initial
+        ("method", False),  # common noun
+        ("a", False),  # too short
+        ("data", False),  # stopword
+        ("emcee", False),  # pure lowercase, no digit/punct (known limitation)
+        ("Obf~", False),  # OCR garbage (non-name punctuation)
+        ("i8óO", False),  # OCR garbage (non-ASCII)
+        ("Wolbach", False),  # ADS digitization-footer provenance
+        ("HARVARD", False),  # institutional provenance
     ],
 )
 def test_is_namey_token(token: str, expected: bool) -> None:
@@ -100,17 +98,17 @@ def test_take_trailing_name_stops_at_non_name() -> None:
 @pytest.mark.parametrize(
     "token,expected",
     [
-        ("TOPCAT.", True),       # sentence-final period
-        ("TOPCAT;", True),       # clause boundary
-        ("TOPCAT:", True),       # colon boundary
-        ("GADGET?", True),       # question mark
-        ("(GADGET).", True),     # terminator behind a closing bracket
-        ('emcee."', True),       # terminator behind a closing quote
-        ("TOPCAT", False),       # bare name
-        ("v4.0", False),         # internal dot, digit tail
-        ("healpy.io", False),    # internal dot, alpha tail
-        ("scikit-learn", False), # hyphenated name
-        ("TOPCAT,", False),      # comma is not a sentence terminator
+        ("TOPCAT.", True),  # sentence-final period
+        ("TOPCAT;", True),  # clause boundary
+        ("TOPCAT:", True),  # colon boundary
+        ("GADGET?", True),  # question mark
+        ("(GADGET).", True),  # terminator behind a closing bracket
+        ('emcee."', True),  # terminator behind a closing quote
+        ("TOPCAT", False),  # bare name
+        ("v4.0", False),  # internal dot, digit tail
+        ("healpy.io", False),  # internal dot, alpha tail
+        ("scikit-learn", False),  # hyphenated name
+        ("TOPCAT,", False),  # comma is not a sentence terminator
     ],
 )
 def test_ends_sentence(token: str, expected: bool) -> None:
@@ -153,7 +151,7 @@ def test_sentence_crossing_not_emitted_as_mention() -> None:
 
 def test_normalise_name_rejects_overlong_and_pure_number() -> None:
     assert _normalise_name(["A", "B", "C", "D", "E"]) is None  # > MAX tokens
-    assert _normalise_name(["1234"]) is None                   # pure number
+    assert _normalise_name(["1234"]) is None  # pure number
     assert _normalise_name(["GALFIT"]) == "GALFIT"
 
 
@@ -170,12 +168,12 @@ def test_normalise_name_rejects_overlong_and_pure_number() -> None:
     "token,expected",
     [
         ("high-quality", True),
-        ("High-Quality", True),     # sentence-initial capitalised
+        ("High-Quality", True),  # sentence-initial capitalised
         ("open-source", True),
         ("high-resolution", True),
         ("standardized", True),
         ("large-scale", True),
-        ("Pan-STARRS", False),      # a real hyphenated name, not an adjective
+        ("Pan-STARRS", False),  # a real hyphenated name, not an adjective
         ("SExtractor", False),
         ("LAMOST", False),
     ],
@@ -187,16 +185,10 @@ def test_is_leading_adjective(token: str, expected: bool) -> None:
 def test_adjective_only_span_yields_no_mention() -> None:
     # The head noun ("dataset"/"code") is the cue, so trimming the adjective
     # leaves nothing — the candidate is dropped, not emitted as the adjective.
-    assert detect_informal_references(
-        "we collect a high-quality dataset consisting of clips"
-    ) == []
-    assert detect_informal_references(
-        "we modify their open-source code to take audio"
-    ) == []
+    assert detect_informal_references("we collect a high-quality dataset consisting of clips") == []
+    assert detect_informal_references("we modify their open-source code to take audio") == []
     # Two stacked descriptive adjectives collapse the same way.
-    assert detect_informal_references(
-        "We build a High-Quality Standardized Dataset for this"
-    ) == []
+    assert detect_informal_references("We build a High-Quality Standardized Dataset for this") == []
 
 
 def test_leading_adjective_trimmed_but_real_name_kept() -> None:
@@ -259,14 +251,11 @@ def test_multitoken_irregular_whitespace_slices_back() -> None:
     # canonical key collapses the double space (so it dedupes with the single-
     # space form), while the surface stays verbatim so the offsets slice back.
     text = "We cross-matched against the SDSS  DR16 catalog."
-    mentions = [
-        m for m in detect_informal_references(text)
-        if m.canonical_name == "SDSS DR16"
-    ]
+    mentions = [m for m in detect_informal_references(text) if m.canonical_name == "SDSS DR16"]
     assert mentions, "expected the two-token dataset name to fire"
     m = mentions[0]
-    assert m.canonical_name == "SDSS DR16"   # collapsed — stable upsert key
-    assert m.surface == "SDSS  DR16"          # verbatim — matches the body
+    assert m.canonical_name == "SDSS DR16"  # collapsed — stable upsert key
+    assert m.surface == "SDSS  DR16"  # verbatim — matches the body
     assert text[m.start_char : m.end_char] == m.surface
 
 
@@ -353,8 +342,14 @@ def test_decoys_stay_silent_at_default_threshold() -> None:
 
 def test_informal_mention_is_frozen() -> None:
     m = InformalMention(
-        surface="CASA", canonical_name="CASA", entity_type="software",
-        cue_id="we_used", confidence=0.7, start_char=0, end_char=4, evidence_span="CASA",
+        surface="CASA",
+        canonical_name="CASA",
+        entity_type="software",
+        cue_id="we_used",
+        confidence=0.7,
+        start_char=0,
+        end_char=4,
+        evidence_span="CASA",
     )
     with pytest.raises(FrozenInstanceError):
         m.surface = "other"  # type: ignore[misc]
@@ -396,6 +391,6 @@ def test_insert_mentions_upserts_entities_then_doc_entities() -> None:
 
 def test_provenance_constants_distinct_from_gliner() -> None:
     assert MATCH_METHOD == "lafia_informal"
-    assert LINK_TYPE == "informal_mention"   # not GLiNER's 'mentions'
+    assert LINK_TYPE == "informal_mention"  # not GLiNER's 'mentions'
     assert SOURCE == "lafia"
-    assert LAFIA_TIER != 4                    # GLiNER owns tier 4
+    assert LAFIA_TIER != 4  # GLiNER owns tier 4

@@ -499,9 +499,7 @@ class TestEndToEnd:
             "metadata": metadata_preds,
             "ner": ner_preds,
             "haiku": haiku_preds,
-            "haiku_usage": [
-                {"input_tokens": 1200, "output_tokens": 250} for _ in range(10)
-            ],
+            "haiku_usage": [{"input_tokens": 1200, "output_tokens": 250} for _ in range(10)],
         }
         preds_path.write_text(json.dumps(preds_payload))
         gold_path.write_text(json.dumps(gold))
@@ -549,9 +547,7 @@ class TestEndToEnd:
         assert report["meta"]["sample_seed"] == ces.DEFAULT_SAMPLE_SEED
         assert report["meta"]["mock_mode"] == "mock_all"
 
-    def test_mock_all_recommendation_is_haiku_for_perfect_haiku(
-        self, tmp_path: Path
-    ) -> None:
+    def test_mock_all_recommendation_is_haiku_for_perfect_haiku(self, tmp_path: Path) -> None:
         # In our fixture metadata.f1 ≈ 1/3, ner.f1 ≈ 1/3, haiku.f1 = 1.0 but
         # haiku has positive cost. Cost band excludes haiku since metadata/ner
         # are free → recommendation should be metadata or ner (not haiku).

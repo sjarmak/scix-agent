@@ -35,9 +35,7 @@ import pytest
 # invoked in production (``python scripts/scix_deep_search.py``).
 # ---------------------------------------------------------------------------
 
-_SCRIPT_PATH = (
-    Path(__file__).resolve().parent.parent / "scripts" / "scix_deep_search.py"
-)
+_SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "scix_deep_search.py"
 _SPEC = importlib.util.spec_from_file_location("scix_deep_search", _SCRIPT_PATH)
 assert _SPEC is not None and _SPEC.loader is not None
 sds = importlib.util.module_from_spec(_SPEC)
@@ -69,9 +67,7 @@ class FakeDispatcher:
         self.last_prompt: str | None = None
         self.last_max_turns: int | None = None
 
-    async def __call__(
-        self, prompt: str, max_turns: int
-    ) -> AsyncIterator[dict[str, Any]]:
+    async def __call__(self, prompt: str, max_turns: int) -> AsyncIterator[dict[str, Any]]:
         self.last_prompt = prompt
         self.last_max_turns = max_turns
         import asyncio
@@ -99,7 +95,7 @@ def text_events() -> list[dict[str, Any]]:
             "type": "text",
             "text": (
                 "The earliest assertion is `bibcode:2011ApJ...730..119R §1` "
-                "\"Our value of H0 is 2.4σ higher\"."
+                '"Our value of H0 is 2.4σ higher".'
             ),
         },
     ]
@@ -146,9 +142,7 @@ def test_run_deep_search_skeptic_raises_notimplemented(
 ) -> None:
     dispatcher = FakeDispatcher(text_events)
     with pytest.raises(NotImplementedError):
-        sds.run_deep_search(
-            "q", dispatcher, runs_dir=tmp_path, skeptic=True
-        )
+        sds.run_deep_search("q", dispatcher, runs_dir=tmp_path, skeptic=True)
 
 
 # ---------------------------------------------------------------------------
@@ -177,9 +171,7 @@ def test_run_deep_search_writes_all_files(
     tmp_path: Path, text_events: list[dict[str, Any]]
 ) -> None:
     dispatcher = FakeDispatcher(text_events)
-    result = sds.run_deep_search(
-        "What is H0?", dispatcher, runs_dir=tmp_path
-    )
+    result = sds.run_deep_search("What is H0?", dispatcher, runs_dir=tmp_path)
 
     assert result.run_dir.exists()
     assert (result.run_dir / "question.txt").is_file()
@@ -231,9 +223,7 @@ def test_metadata_json_schema_required_keys(
     tmp_path: Path, text_events: list[dict[str, Any]]
 ) -> None:
     dispatcher = FakeDispatcher(text_events)
-    result = sds.run_deep_search(
-        "q", dispatcher, runs_dir=tmp_path, max_turns=25
-    )
+    result = sds.run_deep_search("q", dispatcher, runs_dir=tmp_path, max_turns=25)
     md = json.loads((result.run_dir / "metadata.json").read_text())
     assert set(md.keys()) == _REQUIRED_METADATA_KEYS, (
         f"missing keys: {_REQUIRED_METADATA_KEYS - set(md.keys())}, "
@@ -265,13 +255,9 @@ def test_metadata_json_schema_required_keys(
     assert md["persona_path"].endswith("deep_search_investigator.md")
 
 
-def test_metadata_records_rigor_flag(
-    tmp_path: Path, text_events: list[dict[str, Any]]
-) -> None:
+def test_metadata_records_rigor_flag(tmp_path: Path, text_events: list[dict[str, Any]]) -> None:
     dispatcher = FakeDispatcher(text_events)
-    result = sds.run_deep_search(
-        "q", dispatcher, runs_dir=tmp_path, rigor=True
-    )
+    result = sds.run_deep_search("q", dispatcher, runs_dir=tmp_path, rigor=True)
     md = json.loads((result.run_dir / "metadata.json").read_text())
     assert md["rigor"] is True
 
@@ -284,9 +270,7 @@ def test_metadata_records_rigor_flag(
 def test_max_turns_truncates_30_to_25(tmp_path: Path) -> None:
     events = [{"type": "text", "text": f"turn {i}. "} for i in range(30)]
     dispatcher = FakeDispatcher(events)
-    result = sds.run_deep_search(
-        "q", dispatcher, runs_dir=tmp_path, max_turns=25
-    )
+    result = sds.run_deep_search("q", dispatcher, runs_dir=tmp_path, max_turns=25)
 
     # Only 25 events recorded
     lines = (result.run_dir / "tool_calls.jsonl").read_text().splitlines()
@@ -302,9 +286,7 @@ def test_max_turns_no_truncation_when_under_budget(
     tmp_path: Path, text_events: list[dict[str, Any]]
 ) -> None:
     dispatcher = FakeDispatcher(text_events)
-    result = sds.run_deep_search(
-        "q", dispatcher, runs_dir=tmp_path, max_turns=25
-    )
+    result = sds.run_deep_search("q", dispatcher, runs_dir=tmp_path, max_turns=25)
     md = json.loads((result.run_dir / "metadata.json").read_text())
     assert md["truncated"] is False
     assert md["n_turns"] == len(text_events)
@@ -365,10 +347,7 @@ def test_bibcode_regex_matches_canonical_forms() -> None:
 
 
 _PERSONA_PATH = (
-    Path(__file__).resolve().parent.parent
-    / ".claude"
-    / "agents"
-    / "deep_search_investigator.md"
+    Path(__file__).resolve().parent.parent / ".claude" / "agents" / "deep_search_investigator.md"
 )
 
 
@@ -428,8 +407,7 @@ def test_persona_contains_mandatory_citation_sentence() -> None:
         "bibcode + section + quoted span from a tool result."
     )
     assert required in text, (
-        "persona must contain the verbatim citation-discipline sentence "
-        "(AC #2)"
+        "persona must contain the verbatim citation-discipline sentence " "(AC #2)"
     )
 
 
@@ -457,12 +435,9 @@ def test_wrapper_imports_no_paid_sdk() -> None:
         forbidden_imports = [
             line
             for line in src.splitlines()
-            if line.strip().startswith(("import ", "from "))
-            and forbidden in line
+            if line.strip().startswith(("import ", "from ")) and forbidden in line
         ]
-        assert not forbidden_imports, (
-            f"forbidden paid-SDK import found: {forbidden_imports!r}"
-        )
+        assert not forbidden_imports, f"forbidden paid-SDK import found: {forbidden_imports!r}"
 
 
 def test_dispatcher_seam_is_dependency_injected() -> None:

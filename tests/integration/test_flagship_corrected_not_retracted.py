@@ -67,8 +67,8 @@ MOCK_FIXTURE: dict[str, Any] = {
             "tool_name": "search",
             "text": (
                 f"Found {_SH0ES_LMC_ERRATUM_2026}: "
-                "\"Erratum: revised LMC distance modulus shifts the local H0 "
-                "from 73.04 to 71.8 km/s/Mpc.\" "
+                '"Erratum: revised LMC distance modulus shifts the local H0 '
+                'from 73.04 to 71.8 km/s/Mpc." '
                 "Retraction Watch: NOT flagged (this is an erratum, not a "
                 "retraction). OpenAlex is_retracted: false."
             ),
@@ -76,9 +76,7 @@ MOCK_FIXTURE: dict[str, Any] = {
         {
             "type": "tool_use",
             "tool_name": "claim_blame",
-            "text": (
-                "(walking lineage with correction_events JSONB filter)"
-            ),
+            "text": ("(walking lineage with correction_events JSONB filter)"),
         },
         {
             "type": "tool_result",
@@ -92,9 +90,7 @@ MOCK_FIXTURE: dict[str, Any] = {
         {
             "type": "tool_use",
             "tool_name": "find_replications",
-            "text": (
-                f"(forward citations of {_SH0ES_2019} after erratum)"
-            ),
+            "text": (f"(forward citations of {_SH0ES_2019} after erratum)"),
         },
         {
             "type": "tool_result",
@@ -150,18 +146,15 @@ def test_flagship_corrected_not_retracted(run_flagship: Any) -> None:
     erratum = MOCK_FIXTURE["expected_erratum_bibcode"]
     corrected = MOCK_FIXTURE["expected_corrected_paper"]
     assert erratum in bibs_in_answer, (
-        f"erratum bibcode {erratum} not surfaced in answer; "
-        f"bibs={sorted(bibs_in_answer)}"
+        f"erratum bibcode {erratum} not surfaced in answer; " f"bibs={sorted(bibs_in_answer)}"
     )
-    assert corrected in bibs_in_answer, (
-        f"corrected paper {corrected} not surfaced in answer"
-    )
+    assert corrected in bibs_in_answer, f"corrected paper {corrected} not surfaced in answer"
 
     # The answer must mention the correction explicitly.
     answer_lower = answer.lower()
-    assert any(t in answer_lower for t in ("erratum", "correction", "corrected")), (
-        "answer must explicitly mention erratum/correction"
-    )
+    assert any(
+        t in answer_lower for t in ("erratum", "correction", "corrected")
+    ), "answer must explicitly mention erratum/correction"
     # And explicitly distinguish from retraction.
     assert "retraction watch" in answer_lower or "is_retracted" in answer_lower, (
         "answer must distinguish corrected-not-retracted: mention "
@@ -177,7 +170,7 @@ def test_flagship_corrected_not_retracted(run_flagship: Any) -> None:
     ), "answer must surface the correction_events_in_lineage field"
 
     # (3) ≤25 tool turns
-    assert result.metadata.n_turns <= 25, (
-        f"n_turns={result.metadata.n_turns} exceeds 25-turn budget"
-    )
+    assert (
+        result.metadata.n_turns <= 25
+    ), f"n_turns={result.metadata.n_turns} exceeds 25-turn budget"
     assert not result.metadata.truncated

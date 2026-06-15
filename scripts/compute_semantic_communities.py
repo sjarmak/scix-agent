@@ -114,10 +114,8 @@ def _parse_pgvector_text(text: str) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-_STREAM_SQL_BASE = (
-    "SELECT bibcode, embedding FROM paper_embeddings "
-    "WHERE model_name = 'indus'"
-)
+_STREAM_SQL_BASE = "SELECT bibcode, embedding FROM paper_embeddings " "WHERE model_name = 'indus'"
+
 
 def _build_stream_sql(row_limit: Optional[int]) -> str:
     """Return the stream SQL optionally capped by ``row_limit``.
@@ -367,7 +365,9 @@ def _run_resolution(
                 logger.info(
                     "Resolution %s: training cap reached at %d rows (>= %d) — "
                     "proceeding to predict pass",
-                    spec.name, n_rows_train, train_max_rows,
+                    spec.name,
+                    n_rows_train,
+                    train_max_rows,
                 )
                 break
         if carry_vecs is not None and len(carry_vecs) > 0:
@@ -378,9 +378,7 @@ def _run_resolution(
             if len(carry_vecs) >= spec.k:
                 kmeans.partial_fit(carry_vecs)
     if n_rows_train == 0:
-        logger.warning(
-            "Resolution %s: no INDUS embeddings found — skipping", spec.name
-        )
+        logger.warning("Resolution %s: no INDUS embeddings found — skipping", spec.name)
         return ResolutionResult(
             name=spec.name,
             k=spec.k,
@@ -391,9 +389,7 @@ def _run_resolution(
         )
 
     # --- Pass 2: predict + COPY to staging, one transaction per resolution ---
-    reservoir = _SilhouetteReservoir(
-        k=spec.k, total_cap=silhouette_sample, seed=seed
-    )
+    reservoir = _SilhouetteReservoir(k=spec.k, total_cap=silhouette_sample, seed=seed)
     n_rows_predict = 0
     with conn.transaction():
         _create_staging(conn)
@@ -429,9 +425,7 @@ def _run_resolution(
     if len(sample_vecs) >= 2 and len(np.unique(sample_labels)) >= 2:
         # ``silhouette_score`` needs at least 2 clusters; guard against the
         # pathological case where every sampled point landed in one cluster.
-        silhouette = float(
-            silhouette_score(sample_vecs, sample_labels, metric="cosine")
-        )
+        silhouette = float(silhouette_score(sample_vecs, sample_labels, metric="cosine"))
 
     wall_clock = time.perf_counter() - t0
     logger.info(
@@ -493,9 +487,7 @@ def _peak_rss_mb() -> float:
 
 def _count_indus_rows(conn: psycopg.Connection) -> int:
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT COUNT(*) FROM paper_embeddings WHERE model_name = 'indus'"
-        )
+        cur.execute("SELECT COUNT(*) FROM paper_embeddings WHERE model_name = 'indus'")
         row = cur.fetchone()
         return int(row[0]) if row else 0
 
@@ -631,19 +623,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     requested = {r.strip() for r in args.resolutions.split(",") if r.strip()}
     unknown = requested - set(RESOLUTION_NAMES)
     if unknown:
-        raise SystemExit(
-            f"Unknown resolution(s): {sorted(unknown)}. "
-            f"Valid: {RESOLUTION_NAMES}"
-        )
+        raise SystemExit(f"Unknown resolution(s): {sorted(unknown)}. " f"Valid: {RESOLUTION_NAMES}")
     all_specs = [
         ResolutionSpec("coarse", args.k_coarse),
         ResolutionSpec("medium", args.k_medium),
-        ResolutionSpec("fine",   args.k_fine),
+        ResolutionSpec("fine", args.k_fine),
     ]
     specs = [s for s in all_specs if s.name in requested]
-    logger.info(
-        "Running resolutions: %s", ", ".join(s.name for s in specs)
-    )
+    logger.info("Running resolutions: %s", ", ".join(s.name for s in specs))
 
     results: list[ResolutionResult] = []
 
@@ -726,9 +713,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "peak_rss_mb": peak_rss_mb,
         "resolutions": results_payload["resolutions"],
     }
-    Path(args.run_meta_path).write_text(
-        json.dumps(run_meta, indent=2) + "\n", encoding="utf-8"
-    )
+    Path(args.run_meta_path).write_text(json.dumps(run_meta, indent=2) + "\n", encoding="utf-8")
     logger.info("Wrote %s", args.run_meta_path)
 
     return 0

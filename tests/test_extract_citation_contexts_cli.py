@@ -161,9 +161,7 @@ class TestEnforceFreeDiskGuard:
         monkeypatch.setattr(
             extract_cli.shutil,
             "disk_usage",
-            lambda path: _FakeDiskUsage(
-                total=200 * 1024**3, used=150 * 1024**3, free=50 * 1024**3
-            ),
+            lambda path: _FakeDiskUsage(total=200 * 1024**3, used=150 * 1024**3, free=50 * 1024**3),
         )
         extract_cli.enforce_free_disk_guard(path="/", min_free_gb=50)
 
@@ -175,9 +173,7 @@ class TestEnforceFreeDiskGuard:
         monkeypatch.setattr(
             extract_cli.shutil,
             "disk_usage",
-            lambda path: _FakeDiskUsage(
-                total=200 * 1024**3, used=170 * 1024**3, free=30 * 1024**3
-            ),
+            lambda path: _FakeDiskUsage(total=200 * 1024**3, used=170 * 1024**3, free=30 * 1024**3),
         )
         with pytest.raises(SystemExit) as exc:
             extract_cli.enforce_free_disk_guard(path="/", min_free_gb=50)
@@ -210,9 +206,7 @@ class TestEnforceFreeDiskGuard:
         monkeypatch.setattr(
             extract_cli.shutil,
             "disk_usage",
-            lambda path: _FakeDiskUsage(
-                total=200 * 1024**3, used=199 * 1024**3, free=1 * 1024**3
-            ),
+            lambda path: _FakeDiskUsage(total=200 * 1024**3, used=199 * 1024**3, free=1 * 1024**3),
         )
         with pytest.raises(SystemExit) as disk_exc:
             extract_cli.enforce_free_disk_guard(path="/", min_free_gb=50)
@@ -285,8 +279,6 @@ class TestIncludeClosedFlag:
             return 0
 
         monkeypatch.setattr(extract_cli, "run_pipeline", _spy_run)
-        rc = extract_cli.main(
-            ["--dsn", "dbname=scix_test", "--include-closed"]
-        )
+        rc = extract_cli.main(["--dsn", "dbname=scix_test", "--include-closed"])
         assert rc == 0
         assert captured.get("oa_only") is False

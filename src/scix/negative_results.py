@@ -97,91 +97,80 @@ EVIDENCE_SPAN_CHARS: int = 250
 
 _PATTERNS_RAW: list[tuple[str, str, int, str]] = [
     # --- tier=3 / high ---
-    ("no_significant",
-     r"\bno\s+(?:statistically\s+)?significant\b",
-     3, "high"),
-    ("null_result",
-     r"\bnull\s+results?\b",
-     3, "high"),
-    ("failed_to_detect",
-     r"\bfailed?\s+to\s+detect\b",
-     3, "high"),
-    ("do_not_detect",
-     r"\b(?:do(?:es)?|did)\s+not\s+detect\b",
-     3, "high"),
-    ("we_do_not_find",
-     r"\bwe\s+(?:do\s+not|did\s+not|cannot)\s+(?:find|see|observe|measure)\b",
-     3, "high"),
-    ("no_evidence",
-     r"\bno\s+evidence\s+(?:for|of)\b",
-     3, "high"),
-    ("non_detection",
-     r"\bnon[- ]?detections?\b",
-     3, "high"),
-    ("not_detected",
-     r"\b(?:is|are|was|were)\s+not\s+detected\b",
-     3, "high"),
-    ("rejected_sigma",
-     r"\b(?:rejected?|excluded?|ruled\s+out)\s+(?:at|with|to)\s+(?:more\s+than\s+)?"
-     r"(?:>\s*)?\d+(?:\.\d+)?\s*(?:[σ]|sigma|standard\s+deviations?)\b",
-     3, "high"),
-    ("ruled_out",
-     r"\b(?:rule|ruled|ruling)\s+out\b",
-     3, "high"),
-    ("retracted",
-     r"\bretracted\b",
-     3, "high"),
-    ("refuted",
-     r"\b(?:was|has\s+been|is)\s+(?:refuted|disproved|disproven)\b",
-     3, "high"),
-    ("no_detection",
-     r"\bno\s+detections?\s+(?:of|at|in|was|were|is|are)\b",
-     3, "high"),
-
+    ("no_significant", r"\bno\s+(?:statistically\s+)?significant\b", 3, "high"),
+    ("null_result", r"\bnull\s+results?\b", 3, "high"),
+    ("failed_to_detect", r"\bfailed?\s+to\s+detect\b", 3, "high"),
+    ("do_not_detect", r"\b(?:do(?:es)?|did)\s+not\s+detect\b", 3, "high"),
+    (
+        "we_do_not_find",
+        r"\bwe\s+(?:do\s+not|did\s+not|cannot)\s+(?:find|see|observe|measure)\b",
+        3,
+        "high",
+    ),
+    ("no_evidence", r"\bno\s+evidence\s+(?:for|of)\b", 3, "high"),
+    ("non_detection", r"\bnon[- ]?detections?\b", 3, "high"),
+    ("not_detected", r"\b(?:is|are|was|were)\s+not\s+detected\b", 3, "high"),
+    (
+        "rejected_sigma",
+        r"\b(?:rejected?|excluded?|ruled\s+out)\s+(?:at|with|to)\s+(?:more\s+than\s+)?"
+        r"(?:>\s*)?\d+(?:\.\d+)?\s*(?:[σ]|sigma|standard\s+deviations?)\b",
+        3,
+        "high",
+    ),
+    ("ruled_out", r"\b(?:rule|ruled|ruling)\s+out\b", 3, "high"),
+    ("retracted", r"\bretracted\b", 3, "high"),
+    ("refuted", r"\b(?:was|has\s+been|is)\s+(?:refuted|disproved|disproven)\b", 3, "high"),
+    ("no_detection", r"\bno\s+detections?\s+(?:of|at|in|was|were|is|are)\b", 3, "high"),
     # --- tier=2 / medium ---
-    ("cannot_rule_out",
-     r"\b(?:cannot|can\s+not|are\s+unable\s+to|unable\s+to)\s+rule\s+out\b",
-     2, "medium"),
-    ("consistent_with_no",
-     r"\bconsistent\s+with\s+(?:no|zero|the\s+absence\s+of)\b",
-     2, "medium"),
-    ("not_consistent_with",
-     r"\b(?:not\s+consistent|inconsistent)\s+with\b",
-     2, "medium"),
-    ("upper_limit",
-     r"\b(?:place|placing|set|setting|derive|deriving|report|reporting|provide|providing)"
-     r"\s+(?:a|an|the)?\s*(?:\d+(?:\.\d+)?\s*[σ]\s+)?upper\s+limits?\s+(?:of|on)\b",
-     2, "medium"),
-    ("lower_limit",
-     r"\b(?:place|placing|set|setting|derive|deriving|report|reporting|provide|providing)"
-     r"\s+(?:a|an|the)?\s*(?:\d+(?:\.\d+)?\s*[σ]\s+)?lower\s+limits?\s+(?:of|on)\b",
-     2, "medium"),
-    ("no_correlation",
-     r"\bno\s+(?:significant\s+)?correlation\b",
-     2, "medium"),
-    ("no_clear_signal",
-     r"\bno\s+clear\s+(?:evidence|signal|trend|detection|excess|feature)\b",
-     2, "medium"),
-    ("no_difference",
-     r"\bno\s+(?:significant\s+)?(?:difference|differences)\s+(?:between|in|was|were)\b",
-     2, "medium"),
-
+    (
+        "cannot_rule_out",
+        r"\b(?:cannot|can\s+not|are\s+unable\s+to|unable\s+to)\s+rule\s+out\b",
+        2,
+        "medium",
+    ),
+    ("consistent_with_no", r"\bconsistent\s+with\s+(?:no|zero|the\s+absence\s+of)\b", 2, "medium"),
+    ("not_consistent_with", r"\b(?:not\s+consistent|inconsistent)\s+with\b", 2, "medium"),
+    (
+        "upper_limit",
+        r"\b(?:place|placing|set|setting|derive|deriving|report|reporting|provide|providing)"
+        r"\s+(?:a|an|the)?\s*(?:\d+(?:\.\d+)?\s*[σ]\s+)?upper\s+limits?\s+(?:of|on)\b",
+        2,
+        "medium",
+    ),
+    (
+        "lower_limit",
+        r"\b(?:place|placing|set|setting|derive|deriving|report|reporting|provide|providing)"
+        r"\s+(?:a|an|the)?\s*(?:\d+(?:\.\d+)?\s*[σ]\s+)?lower\s+limits?\s+(?:of|on)\b",
+        2,
+        "medium",
+    ),
+    ("no_correlation", r"\bno\s+(?:significant\s+)?correlation\b", 2, "medium"),
+    (
+        "no_clear_signal",
+        r"\bno\s+clear\s+(?:evidence|signal|trend|detection|excess|feature)\b",
+        2,
+        "medium",
+    ),
+    (
+        "no_difference",
+        r"\bno\s+(?:significant\s+)?(?:difference|differences)\s+(?:between|in|was|were)\b",
+        2,
+        "medium",
+    ),
     # --- tier=1 / low ---
-    ("if_real",
-     r"\b(?:the\s+(?:signal|feature|excess|detection|effect)\s*,?\s+if\s+real)\b",
-     1, "low"),
-    ("marginal_detection",
-     r"\bmarginal(?:ly)?\s+(?:significant|detected|consistent)\b",
-     1, "low"),
-    ("tentative_detection",
-     r"\btentative(?:ly)?\s+(?:detection|detected|identified)\b",
-     1, "low"),
+    (
+        "if_real",
+        r"\b(?:the\s+(?:signal|feature|excess|detection|effect)\s*,?\s+if\s+real)\b",
+        1,
+        "low",
+    ),
+    ("marginal_detection", r"\bmarginal(?:ly)?\s+(?:significant|detected|consistent)\b", 1, "low"),
+    ("tentative_detection", r"\btentative(?:ly)?\s+(?:detection|detected|identified)\b", 1, "low"),
 ]
 
 
 _PATTERNS: list[tuple[str, re.Pattern[str], int, str]] = [
-    (pid, re.compile(rx, re.IGNORECASE), tier, label)
-    for (pid, rx, tier, label) in _PATTERNS_RAW
+    (pid, re.compile(rx, re.IGNORECASE), tier, label) for (pid, rx, tier, label) in _PATTERNS_RAW
 ]
 
 

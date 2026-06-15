@@ -63,9 +63,7 @@ logger = logging.getLogger("generate_community_labels")
 
 
 RESULTS_PATH = REPO_ROOT / "results" / "community_labels_spotcheck.md"
-SAMPLE_PATH = (
-    REPO_ROOT / "docs" / "prd" / "artifacts" / "community_labels_spotcheck.sample.md"
-)
+SAMPLE_PATH = REPO_ROOT / "docs" / "prd" / "artifacts" / "community_labels_spotcheck.sample.md"
 
 # Per-signal resolution lists. Taxonomic has a single resolution because
 # paper_metrics.community_taxonomic is a scalar TEXT, not per-level.
@@ -258,16 +256,12 @@ def _load_vocab_terms(
 
     with conn.cursor() as cur:
         try:
-            cur.execute(
-                "SELECT to_regclass('public.concepts')::text"
-            )
+            cur.execute("SELECT to_regclass('public.concepts')::text")
             row = cur.fetchone()
         except psycopg.Error:
             return frozenset()
         if not row or row[0] is None:
-            logger.info(
-                "concepts table not present; skipping vocab-boost loading"
-            )
+            logger.info("concepts table not present; skipping vocab-boost loading")
             return frozenset()
 
         cur.execute("SELECT preferred_label, alternate_labels FROM concepts")
@@ -370,9 +364,7 @@ def _iter_rows(
     signal: str,
     resolution: str,
     cursor_name: str,
-) -> Iterator[
-    tuple[object, str, Optional[list[str]], Optional[list[str]], Optional[str]]
-]:
+) -> Iterator[tuple[object, str, Optional[list[str]], Optional[list[str]], Optional[str]]]:
     """Stream (community_id_raw, bibcode, arxiv_class, keyword_norm, title) rows.
 
     ``community_id_raw`` is INT for citation/semantic, TEXT for taxonomic.
@@ -440,9 +432,7 @@ def _aggregate(
 
             bucket = by_community.get(cid)
             if bucket is None:
-                bucket = _Bucket(
-                    bibcodes=[], arxiv_counter=Counter(), kw_counter=Counter()
-                )
+                bucket = _Bucket(bibcodes=[], arxiv_counter=Counter(), kw_counter=Counter())
                 by_community[cid] = bucket
             bucket.bibcodes.append(bibcode)
 
@@ -453,11 +443,7 @@ def _aggregate(
             # Prefer curated keyword_norm when present; fall back to title
             # tokens so the 100% of papers that lack keyword_norm today still
             # yield legible labels.
-            normed = (
-                {kw for kw in keyword_norm if kw and kw.strip()}
-                if keyword_norm
-                else set()
-            )
+            normed = {kw for kw in keyword_norm if kw and kw.strip()} if keyword_norm else set()
             if normed:
                 bucket.kw_counter.update(normed)
             else:
@@ -511,8 +497,7 @@ def compute_tfidf(
 
     # Precompute idf
     idf: dict[str, float] = {
-        term: math.log(n_communities / (1 + df_val))
-        for term, df_val in df.items()
+        term: math.log(n_communities / (1 + df_val)) for term, df_val in df.items()
     }
 
     out: dict[int, list[tuple[str, float]]] = {}
@@ -639,9 +624,7 @@ def _label_one(
         top_arxiv_pairs = bucket.arxiv_counter.most_common(TOP_ARXIV_N)
         # Stable order across ties: most_common is already count-desc, we
         # append a secondary alpha sort via sorted(... key=(-count, cls)).
-        top_arxiv_sorted = sorted(
-            top_arxiv_pairs, key=lambda pair: (-pair[1], pair[0])
-        )
+        top_arxiv_sorted = sorted(top_arxiv_pairs, key=lambda pair: (-pair[1], pair[0]))
         top_arxiv = [a for a, _ in top_arxiv_sorted]
 
         top_kw_pairs = tfidf.get(cid, [])
@@ -762,8 +745,7 @@ def _spotcheck_markdown(
 
     for i, (signal, resolution, community_id, label, top_kw, paper_count) in enumerate(picks, 1):
         lines.append(
-            f"## {i}. signal=`{signal}` resolution=`{resolution}` "
-            f"community_id=`{community_id}`"
+            f"## {i}. signal=`{signal}` resolution=`{resolution}` " f"community_id=`{community_id}`"
         )
         lines.append("")
         lines.append(f"- **Label**: {label}")
@@ -771,9 +753,7 @@ def _spotcheck_markdown(
         kw_str = ", ".join(f"`{k}`" for k in (top_kw or [])) or "_none_"
         lines.append(f"- **Top keywords**: {kw_str}")
 
-        members = _fetch_top_members(
-            conn, signal, resolution, community_id, taxonomic_text_by_id
-        )
+        members = _fetch_top_members(conn, signal, resolution, community_id, taxonomic_text_by_id)
         if members:
             lines.append("- **Top 3 member papers**:")
             for bib, title in members:
@@ -901,9 +881,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # and don't pin any tx state.
     with psycopg.connect(dsn) as conn:
         conn.autocommit = False
-        spotcheck_md = _spotcheck_markdown(
-            conn, taxonomic_text_by_id, args.spotcheck_n, args.seed
-        )
+        spotcheck_md = _spotcheck_markdown(conn, taxonomic_text_by_id, args.spotcheck_n, args.seed)
 
     spotcheck_path = Path(args.spotcheck_path)
     sample_path = Path(args.spotcheck_sample_path)

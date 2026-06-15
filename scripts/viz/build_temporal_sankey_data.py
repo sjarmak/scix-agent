@@ -275,9 +275,7 @@ def load_from_db(dsn: str, resolution: str) -> Iterator[PaperRow]:
     result set is streamed in ``_DB_FETCH_BATCH``-sized chunks.
     """
     if resolution not in COMMUNITY_COLUMNS:
-        raise ValueError(
-            f"unknown resolution {resolution!r}; must be one of {RESOLUTIONS}"
-        )
+        raise ValueError(f"unknown resolution {resolution!r}; must be one of {RESOLUTIONS}")
     column = COMMUNITY_COLUMNS[resolution]
 
     # Import psycopg lazily so tests and --synthetic don't require a live DB.

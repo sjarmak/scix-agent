@@ -138,9 +138,7 @@ class TestFacetPayload:
                 "ratio_p_over_q",
             } <= set(r.keys())
 
-    def test_build_facet_payload_kl_positive_when_skewed(
-        self, rows: list[DistributionRow]
-    ) -> None:
+    def test_build_facet_payload_kl_positive_when_skewed(self, rows: list[DistributionRow]) -> None:
         # P heavily skewed to A relative to uniform Q — KL > 0.
         payload = build_facet_payload(rows)
         assert payload["kl_divergence_vs_corpus_prior"] > 0.0
@@ -240,18 +238,13 @@ class TestDryRunEndToEnd:
         # Existing content is preserved on both runs.
         assert "Existing content paragraph." in second
 
-    def test_agent_guidance_has_three_safe_and_three_unsafe_examples(
-        self, tmp_path: Path
-    ) -> None:
+    def test_agent_guidance_has_three_safe_and_three_unsafe_examples(self, tmp_path: Path) -> None:
         json_out = tmp_path / "out.json"
         payload = run_report(json_out=json_out, docs_path=None, dry_run=True)
         section = render_agent_guidance(payload, json_out)
 
         # Heading present
-        assert (
-            "## Agent guidance: safe vs unsafe queries on the full-text cohort"
-            in section
-        )
+        assert "## Agent guidance: safe vs unsafe queries on the full-text cohort" in section
         # Locate the safe / unsafe sub-sections by their h3 markers and count
         # numbered bullets within each.
         safe_idx = section.index("### Safe queries to restrict to the full-text cohort")

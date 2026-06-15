@@ -215,9 +215,7 @@ def link_datasets_batch(
         batch_skipped = 0
 
         for bibcode, ext_type, payload_raw in rows:
-            payload = (
-                payload_raw if isinstance(payload_raw, dict) else json.loads(payload_raw)
-            )
+            payload = payload_raw if isinstance(payload_raw, dict) else json.loads(payload_raw)
             mentions = _extract_dataset_mentions(payload, ext_type)
 
             for mention_text, match_method_source in mentions:
@@ -235,9 +233,7 @@ def link_datasets_batch(
                         match.match_method,
                     )
                 )
-                by_method[match_method_source] = (
-                    by_method.get(match_method_source, 0) + 1
-                )
+                by_method[match_method_source] = by_method.get(match_method_source, 0) + 1
 
         batch_links = len(insert_params)
 

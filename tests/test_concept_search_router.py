@@ -341,11 +341,13 @@ def test_uat_wins_score_tie_against_other_vocab(conn: psycopg.Connection, uat_se
     with conn.cursor() as cur:
         # Seed a PhySH concept with the same preferred label as the UAT one,
         # so both should hit at score=1.0 on the same query.
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO vocabularies (vocabulary, name, license, source_url)
             VALUES ('physh', 'test-physh', 'test-license', 'https://example.test/')
             ON CONFLICT (vocabulary) DO NOTHING
-            """)
+            """
+        )
         cur.execute(
             """
             INSERT INTO concepts (vocabulary, concept_id, preferred_label)

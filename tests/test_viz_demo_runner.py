@@ -61,8 +61,7 @@ def test_run_sh_help() -> None:
         cwd=REPO_ROOT,
     )
     assert result.returncode == 0, (
-        f"--help exited {result.returncode}\n"
-        f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
+        f"--help exited {result.returncode}\n" f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
     )
     combined = result.stdout + result.stderr
     for flag in ("--port", "--host", "--no-build"):
@@ -90,6 +89,7 @@ def test_build_only_synthetic_produces_json() -> None:
     default_venv_py = REPO_ROOT / ".venv" / "bin" / "python"
     if "VENV_PY" not in env and not default_venv_py.is_file():
         import sys as _sys
+
         env["VENV_PY"] = _sys.executable
 
     result = subprocess.run(

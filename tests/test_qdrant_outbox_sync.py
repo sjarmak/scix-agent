@@ -235,9 +235,7 @@ def test_trigger_enqueues_and_drain_upserts(conn: psycopg.Connection) -> None:
     assert _outbox_count(conn) == 2
 
     client = FakeQdrant()
-    stats = obx.drain_model(
-        conn, client, model_name="indus", collection="scix_indus_v2_papers_s1"
-    )
+    stats = obx.drain_model(conn, client, model_name="indus", collection="scix_indus_v2_papers_s1")
 
     assert stats.upserted == 2
     assert stats.deleted == 0
@@ -264,9 +262,7 @@ def test_update_trigger_drains_new_vector(conn: psycopg.Connection) -> None:
     assert _outbox_count(conn) == 1
 
     client = FakeQdrant()
-    stats = obx.drain_model(
-        conn, client, model_name="indus", collection="scix_indus_v2_papers_s1"
-    )
+    stats = obx.drain_model(conn, client, model_name="indus", collection="scix_indus_v2_papers_s1")
     assert stats.upserted == 1
     # vector(768) is float32, so compare approximately; the point is that the
     # NEW vector (0.9) reached Qdrant, not the stale 0.1.
@@ -292,9 +288,7 @@ def test_delete_op_removes_point(conn: psycopg.Connection) -> None:
     assert _outbox_count(conn) == 1
 
     client = FakeQdrant()
-    stats = obx.drain_model(
-        conn, client, model_name="indus", collection="scix_indus_v2_papers_s1"
-    )
+    stats = obx.drain_model(conn, client, model_name="indus", collection="scix_indus_v2_papers_s1")
     assert stats.deleted == 1
     assert client.deleted["scix_indus_v2_papers_s1"] == [obx.point_id(b)]
     assert _outbox_count(conn) == 0

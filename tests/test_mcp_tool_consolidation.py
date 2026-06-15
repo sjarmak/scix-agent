@@ -627,9 +627,10 @@ class TestResolutionDefaultUnified:
         """
         from scix.search import SearchResult
 
-        with patch("scix.search.get_paper_metrics") as mock_metrics, patch(
-            "scix.search.explore_community"
-        ) as mock_explore:
+        with (
+            patch("scix.search.get_paper_metrics") as mock_metrics,
+            patch("scix.search.explore_community") as mock_explore,
+        ):
             mock_metrics.return_value = SearchResult(
                 papers=[], total=0, timing_ms={"query_ms": 1.0}
             )

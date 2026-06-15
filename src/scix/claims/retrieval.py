@@ -74,8 +74,7 @@ def _validate_claim_type(claim_type: str | None) -> None:
         return
     if claim_type not in VALID_CLAIM_TYPES:
         raise ValueError(
-            f"invalid claim_type: {claim_type!r}; "
-            f"must be one of {sorted(VALID_CLAIM_TYPES)}"
+            f"invalid claim_type: {claim_type!r}; " f"must be one of {sorted(VALID_CLAIM_TYPES)}"
         )
 
 
@@ -186,9 +185,7 @@ def find_claims(
         try:
             entity_id_int: int | None = int(entity_id)
         except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"entity_id must be an integer, got {entity_id!r}"
-            ) from exc
+            raise ValueError(f"entity_id must be an integer, got {entity_id!r}") from exc
     else:
         entity_id_int = None
 
@@ -203,9 +200,7 @@ def find_claims(
         where.append("claim_type = %s")
         params.append(claim_type)
     if entity_id_int is not None:
-        where.append(
-            "(linked_entity_subject_id = %s OR linked_entity_object_id = %s)"
-        )
+        where.append("(linked_entity_subject_id = %s OR linked_entity_object_id = %s)")
         params.append(entity_id_int)
         params.append(entity_id_int)
     # ORDER BY ts_rank tsquery

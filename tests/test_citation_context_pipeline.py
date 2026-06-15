@@ -69,9 +69,7 @@ class TestBuildPapersSelect:
         assert "papers_is_oa_or_preprint" not in sql
 
     def test_oa_gate_composes_with_shard_and_limit(self) -> None:
-        sql, params = cc._build_papers_select(
-            shard=(0, 4), limit=500, oa_only=True
-        )
+        sql, params = cc._build_papers_select(shard=(0, 4), limit=500, oa_only=True)
         assert "papers_is_oa_or_preprint" in sql
         assert "mod(hashtext(p.bibcode), %s) = %s" in sql
         # LIMIT must be the last clause; assert against the lowercase form
@@ -151,8 +149,9 @@ class TestRunPipelineIngestLog:
 
         # Two-call sequence: read connection first, then write connection.
         seq = iter([read_conn, write_conn])
-        with patch.object(cc, "get_connection", lambda dsn=None: next(seq)), patch.object(
-            cc, "IngestLog", return_value=log
+        with (
+            patch.object(cc, "get_connection", lambda dsn=None: next(seq)),
+            patch.object(cc, "IngestLog", return_value=log),
         ):
             total = cc.run_pipeline(
                 dsn="dbname=scix_test",
@@ -171,9 +170,10 @@ class TestRunPipelineIngestLog:
     ) -> None:
         read_conn, write_conn = fake_conns
         seq = iter([read_conn, write_conn])
-        with patch.object(cc, "get_connection", lambda dsn=None: next(seq)), patch.object(
-            cc, "IngestLog"
-        ) as mock_log_cls:
+        with (
+            patch.object(cc, "get_connection", lambda dsn=None: next(seq)),
+            patch.object(cc, "IngestLog") as mock_log_cls,
+        ):
             cc.run_pipeline(dsn="dbname=scix_test", batch_size=1000, limit=None)
 
         # Backwards-compat: callers that don't ask for logging don't get any.
@@ -192,8 +192,9 @@ class TestRunPipelineIngestLog:
         read_conn._server_cursor.execute = _boom  # type: ignore[method-assign]
 
         seq = iter([read_conn, write_conn])
-        with patch.object(cc, "get_connection", lambda dsn=None: next(seq)), patch.object(
-            cc, "IngestLog", return_value=log
+        with (
+            patch.object(cc, "get_connection", lambda dsn=None: next(seq)),
+            patch.object(cc, "IngestLog", return_value=log),
         ):
             with pytest.raises(RuntimeError, match="simulated DB failure"):
                 cc.run_pipeline(

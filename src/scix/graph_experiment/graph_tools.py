@@ -153,9 +153,7 @@ def personalized_pagerank(
     for sid in seed_ids:
         reset[sid] = 1.0 / len(seed_ids)
 
-    scores = graph.personalized_pagerank(
-        reset=reset, damping=damping, directed=True
-    )
+    scores = graph.personalized_pagerank(reset=reset, damping=damping, directed=True)
 
     seed_set = set(seed_ids)
     ranked = sorted(
@@ -165,10 +163,7 @@ def personalized_pagerank(
     )[:top_k]
 
     return {
-        "results": [
-            {**_vertex_payload(graph, vid), "score": float(scores[vid])}
-            for vid in ranked
-        ],
+        "results": [{**_vertex_payload(graph, vid), "score": float(scores[vid])} for vid in ranked],
         "seed_count": len(seed_ids),
         "missing_seeds": missing,
         "damping": damping,
@@ -206,9 +201,7 @@ def multi_hop_neighbors(
             break
 
     discovered = [(vid, h) for vid, h in visited.items() if vid != start_id]
-    discovered.sort(
-        key=lambda pair: (pair[1], -(graph.vs[pair[0]]["citation_count"] or 0))
-    )
+    discovered.sort(key=lambda pair: (pair[1], -(graph.vs[pair[0]]["citation_count"] or 0)))
 
     return {
         "results": [

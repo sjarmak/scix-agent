@@ -979,9 +979,7 @@ def _theme_for(
             # routing recovers that signal so ``top_keywords`` reflects
             # the whole community, not just the keyword-bearing minority.
             paper_keywords = [
-                kw.lower()
-                for kw in (meta.get("keywords") or [])
-                if isinstance(kw, str) and kw
+                kw.lower() for kw in (meta.get("keywords") or []) if isinstance(kw, str) and kw
             ]
             if paper_keywords:
                 for kw in paper_keywords:

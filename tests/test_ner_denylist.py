@@ -8,6 +8,7 @@ Covers:
   ``protein`` ``gene`` is.
 - ``filter_denylisted_rows`` doesn't mutate the input list.
 """
+
 from __future__ import annotations
 
 from scix.extract.ner_denylist import (
@@ -103,9 +104,9 @@ class TestDenylistShape:
         # The is_denylisted lookup casefolds incoming canonical_name; entries
         # in the set must already be normalized so the lookup actually hits.
         for canonical, _entity_type in _DENYLIST:
-            assert canonical == canonical.casefold(), (
-                f"denylist canonical {canonical!r} is not casefolded"
-            )
+            assert (
+                canonical == canonical.casefold()
+            ), f"denylist canonical {canonical!r} is not casefolded"
 
     def test_no_blank_or_none_entries(self) -> None:
         for canonical, entity_type in _DENYLIST:

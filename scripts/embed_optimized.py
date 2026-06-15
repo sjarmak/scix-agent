@@ -247,7 +247,8 @@ def _flush(
             with cur.copy(copy_sql) as copy:
                 while chunk := buf.read(65536):
                     copy.write(chunk.encode("utf-8"))
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO paper_embeddings (bibcode, model_name, embedding, input_type, source_hash)
                 SELECT bibcode, model_name, embedding, input_type, source_hash
                 FROM _embed_staging
@@ -255,7 +256,8 @@ def _flush(
                     embedding = EXCLUDED.embedding,
                     input_type = EXCLUDED.input_type,
                     source_hash = EXCLUDED.source_hash
-                """)
+                """
+            )
 
 
 if __name__ == "__main__":

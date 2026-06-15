@@ -38,7 +38,8 @@ from scix.sources.arxiv_s3 import (
 # Fixture: minimal manifest XML
 # ---------------------------------------------------------------------------
 
-MINIMAL_MANIFEST_XML = textwrap.dedent("""\
+MINIMAL_MANIFEST_XML = textwrap.dedent(
+    """\
     <?xml version="1.0" encoding="UTF-8"?>
     <arXivSRC>
       <file>
@@ -66,7 +67,8 @@ MINIMAL_MANIFEST_XML = textwrap.dedent("""\
         <yymm>2301</yymm>
       </file>
     </arXivSRC>
-""")
+"""
+)
 
 
 # ---------------------------------------------------------------------------

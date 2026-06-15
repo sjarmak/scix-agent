@@ -63,6 +63,7 @@ def _rss_gb() -> float:
         pass
     return 0.0
 
+
 logger = logging.getLogger(__name__)
 
 _VALID_RESOLUTIONS = frozenset({"coarse", "medium", "fine"})
@@ -402,13 +403,9 @@ def load_graph(
     )
     edge_chunk_size = 5_000_000
     chunk_log_every = 10  # log RSS every ~50M edges
-    for chunk_idx, chunk_start in enumerate(
-        range(0, edge_count, edge_chunk_size)
-    ):
+    for chunk_idx, chunk_start in enumerate(range(0, edge_count, edge_chunk_size)):
         chunk_end = min(chunk_start + edge_chunk_size, edge_count)
-        chunk = np.column_stack(
-            (src_arr[chunk_start:chunk_end], tgt_arr[chunk_start:chunk_end])
-        )
+        chunk = np.column_stack((src_arr[chunk_start:chunk_end], tgt_arr[chunk_start:chunk_end]))
         graph.add_edges(chunk)
         del chunk
         if (chunk_idx + 1) % chunk_log_every == 0 or chunk_end == edge_count:
@@ -569,9 +566,7 @@ def extract_giant_component(
     # cheaper than `components[giant_idx]` which rescans membership.
     t_vids = time.perf_counter()
     membership = components.membership
-    giant_vids: list[int] = [
-        vid for vid, cid in enumerate(membership) if cid == giant_idx
-    ]
+    giant_vids: list[int] = [vid for vid, cid in enumerate(membership) if cid == giant_idx]
     logger.info(
         "Collected %d giant-component vids (%.1fms)",
         len(giant_vids),
@@ -582,9 +577,7 @@ def extract_giant_component(
     # membership vector. Avoids re-hashing a 22M-element giant_vid_set.
     t_small = time.perf_counter()
     small_bibcodes: set[str] = {
-        id_to_bibcode[vid]
-        for vid, cid in enumerate(membership)
-        if cid != giant_idx
+        id_to_bibcode[vid] for vid, cid in enumerate(membership) if cid != giant_idx
     }
     logger.info(
         "Collected %d small-component bibcodes (%.1fms)",

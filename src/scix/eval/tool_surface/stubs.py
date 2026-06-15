@@ -186,12 +186,20 @@ def _stub_payload(name: str, args: dict[str, Any]) -> dict[str, Any]:
     # Entity
     if name == "entity":
         if action == "context":
-            return {"entity": args.get("name"), "co_occurring": _SAMPLE_ENTITIES, "papers": _SAMPLE_PAPERS[:1]}
+            return {
+                "entity": args.get("name"),
+                "co_occurring": _SAMPLE_ENTITIES,
+                "papers": _SAMPLE_PAPERS[:1],
+            }
         if action == "papers":
             return {"entity": args.get("name"), "papers": _SAMPLE_PAPERS}
         return {"entity": args.get("name") or args.get("query"), "matches": _SAMPLE_ENTITIES}
     if name == "entity_context":
-        return {"entity": args.get("name"), "co_occurring": _SAMPLE_ENTITIES, "papers": _SAMPLE_PAPERS[:1]}
+        return {
+            "entity": args.get("name"),
+            "co_occurring": _SAMPLE_ENTITIES,
+            "papers": _SAMPLE_PAPERS[:1],
+        }
 
     # Discovery (kept separate in all variants)
     if name == "graph_context":
@@ -253,7 +261,11 @@ def _v0_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string"},
-                    "mode": {"type": "string", "enum": ["hybrid", "semantic", "keyword"], "default": "hybrid"},
+                    "mode": {
+                        "type": "string",
+                        "enum": ["hybrid", "semantic", "keyword"],
+                        "default": "hybrid",
+                    },
                     "limit": {"type": "integer", "default": 10},
                     **_FILTER_PROPS,
                 },
@@ -270,7 +282,10 @@ def _v0_tools() -> list[Tool]:
             ),
             inputSchema={
                 "type": "object",
-                "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 20}},
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "default": 20},
+                },
                 "required": ["query"],
             },
         ),
@@ -303,7 +318,11 @@ def _v0_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "bibcode": {"type": "string"},
-                    "direction": {"type": "string", "enum": ["forward", "backward", "both"], "default": "both"},
+                    "direction": {
+                        "type": "string",
+                        "enum": ["forward", "backward", "both"],
+                        "default": "both",
+                    },
                     "depth": {"type": "integer", "default": 1},
                     "limit": {"type": "integer", "default": 20},
                 },
@@ -321,7 +340,11 @@ def _v0_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "bibcode": {"type": "string"},
-                    "method": {"type": "string", "enum": ["co_citation", "bibliographic_coupling"], "default": "co_citation"},
+                    "method": {
+                        "type": "string",
+                        "enum": ["co_citation", "bibliographic_coupling"],
+                        "default": "co_citation",
+                    },
                     "limit": {"type": "integer", "default": 20},
                 },
                 "required": ["bibcode"],
@@ -350,7 +373,10 @@ def _v0_tools() -> list[Tool]:
             ),
             inputSchema={
                 "type": "object",
-                "properties": {"name": {"type": "string"}, "limit": {"type": "integer", "default": 20}},
+                "properties": {
+                    "name": {"type": "string"},
+                    "limit": {"type": "integer", "default": 20},
+                },
                 "required": ["name"],
             },
         ),
@@ -374,7 +400,10 @@ def _v0_tools() -> list[Tool]:
             ),
             inputSchema={
                 "type": "object",
-                "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 20}},
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "default": 20},
+                },
                 "required": ["query"],
             },
         ),
@@ -383,7 +412,11 @@ def _v0_tools() -> list[Tool]:
             description="Time series of paper counts on a topic across years. Returns a year→count distribution.",
             inputSchema={
                 "type": "object",
-                "properties": {"query": {"type": "string"}, "year_min": {"type": "integer"}, "year_max": {"type": "integer"}},
+                "properties": {
+                    "query": {"type": "string"},
+                    "year_min": {"type": "integer"},
+                    "year_max": {"type": "integer"},
+                },
                 "required": ["query"],
             },
         ),
@@ -392,7 +425,10 @@ def _v0_tools() -> list[Tool]:
             description="For a query, return facet distributions (discipline, year, arxiv_class). Use for aggregate / summary views.",
             inputSchema={
                 "type": "object",
-                "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 50}},
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "default": 50},
+                },
                 "required": ["query"],
             },
         ),
@@ -412,7 +448,10 @@ def _v0_tools() -> list[Tool]:
             description="Find papers that replicate, extend, or contradict a seed paper's main claim.",
             inputSchema={
                 "type": "object",
-                "properties": {"bibcode": {"type": "string"}, "limit": {"type": "integer", "default": 20}},
+                "properties": {
+                    "bibcode": {"type": "string"},
+                    "limit": {"type": "integer", "default": 20},
+                },
                 "required": ["bibcode"],
             },
         ),
@@ -450,7 +489,10 @@ def _v0_tools() -> list[Tool]:
             ),
             inputSchema={
                 "type": "object",
-                "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 20}},
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "default": 20},
+                },
                 "required": ["query"],
             },
         ),
@@ -491,8 +533,16 @@ def _v1_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string"},
-                    "grain": {"type": "string", "enum": ["paper", "concept", "section", "chunk", "claim"], "default": "paper"},
-                    "mode": {"type": "string", "enum": ["hybrid", "semantic", "keyword"], "default": "hybrid"},
+                    "grain": {
+                        "type": "string",
+                        "enum": ["paper", "concept", "section", "chunk", "claim"],
+                        "default": "paper",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["hybrid", "semantic", "keyword"],
+                        "default": "hybrid",
+                    },
                     "limit": {"type": "integer", "default": 10},
                     **_FILTER_PROPS,
                 },
@@ -513,9 +563,19 @@ def _v1_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "bibcode": {"type": "string"},
-                    "action": {"type": "string", "enum": ["metadata", "read", "claims", "blame", "replications"], "default": "metadata"},
-                    "section": {"type": "string", "description": "For action=read: restrict to one section"},
-                    "claim_id": {"type": "string", "description": "For action=blame: which claim to trace"},
+                    "action": {
+                        "type": "string",
+                        "enum": ["metadata", "read", "claims", "blame", "replications"],
+                        "default": "metadata",
+                    },
+                    "section": {
+                        "type": "string",
+                        "description": "For action=read: restrict to one section",
+                    },
+                    "claim_id": {
+                        "type": "string",
+                        "description": "For action=blame: which claim to trace",
+                    },
                 },
                 "required": ["bibcode"],
             },
@@ -531,10 +591,22 @@ def _v1_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "bibcode": {"type": "string"},
-                    "mode": {"type": "string", "enum": ["traverse", "similarity"], "default": "traverse"},
-                    "direction": {"type": "string", "enum": ["forward", "backward", "both"], "default": "both"},
+                    "mode": {
+                        "type": "string",
+                        "enum": ["traverse", "similarity"],
+                        "default": "traverse",
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["forward", "backward", "both"],
+                        "default": "both",
+                    },
                     "depth": {"type": "integer", "default": 1},
-                    "method": {"type": "string", "enum": ["co_citation", "bibliographic_coupling"], "default": "co_citation"},
+                    "method": {
+                        "type": "string",
+                        "enum": ["co_citation", "bibliographic_coupling"],
+                        "default": "co_citation",
+                    },
                     "limit": {"type": "integer", "default": 20},
                 },
                 "required": ["bibcode"],
@@ -553,7 +625,11 @@ def _v1_tools() -> list[Tool]:
                 "properties": {
                     "name": {"type": "string"},
                     "qid": {"type": "string"},
-                    "action": {"type": "string", "enum": ["lookup", "context", "papers"], "default": "lookup"},
+                    "action": {
+                        "type": "string",
+                        "enum": ["lookup", "context", "papers"],
+                        "default": "lookup",
+                    },
                     "type": {"type": "string"},
                     "limit": {"type": "integer", "default": 20},
                 },
@@ -579,7 +655,10 @@ def _v1_tools() -> list[Tool]:
             ),
             inputSchema={
                 "type": "object",
-                "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 20}},
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "default": 20},
+                },
                 "required": ["query"],
             },
         ),
@@ -588,7 +667,11 @@ def _v1_tools() -> list[Tool]:
             description="Time series of paper counts on a topic across years. Returns a year→count distribution.",
             inputSchema={
                 "type": "object",
-                "properties": {"query": {"type": "string"}, "year_min": {"type": "integer"}, "year_max": {"type": "integer"}},
+                "properties": {
+                    "query": {"type": "string"},
+                    "year_min": {"type": "integer"},
+                    "year_max": {"type": "integer"},
+                },
                 "required": ["query"],
             },
         ),
@@ -597,7 +680,10 @@ def _v1_tools() -> list[Tool]:
             description="For a query, return facet distributions (discipline, year, arxiv_class). Use for aggregate / summary views.",
             inputSchema={
                 "type": "object",
-                "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "default": 50}},
+                "properties": {
+                    "query": {"type": "string"},
+                    "limit": {"type": "integer", "default": 50},
+                },
                 "required": ["query"],
             },
         ),

@@ -63,9 +63,7 @@ from scix.synthesize import (
 # truth in synthesize.py so the tool description never drifts when a new
 # signal value is added. Hand-typed before; one-place change now.
 _SIGNAL_USED_DESCRIPTION: str = (
-    "signal_used ("
-    + " | ".join(f"'{v}'" for v in _SYNTH_SIGNAL_USED_VALUES)
-    + ")"
+    "signal_used (" + " | ".join(f"'{v}'" for v in _SYNTH_SIGNAL_USED_VALUES) + ")"
 )
 
 # Optional Qdrant-backed discovery tool. Feature-flagged via QDRANT_URL so the
@@ -469,13 +467,10 @@ def _cap_params_lists(params: dict[str, Any]) -> dict[str, Any]:
     value at the canonical bound. A new dict is returned so the caller's live
     arguments dict is never mutated.
     """
-    if not any(
-        isinstance(v, list) and len(v) > MAX_WORKING_SET_BIBCODES for v in params.values()
-    ):
+    if not any(isinstance(v, list) and len(v) > MAX_WORKING_SET_BIBCODES for v in params.values()):
         return params
     return {
-        k: (v[:MAX_WORKING_SET_BIBCODES] if isinstance(v, list) else v)
-        for k, v in params.items()
+        k: (v[:MAX_WORKING_SET_BIBCODES] if isinstance(v, list) else v) for k, v in params.items()
     }
 
 
@@ -5788,8 +5783,7 @@ def _resolve_sections_pool() -> int | None:
         return _SECTIONS_POOL_DEFAULT
     if value <= 0:
         logger.warning(
-            "SCIX_SECTIONS_POOL=%d must be positive (use INF for unbounded); "
-            "falling back to %d",
+            "SCIX_SECTIONS_POOL=%d must be positive (use INF for unbounded); " "falling back to %d",
             value,
             _SECTIONS_POOL_DEFAULT,
         )

@@ -72,7 +72,12 @@ VARIANTS: dict[str, dict[str, Any]] = {
             "WHERE model_name='indus'"
         ),
         "index_name": "paper_embeddings_diskann_v2",
-        "params": {"storage_layout": "plain", "sbq": True, "num_bits_per_dimension": 2, "type": "halfvec(768)"},
+        "params": {
+            "storage_layout": "plain",
+            "sbq": True,
+            "num_bits_per_dimension": 2,
+            "type": "halfvec(768)",
+        },
     },
     "v3": {
         "ddl": (
@@ -83,18 +88,26 @@ VARIANTS: dict[str, dict[str, Any]] = {
             "WHERE model_name='indus'"
         ),
         "index_name": "paper_embeddings_diskann_v3",
-        "params": {"storage_layout": "memory_optimized", "num_neighbors": 64, "sbq": True, "num_bits_per_dimension": 2, "type": "halfvec(768)"},
+        "params": {
+            "storage_layout": "memory_optimized",
+            "num_neighbors": 64,
+            "sbq": True,
+            "num_bits_per_dimension": 2,
+            "type": "halfvec(768)",
+        },
     },
 }
 
 
 def _drop_dense_indexes(conn: psycopg.Connection) -> None:
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT indexname FROM pg_indexes
             WHERE schemaname='public' AND tablename='paper_embeddings'
               AND indexname != 'paper_embeddings_pkey'
-        """)
+        """
+        )
         existing = [r[0] for r in cur.fetchall()]
         for idx in existing:
             logger.info("Dropping existing index: %s", idx)
@@ -127,11 +140,15 @@ def build_one(dsn: str, name: str) -> dict[str, Any]:
         wall = time.perf_counter() - t0
         rec["build_wall_seconds"] = round(wall, 3)
         rec["index_size_bytes"] = _index_size(conn, spec["index_name"])
-    rec["peak_rss_kb_self"] = int(max(rss_before, resource.getrusage(resource.RUSAGE_SELF).ru_maxrss))
+    rec["peak_rss_kb_self"] = int(
+        max(rss_before, resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    )
     rec["finished_at"] = datetime.now(timezone.utc).isoformat()
     logger.info(
         "Built %s in %.0fs — size=%dGB",
-        spec["index_name"], wall, rec["index_size_bytes"] // (1024**3),
+        spec["index_name"],
+        wall,
+        rec["index_size_bytes"] // (1024**3),
     )
     return rec
 
@@ -141,12 +158,18 @@ def run_unfiltered_bench(dsn: str, name: str, sample_size: int) -> dict[str, Any
     out_dir = OUT_DIR / f"tier2_{name}"
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
-        sys.executable, "scripts/bench_pgvectorscale.py",
-        "--dsn", dsn,
-        "--indexes", name,
-        "--index-map", f"{name}={spec['index_name']}",
-        "--sample-size", str(sample_size),
-        "--out", str(out_dir),
+        sys.executable,
+        "scripts/bench_pgvectorscale.py",
+        "--dsn",
+        dsn,
+        "--indexes",
+        name,
+        "--index-map",
+        f"{name}={spec['index_name']}",
+        "--sample-size",
+        str(sample_size),
+        "--out",
+        str(out_dir),
     ]
     logger.info("Running: %s", " ".join(cmd))
     res = subprocess.run(cmd, check=True, capture_output=True, text=True)
@@ -161,12 +184,18 @@ def run_filtered_bench(dsn: str, name: str) -> dict[str, Any]:
     out_dir = OUT_DIR / f"tier2_{name}"
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
-        sys.executable, "scripts/bench_pgvectorscale_filtered.py",
-        "--dsn", dsn,
-        "--indexes", name,
-        "--index-map", f"{name}={spec['index_name']}",
-        "--filter", "both",
-        "--out", str(out_dir),
+        sys.executable,
+        "scripts/bench_pgvectorscale_filtered.py",
+        "--dsn",
+        dsn,
+        "--indexes",
+        name,
+        "--index-map",
+        f"{name}={spec['index_name']}",
+        "--filter",
+        "both",
+        "--out",
+        str(out_dir),
     ]
     logger.info("Running filtered: %s", " ".join(cmd))
     res = subprocess.run(cmd, check=True, capture_output=True, text=True)
@@ -201,9 +230,17 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("\n=== TIER 2 VARIANT %s ===", v)
         b = build_one(args.dsn, v)
         builds.append(b)
-        BUILDS_PATH.write_text(json.dumps(
-            {"timestamp": datetime.now(timezone.utc).isoformat(), "tier": 2,
-             "sample_size": args.sample_size, "builds": builds}, indent=2))
+        BUILDS_PATH.write_text(
+            json.dumps(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "tier": 2,
+                    "sample_size": args.sample_size,
+                    "builds": builds,
+                },
+                indent=2,
+            )
+        )
         bench_runs[v] = run_unfiltered_bench(args.dsn, v, args.sample_size)
         if not args.skip_filtered:
             filtered_runs[v] = run_filtered_bench(args.dsn, v)
@@ -223,20 +260,24 @@ def main(argv: list[str] | None = None) -> int:
         if not per_index:
             continue
         ix = per_index[0]
-        merged["variants"].append({
-            "name": v,
-            "index_name": VARIANTS[v]["index_name"],
-            "metrics": ix["metrics"],
-            "n_per_query": len(ix.get("per_query") or []),
-        })
+        merged["variants"].append(
+            {
+                "name": v,
+                "index_name": VARIANTS[v]["index_name"],
+                "metrics": ix["metrics"],
+                "n_per_query": len(ix.get("per_query") or []),
+            }
+        )
         if v in filtered_runs:
             for cell in filtered_runs[v].get("results", []):
-                merged["filtered"].append({
-                    "variant": v,
-                    "filter_key": cell.get("filter_key"),
-                    "metrics": cell.get("metrics"),
-                    "p95_unfiltered_ms": ix["metrics"].get("p95_ms"),
-                })
+                merged["filtered"].append(
+                    {
+                        "variant": v,
+                        "filter_key": cell.get("filter_key"),
+                        "metrics": cell.get("metrics"),
+                        "p95_unfiltered_ms": ix["metrics"].get("p95_ms"),
+                    }
+                )
     RETRIEVAL_PATH.write_text(json.dumps(merged, indent=2))
     RETRIEVAL_MD_PATH.write_text(_render(merged, builds))
     logger.info("Wrote %s + %s", RETRIEVAL_PATH, RETRIEVAL_MD_PATH)
@@ -287,12 +328,8 @@ def _render(merged: dict[str, Any], builds: list[dict[str, Any]]) -> str:
     if merged.get("filtered"):
         lines.append("## Filtered queries")
         lines.append("")
-        lines.append(
-            "| Variant | Filter | nDCG@10 | p50 (ms) | p95 (ms) | p95 unfilt (ms) |"
-        )
-        lines.append(
-            "|---------|--------|--------:|---------:|---------:|----------------:|"
-        )
+        lines.append("| Variant | Filter | nDCG@10 | p50 (ms) | p95 (ms) | p95 unfilt (ms) |")
+        lines.append("|---------|--------|--------:|---------:|---------:|----------------:|")
         for f in merged["filtered"]:
             m = f.get("metrics") or {}
             lines.append(

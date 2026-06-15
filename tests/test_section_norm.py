@@ -77,9 +77,9 @@ def test_normalize_returns_only_canonical_or_unknown() -> None:
     ]
     for raw in samples:
         out = normalize_heading(raw)
-        assert out in CANONICAL_HEADINGS or out == UNKNOWN, (
-            f"normalize_heading({raw!r}) returned non-canonical {out!r}"
-        )
+        assert (
+            out in CANONICAL_HEADINGS or out == UNKNOWN
+        ), f"normalize_heading({raw!r}) returned non-canonical {out!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -103,17 +103,15 @@ def test_heading_map_keys_are_pre_normalized() -> None:
     """
     for key in HEADING_MAP:
         assert key == key.lower(), f"HEADING_MAP key {key!r} is not lowercase"
-        assert key == " ".join(key.split()), (
-            f"HEADING_MAP key {key!r} has non-canonical whitespace"
-        )
+        assert key == " ".join(key.split()), f"HEADING_MAP key {key!r} has non-canonical whitespace"
 
 
 def test_heading_map_values_are_canonical() -> None:
     """Every value in HEADING_MAP must be a canonical label."""
     for key, value in HEADING_MAP.items():
-        assert value in CANONICAL_HEADINGS, (
-            f"HEADING_MAP[{key!r}] = {value!r} is not a canonical label"
-        )
+        assert (
+            value in CANONICAL_HEADINGS
+        ), f"HEADING_MAP[{key!r}] = {value!r} is not a canonical label"
 
 
 # ---------------------------------------------------------------------------

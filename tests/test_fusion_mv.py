@@ -163,11 +163,13 @@ class TestTierWeightFunction:
 
     def test_declared_immutable_and_parallel_safe(self, db_conn: psycopg.Connection) -> None:
         with db_conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT provolatile, proparallel, proleakproof
                   FROM pg_proc
                  WHERE proname = 'tier_weight'
-                """)
+                """
+            )
             row = cur.fetchone()
         assert row is not None
         provolatile, proparallel, proleakproof = row
@@ -196,11 +198,13 @@ class TestCalibrationLog:
 class TestMaterializedView:
     def test_unique_index_on_bibcode_entity(self, db_conn: psycopg.Connection) -> None:
         with db_conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT indexname, indexdef
                   FROM pg_indexes
                  WHERE tablename = 'document_entities_canonical'
-                """)
+                """
+            )
             rows = cur.fetchall()
         names = [r[0] for r in rows]
         assert "idx_dec_bibcode_entity" in names

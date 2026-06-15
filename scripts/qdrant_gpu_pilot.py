@@ -110,10 +110,18 @@ def main() -> None:
     t_total = time.monotonic() - t0
 
     info = client.get_collection(COLLECTION)
-    log.info("INDEX DONE: status=%s points=%s indexed_vectors=%s", info.status, info.points_count, info.indexed_vectors_count)
+    log.info(
+        "INDEX DONE: status=%s points=%s indexed_vectors=%s",
+        info.status,
+        info.points_count,
+        info.indexed_vectors_count,
+    )
     log.info(
         "TIMINGS: load=%.1fs  index_tail_after_load=%.1fs  total=%.1fs  (%.0f pts/s end-to-end)",
-        t_load, t_index_tail, t_total, n / t_total,
+        t_load,
+        t_index_tail,
+        t_total,
+        n / t_total,
     )
     proj = 32_383_535 / n * t_total / 3600
     log.info("PROJECTION to 32.38M at this end-to-end rate: %.1f h", proj)

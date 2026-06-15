@@ -60,10 +60,12 @@ def _mock_cursor_with_row(row, extra_rows=None):
         # Caller is being explicit — give them exactly what they asked for.
         mock_cursor.fetchone.side_effect = [row] + extra_rows
     else:
+
         def _fetchone_sequence():
             yield row
             while True:
                 yield None
+
         mock_cursor.fetchone.side_effect = _fetchone_sequence()
     mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
     mock_cursor.__exit__ = MagicMock(return_value=False)

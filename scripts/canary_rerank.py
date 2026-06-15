@@ -226,16 +226,13 @@ def load_baseline(path: Path) -> tuple[Pair, ...]:
 
     pairs_raw = payload.get("pairs")
     if not isinstance(pairs_raw, list) or not pairs_raw:
-        raise FileFormatError(
-            f"Baseline at {path} 'pairs' must be a non-empty list."
-        )
+        raise FileFormatError(f"Baseline at {path} 'pairs' must be a non-empty list.")
 
     pairs: list[Pair] = []
     for i, row in enumerate(pairs_raw):
         if not isinstance(row, dict):
             raise FileFormatError(
-                f"Baseline at {path} pairs[{i}] must be an object, got "
-                f"{type(row).__name__}."
+                f"Baseline at {path} pairs[{i}] must be an object, got " f"{type(row).__name__}."
             )
         missing = [k for k in REQUIRED_PAIR_KEYS if k not in row]
         if missing:
@@ -422,9 +419,7 @@ def _load_first_n_seeds(gold_path: Path, n: int) -> list[str]:
     payload = json.loads(gold_path.read_text())
     per_query = payload.get("per_query")
     if not isinstance(per_query, list) or not per_query:
-        raise FileFormatError(
-            f"Gold-set {gold_path} missing non-empty 'per_query' list."
-        )
+        raise FileFormatError(f"Gold-set {gold_path} missing non-empty 'per_query' list.")
     seen: set[str] = set()
     seeds: list[str] = []
     for entry in per_query:
@@ -436,9 +431,7 @@ def _load_first_n_seeds(gold_path: Path, n: int) -> list[str]:
         if len(seeds) >= n:
             break
     if len(seeds) < n:
-        raise FileFormatError(
-            f"Gold-set {gold_path} has only {len(seeds)} unique seeds; need {n}."
-        )
+        raise FileFormatError(f"Gold-set {gold_path} has only {len(seeds)} unique seeds; need {n}.")
     return seeds
 
 
@@ -634,8 +627,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         bootstrapped = False
     except FileNotFoundError:
         logger.info(
-            "Baseline fixture %s not found — bootstrapping from DB and "
-            "gold set %s",
+            "Baseline fixture %s not found — bootstrapping from DB and " "gold set %s",
             args.baseline,
             args.gold_path,
         )

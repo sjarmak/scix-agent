@@ -148,7 +148,9 @@ class LLMClient(Protocol):
     mappings or raise; callers tolerate JSON-decode failures by treating them
     as "no claims for this paragraph"."""
 
-    def extract(self, prompt: str, paragraph: str) -> list[ClaimDict]:  # pragma: no cover - Protocol
+    def extract(
+        self, prompt: str, paragraph: str
+    ) -> list[ClaimDict]:  # pragma: no cover - Protocol
         """Run claim extraction over ``paragraph`` and return zero or more claims.
 
         Implementations MAY raise ``json.JSONDecodeError`` if the underlying

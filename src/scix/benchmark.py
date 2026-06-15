@@ -115,18 +115,22 @@ def _select_citation_test_papers(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Select a typical and a highly-cited paper for graph benchmarks."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT bibcode, citation_count FROM papers
             WHERE citation_count BETWEEN 15 AND 30
             ORDER BY random() LIMIT 1
-            """)
+            """
+        )
         typical = cur.fetchone()
 
-        cur.execute("""
+        cur.execute(
+            """
             SELECT bibcode, citation_count FROM papers
             WHERE citation_count > 1000
             ORDER BY citation_count DESC LIMIT 1
-            """)
+            """
+        )
         highly_cited = cur.fetchone()
 
     return (
@@ -453,14 +457,16 @@ def collect_ingestion_metrics(conn: psycopg.Connection) -> IngestionMetrics:
         no_abstract = cur.fetchone()[0]
 
         # HNSW index size — find dynamically
-        cur.execute("""
+        cur.execute(
+            """
             SELECT indexname, pg_relation_size(quote_ident(indexname))
             FROM pg_indexes
             WHERE tablename = 'paper_embeddings'
               AND indexdef LIKE '%%hnsw%%'
             ORDER BY pg_relation_size(quote_ident(indexname)) DESC
             LIMIT 1
-            """)
+            """
+        )
         row = cur.fetchone()
         hnsw_bytes = row[1] if row else 0
 

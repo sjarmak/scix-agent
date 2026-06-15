@@ -71,9 +71,7 @@ def test_latex_derived_sources_constant_is_exactly_the_expected_frozenset():
 def test_direct_hit_returns_row_without_touching_aliases():
     row = {"bibcode": "2020ApJ...900..100A", "source": "s2orc", "body": "..."}
     rows = {"2020ApJ...900..100A": row}
-    fetch_row, fetch_aliases, fetch_canonical_url, calls = _make_fetchers(
-        rows=rows, aliases={}
-    )
+    fetch_row, fetch_aliases, fetch_canonical_url, calls = _make_fetchers(rows=rows, aliases={})
 
     result = read_fulltext_with_sibling_fallback(
         "2020ApJ...900..100A", fetch_row, fetch_aliases, fetch_canonical_url
@@ -235,9 +233,7 @@ def test_duplicate_siblings_are_deduplicated():
         rows=rows, aliases=aliases
     )
 
-    read_fulltext_with_sibling_fallback(
-        "REQ", fetch_row, fetch_aliases, fetch_canonical_url
-    )
+    read_fulltext_with_sibling_fallback("REQ", fetch_row, fetch_aliases, fetch_canonical_url)
 
     assert calls["fetch_row"].count("SIB") == 1
 
@@ -248,9 +244,7 @@ def test_duplicate_siblings_are_deduplicated():
 
 
 def test_complete_miss_returns_hit_false_miss_with_hint_false():
-    fetch_row, fetch_aliases, fetch_canonical_url, _calls = _make_fetchers(
-        rows={}, aliases={}
-    )
+    fetch_row, fetch_aliases, fetch_canonical_url, _calls = _make_fetchers(rows={}, aliases={})
 
     result = read_fulltext_with_sibling_fallback(
         "REQ", fetch_row, fetch_aliases, fetch_canonical_url

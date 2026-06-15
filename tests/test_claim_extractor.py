@@ -215,12 +215,9 @@ def test_recall_per_quantity_on_cosmology_fixture() -> None:
         recall = hits / len(examples)
         if recall < threshold:
             failures.append(
-                f"{quantity}: recall {recall:.2f} < {threshold:.2f} "
-                f"({hits}/{len(examples)})"
+                f"{quantity}: recall {recall:.2f} < {threshold:.2f} " f"({hits}/{len(examples)})"
             )
-    assert not failures, "Per-quantity recall below PRD threshold:\n  " + "\n  ".join(
-        failures
-    )
+    assert not failures, "Per-quantity recall below PRD threshold:\n  " + "\n  ".join(failures)
 
 
 # ---------------------------------------------------------------------------

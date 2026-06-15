@@ -531,9 +531,7 @@ def _insert_alias(conn: psycopg.Connection, *, entity_id: int, alias: str) -> bo
         return cur.fetchone() is not None
 
 
-def _ensure_parent(
-    conn: psycopg.Connection, parent: ParentEntity
-) -> tuple[int, bool, int]:
+def _ensure_parent(conn: psycopg.Connection, parent: ParentEntity) -> tuple[int, bool, int]:
     """Find or create a parent entity. Uses ``source_preference`` order.
 
     Returns ``(entity_id, created_new, new_alias_count)``.
@@ -618,9 +616,7 @@ def seed(conn: psycopg.Connection, *, dry_run: bool = False) -> SeedStats:
             if key in parent_ids:
                 parent_id = parent_ids[key]
             else:
-                parent_id, parent_created, parent_new_aliases = _ensure_parent(
-                    conn, inst.parent
-                )
+                parent_id, parent_created, parent_new_aliases = _ensure_parent(conn, inst.parent)
                 parent_ids[key] = parent_id
                 if parent_created:
                     entities_created += 1

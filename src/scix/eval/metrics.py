@@ -289,9 +289,7 @@ def format_m4_report(
             d_ndcg = report.mean_ndcg_at_10 - baseline_q.mean_ndcg_at_10
             d_recall = report.mean_recall_at_20 - baseline_q.mean_recall_at_20
             d_mrr = report.mean_mrr - baseline_q.mean_mrr
-            lines.append(
-                f"| {config.name} | {d_ndcg:+.4f} | {d_recall:+.4f} | {d_mrr:+.4f} |"
-            )
+            lines.append(f"| {config.name} | {d_ndcg:+.4f} | {d_recall:+.4f} | {d_mrr:+.4f} |")
     lines.append("")
 
     return "\n".join(lines) + "\n"

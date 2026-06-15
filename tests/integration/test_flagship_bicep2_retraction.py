@@ -61,8 +61,8 @@ MOCK_FIXTURE: dict[str, Any] = {
             "tool_name": "search",
             "text": (
                 f"Found {_BICEP2_2014} (BICEP2 Collaboration 2014, "
-                "\"We report the detection of B-mode polarization at "
-                "degree angular scales... r = 0.20 +0.07 -0.05\"). "
+                '"We report the detection of B-mode polarization at '
+                'degree angular scales... r = 0.20 +0.07 -0.05"). '
                 f"correction_events: [retraction by {_BICEP2_PLANCK_JOINT}]"
             ),
         },
@@ -91,11 +91,11 @@ MOCK_FIXTURE: dict[str, Any] = {
             "tool_name": "find_replications",
             "text": (
                 f"{_BICEP2_PLANCK_JOINT} (BICEP2/Keck + Planck joint analysis): "
-                "\"We find no statistically significant evidence for "
+                '"We find no statistically significant evidence for '
                 "primordial gravitational waves; r < 0.12 at 95% CL after "
-                "subtracting the dust contribution.\" "
-                f"{_PLANCK_DUST_2016}: \"The B-mode signal is consistent "
-                "with thermal dust emission alone.\""
+                'subtracting the dust contribution." '
+                f'{_PLANCK_DUST_2016}: "The B-mode signal is consistent '
+                'with thermal dust emission alone."'
             ),
         },
         {
@@ -138,10 +138,7 @@ MOCK_FIXTURE: dict[str, Any] = {
             ),
         },
         {
-            "text": (
-                "The BICEP2 result was not a primordial gravitational-wave "
-                "detection"
-            ),
+            "text": ("The BICEP2 result was not a primordial gravitational-wave " "detection"),
         },
     ],
     # The fixture's claim_blame mock — the test asserts BICEP2 is NOT here.
@@ -167,19 +164,15 @@ def test_flagship_bicep2_retraction(run_flagship: Any) -> None:
     bicep2 = MOCK_FIXTURE["bicep2_bibcode"]
 
     # (a) BICEP2 paper surfaced WITH retraction_warning annotation.
-    assert bicep2 in answer, (
-        f"BICEP2 paper {bicep2} not found in answer"
-    )
+    assert bicep2 in answer, f"BICEP2 paper {bicep2} not found in answer"
     assert MOCK_FIXTURE["annotation_token"] in answer, (
-        f"answer must include annotation token "
-        f"{MOCK_FIXTURE['annotation_token']!r}"
+        f"answer must include annotation token " f"{MOCK_FIXTURE['annotation_token']!r}"
     )
 
     # (b) Answer explicitly states retraction / correction.
     answer_lower = answer.lower()
     assert any(t in answer_lower for t in ("retract", "corrected", "correction")), (
-        "answer must explicitly state the original detection was "
-        "retracted/corrected"
+        "answer must explicitly state the original detection was " "retracted/corrected"
     )
 
     # (c) No sentence quotes the BICEP2 result without annotation.
@@ -215,16 +208,14 @@ def test_flagship_bicep2_retraction(run_flagship: Any) -> None:
     )
 
     # (d) <=25 tool turns
-    assert result.metadata.n_turns <= 25, (
-        f"n_turns={result.metadata.n_turns} exceeds 25-turn budget"
-    )
+    assert (
+        result.metadata.n_turns <= 25
+    ), f"n_turns={result.metadata.n_turns} exceeds 25-turn budget"
     assert not result.metadata.truncated
 
     # (e) claim_blame does NOT return BICEP2 as clean source.
     cb = MOCK_FIXTURE["claim_blame_response"]
-    assert cb["origin"] != bicep2, (
-        f"claim_blame origin must not be BICEP2 ({bicep2})"
-    )
-    assert bicep2 in cb["retraction_warnings"], (
-        f"BICEP2 ({bicep2}) must appear in retraction_warnings"
-    )
+    assert cb["origin"] != bicep2, f"claim_blame origin must not be BICEP2 ({bicep2})"
+    assert (
+        bicep2 in cb["retraction_warnings"]
+    ), f"BICEP2 ({bicep2}) must appear in retraction_warnings"

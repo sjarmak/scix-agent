@@ -186,9 +186,7 @@ class HybridSearcher:
         from scix.db import get_connection
 
         with get_connection(dsn=self._dsn) as conn, conn.cursor() as cur:
-            cur.execute(
-                "SELECT title, abstract, body FROM papers WHERE bibcode = %s", (bibcode,)
-            )
+            cur.execute("SELECT title, abstract, body FROM papers WHERE bibcode = %s", (bibcode,))
             row = cur.fetchone()
             if not row or not row[0]:
                 return None
@@ -224,7 +222,9 @@ def build_pairs(
             if len(top10) < rank:
                 logger.warning(
                     "query %s only returned %d results; skipping rank %d",
-                    lq.query_id, len(top10), rank,
+                    lq.query_id,
+                    len(top10),
+                    rank,
                 )
                 continue
             bib = top10[rank - 1]
@@ -336,17 +336,25 @@ def write_csv(path: Path, rows: list[tuple[ScoredPair, int, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(
-            ["lane", "query_id", "query", "rank_slot", "bibcode", "umbrela_score", "reason"]
-        )
+        w.writerow(["lane", "query_id", "query", "rank_slot", "bibcode", "umbrela_score", "reason"])
         for p, u, r in rows:
             w.writerow(
-                [p.lane, p.query_id, p.query, p.rank_slot, p.bibcode, u, (r or "").replace("\n", " ")[:400]]
+                [
+                    p.lane,
+                    p.query_id,
+                    p.query,
+                    p.rank_slot,
+                    p.bibcode,
+                    u,
+                    (r or "").replace("\n", " ")[:400],
+                ]
             )
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--queries-per-lane", type=int, default=4)
     p.add_argument("--seed", type=int, default=20260422)
     p.add_argument("--output-csv", type=Path, default=DEFAULT_OUTPUT_CSV)
@@ -374,7 +382,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     random.seed(args.seed)
 
-    lane_queries = load_queries(VALUE_PROPS_DIR, queries_per_lane=args.queries_per_lane, seed=args.seed)
+    lane_queries = load_queries(
+        VALUE_PROPS_DIR, queries_per_lane=args.queries_per_lane, seed=args.seed
+    )
     logger.info(
         "%d lane-queries across %d lanes", len(lane_queries), len({q.lane for q in lane_queries})
     )
@@ -408,13 +418,17 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  n_scored / n_failed : {metrics['n_scored']} / {metrics['n_failed']}")
     print("  mean UMBRELA per slot:")
     for slot in ("r1", "r3", "r10", "random"):
-        print(f"    {slot:7s}: {metrics['mean_by_slot'][slot]:+.3f} (n={metrics['count_by_slot'][slot]})")
+        print(
+            f"    {slot:7s}: {metrics['mean_by_slot'][slot]:+.3f} (n={metrics['count_by_slot'][slot]})"
+        )
     print(f"  monotonic r1>=r3>=r10>=random : {metrics['all_monotonic']}")
     print(f"    r1 >= r3    : {metrics['monotonic_r1_r3']}")
     print(f"    r3 >= r10   : {metrics['monotonic_r3_r10']}")
     print(f"    r10 >= rand : {metrics['monotonic_r10_random']}")
-    print(f"  Spearman rho  : {metrics['spearman_rho_rank_vs_score']:+.3f}  "
-          f"(<= {RHO_SUCCESS}; passes={metrics['passes_rho']})")
+    print(
+        f"  Spearman rho  : {metrics['spearman_rho_rank_vs_score']:+.3f}  "
+        f"(<= {RHO_SUCCESS}; passes={metrics['passes_rho']})"
+    )
     print(f"\n  csv : {args.output_csv}")
     print(f"  json: {args.output_json}")
     return 0 if metrics["passes"] else 1

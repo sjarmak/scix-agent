@@ -151,10 +151,7 @@ def test_parse_crossref_work_emits_all_relations() -> None:
 def test_map_crossref_type_known_and_unknown() -> None:
     assert crossref_update_to._map_crossref_type("retraction") == "retraction"
     assert crossref_update_to._map_crossref_type("erratum") == "erratum"
-    assert (
-        crossref_update_to._map_crossref_type("expression-of-concern")
-        == "expression_of_concern"
-    )
+    assert crossref_update_to._map_crossref_type("expression-of-concern") == "expression_of_concern"
     assert crossref_update_to._map_crossref_type("removal") == "retraction"
     assert crossref_update_to._map_crossref_type("is-corrected-by") == "correction"
     assert crossref_update_to._map_crossref_type(None) == "correction"
@@ -171,9 +168,7 @@ def test_crossref_harvest_uses_injected_fetcher() -> None:
         return payload
 
     events = list(
-        crossref_update_to.harvest(
-            ["10.1103/physrevlett.112.241101"], fetcher=fake_fetcher
-        )
+        crossref_update_to.harvest(["10.1103/physrevlett.112.241101"], fetcher=fake_fetcher)
     )
     assert len(events) == 3
     assert seen_urls and seen_urls[0].startswith("https://api.crossref.org/works/")

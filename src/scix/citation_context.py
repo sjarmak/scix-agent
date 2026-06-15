@@ -230,9 +230,7 @@ def extract_citation_contexts(body: str) -> list[CitationMarker]:
 
         char_start = m.start()
         char_end = m.end()
-        win_start, win_end = _word_boundary_window(
-            body, char_start, char_end, offsets=offsets
-        )
+        win_start, win_end = _word_boundary_window(body, char_start, char_end, offsets=offsets)
         context = body[win_start:win_end]
 
         markers.append(
@@ -363,17 +361,13 @@ _YEAR = r"(?P<year>\d{4})"
 # The optional second author after "and" / "&" is captured but not strictly
 # required. We anchor with a word boundary so we don't match within tokens.
 _AY_NARRATIVE = re.compile(
-    rf"\b(?P<surname>{_SURNAME})"
-    rf"(?:\s+(?:and|&)\s+(?:{_SURNAME}))?"
-    rf"\s*\(\s*{_YEAR}\s*\)"
+    rf"\b(?P<surname>{_SURNAME})" rf"(?:\s+(?:and|&)\s+(?:{_SURNAME}))?" rf"\s*\(\s*{_YEAR}\s*\)"
 )
 
 # Pattern B — "Surname et al. YYYY" / "Surname et al., YYYY".
 # Whitespace and parens are grouped so trailing space is consumed only when a
 # closing paren follows — otherwise m.end() inflates past the year.
-_AY_ET_AL = re.compile(
-    rf"\b(?P<surname>{_SURNAME})\s+et\s+al\.?,?\s*(?:\(\s*)?{_YEAR}(?:\s*\))?"
-)
+_AY_ET_AL = re.compile(rf"\b(?P<surname>{_SURNAME})\s+et\s+al\.?,?\s*(?:\(\s*)?{_YEAR}(?:\s*\))?")
 
 # Pattern C — fully parenthetical: "(Surname, YYYY)" / "(Surname & Other, YYYY)"
 # / "(Surname et al., YYYY)" / "(Surname, Other, & Third, YYYY)".
@@ -853,9 +847,7 @@ def run_pipeline(
     pipeline_failed = False
 
     try:
-        query, params = _build_papers_select(
-            shard=shard, limit=limit, oa_only=oa_only
-        )
+        query, params = _build_papers_select(shard=shard, limit=limit, oa_only=oa_only)
 
         with read_conn.cursor(name="citctx_papers") as cur:
             cur.execute(query, params)

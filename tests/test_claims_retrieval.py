@@ -66,9 +66,7 @@ class TestInputValidationStatic:
 
     def test_read_paper_claims_rejects_unknown_claim_type(self) -> None:
         with pytest.raises(ValueError, match="invalid claim_type"):
-            read_paper_claims(
-                _NoOpConn(), bibcode="x", claim_type="bogus"
-            )
+            read_paper_claims(_NoOpConn(), bibcode="x", claim_type="bogus")
 
     def test_read_paper_claims_accepts_each_valid_claim_type(self) -> None:
         # Should NOT raise — the validator only complains about unknown labels.
@@ -173,9 +171,7 @@ def applied_migration(dsn: str) -> str:
         text=True,
         check=False,
     )
-    assert result.returncode == 0, (
-        f"migration 062 failed to apply: stderr=\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"migration 062 failed to apply: stderr=\n{result.stderr}"
     return dsn
 
 
@@ -190,8 +186,7 @@ def _ensure_test_bibcode(dsn: str) -> str:
             return row[0]
         synthetic = "9999paper_claims_retrieval_X"
         cur.execute(
-            "INSERT INTO papers (bibcode) VALUES (%s) "
-            "ON CONFLICT (bibcode) DO NOTHING",
+            "INSERT INTO papers (bibcode) VALUES (%s) " "ON CONFLICT (bibcode) DO NOTHING",
             (synthetic,),
         )
         conn.commit()
@@ -354,9 +349,7 @@ def seeded_claims(applied_migration: str) -> Iterator[dict[str, object]]:
 class TestReadPaperClaims:
     """End-to-end behavior of read_paper_claims against scix_test."""
 
-    def test_returns_rows_for_known_bibcode(
-        self, seeded_claims: dict[str, object]
-    ) -> None:
+    def test_returns_rows_for_known_bibcode(self, seeded_claims: dict[str, object]) -> None:
         import psycopg
 
         dsn = str(seeded_claims["dsn"])
@@ -381,39 +374,28 @@ class TestReadPaperClaims:
         for row in rows:
             assert row["bibcode"] == bibcode
 
-    def test_orders_by_section_paragraph_charspan(
-        self, seeded_claims: dict[str, object]
-    ) -> None:
+    def test_orders_by_section_paragraph_charspan(self, seeded_claims: dict[str, object]) -> None:
         import psycopg
 
         dsn = str(seeded_claims["dsn"])
         bibcode = str(seeded_claims["bibcode"])
         with psycopg.connect(dsn) as conn:
             rows = read_paper_claims(conn, bibcode=bibcode)
-        keys = [
-            (r["section_index"], r["paragraph_index"], r["char_span_start"])
-            for r in rows
-        ]
+        keys = [(r["section_index"], r["paragraph_index"], r["char_span_start"]) for r in rows]
         assert keys == sorted(keys)
 
-    def test_filters_by_claim_type(
-        self, seeded_claims: dict[str, object]
-    ) -> None:
+    def test_filters_by_claim_type(self, seeded_claims: dict[str, object]) -> None:
         import psycopg
 
         dsn = str(seeded_claims["dsn"])
         bibcode = str(seeded_claims["bibcode"])
         with psycopg.connect(dsn) as conn:
-            rows = read_paper_claims(
-                conn, bibcode=bibcode, claim_type="factual"
-            )
+            rows = read_paper_claims(conn, bibcode=bibcode, claim_type="factual")
         assert len(rows) == 2
         for row in rows:
             assert row["claim_type"] == "factual"
 
-    def test_limit_is_honored(
-        self, seeded_claims: dict[str, object]
-    ) -> None:
+    def test_limit_is_honored(self, seeded_claims: dict[str, object]) -> None:
         import psycopg
 
         dsn = str(seeded_claims["dsn"])
@@ -422,16 +404,12 @@ class TestReadPaperClaims:
             rows = read_paper_claims(conn, bibcode=bibcode, limit=2)
         assert len(rows) == 2
 
-    def test_empty_when_no_match(
-        self, seeded_claims: dict[str, object]
-    ) -> None:
+    def test_empty_when_no_match(self, seeded_claims: dict[str, object]) -> None:
         import psycopg
 
         dsn = str(seeded_claims["dsn"])
         with psycopg.connect(dsn) as conn:
-            rows = read_paper_claims(
-                conn, bibcode="nonexistent_bibcode_xyz"
-            )
+            rows = read_paper_claims(conn, bibcode="nonexistent_bibcode_xyz")
         assert rows == []
 
 
@@ -443,9 +421,7 @@ class TestReadPaperClaims:
 class TestFindClaims:
     """End-to-end behavior of find_claims against scix_test."""
 
-    def test_returns_results_ranked_by_ts_rank(
-        self, seeded_claims: dict[str, object]
-    ) -> None:
+    def test_returns_results_ranked_by_ts_rank(self, seeded_claims: dict[str, object]) -> None:
         import psycopg
 
         dsn = str(seeded_claims["dsn"])
@@ -458,9 +434,7 @@ class TestFindClaims:
         # rows; the marker filter on extraction_model isn't visible here, so
         # we narrow down by bibcode and 'tension' substring instead).
         seeded = [
-            r
-            for r in rows
-            if r["bibcode"] == bibcode and "tension" in r["claim_text"].lower()
+            r for r in rows if r["bibcode"] == bibcode and "tension" in r["claim_text"].lower()
         ]
         assert len(seeded) >= 2
         texts = [r["claim_text"] for r in seeded]
@@ -468,9 +442,7 @@ class TestFindClaims:
         assert any("Future JWST" in t for t in texts)
         assert any("robust across" in t for t in texts)
 
-    def test_filters_by_entity_id_subject_or_object(
-        self, seeded_claims: dict[str, object]
-    ) -> None:
+    def test_filters_by_entity_id_subject_or_object(self, seeded_claims: dict[str, object]) -> None:
         import psycopg
 
         dsn = str(seeded_claims["dsn"])
@@ -489,9 +461,7 @@ class TestFindClaims:
         # (section 2). The latter is the clean search hit for "Hubble
         # tension"; it must come back when filtering on the OBJECT side.
         with psycopg.connect(dsn) as conn:
-            rows = find_claims(
-                conn, query="Hubble tension", entity_id=2002
-            )
+            rows = find_claims(conn, query="Hubble tension", entity_id=2002)
         seeded = [r for r in rows if r["bibcode"] == bibcode]
         assert len(seeded) >= 1
         for row in seeded:
@@ -508,9 +478,7 @@ class TestFindClaims:
             rows = find_claims(conn, query="Hubble", entity_id=9999)
         assert rows == []
 
-    def test_filters_by_claim_type(
-        self, seeded_claims: dict[str, object]
-    ) -> None:
+    def test_filters_by_claim_type(self, seeded_claims: dict[str, object]) -> None:
         import psycopg
 
         dsn = str(seeded_claims["dsn"])
@@ -525,9 +493,7 @@ class TestFindClaims:
         for row in seeded:
             assert row["claim_type"] == "factual"
 
-    def test_limit_is_honored(
-        self, seeded_claims: dict[str, object]
-    ) -> None:
+    def test_limit_is_honored(self, seeded_claims: dict[str, object]) -> None:
         import psycopg
 
         dsn = str(seeded_claims["dsn"])
@@ -535,16 +501,12 @@ class TestFindClaims:
             rows = find_claims(conn, query="Hubble", limit=1)
         assert len(rows) <= 1
 
-    def test_no_match_returns_empty(
-        self, seeded_claims: dict[str, object]
-    ) -> None:
+    def test_no_match_returns_empty(self, seeded_claims: dict[str, object]) -> None:
         import psycopg
 
         dsn = str(seeded_claims["dsn"])
         with psycopg.connect(dsn) as conn:
-            rows = find_claims(
-                conn, query="zxqv_thisstringdoesnotappear_anywhereuvw"
-            )
+            rows = find_claims(conn, query="zxqv_thisstringdoesnotappear_anywhereuvw")
         assert rows == []
 
 
@@ -589,6 +551,6 @@ class TestFindClaimsUsesGinIndex:
                 plan_rows = cur.fetchall()
                 cur.execute("ROLLBACK")
         plan_text = "\n".join(r[0] for r in plan_rows)
-        assert "ix_paper_claims_claim_text_tsv" in plan_text, (
-            f"GIN index not used. Plan was:\n{plan_text}"
-        )
+        assert (
+            "ix_paper_claims_claim_text_tsv" in plan_text
+        ), f"GIN index not used. Plan was:\n{plan_text}"

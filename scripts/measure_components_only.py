@@ -59,17 +59,21 @@ def main() -> None:
     logger.info("Creating node ID mapping...")
     t_map = time.perf_counter()
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TEMP TABLE node_ids (
                 bibcode TEXT PRIMARY KEY,
                 nid INT NOT NULL
             ) ON COMMIT PRESERVE ROWS
-        """)
-        cur.execute("""
+        """
+        )
+        cur.execute(
+            """
             INSERT INTO node_ids (bibcode, nid)
             SELECT bibcode, ROW_NUMBER() OVER (ORDER BY bibcode)::INT - 1
             FROM papers
-        """)
+        """
+        )
         cur.execute("CREATE INDEX ON node_ids (nid)")
         cur.execute("ANALYZE node_ids")
     conn.commit()
@@ -91,12 +95,14 @@ def main() -> None:
 
     with conn.cursor(name="edge_cursor") as cur:
         cur.itersize = 1_000_000
-        cur.execute("""
+        cur.execute(
+            """
             SELECT n1.nid, n2.nid
             FROM citation_edges ce
             JOIN node_ids n1 ON ce.source_bibcode = n1.bibcode
             JOIN node_ids n2 ON ce.target_bibcode = n2.bibcode
-        """)
+        """
+        )
         for src_id, tgt_id in cur:
             src_arr[valid] = src_id
             tgt_arr[valid] = tgt_id
@@ -107,7 +113,9 @@ def main() -> None:
     skipped = edge_count_total - valid
     logger.info(
         "Loaded %d edges (skipped %d dangling) in %.1fs",
-        valid, skipped, time.perf_counter() - t_edge,
+        valid,
+        skipped,
+        time.perf_counter() - t_edge,
     )
 
     results["full_graph"] = {
@@ -173,7 +181,8 @@ def main() -> None:
     # --- Degree distribution stats (from DB, memory-efficient) ---
     logger.info("Computing degree statistics from DB...")
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             WITH degree AS (
                 SELECT source_bibcode as bibcode, COUNT(*) as out_deg FROM citation_edges GROUP BY 1
             )
@@ -183,11 +192,14 @@ def main() -> None:
                 PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY out_deg),
                 PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY out_deg)
             FROM degree
-        """)
+        """
+        )
         row = cur.fetchone()
         results["out_degree"] = {
-            "min": int(row[0]), "max": int(row[1]),
-            "mean": float(row[2]), "median": float(row[3]),
+            "min": int(row[0]),
+            "max": int(row[1]),
+            "mean": float(row[2]),
+            "median": float(row[3]),
             "p99": float(row[4]),
         }
 
@@ -197,7 +209,9 @@ def main() -> None:
     # --- Save ---
     elapsed = round(time.perf_counter() - t_total, 1)
     results["elapsed_seconds"] = elapsed
-    results["note"] = "Phase A only (components). Leiden communities not computed (requires separate run with more memory)."
+    results["note"] = (
+        "Phase A only (components). Leiden communities not computed (requires separate run with more memory)."
+    )
 
     json_path = RESULTS_DIR / "graph_quality_metrics.json"
     with open(json_path, "w") as f:
@@ -231,9 +245,11 @@ def _write_report(results: dict[str, Any]) -> None:
     comp = results["components"]
     a("## Connected Components\n")
     a(f"- **Total components:** {comp['total_components']:,}")
-    a(f"- **Giant component:** {comp['giant_component_nodes']:,} nodes "
-      f"({comp['giant_component_pct_of_total']}% of total, "
-      f"{comp['giant_component_pct_of_connected']}% of connected)")
+    a(
+        f"- **Giant component:** {comp['giant_component_nodes']:,} nodes "
+        f"({comp['giant_component_pct_of_total']}% of total, "
+        f"{comp['giant_component_pct_of_connected']}% of connected)"
+    )
     a(f"- **Components > 100 nodes:** {comp['components_gt_100']:,}")
     a(f"- **Components > 1,000 nodes:** {comp['components_gt_1000']:,}")
     a(f"- **Small-component papers:** {comp['small_component_papers']:,}")
@@ -265,9 +281,11 @@ def _write_report(results: dict[str, Any]) -> None:
             if key not in results:
                 continue
             s = results[key]["stats"]
-            a(f"| {rn} | {results[key]['resolution']} | {s['n_communities']:,} | "
-              f"{s['singletons']:,} | {s['max_size']:,} | {s['mean_size']} | "
-              f"{s['pct_in_top10']}% |")
+            a(
+                f"| {rn} | {results[key]['resolution']} | {s['n_communities']:,} | "
+                f"{s['singletons']:,} | {s['max_size']:,} | {s['mean_size']} | "
+                f"{s['pct_in_top10']}% |"
+            )
     else:
         a("*Not yet computed — requires separate run with more memory.*\n")
     a("")

@@ -30,9 +30,7 @@ def script_text() -> str:
 def script_code(script_text: str) -> str:
     """Script text with comment lines stripped, so DDL assertions ignore the
     explanatory comments that intentionally name the rejected forms."""
-    return "\n".join(
-        line for line in script_text.splitlines() if not line.lstrip().startswith("#")
-    )
+    return "\n".join(line for line in script_text.splitlines() if not line.lstrip().startswith("#"))
 
 
 def test_script_exists() -> None:

@@ -428,9 +428,7 @@ class SampleRow:
     confidence: float
 
 
-def _stratified_sample(
-    rows: list[tuple[str, str, float]], n: int, seed: int
-) -> list[SampleRow]:
+def _stratified_sample(rows: list[tuple[str, str, float]], n: int, seed: int) -> list[SampleRow]:
     """Stratify (snippet, intent, confidence) tuples by intent class.
 
     Distributes N evenly across observed classes; remainder falls to the
@@ -477,9 +475,7 @@ def _format_report(samples: list[SampleRow], total_in_corpus: int | None) -> str
         "- Sample size: 500 (stratified by predicted class — equal share per class, "
         "remainder to the lowest-indexed class)."
     )
-    lines.append(
-        "- Random seed: fixed (default 42) so the sample is reproducible across runs."
-    )
+    lines.append("- Random seed: fixed (default 42) so the sample is reproducible across runs.")
     lines.append(
         "- Source: rows from `citation_contexts` after the SciBERT-SciCite backfill "
         "completes. NULL `intent` rows are excluded."
@@ -524,12 +520,7 @@ def _format_report(samples: list[SampleRow], total_in_corpus: int | None) -> str
         lines.append("| _no rows yet — run the backfill first_ | | | |")
     else:
         for s in samples:
-            snippet = (
-                s.snippet.replace("|", "\\|")
-                .replace("\n", " ")
-                .replace("\r", " ")
-                .strip()
-            )
+            snippet = s.snippet.replace("|", "\\|").replace("\n", " ").replace("\r", " ").strip()
             if len(snippet) > 240:
                 snippet = snippet[:237] + "..."
             lines.append(f"| {snippet} | {s.predicted_intent} | {s.confidence:.3f} |  |")
@@ -597,9 +588,7 @@ def export_validation_sample(
 
 
 def main(argv: list[str] | None = None) -> int:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = _parse_args(argv)
 
     plan = _format_plan(cfg)

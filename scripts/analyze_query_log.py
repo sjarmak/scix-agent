@@ -47,7 +47,8 @@ def top_queries(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, Any
 def failure_rate_by_tool(conn: psycopg.Connection) -> list[dict[str, Any]]:
     """Failure rate per tool: total calls, failures, and rate."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT tool_name,
                    COUNT(*) AS total,
                    COUNT(*) FILTER (WHERE NOT success) AS failures,
@@ -58,7 +59,8 @@ def failure_rate_by_tool(conn: psycopg.Connection) -> list[dict[str, Any]]:
             FROM query_log
             GROUP BY tool_name
             ORDER BY failures DESC, total DESC
-            """)
+            """
+        )
         rows = cur.fetchall()
     return [
         {
@@ -74,7 +76,8 @@ def failure_rate_by_tool(conn: psycopg.Connection) -> list[dict[str, Any]]:
 def entity_type_requests(conn: psycopg.Connection) -> list[dict[str, Any]]:
     """Distribution of entity_type values from entity_search tool calls."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT params_json->>'entity_type' AS entity_type,
                    COUNT(*) AS call_count
             FROM query_log
@@ -82,7 +85,8 @@ def entity_type_requests(conn: psycopg.Connection) -> list[dict[str, Any]]:
               AND params_json->>'entity_type' IS NOT NULL
             GROUP BY entity_type
             ORDER BY call_count DESC
-            """)
+            """
+        )
         rows = cur.fetchall()
     return [{"entity_type": row[0], "call_count": row[1]} for row in rows]
 

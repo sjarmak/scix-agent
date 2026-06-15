@@ -7,6 +7,7 @@ no live Qdrant, no Postgres — because the module is a thin orchestrator and
 the interesting properties are structural (exact payload keys, deterministic
 ids, checkpoint round-trip).
 """
+
 from __future__ import annotations
 
 from typing import Any

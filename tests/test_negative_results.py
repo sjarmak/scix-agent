@@ -28,9 +28,7 @@ from scix.negative_results import (
     insert_extractions,
 )
 
-_FIXTURE_PATH = (
-    Path(__file__).resolve().parent / "fixtures" / "negative_results_gold_100.jsonl"
-)
+_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "negative_results_gold_100.jsonl"
 
 
 # ---------------------------------------------------------------------------
@@ -54,9 +52,7 @@ _FIXTURE_PATH = (
         ("the discovery paper was retracted", "retracted"),
     ],
 )
-def test_high_tier_patterns_fire_in_results_section(
-    snippet: str, expected_pattern: str
-) -> None:
+def test_high_tier_patterns_fire_in_results_section(snippet: str, expected_pattern: str) -> None:
     """A 'results' section containing the snippet should produce a tier=3 span
     keyed to ``expected_pattern``."""
     body = "Results\n" + snippet
@@ -64,8 +60,7 @@ def test_high_tier_patterns_fire_in_results_section(
     assert spans, f"expected a span for snippet={snippet!r}"
     pattern_ids = {s.pattern_id for s in spans}
     assert expected_pattern in pattern_ids, (
-        f"expected pattern_id={expected_pattern!r} in {pattern_ids!r} "
-        f"for snippet={snippet!r}"
+        f"expected pattern_id={expected_pattern!r} in {pattern_ids!r} " f"for snippet={snippet!r}"
     )
     # All emitted spans here should be tier 3 (high).
     assert all(s.confidence_tier == 3 for s in spans), spans
@@ -132,15 +127,13 @@ def test_full_text_no_headers_only_high_tier_emitted() -> None:
 
 def test_evidence_span_is_exactly_250_chars() -> None:
     """Acceptance criterion (5): evidence_span field is exactly 250 chars."""
-    body = "Results\n" + ("padding " * 80) + "we find no significant excess. " + (
-        "trailing " * 80
-    )
+    body = "Results\n" + ("padding " * 80) + "we find no significant excess. " + ("trailing " * 80)
     spans = detect_negative_results(body)
     assert spans
     for s in spans:
-        assert len(s.evidence_span) == EVIDENCE_SPAN_CHARS, (
-            f"len(evidence_span)={len(s.evidence_span)} expected={EVIDENCE_SPAN_CHARS}"
-        )
+        assert (
+            len(s.evidence_span) == EVIDENCE_SPAN_CHARS
+        ), f"len(evidence_span)={len(s.evidence_span)} expected={EVIDENCE_SPAN_CHARS}"
 
 
 def test_evidence_span_padded_when_body_shorter_than_window() -> None:
@@ -165,7 +158,7 @@ def test_offsets_point_into_original_body() -> None:
     spans = detect_negative_results(body)
     assert spans
     for s in spans:
-        assert body[s.start_char:s.end_char].lower() == s.match_text.lower()
+        assert body[s.start_char : s.end_char].lower() == s.match_text.lower()
 
 
 def test_overlapping_matches_dedup_to_highest_tier() -> None:
@@ -245,21 +238,33 @@ def test_db_insert_with_no_spans_still_writes_row_with_null_tier() -> None:
 def test_build_payload_counts_tiers() -> None:
     spans = [
         NegativeResultSpan(
-            section="results", pattern_id="no_significant",
-            confidence_tier=3, confidence_label="high",
-            match_text="no significant", start_char=0, end_char=14,
+            section="results",
+            pattern_id="no_significant",
+            confidence_tier=3,
+            confidence_label="high",
+            match_text="no significant",
+            start_char=0,
+            end_char=14,
             evidence_span=" " * EVIDENCE_SPAN_CHARS,
         ),
         NegativeResultSpan(
-            section="discussion", pattern_id="cannot_rule_out",
-            confidence_tier=2, confidence_label="medium",
-            match_text="cannot rule out", start_char=20, end_char=35,
+            section="discussion",
+            pattern_id="cannot_rule_out",
+            confidence_tier=2,
+            confidence_label="medium",
+            match_text="cannot rule out",
+            start_char=20,
+            end_char=35,
             evidence_span=" " * EVIDENCE_SPAN_CHARS,
         ),
         NegativeResultSpan(
-            section="conclusions", pattern_id="if_real",
-            confidence_tier=1, confidence_label="low",
-            match_text="signal, if real", start_char=40, end_char=55,
+            section="conclusions",
+            pattern_id="if_real",
+            confidence_tier=1,
+            confidence_label="low",
+            match_text="signal, if real",
+            start_char=40,
+            end_char=55,
             evidence_span=" " * EVIDENCE_SPAN_CHARS,
         ),
     ]

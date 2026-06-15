@@ -294,8 +294,7 @@ def test_module_import_does_not_pull_torch_or_transformers():
         env=env,
     )
     assert result.stdout.strip() == "False False", (
-        f"expected 'False False' (lazy load), got: {result.stdout!r}; "
-        f"stderr: {result.stderr!r}"
+        f"expected 'False False' (lazy load), got: {result.stdout!r}; " f"stderr: {result.stderr!r}"
     )
 
 

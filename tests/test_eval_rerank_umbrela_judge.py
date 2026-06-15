@@ -160,7 +160,11 @@ def test_summarize_config_perfect_vs_inverted_order():
     assert minilm.judge_ndcg_10 == 1.0  # ideal order
     assert indus.judge_ndcg_10 < minilm.judge_ndcg_10
     # mean top-K judge score is order-independent → identical for both.
-    assert minilm.mean_judge_score_top10 == indus.mean_judge_score_top10 == pytest.approx(5 / 3, abs=1e-4)
+    assert (
+        minilm.mean_judge_score_top10
+        == indus.mean_judge_score_top10
+        == pytest.approx(5 / 3, abs=1e-4)
+    )
     assert minilm.judged_relevant_at_10 == 2.0  # P1,P2 are >=2
 
 

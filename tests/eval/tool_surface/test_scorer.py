@@ -24,7 +24,12 @@ class TestArgsSubsetMatch:
         assert _args_subset_match({"grain": "section", "limit": 10}, {"grain": "section"}) is True
 
     def test_extra_keys_in_actual_are_fine(self):
-        assert _args_subset_match({"grain": "paper", "mode": "hybrid", "limit": 20}, {"grain": "paper"}) is True
+        assert (
+            _args_subset_match(
+                {"grain": "paper", "mode": "hybrid", "limit": 20}, {"grain": "paper"}
+            )
+            is True
+        )
 
     def test_missing_key_fails(self):
         assert _args_subset_match({"limit": 10}, {"grain": "section"}) is False
@@ -39,17 +44,27 @@ class TestCandidateOracles:
         assert cs == [{"tool": "search", "args_subset": {"grain": "paper"}}]
 
     def test_alt_ok_as_strings(self):
-        cs = _candidate_oracles({"tool": "section_retrieval", "args_subset": {}, "alt_ok": ["read_paper", "chunk_search"]})
+        cs = _candidate_oracles(
+            {
+                "tool": "section_retrieval",
+                "args_subset": {},
+                "alt_ok": ["read_paper", "chunk_search"],
+            }
+        )
         assert {c["tool"] for c in cs} == {"section_retrieval", "read_paper", "chunk_search"}
         # Bare strings produce empty args_subset
-        assert all(c["args_subset"] == {} for c in cs if c["tool"] in ("read_paper", "chunk_search"))
+        assert all(
+            c["args_subset"] == {} for c in cs if c["tool"] in ("read_paper", "chunk_search")
+        )
 
     def test_alt_ok_as_dicts(self):
-        cs = _candidate_oracles({
-            "tool": "search",
-            "args_subset": {"grain": "section"},
-            "alt_ok": [{"tool": "paper", "args_subset": {"action": "read"}}],
-        })
+        cs = _candidate_oracles(
+            {
+                "tool": "search",
+                "args_subset": {"grain": "section"},
+                "alt_ok": [{"tool": "paper", "args_subset": {"action": "read"}}],
+            }
+        )
         assert len(cs) == 2
         assert cs[1] == {"tool": "paper", "args_subset": {"action": "read"}}
 
@@ -89,9 +104,15 @@ class TestScoreRun:
         }
 
     def test_correct_tool_and_params(self):
-        run = self._make_run("v1", [
-            {"name": "mcp__scixstub_v1__search", "input": {"query": "x", "grain": "paper", "limit": 10}}
-        ])
+        run = self._make_run(
+            "v1",
+            [
+                {
+                    "name": "mcp__scixstub_v1__search",
+                    "input": {"query": "x", "grain": "paper", "limit": 10},
+                }
+            ],
+        )
         oracle = {"v1": {"tool": "search", "args_subset": {"grain": "paper"}}}["v1"]
         s = score_run(run, {"v1": oracle})
         assert s["tool_correct"] is True
@@ -100,18 +121,16 @@ class TestScoreRun:
         assert s["mcp_call_count"] == 1
 
     def test_correct_tool_wrong_params(self):
-        run = self._make_run("v1", [
-            {"name": "mcp__scixstub_v1__search", "input": {"query": "x", "grain": "paper"}}
-        ])
+        run = self._make_run(
+            "v1", [{"name": "mcp__scixstub_v1__search", "input": {"query": "x", "grain": "paper"}}]
+        )
         oracle = {"v1": {"tool": "search", "args_subset": {"grain": "section"}}}["v1"]
         s = score_run(run, {"v1": oracle})
         assert s["tool_correct"] is True
         assert s["params_correct"] is False
 
     def test_wrong_tool(self):
-        run = self._make_run("v1", [
-            {"name": "mcp__scixstub_v1__paper", "input": {"bibcode": "B"}}
-        ])
+        run = self._make_run("v1", [{"name": "mcp__scixstub_v1__paper", "input": {"bibcode": "B"}}])
         oracle = {"v1": {"tool": "search", "args_subset": {}}}["v1"]
         s = score_run(run, {"v1": oracle})
         assert s["tool_correct"] is False
@@ -129,9 +148,9 @@ class TestScoreRun:
 
     def test_alt_ok_accepts_alternative_tool(self):
         # Oracle says section_retrieval but read_paper is alt_ok
-        run = self._make_run("v0", [
-            {"name": "mcp__scixstub_v0__read_paper", "input": {"bibcode": "B"}}
-        ])
+        run = self._make_run(
+            "v0", [{"name": "mcp__scixstub_v0__read_paper", "input": {"bibcode": "B"}}]
+        )
         oracle = {
             "v0": {
                 "tool": "section_retrieval",
@@ -146,9 +165,9 @@ class TestScoreRun:
 
     def test_alt_ok_dict_accepts_with_required_args(self):
         # alt_ok requires action=read; the call has action=read → both correct
-        run = self._make_run("v1", [
-            {"name": "mcp__scixstub_v1__paper", "input": {"bibcode": "B", "action": "read"}}
-        ])
+        run = self._make_run(
+            "v1", [{"name": "mcp__scixstub_v1__paper", "input": {"bibcode": "B", "action": "read"}}]
+        )
         oracle = {
             "v1": {
                 "tool": "search",
@@ -162,10 +181,13 @@ class TestScoreRun:
 
     def test_first_call_is_what_counts(self):
         # If the agent makes multiple calls, only the FIRST is scored
-        run = self._make_run("v1", [
-            {"name": "mcp__scixstub_v1__paper", "input": {"bibcode": "B"}},
-            {"name": "mcp__scixstub_v1__search", "input": {"grain": "paper", "query": "x"}},
-        ])
+        run = self._make_run(
+            "v1",
+            [
+                {"name": "mcp__scixstub_v1__paper", "input": {"bibcode": "B"}},
+                {"name": "mcp__scixstub_v1__search", "input": {"grain": "paper", "query": "x"}},
+            ],
+        )
         oracle = {"v1": {"tool": "search", "args_subset": {"grain": "paper"}}}["v1"]
         s = score_run(run, {"v1": oracle})
         assert s["tool_correct"] is False  # first was paper, not search

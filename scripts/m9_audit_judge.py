@@ -140,11 +140,25 @@ def _enrich(
             if row is None:
                 logger.warning(
                     "skip orphan candidate (no enrichment): tier=%d bib=%s eid=%d",
-                    c.tier, c.bibcode, c.entity_id,
+                    c.tier,
+                    c.bibcode,
+                    c.entity_id,
                 )
                 continue
-            (bib, eid, tier, conf, link_type, evidence_json, title, abstract,
-             canonical_name, entity_type, source, properties_json) = row
+            (
+                bib,
+                eid,
+                tier,
+                conf,
+                link_type,
+                evidence_json,
+                title,
+                abstract,
+                canonical_name,
+                entity_type,
+                source,
+                properties_json,
+            ) = row
             out.append(
                 EnrichedCandidate(
                     tier=int(tier),
@@ -162,9 +176,7 @@ def _enrich(
                     entity_canonical_name=str(canonical_name or ""),
                     entity_type=str(entity_type or ""),
                     entity_source=str(source),
-                    entity_properties_json=_truncate(
-                        str(properties_json), PROPERTIES_CHAR_BUDGET
-                    ),
+                    entity_properties_json=_truncate(str(properties_json), PROPERTIES_CHAR_BUDGET),
                 )
             )
     return out
@@ -263,9 +275,7 @@ class DispatcherError(Exception):
     pass
 
 
-async def _run_claude_subprocess(
-    binary: str, prompt: str
-) -> subprocess.CompletedProcess:
+async def _run_claude_subprocess(binary: str, prompt: str) -> subprocess.CompletedProcess:
     proc = await asyncio.create_subprocess_exec(
         binary,
         "-p",
@@ -304,19 +314,22 @@ async def _judge_one(
                 last_err = f"timeout after {timeout_s}s"
                 logger.warning(
                     "judge timeout (attempt %d/%d) bib=%s eid=%d",
-                    attempt, max_retries, candidate.bibcode, candidate.entity_id,
+                    attempt,
+                    max_retries,
+                    candidate.bibcode,
+                    candidate.entity_id,
                 )
             except FileNotFoundError as exc:
                 return JudgeOutcome(
-                    bibcode=candidate.bibcode, entity_id=candidate.entity_id,
-                    tier=candidate.tier, label="error",
+                    bibcode=candidate.bibcode,
+                    entity_id=candidate.entity_id,
+                    tier=candidate.tier,
+                    label="error",
                     rationale=f"claude binary missing: {exc}",
                 )
             else:
                 if completed.returncode != 0:
-                    last_err = (
-                        f"exit={completed.returncode} stderr={completed.stderr[:200]!r}"
-                    )
+                    last_err = f"exit={completed.returncode} stderr={completed.stderr[:200]!r}"
                 else:
                     try:
                         label, rationale = _parse_response(completed.stdout)
@@ -334,8 +347,10 @@ async def _judge_one(
             await asyncio.sleep(backoff_base_s * (2 ** (attempt - 1)))
 
     return JudgeOutcome(
-        bibcode=candidate.bibcode, entity_id=candidate.entity_id,
-        tier=candidate.tier, label="error",
+        bibcode=candidate.bibcode,
+        entity_id=candidate.entity_id,
+        tier=candidate.tier,
+        label="error",
         rationale=f"exhausted {max_retries} retries: {last_err}",
     )
 
@@ -354,9 +369,12 @@ async def _judge_all(
     tasks = [
         asyncio.create_task(
             _judge_one(
-                sem, c,
-                claude_binary=claude_binary, timeout_s=timeout_s,
-                max_retries=max_retries, backoff_base_s=backoff_base_s,
+                sem,
+                c,
+                claude_binary=claude_binary,
+                timeout_s=timeout_s,
+                max_retries=max_retries,
+                backoff_base_s=backoff_base_s,
             )
         )
         for c in candidates
@@ -370,7 +388,10 @@ async def _judge_all(
             elapsed = time.time() - started
             logger.info(
                 "judge progress: %d/%d  (%.1fs elapsed, %.1fs/item avg)",
-                i, len(tasks), elapsed, elapsed / i,
+                i,
+                len(tasks),
+                elapsed,
+                elapsed / i,
             )
     by_key = {(o.bibcode, o.entity_id, o.tier): o for o in outcomes}
     return [by_key[(c.bibcode, c.entity_id, c.tier)] for c in candidates]
@@ -381,13 +402,10 @@ async def _judge_all(
 # ---------------------------------------------------------------------------
 
 
-def _existing_audited_keys(
-    conn: psycopg.Connection, annotator: str
-) -> set[tuple[int, str, int]]:
+def _existing_audited_keys(conn: psycopg.Connection, annotator: str) -> set[tuple[int, str, int]]:
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT tier, bibcode, entity_id "
-            "FROM entity_link_audits WHERE annotator = %s",
+            "SELECT tier, bibcode, entity_id " "FROM entity_link_audits WHERE annotator = %s",
             (annotator,),
         )
         return {(int(r[0]), str(r[1]), int(r[2])) for r in cur.fetchall()}
@@ -468,7 +486,8 @@ def _summarize_from_db(conn: psycopg.Connection, annotator: str) -> list[TierSum
         total = sum(counts.values())
         out.append(
             TierSummary(
-                tier=tier, n_total=total,
+                tier=tier,
+                n_total=total,
                 n_correct=counts.get("correct", 0),
                 n_incorrect=counts.get("incorrect", 0),
                 n_ambiguous=counts.get("ambiguous", 0),
@@ -491,9 +510,7 @@ def _write_report(
     lines.append("# M9 entity-link audit report\n")
     lines.append(f"- Annotator: `{annotator}`")
     lines.append(f"- Target sample per tier: **{n_per_tier_target}**")
-    lines.append(
-        f"- Total candidates judged: **{sum(s.n_total for s in summaries)}**"
-    )
+    lines.append(f"- Total candidates judged: **{sum(s.n_total for s in summaries)}**")
     lines.append(f"- Judge errors (this run): **{n_errors_this_run}**")
     lines.append("")
     if note:
@@ -510,9 +527,7 @@ def _write_report(
     lines.append(
         "| tier | total | correct | incorrect | ambiguous | precision | CI low | CI high |"
     )
-    lines.append(
-        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
-    )
+    lines.append("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for s in summaries:
         lo, hi = wilson_95_ci(s.n_correct, s.n_decisive)
         lines.append(
@@ -523,9 +538,7 @@ def _write_report(
     lines.append("")
 
     ex_lo, ex_hi = wilson_95_ci(95, 100)
-    lines.append(
-        f"_Worked example `wilson_95_ci(95, 100)` → **[{ex_lo:.3f}, {ex_hi:.3f}]**_"
-    )
+    lines.append(f"_Worked example `wilson_95_ci(95, 100)` → **[{ex_lo:.3f}, {ex_hi:.3f}]**_")
     lines.append("")
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -560,8 +573,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--annotator", default=ANNOTATOR_NAME)
     parser.add_argument("--output", type=pathlib.Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--claude-binary", default=os.environ.get("CLAUDE_BINARY", "claude-auto"))
-    parser.add_argument("--dry-run", action="store_true",
-                        help="sample + enrich only; no claude calls, no DB writes")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="sample + enrich only; no claude calls, no DB writes"
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args(argv)
 
@@ -580,13 +594,11 @@ def main(argv: list[str] | None = None) -> int:
         already = _existing_audited_keys(conn, args.annotator)
         if already:
             before = len(candidates)
-            candidates = [
-                c for c in candidates
-                if (c.tier, c.bibcode, c.entity_id) not in already
-            ]
+            candidates = [c for c in candidates if (c.tier, c.bibcode, c.entity_id) not in already]
             logger.info(
                 "filtered %d already-audited rows; %d remain",
-                before - len(candidates), len(candidates),
+                before - len(candidates),
+                len(candidates),
             )
 
         enriched = _enrich(conn, candidates)
@@ -597,7 +609,8 @@ def main(argv: list[str] | None = None) -> int:
             for c in enriched[:3]:
                 logger.info(
                     "sample candidate prompt (tier %d):\n%s\n---\n",
-                    c.tier, _format_prompt(c)[:600],
+                    c.tier,
+                    _format_prompt(c)[:600],
                 )
             return 0
 
@@ -618,7 +631,9 @@ def main(argv: list[str] | None = None) -> int:
             n_errors = sum(1 for o in outcomes if o.label == "error")
             logger.info(
                 "persisted %d audits (annotator=%s); %d judge errors this run",
-                n_inserted, args.annotator, n_errors,
+                n_inserted,
+                args.annotator,
+                n_errors,
             )
 
         summaries = _summarize_from_db(conn, args.annotator)

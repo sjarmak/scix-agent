@@ -15,9 +15,7 @@ from scix.ingest import IngestPipeline
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Ingest ADS JSONL metadata into PostgreSQL"
-    )
+    parser = argparse.ArgumentParser(description="Ingest ADS JSONL metadata into PostgreSQL")
     parser.add_argument(
         "--data-dir",
         type=Path,
@@ -47,7 +45,8 @@ def main() -> None:
         help="Skip dropping/recreating indexes (slower for bulk, useful for incremental)",
     )
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Enable debug logging",
     )

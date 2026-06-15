@@ -34,7 +34,9 @@ class TestDcgAtK:
         # Standard example: rels = [3, 2, 3, 0, 1, 2]
         rels = [3.0, 2.0, 3.0, 0.0, 1.0, 2.0]
         # DCG = (2^3-1)/log2(2) + (2^2-1)/log2(3) + (2^3-1)/log2(4) + 0 + (2^1-1)/log2(6) + (2^2-1)/log2(7)
-        expected = 7 / 1 + 3 / math.log2(3) + 7 / math.log2(4) + 0 + 1 / math.log2(6) + 3 / math.log2(7)
+        expected = (
+            7 / 1 + 3 / math.log2(3) + 7 / math.log2(4) + 0 + 1 / math.log2(6) + 3 / math.log2(7)
+        )
         assert dcg_at_k(rels, 6) == pytest.approx(expected, rel=1e-6)
 
     def test_k_truncation(self) -> None:

@@ -137,8 +137,7 @@ def assert_pilot_dsn(dest_dsn: str, source_dsn: str) -> None:
     env_dsn = os.environ.get("SCIX_DSN", "").strip()
     if env_dsn and env_dsn == dest_dsn.strip():
         reasons.append(
-            "destination DSN equals SCIX_DSN env var — refuse: that's "
-            "the production database"
+            "destination DSN equals SCIX_DSN env var — refuse: that's " "the production database"
         )
 
     if reasons:
@@ -163,9 +162,7 @@ def build_source_copy_sql(columns: list[str], limit: int | None) -> str:
 def build_dest_copy_sql(columns: list[str]) -> str:
     """Return the destination-side COPY FROM STDIN statement (binary)."""
     col_list = ", ".join(columns)
-    return (
-        f"COPY paper_embeddings ({col_list}) FROM STDIN WITH (FORMAT BINARY)"
-    )
+    return f"COPY paper_embeddings ({col_list}) FROM STDIN WITH (FORMAT BINARY)"
 
 
 # ---------------------------------------------------------------------------
@@ -202,9 +199,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--source-dsn",
         default=os.environ.get("SCIX_DSN", "dbname=scix"),
-        help=(
-            "Source DSN (read-only). Defaults to $SCIX_DSN or 'dbname=scix'."
-        ),
+        help=("Source DSN (read-only). Defaults to $SCIX_DSN or 'dbname=scix'."),
     )
     parser.add_argument(
         "--dest-dsn",
@@ -267,8 +262,7 @@ def _discover_columns(conn: Any) -> list[str]:
     columns = [r[0] for r in rows]
     if not columns:
         raise RuntimeError(
-            "Could not discover paper_embeddings columns from source — "
-            "is the schema loaded?"
+            "Could not discover paper_embeddings columns from source — " "is the schema loaded?"
         )
     return columns
 
@@ -282,6 +276,7 @@ def _lazy_import_capture_env() -> Any:
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from pgvs_bench_env import capture_env  # type: ignore[import-not-found]
+
         return capture_env
     except ImportError as exc:
         raise ImportError(
@@ -332,6 +327,7 @@ def _run_copy(
 
     try:
         from tqdm import tqdm  # type: ignore[import-not-found]
+
         _have_tqdm = True
     except ImportError:
         tqdm = None  # type: ignore[assignment]
@@ -436,8 +432,7 @@ def main(argv: list[str] | None = None) -> int:
             f"{build_source_copy_sql(placeholder_cols, args.limit)}"
         )
         print(
-            f"[dry-run] dest SQL   (placeholder cols): "
-            f"{build_dest_copy_sql(placeholder_cols)}"
+            f"[dry-run] dest SQL   (placeholder cols): " f"{build_dest_copy_sql(placeholder_cols)}"
         )
         print("[dry-run] no connections opened; no writes performed.")
         return 0
@@ -476,9 +471,7 @@ def main(argv: list[str] | None = None) -> int:
         columns=columns,
     )
     _write_result(result)
-    logger.info(
-        "Done. rows=%d bytes=%d wall=%.2fs", rows, bytes_, wall
-    )
+    logger.info("Done. rows=%d bytes=%d wall=%.2fs", rows, bytes_, wall)
     return 0
 
 

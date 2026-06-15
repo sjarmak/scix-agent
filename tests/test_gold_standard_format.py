@@ -13,11 +13,7 @@ from pathlib import Path
 
 import pytest
 
-GOLD_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "eval"
-    / "claim_extraction_gold_standard.jsonl"
-)
+GOLD_PATH = Path(__file__).resolve().parents[1] / "eval" / "claim_extraction_gold_standard.jsonl"
 
 REQUIRED_ENTRY_KEYS = {
     "bibcode",
@@ -82,8 +78,7 @@ def test_file_exists() -> None:
 
 def test_minimum_entry_count(entries: list[dict]) -> None:
     assert len(entries) >= MIN_TOTAL_ENTRIES, (
-        f"gold standard has {len(entries)} entries; "
-        f"need at least {MIN_TOTAL_ENTRIES}"
+        f"gold standard has {len(entries)} entries; " f"need at least {MIN_TOTAL_ENTRIES}"
     )
 
 
@@ -100,8 +95,7 @@ def test_required_entry_keys(entries: list[dict]) -> None:
     for idx, entry in enumerate(entries):
         missing = REQUIRED_ENTRY_KEYS - set(entry.keys())
         assert not missing, (
-            f"entry {idx} (bibcode={entry.get('bibcode')!r}) "
-            f"missing keys: {sorted(missing)}"
+            f"entry {idx} (bibcode={entry.get('bibcode')!r}) " f"missing keys: {sorted(missing)}"
         )
 
 
@@ -115,37 +109,33 @@ def test_discipline_enum(entries: list[dict]) -> None:
 
 def test_section_paragraph_indices_are_ints(entries: list[dict]) -> None:
     for idx, entry in enumerate(entries):
-        assert isinstance(entry["section_index"], int), (
-            f"entry {idx}: section_index must be int"
-        )
-        assert isinstance(entry["paragraph_index"], int), (
-            f"entry {idx}: paragraph_index must be int"
-        )
+        assert isinstance(entry["section_index"], int), f"entry {idx}: section_index must be int"
+        assert isinstance(
+            entry["paragraph_index"], int
+        ), f"entry {idx}: paragraph_index must be int"
 
 
 def test_paragraph_text_is_nonempty_string(entries: list[dict]) -> None:
     for idx, entry in enumerate(entries):
         text = entry["paragraph_text"]
-        assert isinstance(text, str) and text.strip(), (
-            f"entry {idx}: paragraph_text must be a non-empty string"
-        )
+        assert (
+            isinstance(text, str) and text.strip()
+        ), f"entry {idx}: paragraph_text must be a non-empty string"
 
 
 def test_expected_claims_is_nonempty_list(entries: list[dict]) -> None:
     for idx, entry in enumerate(entries):
         claims = entry["expected_claims"]
-        assert isinstance(claims, list) and len(claims) > 0, (
-            f"entry {idx}: expected_claims must be a non-empty list"
-        )
+        assert (
+            isinstance(claims, list) and len(claims) > 0
+        ), f"entry {idx}: expected_claims must be a non-empty list"
 
 
 def test_claim_required_keys(entries: list[dict]) -> None:
     for idx, entry in enumerate(entries):
         for cidx, claim in enumerate(entry["expected_claims"]):
             missing = REQUIRED_CLAIM_KEYS - set(claim.keys())
-            assert not missing, (
-                f"entry {idx} claim {cidx}: missing keys {sorted(missing)}"
-            )
+            assert not missing, f"entry {idx} claim {cidx}: missing keys {sorted(missing)}"
 
 
 def test_claim_type_enum(entries: list[dict]) -> None:
@@ -163,21 +153,19 @@ def test_span_is_nonempty_substring_of_paragraph(entries: list[dict]) -> None:
         for cidx, claim in enumerate(entry["expected_claims"]):
             start = claim["char_span_start"]
             end = claim["char_span_end"]
-            assert isinstance(start, int) and isinstance(end, int), (
-                f"entry {idx} claim {cidx}: span offsets must be ints"
-            )
+            assert isinstance(start, int) and isinstance(
+                end, int
+            ), f"entry {idx} claim {cidx}: span offsets must be ints"
             assert 0 <= start < end <= len(paragraph), (
                 f"entry {idx} claim {cidx}: span [{start}, {end}) "
                 f"out of bounds for paragraph of length {len(paragraph)}"
             )
             substring = paragraph[start:end]
-            assert substring, (
-                f"entry {idx} claim {cidx}: span yields empty substring"
-            )
+            assert substring, f"entry {idx} claim {cidx}: span yields empty substring"
             # Sanity: substring is actually a substring of the paragraph
-            assert substring in paragraph, (
-                f"entry {idx} claim {cidx}: span content not found in paragraph"
-            )
+            assert (
+                substring in paragraph
+            ), f"entry {idx} claim {cidx}: span content not found in paragraph"
 
 
 def test_claim_type_diversity(entries: list[dict]) -> None:
@@ -187,6 +175,4 @@ def test_claim_type_diversity(entries: list[dict]) -> None:
         for claim in entry["expected_claims"]:
             seen.add(claim["claim_type"])
     missing = ALLOWED_CLAIM_TYPES - seen
-    assert not missing, (
-        f"gold standard does not exercise claim_type values: {sorted(missing)}"
-    )
+    assert not missing, f"gold standard does not exercise claim_type values: {sorted(missing)}"

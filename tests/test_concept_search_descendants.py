@@ -29,9 +29,9 @@ from scix.search import CONCEPT_DESCENDANT_MAX_DEPTH, concept_search
 # CONCEPT_DESCENDANT_MAX_DEPTH bounds expansion to depth 6, so a depth-7
 # descendant must NOT appear in the superset results.
 _DEPTH_TOTAL = 7  # levels beyond root; produces root + 7 descendants
-assert _DEPTH_TOTAL > CONCEPT_DESCENDANT_MAX_DEPTH, (
-    "fixture must extend past the depth cap to exercise truncation"
-)
+assert (
+    _DEPTH_TOTAL > CONCEPT_DESCENDANT_MAX_DEPTH
+), "fixture must extend past the depth cap to exercise truncation"
 
 _CONCEPT_PREFIX = "http://example.test/uat-depth-fixture/"
 _BIBCODE_PREFIX = "9999TEST.conf..00"  # yields 9999TEST.conf..000 .. 007
@@ -201,9 +201,7 @@ def _bibcodes(result) -> set[str]:
     return {p["bibcode"] for p in result.papers}
 
 
-def test_recursive_cte_terminates_at_depth_cap(
-    conn: psycopg.Connection, hierarchy: None
-) -> None:
+def test_recursive_cte_terminates_at_depth_cap(conn: psycopg.Connection, hierarchy: None) -> None:
     """include_descendants=True from the root must include papers at depths
     1..CONCEPT_DESCENDANT_MAX_DEPTH plus the root (depth 0), but NOT the
     deeper L(cap+1) paper — proving the recursion stopped at the cap.
@@ -218,15 +216,15 @@ def test_recursive_cte_terminates_at_depth_cap(
 
     # Depths 0..cap must be present.
     for depth in range(CONCEPT_DESCENDANT_MAX_DEPTH + 1):
-        assert _bibcode(depth) in found, (
-            f"expected depth-{depth} paper in expansion (cap={CONCEPT_DESCENDANT_MAX_DEPTH})"
-        )
+        assert (
+            _bibcode(depth) in found
+        ), f"expected depth-{depth} paper in expansion (cap={CONCEPT_DESCENDANT_MAX_DEPTH})"
 
     # Anything past the cap must be excluded.
     for depth in range(CONCEPT_DESCENDANT_MAX_DEPTH + 1, _DEPTH_TOTAL + 1):
-        assert _bibcode(depth) not in found, (
-            f"depth-{depth} paper leaked past cap={CONCEPT_DESCENDANT_MAX_DEPTH}"
-        )
+        assert (
+            _bibcode(depth) not in found
+        ), f"depth-{depth} paper leaked past cap={CONCEPT_DESCENDANT_MAX_DEPTH}"
 
 
 def test_descendants_true_is_strict_superset_of_false(

@@ -103,9 +103,8 @@ def iter_bibcode_batches(
     params: list[Any] = []
 
     join_papers = arxiv_class is not None
-    base = (
-        "SELECT pf.bibcode FROM papers_fulltext pf "
-        + ("JOIN papers p ON p.bibcode = pf.bibcode " if join_papers else "")
+    base = "SELECT pf.bibcode FROM papers_fulltext pf " + (
+        "JOIN papers p ON p.bibcode = pf.bibcode " if join_papers else ""
     )
 
     if arxiv_class is not None:
@@ -181,13 +180,9 @@ def build_llm_client(
             try:
                 parsed = json.loads(stub_claims_json)
             except json.JSONDecodeError as exc:
-                raise SystemExit(
-                    f"--llm-stub-claims-json is not valid JSON: {exc}"
-                ) from exc
+                raise SystemExit(f"--llm-stub-claims-json is not valid JSON: {exc}") from exc
             if not isinstance(parsed, list):
-                raise SystemExit(
-                    "--llm-stub-claims-json must be a JSON array of claim dicts"
-                )
+                raise SystemExit("--llm-stub-claims-json must be a JSON array of claim dicts")
             return StubLLMClient(default=parsed)
         return StubLLMClient(default=[])
     if kind == "claude-cli":
@@ -252,8 +247,7 @@ def _build_argparser() -> argparse.ArgumentParser:
     p.add_argument(
         "--model-name",
         default="claude-opus-4-7",
-        help="Stored verbatim into paper_claims.extraction_model "
-        "(default: claude-opus-4-7).",
+        help="Stored verbatim into paper_claims.extraction_model " "(default: claude-opus-4-7).",
     )
     p.add_argument(
         "--dsn",
@@ -373,9 +367,7 @@ def main(argv: list[str] | None = None) -> int:
                     sections = fetch_paper_sections(conn, bibcode)
                     if not sections:
                         stats["skipped"] += 1
-                        logger.debug(
-                            "skipping %s — no sections in papers_fulltext", bibcode
-                        )
+                        logger.debug("skipping %s — no sections in papers_fulltext", bibcode)
                         continue
                     n_inserted = extract_claims_for_paper(
                         conn,
@@ -391,9 +383,7 @@ def main(argv: list[str] | None = None) -> int:
                     if args.strict:
                         raise
                     stats["failed"] += 1
-                    logger.warning(
-                        "extraction failed for %s: %s", bibcode, exc, exc_info=False
-                    )
+                    logger.warning("extraction failed for %s: %s", bibcode, exc, exc_info=False)
                     # Roll back the aborted transaction so the next bibcode can
                     # run on a clean connection state.
                     try:

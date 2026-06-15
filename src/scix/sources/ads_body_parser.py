@@ -198,9 +198,7 @@ def _collect_marker_hits(body: str) -> list[tuple[int, int, str]]:
     return hits
 
 
-def _build_sections(
-    body: str, hits: list[tuple[int, int, str]]
-) -> list[Section]:
+def _build_sections(body: str, hits: list[tuple[int, int, str]]) -> list[Section]:
     """Build ``Section`` list from ordered ``(start, end, heading)`` tuples."""
     sections: list[Section] = []
     for i, (start, end, heading) in enumerate(hits):

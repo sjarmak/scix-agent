@@ -270,7 +270,9 @@ def test_write_report_creates_parent_dirs(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _completed_process(stdout: str, returncode: int = 0, stderr: str = "") -> subprocess.CompletedProcess:
+def _completed_process(
+    stdout: str, returncode: int = 0, stderr: str = ""
+) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(
         args=["claude", "-p", "--output-format=json", "..."],
         returncode=returncode,
@@ -287,9 +289,12 @@ def test_claude_subprocess_judge_parses_cli_envelope() -> None:
     gold = eevp.GoldQuery(
         prop="alias_expansion", query_id="a-1", query="HST M31", expectation="expand HST"
     )
-    with patch("shutil.which", return_value="/bin/claude"), patch(
-        "subprocess.run", return_value=_completed_process(json.dumps(envelope))
-    ) as mocked_run:
+    with (
+        patch("shutil.which", return_value="/bin/claude"),
+        patch(
+            "subprocess.run", return_value=_completed_process(json.dumps(envelope))
+        ) as mocked_run,
+    ):
         judge = eevp.ClaudeSubprocessJudge()
         score, rationale = judge.judge(gold, [eevp.RetrievalDoc("b", "T")])
 
@@ -309,8 +314,9 @@ def test_claude_subprocess_judge_parses_bare_json_stdout() -> None:
     gold = eevp.GoldQuery(
         prop="disambiguation", query_id="d-1", query="Hubble mission", expectation=""
     )
-    with patch("shutil.which", return_value="/bin/claude"), patch(
-        "subprocess.run", return_value=_completed_process(raw)
+    with (
+        patch("shutil.which", return_value="/bin/claude"),
+        patch("subprocess.run", return_value=_completed_process(raw)),
     ):
         judge = eevp.ClaudeSubprocessJudge()
         score, rationale = judge.judge(gold, [])
@@ -326,11 +332,10 @@ def test_claude_subprocess_judge_raises_on_missing_binary() -> None:
 
 
 def test_claude_subprocess_judge_raises_on_nonzero_exit() -> None:
-    gold = eevp.GoldQuery(
-        prop="alias_expansion", query_id="a-1", query="x", expectation="y"
-    )
-    with patch("shutil.which", return_value="/bin/claude"), patch(
-        "subprocess.run", return_value=_completed_process("", returncode=2, stderr="boom")
+    gold = eevp.GoldQuery(prop="alias_expansion", query_id="a-1", query="x", expectation="y")
+    with (
+        patch("shutil.which", return_value="/bin/claude"),
+        patch("subprocess.run", return_value=_completed_process("", returncode=2, stderr="boom")),
     ):
         judge = eevp.ClaudeSubprocessJudge()
         with pytest.raises(RuntimeError, match="exited 2"):
@@ -602,9 +607,7 @@ def test_community_backend_resolves_via_alias_when_canonical_miss() -> None:
         timing_ms={"cooccur_neighbors_ms": 1.0, "cooccur_papers_ms": 1.0},
         metadata={"seed_entity_id": 42, "neighbor_count": 5},
     )
-    with patch(
-        "scix.search.community_expand_search", return_value=fake_result
-    ) as mock_fn:
+    with patch("scix.search.community_expand_search", return_value=fake_result) as mock_fn:
         docs = backend.retrieve(_community_query_gold(seed="JWST"), top_k=2)
 
     assert len(docs) == 2
@@ -668,9 +671,7 @@ def test_community_backend_picks_highest_paper_count_on_ambiguous_canonical() ->
         timing_ms={"cooccur_neighbors_ms": 1.0, "cooccur_papers_ms": 1.0},
         metadata={"seed_entity_id": 1588891, "neighbor_count": 3},
     )
-    with patch(
-        "scix.search.community_expand_search", return_value=fake_result
-    ) as mock_fn:
+    with patch("scix.search.community_expand_search", return_value=fake_result) as mock_fn:
         docs = backend.retrieve(_community_query_gold(seed="LIGO"))
 
     assert len(docs) == 1
@@ -774,7 +775,9 @@ def test_specific_backend_resolves_via_union_of_canonical_and_alias() -> None:
     assert len(docs) == 2
     assert docs[0].bibcode == "2024X....42...1A"
     papers_call = [
-        c for c in cursor.executed if "FROM document_entities de\n                      JOIN papers p" in c[0]
+        c
+        for c in cursor.executed
+        if "FROM document_entities de\n                      JOIN papers p" in c[0]
     ][0]
     assert papers_call[1][0] == 42  # entity_id
     assert papers_call[1][1] == 2  # top_k
@@ -800,7 +803,9 @@ def test_specific_backend_returns_papers_filtered_by_entity_id() -> None:
     docs = backend.retrieve(_specific_query_gold("James Webb Space Telescope"), top_k=3)
     assert [d.bibcode for d in docs] == ["2023JWST.001", "2023JWST.002", "2023JWST.003"]
     papers_sql = [
-        c for c in cursor.executed if "FROM document_entities de\n                      JOIN papers p" in c[0]
+        c
+        for c in cursor.executed
+        if "FROM document_entities de\n                      JOIN papers p" in c[0]
     ][0][0]
     assert "pagerank DESC NULLS LAST" in papers_sql
     assert "de.entity_id = %s" in papers_sql
@@ -812,12 +817,17 @@ def test_specific_backend_resolver_applies_entity_type_hint() -> None:
     cursor = _FakeCursor(
         handlers=[
             ("WITH candidates", [(1588887, 13006)]),  # typed hit
-            ("FROM document_entities de\n                      JOIN papers p", [("2024A.1", "ALMA paper", "")]),
+            (
+                "FROM document_entities de\n                      JOIN papers p",
+                [("2024A.1", "ALMA paper", "")],
+            ),
         ]
     )
     backend = eevp.SpecificEntityBackend(inner=inner, dsn="dbname=scix_test")
     backend._conn = _FakeConn(cursor)
-    backend.retrieve(_specific_query_gold("ALMA"), top_k=1)  # gold has entity_type="mission"; resolver should pass it through
+    backend.retrieve(
+        _specific_query_gold("ALMA"), top_k=1
+    )  # gold has entity_type="mission"; resolver should pass it through
 
     resolver_calls = [c for c in cursor.executed if "WITH candidates" in c[0]]
     # First call: typed pass with entity_type as 3rd param.

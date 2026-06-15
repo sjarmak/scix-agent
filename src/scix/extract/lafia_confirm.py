@@ -135,8 +135,7 @@ def confirm_mentions(
         return []
 
     windows = [
-        PaperInput(bibcode="", text=_context_window(body, m, context_chars))
-        for m in mentions
+        PaperInput(bibcode="", text=_context_window(body, m, context_chars)) for m in mentions
     ]
     per_window = extractor.predict(windows)
 

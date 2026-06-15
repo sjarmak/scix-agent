@@ -39,14 +39,16 @@ def fetch_entity_frequencies(dsn: str | None) -> tuple[list[tuple[str, int]], in
 
             # Count distinct bibcodes per entity from payload->'entities'
             # payload->'entities' is a JSONB array of strings
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT entity, COUNT(DISTINCT bibcode) AS df
                 FROM extractions,
                      jsonb_array_elements_text(payload->'entities') AS entity
                 WHERE extraction_type = 'entities'
                 GROUP BY entity
                 ORDER BY df DESC
-                """)
+                """
+            )
             entity_freqs: list[tuple[str, int]] = [(row[0], row[1]) for row in cur.fetchall()]
     finally:
         conn.close()

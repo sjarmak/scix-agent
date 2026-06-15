@@ -160,9 +160,7 @@ def _pool_cap(label: str) -> int | None:
     return int(label)
 
 
-def match_set_size(
-    conn: Any, query_text: str, ts_config: str = "scix_english"
-) -> int:
+def match_set_size(conn: Any, query_text: str, ts_config: str = "scix_english") -> int:
     """Count the rows ``lexical_search`` would match before the candidate cap.
 
     Mirrors the ``cand`` CTE predicate (``p.tsv @@ plainto_tsquery(...)``) with
@@ -170,10 +168,7 @@ def match_set_size(
     decides whether a given pool cap actually truncates the candidate set: the
     cap only changes results for queries whose match set exceeds it.
     """
-    sql = (
-        f"SELECT count(*) FROM papers p "
-        f"WHERE p.tsv @@ plainto_tsquery('{ts_config}', %s)"
-    )
+    sql = f"SELECT count(*) FROM papers p " f"WHERE p.tsv @@ plainto_tsquery('{ts_config}', %s)"
     with conn.cursor() as cur:
         cur.execute(sql, (query_text,))
         row = cur.fetchone()
@@ -203,9 +198,7 @@ def run_pool(
             retrieved: list[str] = []
             try:
                 sr = lexical_search(conn, q.query, limit=RETRIEVE_LIMIT)
-                retrieved = _dedupe_preserving_order(
-                    p.get("bibcode") for p in sr.papers
-                )
+                retrieved = _dedupe_preserving_order(p.get("bibcode") for p in sr.papers)
             except Exception as exc:  # noqa: BLE001 — record, don't score as 0
                 # A failed SELECT leaves the connection in an aborted txn;
                 # roll back so the next query starts clean.
@@ -214,20 +207,14 @@ def run_pool(
                 except Exception:
                     pass
                 error = f"{type(exc).__name__}: {exc}"
-                logger.warning(
-                    "pool=%s query=%r failed: %s", pool_label, q.query, error
-                )
+                logger.warning("pool=%s query=%r failed: %s", pool_label, q.query, error)
             latency_ms = (time.perf_counter() - t0) * 1000.0
             results.append(
                 QueryResult(
                     query=q.query,
                     bucket=q.bucket,
                     ndcg=ndcg_at_10(retrieved, gold) if error is None else None,
-                    recall=(
-                        recall_at_k(retrieved, gold, RECALL_K)
-                        if error is None
-                        else None
-                    ),
+                    recall=(recall_at_k(retrieved, gold, RECALL_K) if error is None else None),
                     latency_ms=latency_ms,
                     error=error,
                     n_hits=len(retrieved),
@@ -268,9 +255,7 @@ def aggregate(results: Sequence[QueryResult]) -> dict[str, Any]:
         "by_bucket": {b: block([r for r in results if r.bucket == b]) for b in BUCKETS},
         "n_queries": len(results),
         "n_errored": len(errored),
-        "errored_queries": [
-            {"query": r.query, "error": r.error} for r in errored
-        ],
+        "errored_queries": [{"query": r.query, "error": r.error} for r in errored],
         "latency_ms": {
             "max": max((r.latency_ms for r in results), default=0.0),
             "mean": _mean([r.latency_ms for r in results]),
@@ -399,8 +384,10 @@ def render_report(payload: dict[str, Any]) -> str:
         )
     lines.append("")
     acc = payload["acceptance"]
-    lines.append("Per-bucket nDCG@10 drop at default pool "
-                 f"({DEFAULT_POOL_LABEL}) vs {BASELINE_POOL_LABEL}:")
+    lines.append(
+        "Per-bucket nDCG@10 drop at default pool "
+        f"({DEFAULT_POOL_LABEL}) vs {BASELINE_POOL_LABEL}:"
+    )
     for bucket in BUCKETS:
         bd = acc["by_bucket"].get(bucket, {})
         lines.append(
@@ -466,23 +453,32 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument(
-        "--queries", type=Path, default=Path(DEFAULT_QUERIES),
+        "--queries",
+        type=Path,
+        default=Path(DEFAULT_QUERIES),
         help="Path to the JSONL gold set",
     )
     p.add_argument(
-        "--output", type=Path, default=Path(DEFAULT_OUTPUT),
+        "--output",
+        type=Path,
+        default=Path(DEFAULT_OUTPUT),
         help="Path to write the JSON results",
     )
     p.add_argument(
-        "--pools", type=_parse_pools, default=list(DEFAULT_POOLS),
+        "--pools",
+        type=_parse_pools,
+        default=list(DEFAULT_POOLS),
         help="Comma-separated SCIX_LEXICAL_POOL values to sweep",
     )
     p.add_argument(
-        "--statement-timeout-ms", type=int, default=DEFAULT_STATEMENT_TIMEOUT_MS,
+        "--statement-timeout-ms",
+        type=int,
+        default=DEFAULT_STATEMENT_TIMEOUT_MS,
         help="statement_timeout for the eval connection (raised so INF finishes)",
     )
     p.add_argument(
-        "--quiet", action="store_true",
+        "--quiet",
+        action="store_true",
         help="Suppress the human-readable report (still writes JSON)",
     )
     return p
@@ -502,7 +498,9 @@ def main(argv: list[str] | None = None) -> int:
     n_with_gold = sum(1 for q in queries if q.gold_bibcodes)
     logger.info(
         "loaded %d queries (%d with non-empty gold) from %s",
-        len(queries), n_with_gold, args.queries,
+        len(queries),
+        n_with_gold,
+        args.queries,
     )
 
     pools = list(args.pools)
@@ -556,8 +554,7 @@ def main(argv: list[str] | None = None) -> int:
         # then can the cap change which rows get ranked. INF (cap=None) never
         # engages.
         n_engaged = (
-            0 if cap is None
-            else sum(1 for q in queries if match_sizes.get(q.query, 0) > cap)
+            0 if cap is None else sum(1 for q in queries if match_sizes.get(q.query, 0) > cap)
         )
         block: dict[str, Any] = {
             "aggregate": aggregate(results),
@@ -610,9 +607,7 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
-        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
-    )
+    args.output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     logger.info("results written to %s", args.output)
 
     if not args.quiet:

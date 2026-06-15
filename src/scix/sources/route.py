@@ -124,11 +124,7 @@ def route_fulltext_request(inp: RouteInput) -> RouteDecision:
         )
 
     # Rule 4: R2-eligible (doctype, DOI, OpenAlex PDF URL).
-    if (
-        inp.doctype in R2_ELIGIBLE_DOCTYPES
-        and inp.doi is not None
-        and inp.openalex_has_pdf_url
-    ):
+    if inp.doctype in R2_ELIGIBLE_DOCTYPES and inp.doi is not None and inp.openalex_has_pdf_url:
         return RouteDecision(
             tier="tier3_docling",
             reason="R2-eligible: doctype/doi/openalex_pdf_url all satisfied",

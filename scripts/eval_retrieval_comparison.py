@@ -318,9 +318,7 @@ def select_eval_queries(
             if row["abstract_snippet"]:
                 query_text = f"{title} {row['abstract_snippet']}"
 
-            relevant = frozenset(
-                b for b in row["neighbor_list"] if b != row["bibcode"]
-            )
+            relevant = frozenset(b for b in row["neighbor_list"] if b != row["bibcode"])
 
             queries.append(
                 EvalQuery(
@@ -593,9 +591,7 @@ def generate_report(summary: EvalSummary) -> str:
         lex = summary.methods["lexical"]
         hyb = summary.methods["hybrid_specter2_lexical"]
         ndcg_lift = ((hyb["nDCG@10"] - lex["nDCG@10"]) / max(lex["nDCG@10"], 0.0001)) * 100
-        recall_lift = (
-            (hyb["Recall@10"] - lex["Recall@10"]) / max(lex["Recall@10"], 0.0001)
-        ) * 100
+        recall_lift = ((hyb["Recall@10"] - lex["Recall@10"]) / max(lex["Recall@10"], 0.0001)) * 100
         lines.extend(
             [
                 "",

@@ -229,9 +229,7 @@ def test_entity_links_is_partitioned_by_list(conn: psycopg.Connection) -> None:
         "extraction_entity_links_dataset",
         "extraction_entity_links_method",
     }
-    assert required.issubset(partitions), (
-        f"missing required partitions: {required - partitions}"
-    )
+    assert required.issubset(partitions), f"missing required partitions: {required - partitions}"
 
 
 def test_provenance_columns_on_staging_extractions(conn: psycopg.Connection) -> None:

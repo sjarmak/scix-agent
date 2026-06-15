@@ -81,7 +81,9 @@ class Pair:
     nist_score: int  # 0, 1, or 2
 
 
-def load_trec_covid() -> tuple[dict[str, str], dict[str, tuple[str, str]], list[tuple[str, str, int]]]:
+def load_trec_covid() -> (
+    tuple[dict[str, str], dict[str, tuple[str, str]], list[tuple[str, str, int]]]
+):
     """Pull queries, corpus (as {id: (title, text)}), and qrels rows."""
     import pandas as pd
     from huggingface_hub import hf_hub_download
@@ -239,7 +241,9 @@ async def run(
             if 0 <= s <= 3:
                 hist[s] += 1
         dist[bucket] = hist
-        means[bucket] = sum(scores_in_bucket) / len(scores_in_bucket) if scores_in_bucket else float("nan")
+        means[bucket] = (
+            sum(scores_in_bucket) / len(scores_in_bucket) if scores_in_bucket else float("nan")
+        )
 
     metrics: dict = {
         "n_pairs_scored": len(umbrela_raw),
@@ -262,24 +266,36 @@ def write_csv(path: Path, rows: list[tuple[Pair, int, int | None, str]]) -> None
     with path.open("w", newline="") as f:
         w = csv.writer(f)
         w.writerow(
-            ["query_id", "corpus_id", "nist_score", "umbrela_score", "needs_human_review",
-             "query_text", "passage_preview", "reason"]
+            [
+                "query_id",
+                "corpus_id",
+                "nist_score",
+                "umbrela_score",
+                "needs_human_review",
+                "query_text",
+                "passage_preview",
+                "reason",
+            ]
         )
         for p, u, needs, reason in rows:
-            w.writerow([
-                p.query_id,
-                p.corpus_id,
-                p.nist_score,
-                u,
-                "" if needs is None else ("true" if needs else "false"),
-                p.query_text,
-                p.passage_text[:300].replace("\n", " "),
-                reason.replace("\n", " ")[:500] if reason else "",
-            ])
+            w.writerow(
+                [
+                    p.query_id,
+                    p.corpus_id,
+                    p.nist_score,
+                    u,
+                    "" if needs is None else ("true" if needs else "false"),
+                    p.query_text,
+                    p.passage_text[:300].replace("\n", " "),
+                    reason.replace("\n", " ")[:500] if reason else "",
+                ]
+            )
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--n-per-bucket", type=int, default=40, help="Pairs at each NIST score level.")
     p.add_argument("--seed", type=int, default=20260422)
     p.add_argument("--output-csv", type=Path, default=DEFAULT_OUTPUT_CSV)
@@ -313,7 +329,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         dispatcher = ClaudeSubprocessDispatcher(claude_binary=args.claude_binary)
 
-    rows, metrics = asyncio.run(run(pairs=pairs, dispatcher=dispatcher, max_concurrency=args.concurrency))
+    rows, metrics = asyncio.run(
+        run(pairs=pairs, dispatcher=dispatcher, max_concurrency=args.concurrency)
+    )
 
     write_csv(args.output_csv, rows)
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
@@ -323,8 +341,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  n_scored / n_failed    : {metrics['n_pairs_scored']} / {metrics['n_pairs_failed']}")
     print(f"  mean UMBRELA by NIST   : {metrics['mean_umbrela_by_nist']}")
     print(f"  score dist by NIST     : {metrics['score_dist_by_nist']}")
-    print(f"  binary kappa           : {metrics['binary_kappa']:+.3f}  (>= {KAPPA_SUCCESS}; passes={metrics['passes_kappa']})")
-    print(f"  spearman rho           : {metrics['spearman_rho']:+.3f}  (>= {RHO_SUCCESS}; passes={metrics['passes_rho']})")
+    print(
+        f"  binary kappa           : {metrics['binary_kappa']:+.3f}  (>= {KAPPA_SUCCESS}; passes={metrics['passes_kappa']})"
+    )
+    print(
+        f"  spearman rho           : {metrics['spearman_rho']:+.3f}  (>= {RHO_SUCCESS}; passes={metrics['passes_rho']})"
+    )
     print(f"  AUROC                  : {metrics['auroc']:+.3f}")
     cm = metrics["confusion_matrix"]
     print(f"  confusion (NIST/UMB)   : TP={cm['tp']} FN={cm['fn']} FP={cm['fp']} TN={cm['tn']}")

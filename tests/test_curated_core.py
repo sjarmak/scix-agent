@@ -335,10 +335,12 @@ def test_promote_auto_demotes_at_cap(seeded_db, monkeypatch) -> None:
 
     # At least one demote event must have been logged for overflow.
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT COUNT(*) FROM core_promotion_log
              WHERE action = 'demote' AND reason = 'auto_demote_cap'
-            """)
+            """
+        )
         (demote_events,) = cur.fetchone()
     assert demote_events >= 1, "expected auto_demote_cap event"
 

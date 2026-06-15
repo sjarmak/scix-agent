@@ -246,12 +246,7 @@ async def run_matrix(
             flush=True,
         )
 
-    tasks = [
-        _worker(v, q, r)
-        for v in variants
-        for q in queries
-        for r in range(runs)
-    ]
+    tasks = [_worker(v, q, r) for v in variants for q in queries for r in range(runs)]
     await asyncio.gather(*tasks)
     results_fh.close()
     return runs_path
@@ -268,7 +263,9 @@ def load_queries(path: Path) -> list[dict[str, Any]]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run tool-surface eval matrix")
-    parser.add_argument("--queries", type=Path, default=REPO_ROOT / "eval/tool_surface/queries.jsonl")
+    parser.add_argument(
+        "--queries", type=Path, default=REPO_ROOT / "eval/tool_surface/queries.jsonl"
+    )
     parser.add_argument("--variants", nargs="+", default=["v0"], choices=["v0", "v1", "v2"])
     parser.add_argument("--runs", type=int, default=1, help="Repeats per (variant, query)")
     parser.add_argument(

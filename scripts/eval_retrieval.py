@@ -232,9 +232,7 @@ def run_specter2(
     limit: int = 20,
 ) -> tuple[list[str], float]:
     """Run SPECTER2 vector search, return (bibcode_list, latency_ms)."""
-    result = vector_search(
-        conn, query_embedding, model_name="specter2", limit=limit
-    )
+    result = vector_search(conn, query_embedding, model_name="specter2", limit=limit)
     bibcodes = [p["bibcode"] for p in result.papers]
     latency = result.timing_ms.get("vector_ms", 0.0)
     return bibcodes, latency
@@ -284,7 +282,11 @@ def run_evaluation(
         query_text = qp.title
         logger.info(
             "[%d/%d] %s — %s (cites=%d)",
-            i + 1, len(query_papers), qp.bibcode, qp.title[:60], qp.citation_count,
+            i + 1,
+            len(query_papers),
+            qp.bibcode,
+            qp.title[:60],
+            qp.citation_count,
         )
 
         # Ground truth
@@ -320,9 +322,12 @@ def run_evaluation(
         logger.info(
             "  BM25: nDCG=%.3f R@10=%.3f | SPECTER2: nDCG=%.3f R@10=%.3f | "
             "Hybrid: nDCG=%.3f R@10=%.3f | relevant=%d",
-            scores["bm25"][-1].ndcg_at_10, scores["bm25"][-1].recall_at_10,
-            scores["specter2"][-1].ndcg_at_10, scores["specter2"][-1].recall_at_10,
-            scores["hybrid_rrf"][-1].ndcg_at_10, scores["hybrid_rrf"][-1].recall_at_10,
+            scores["bm25"][-1].ndcg_at_10,
+            scores["bm25"][-1].recall_at_10,
+            scores["specter2"][-1].ndcg_at_10,
+            scores["specter2"][-1].recall_at_10,
+            scores["hybrid_rrf"][-1].ndcg_at_10,
+            scores["hybrid_rrf"][-1].recall_at_10,
             len(relevance_map),
         )
 
@@ -352,7 +357,11 @@ def generate_paper_table(reports: dict[str, EvalReport]) -> str:
 
     for name in ("bm25", "specter2", "hybrid_rrf"):
         r = reports[name]
-        label = {"bm25": "BM25 (lexical)", "specter2": "SPECTER2 (dense)", "hybrid_rrf": "Hybrid RRF"}[name]
+        label = {
+            "bm25": "BM25 (lexical)",
+            "specter2": "SPECTER2 (dense)",
+            "hybrid_rrf": "Hybrid RRF",
+        }[name]
         lines.append(
             f"| {label} | {r.mean_ndcg_at_10:.4f} | {r.mean_recall_at_10:.4f} "
             f"| {r.mean_recall_at_20:.4f} | {r.mean_precision_at_10:.4f} "
@@ -378,26 +387,30 @@ def generate_paper_table(reports: dict[str, EvalReport]) -> str:
         else:
             recall_lift = 0.0
 
-        lines.extend([
-            "",
-            "## Hybrid RRF Improvement over Best Single System",
-            "",
-            f"- nDCG@10: {ndcg_lift:+.1f}%",
-            f"- Recall@10: {recall_lift:+.1f}%",
-            "",
-            "RRF fusion combines the precision of dense retrieval (SPECTER2) with",
-            "the broad coverage of lexical retrieval (BM25). Papers in the literature",
-            "report 49–67% error reduction with hybrid approaches (cf. Section 4.4).",
-        ])
+        lines.extend(
+            [
+                "",
+                "## Hybrid RRF Improvement over Best Single System",
+                "",
+                f"- nDCG@10: {ndcg_lift:+.1f}%",
+                f"- Recall@10: {recall_lift:+.1f}%",
+                "",
+                "RRF fusion combines the precision of dense retrieval (SPECTER2) with",
+                "the broad coverage of lexical retrieval (BM25). Papers in the literature",
+                "report 49–67% error reduction with hybrid approaches (cf. Section 4.4).",
+            ]
+        )
 
     # Per-query breakdown
-    lines.extend([
-        "",
-        "## Per-Query Results (top 10 by nDCG improvement from fusion)",
-        "",
-        "| Year | Bibcode | nDCG(BM25) | nDCG(S2) | nDCG(RRF) | Relevant |",
-        "|------|---------|------------|----------|-----------|----------|",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Per-Query Results (top 10 by nDCG improvement from fusion)",
+            "",
+            "| Year | Bibcode | nDCG(BM25) | nDCG(S2) | nDCG(RRF) | Relevant |",
+            "|------|---------|------------|----------|-----------|----------|",
+        ]
+    )
 
     # Find queries where hybrid helped most
     hybrid_scores = {s.query_id: s for s in reports["hybrid_rrf"].per_query}
@@ -427,19 +440,21 @@ def generate_paper_table(reports: dict[str, EvalReport]) -> str:
         )
 
     # Methodology note
-    lines.extend([
-        "",
-        "## Methodology",
-        "",
-        "- **Query selection**: 50 well-cited papers from the SPECTER2-embedded subset,",
-        "  stratified by decade and diversified across arXiv classes.",
-        "- **Ground truth**: Direct citation neighborhood — papers that cite the query",
-        "  paper or are cited by it. All neighbors receive relevance grade 2.0 (binary).",
-        "- **Metrics**: Standard IR metrics (nDCG@10, Recall@K, Precision@10, MRR).",
-        "- **RRF constant**: k=60 (standard setting).",
-        "- **Note**: SPECTER2 retrieves from the ~20K embedded subset; BM25 searches",
-        "  the full 32M-paper corpus. Hybrid RRF fuses both ranked lists.",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Methodology",
+            "",
+            "- **Query selection**: 50 well-cited papers from the SPECTER2-embedded subset,",
+            "  stratified by decade and diversified across arXiv classes.",
+            "- **Ground truth**: Direct citation neighborhood — papers that cite the query",
+            "  paper or are cited by it. All neighbors receive relevance grade 2.0 (binary).",
+            "- **Metrics**: Standard IR metrics (nDCG@10, Recall@K, Precision@10, MRR).",
+            "- **RRF constant**: k=60 (standard setting).",
+            "- **Note**: SPECTER2 retrieves from the ~20K embedded subset; BM25 searches",
+            "  the full 32M-paper corpus. Hybrid RRF fuses both ranked lists.",
+        ]
+    )
 
     return "\n".join(lines)
 
@@ -485,7 +500,8 @@ def main() -> None:
         description="50-query retrieval evaluation: SPECTER2 vs BM25 vs Hybrid RRF"
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         type=str,
         default=None,
         help="Output file for markdown report (default: stdout)",
@@ -496,13 +512,15 @@ def main() -> None:
         help="PostgreSQL DSN (default: SCIX_DSN env var or 'dbname=scix')",
     )
     parser.add_argument(
-        "--num-queries", "-n",
+        "--num-queries",
+        "-n",
         type=int,
         default=50,
         help="Number of evaluation queries (default: 50)",
     )
     parser.add_argument(
-        "--limit", "-k",
+        "--limit",
+        "-k",
         type=int,
         default=20,
         help="Number of results retrieved per system (default: 20)",
@@ -513,7 +531,8 @@ def main() -> None:
         help="Device for SPECTER2 model (default: cpu)",
     )
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Enable debug logging",
     )
@@ -540,7 +559,11 @@ def main() -> None:
 
         # Run evaluation
         reports = run_evaluation(
-            conn, query_papers, model, tokenizer, limit=args.limit,
+            conn,
+            query_papers,
+            model,
+            tokenizer,
+            limit=args.limit,
         )
 
         # Generate report

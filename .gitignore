@@ -112,3 +112,6 @@ CLAUDE.local.md
 .codegraph/
 scix-sankey-work/
 .venv-ci/
+
+# Agent audit reports (DEEP_AUDIT directive output)
+.gc-reports/

@@ -5316,51 +5316,6 @@ def _handle_chunk_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     return json.dumps(payload, indent=2, default=str)
 
 
-def _handle_find_similar_by_examples(args: dict[str, Any]) -> str:
-    """Dispatch for the Qdrant-backed discovery tool.
-
-    Returns a structured error if Qdrant is not configured, so the tool can
-    live in the registered tool set even in mixed deployments where the
-    backend is not yet wired up. Callers should check the ``error`` field.
-    """
-    if not _qdrant_enabled():
-        return json.dumps(
-            {
-                "error": "qdrant_not_configured",
-                "message": (
-                    "find_similar_by_examples requires the Qdrant backend " "(QDRANT_URL env var)."
-                ),
-            }
-        )
-
-    positives = args.get("positive_bibcodes") or []
-    if not positives:
-        return json.dumps({"error": "positive_bibcodes is required"})
-
-    try:
-        hits = _qdrant_tools.find_similar_by_examples(
-            positive_bibcodes=list(positives),
-            negative_bibcodes=list(args.get("negative_bibcodes") or []) or None,
-            limit=int(args.get("limit", 10)),
-            year_min=args.get("year_min"),
-            year_max=args.get("year_max"),
-            doctype=args.get("doctype"),
-            community_semantic=args.get("community_semantic"),
-            arxiv_class=args.get("arxiv_class"),
-        )
-    except Exception as exc:  # noqa: BLE001 — boundary
-        logger.exception("find_similar_by_examples failed")
-        return json.dumps({"error": str(exc)})
-
-    return json.dumps(
-        {
-            "backend": "qdrant",
-            "collection": _qdrant_tools.COLLECTION,
-            "results": [dataclasses.asdict(h) for h in hits],
-        }
-    )
-
-
 def _handle_health_check(conn: psycopg.Connection) -> str:
     """Internal health check (not in list_tools)."""
     status: dict[str, Any] = {"pool": "no_pool", "model_cached": False, "db": "unknown"}

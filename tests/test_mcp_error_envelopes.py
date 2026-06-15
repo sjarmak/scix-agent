@@ -8,25 +8,33 @@ Every named structured-error response carries:
   input value or remediation hints).
 * ``error_code`` — stable machine-readable identifier the agent can branch on.
 
-Generic exception wrappers (``json.dumps({"error": str(exc)})`` in
-``call_tool`` and the lazy-import paths) are out of scope — those are
-last-resort surfaces and agents are expected to retry or escalate, not
-branch on them.
+As of bead ``scix_experiments-ir2h`` the catalog is closed and every
+error return carries an ``error_code`` (see
+:mod:`scix.mcp_errors`). The last-resort wrapper in ``call_tool`` (an
+unexpected exception that escaped a handler) carries
+``error_code='internal_error'`` — agents retry or escalate on that one
+rather than branch on a specific failure mode.
 
 The mapping below is the documented public contract; adding a new
 structured error should add an assertion here AND a row in
-``docs/mcp_tool_audit_2026-04.md``.
+``docs/mcp_tool_audit_2026-04.md``. The
+``test_every_emitted_error_code_is_in_the_closed_catalog`` conformance
+test additionally guarantees no error return escapes the catalog.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Generator
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from scix import mcp_server
+from scix.mcp_errors import CATALOG, ErrorCode
 from scix.mcp_server import (
     _dispatch_tool,
     _reset_coverage_note_cache,
@@ -60,12 +68,12 @@ def _assert_envelope(payload: dict[str, Any], expected_code: str) -> None:
     """Assert the documented envelope contract for a structured error."""
     assert "error" in payload, f"missing 'error' field: {payload}"
     assert "error_code" in payload, f"missing 'error_code' field: {payload}"
-    assert (
-        isinstance(payload["error"], str) and payload["error"].strip()
-    ), f"'error' must be a non-empty string: {payload}"
-    assert (
-        payload["error_code"] == expected_code
-    ), f"expected error_code={expected_code!r}, got {payload.get('error_code')!r}"
+    assert isinstance(payload["error"], str) and payload["error"].strip(), (
+        f"'error' must be a non-empty string: {payload}"
+    )
+    assert payload["error_code"] == expected_code, (
+        f"expected error_code={expected_code!r}, got {payload.get('error_code')!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -260,9 +268,6 @@ def test_documented_error_codes_in_audit_doc() -> None:
     Matches the backtick-quoted form (`code_name`) used in the registry
     table so a stray prose mention cannot satisfy the check.
     """
-    import re
-    from pathlib import Path
-
     audit_path = Path(__file__).resolve().parents[1] / "docs" / "mcp_tool_audit_2026-04.md"
     text = audit_path.read_text()
 
@@ -286,4 +291,56 @@ def test_documented_error_codes_in_audit_doc() -> None:
         f"{sorted(missing)}. Each new error_code asserted in this file MUST "
         "also appear in the registry table in "
         "docs/mcp_tool_audit_2026-04.md so agents and operators can find it."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Closed-catalog conformance (bead scix_experiments-ir2h)
+# ---------------------------------------------------------------------------
+
+
+def test_catalog_matches_error_code_constants() -> None:
+    """CATALOG is exactly the set of string constants on :class:`ErrorCode`.
+
+    Guards against a constant being added without landing in CATALOG (or a
+    stale CATALOG entry with no backing constant).
+    """
+    constants = {
+        value
+        for name, value in vars(ErrorCode).items()
+        if not name.startswith("_") and isinstance(value, str)
+    }
+    assert CATALOG == constants
+
+
+def test_every_emitted_error_code_is_in_the_closed_catalog() -> None:
+    """Conformance: every ``error_code`` the server can emit is in CATALOG.
+
+    This is the contract-surface guarantee for bead ``scix_experiments-ir2h``:
+    a downstream consumer branching on ``error_code`` only has to handle the
+    closed set in :data:`CATALOG`. The check scans the server source for both
+    forms an ``error_code`` value can take:
+
+    * ``ErrorCode.NAME`` references — must resolve to a real constant.
+    * raw string literals in an ``"error_code": "..."`` position — must be a
+      catalog member (there should be none; all sites use the constant).
+
+    A new code-free error return, or a typo'd raw literal, fails here.
+    """
+    src = Path(mcp_server.__file__).read_text()
+
+    referenced = set(re.findall(r"ErrorCode\.([A-Z_][A-Z0-9_]*)", src))
+    unknown_refs = {name for name in referenced if not hasattr(ErrorCode, name)}
+    assert not unknown_refs, (
+        f"mcp_server references ErrorCode constants that don't exist: {sorted(unknown_refs)}"
+    )
+    # Every referenced constant must serialize to a catalog member.
+    assert {getattr(ErrorCode, name) for name in referenced} <= CATALOG
+
+    raw_literals = set(re.findall(r'"error_code"\s*:\s*"([^"]+)"', src))
+    illegal = raw_literals - CATALOG
+    assert not illegal, (
+        f"mcp_server emits raw error_code string literals outside the closed "
+        f"catalog: {sorted(illegal)}. Use an ErrorCode constant and add it to "
+        f"src/scix/mcp_errors.py."
     )

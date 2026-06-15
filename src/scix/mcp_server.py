@@ -44,6 +44,7 @@ from scix.db import DEFAULT_DSN
 from scix.embed import _model_cache, clear_model_cache, embed_batch, load_model
 from scix.entity_resolver import EntityResolver
 from scix.jit.disambiguator import disambiguate_query
+from scix.mcp_errors import ErrorCode
 from scix.search import CrossEncoderReranker
 from scix.session import SessionState
 from scix.synthesize import (
@@ -848,7 +849,9 @@ _UNSCOPED_BROAD_MIN_CHARS: int = 30
 # Stable telemetry tag — surfaced in result_json AND lifted into query_log.error_msg
 # by _log_query so operators can track unscoped-broad block rate with a single
 # SELECT count(*) FROM query_log WHERE error_msg = 'unscoped_broad_query'.
-_UNSCOPED_BROAD_TAG: str = "unscoped_broad_query"
+# Sourced from the closed error-code catalog so the telemetry tag and the
+# response ``error_code`` cannot drift (bead scix_experiments-ir2h).
+_UNSCOPED_BROAD_TAG: str = ErrorCode.UNSCOPED_BROAD_QUERY
 
 
 def _filters_are_scoped(filters: dict[str, Any] | None) -> bool:
@@ -1422,7 +1425,7 @@ def startup_self_test(server: Any = None) -> dict[str, Any]:
             continue
         if schema.get("type") != "object":
             errors.append(
-                f"tool {name}: inputSchema.type must be 'object', got " f"{schema.get('type')!r}"
+                f"tool {name}: inputSchema.type must be 'object', got {schema.get('type')!r}"
             )
         if "properties" not in schema or not isinstance(schema["properties"], dict):
             errors.append(f"tool {name}: inputSchema.properties missing or not a dict")
@@ -1539,9 +1542,7 @@ def create_server(_run_self_test: bool = True):
         from mcp.server import Server
         from mcp.types import TextContent, Tool
     except ImportError:
-        raise ImportError(
-            "mcp SDK is required for the MCP server. " "Install with: pip install mcp"
-        )
+        raise ImportError("mcp SDK is required for the MCP server. Install with: pip install mcp")
 
     _init_model_impl()
 
@@ -1914,8 +1915,7 @@ def create_server(_run_self_test: bool = True):
                         "bibcode": {
                             "type": "string",
                             "description": (
-                                "ADS bibcode (used when mode='graph' and "
-                                "bibcodes is not provided)"
+                                "ADS bibcode (used when mode='graph' and bibcodes is not provided)"
                             ),
                         },
                         "bibcodes": {
@@ -1949,13 +1949,13 @@ def create_server(_run_self_test: bool = True):
                         "source_bibcode": {
                             "type": "string",
                             "description": (
-                                "Starting paper of the chain " "(required when mode='chain')"
+                                "Starting paper of the chain (required when mode='chain')"
                             ),
                         },
                         "target_bibcode": {
                             "type": "string",
                             "description": (
-                                "Destination paper of the chain " "(required when mode='chain')"
+                                "Destination paper of the chain (required when mode='chain')"
                             ),
                         },
                         "max_depth": {
@@ -2752,7 +2752,7 @@ def create_server(_run_self_test: bool = True):
                                 "cited_from_other",
                             ],
                             "description": (
-                                "Optional filter on claim_type. Omit to " "return all types."
+                                "Optional filter on claim_type. Omit to return all types."
                             ),
                         },
                         "limit": {
@@ -2798,7 +2798,7 @@ def create_server(_run_self_test: bool = True):
                                 "cited_from_other",
                             ],
                             "description": (
-                                "Optional filter on claim_type. Omit to " "return all types."
+                                "Optional filter on claim_type. Omit to return all types."
                             ),
                         },
                         "entity_id": {
@@ -2923,8 +2923,7 @@ def create_server(_run_self_test: bool = True):
                                     },
                                     "bibcode": {
                                         "description": (
-                                            "Restrict to specific paper "
-                                            "bibcode(s); string or list."
+                                            "Restrict to specific paper bibcode(s); string or list."
                                         ),
                                         "oneOf": [
                                             {"type": "string"},
@@ -2939,9 +2938,7 @@ def create_server(_run_self_test: bool = True):
                             "limit": {
                                 "type": "integer",
                                 "default": 20,
-                                "description": (
-                                    "Max chunk hits to return; clamped to " "[1, 100]."
-                                ),
+                                "description": ("Max chunk hits to return; clamped to [1, 100]."),
                             },
                         },
                         "required": ["query"],
@@ -2997,7 +2994,7 @@ def call_tool(name: str, arguments: dict[str, Any]) -> str:
         except Exception as exc:
             success = False
             error_msg = str(exc)
-            result_json = json.dumps({"error": error_msg})
+            result_json = json.dumps({"error": error_msg, "error_code": ErrorCode.INTERNAL_ERROR})
             raise
         finally:
             latency_ms = (time.monotonic() - t0) * 1000
@@ -3185,6 +3182,7 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
         return json.dumps(
             {
                 "error": "tool_removed",
+                "error_code": ErrorCode.TOOL_REMOVED,
                 "removed_in": "2026-04-25",
                 "message": (
                     "find_similar_by_examples was retired in 2026-04-25 because the "
@@ -3258,11 +3256,21 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
     if name == "entity_context":
         entity_id = args.get("entity_id")
         if entity_id is None:
-            return json.dumps({"error": "entity_id is required"})
+            return json.dumps(
+                {
+                    "error": "entity_id is required",
+                    "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
+                }
+            )
         try:
             entity_id = int(entity_id)
         except (TypeError, ValueError):
-            return json.dumps({"error": "entity_id must be an integer"})
+            return json.dumps(
+                {
+                    "error": "entity_id must be an integer",
+                    "error_code": ErrorCode.INVALID_PARAM_TYPE,
+                }
+            )
         result = search.get_entity_context(conn, entity_id)
         return _result_to_json(result)
 
@@ -3379,7 +3387,7 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
     if name == "entity_profile":
         return _handle_entity_profile(conn, args)
 
-    return json.dumps({"error": f"Unknown tool: {name}"})
+    return json.dumps({"error": f"Unknown tool: {name}", "error_code": ErrorCode.UNKNOWN_TOOL})
 
 
 # ---------------------------------------------------------------------------
@@ -3437,7 +3445,7 @@ def _community_expand_no_seed_response(
             "community_expand requires a single seed entity. "
             f"Could not derive one from the request: {reason}."
         ),
-        "error_code": "community_expand_no_seed",
+        "error_code": ErrorCode.COMMUNITY_EXPAND_NO_SEED,
         "hint": (
             "Either pass exactly one filters.entity_ids=[<id>] or use the "
             "entity tool with action='resolve' to disambiguate the query "
@@ -3474,9 +3482,7 @@ def _resolve_community_expand_seed(
             return int(filters.entity_ids[0]), None
         return None, _community_expand_no_seed_response(
             query=query,
-            reason=(
-                f"filters.entity_ids must contain exactly 1 id, " f"got {len(filters.entity_ids)}"
-            ),
+            reason=(f"filters.entity_ids must contain exactly 1 id, got {len(filters.entity_ids)}"),
         )
 
     resolver = EntityResolver(conn)
@@ -3544,9 +3550,9 @@ def _handle_community_expand(
 
     # Lift seed_too_broad from metadata into a top-level envelope. The MCP
     # contract is that error_code lives at the response root (see x5jg).
-    if result.metadata.get("error_code") == "seed_too_broad":
+    if result.metadata.get("error_code") == ErrorCode.SEED_TOO_BROAD:
         payload = {
-            "error_code": "seed_too_broad",
+            "error_code": ErrorCode.SEED_TOO_BROAD,
             "error": result.metadata.get("error", "seed entity is too broad"),
             "hint": result.metadata.get(
                 "hint",
@@ -3596,7 +3602,7 @@ def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     try:
         filters = _parse_filters(args.get("filters"))
     except ValueError as exc:
-        return json.dumps({"error": str(exc)})
+        return json.dumps({"error": str(exc), "error_code": ErrorCode.INVALID_FILTERS})
     limit = args.get("limit", 10)
 
     # Community-expansion lane (bead xz4.1.40). Off by default; gated behind
@@ -3615,6 +3621,7 @@ def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             return json.dumps(
                 {
                     "error": "vector_index_unavailable",
+                    "error_code": ErrorCode.VECTOR_INDEX_UNAVAILABLE,
                     "model_name": model_name,
                     "detail": (
                         f"No ANN index ({' or '.join(_vector_index_names(model_name))}) "
@@ -3632,6 +3639,7 @@ def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             return json.dumps(
                 {
                     "error": "transformers/torch not installed for embedding",
+                    "error_code": ErrorCode.DEPENDENCY_MISSING,
                     "hint": "pip install transformers torch",
                 }
             )
@@ -3688,7 +3696,12 @@ def _handle_lit_review(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """
     query = args.get("query", "")
     if not isinstance(query, str) or not query.strip():
-        return json.dumps({"error": "query must be a non-empty string"})
+        return json.dumps(
+            {
+                "error": "query must be a non-empty string",
+                "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
+            }
+        )
 
     def _coerce_int(name: str, default: int | None) -> int | None:
         v = args.get(name, default)
@@ -3843,7 +3856,12 @@ def _handle_get_paper(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Get paper metadata, optionally with entities."""
     bibcode = args.get("bibcode", "")
     if not bibcode or not bibcode.strip():
-        return json.dumps({"error": "bibcode must be a non-empty string"})
+        return json.dumps(
+            {
+                "error": "bibcode must be a non-empty string",
+                "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
+            }
+        )
 
     include_entities = args.get("include_entities", False)
 
@@ -3944,7 +3962,7 @@ def _handle_facet_counts(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     try:
         filters = _parse_filters(args.get("filters"))
     except ValueError as exc:
-        return json.dumps({"error": str(exc)})
+        return json.dumps({"error": str(exc), "error_code": ErrorCode.INVALID_FILTERS})
     limit = args.get("limit", 50)
     bibcodes = _resolve_working_set_bibcodes(args) or None
     try:
@@ -3956,7 +3974,7 @@ def _handle_facet_counts(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             bibcodes=bibcodes,
         )
     except ValueError as exc:
-        return json.dumps({"error": str(exc)})
+        return json.dumps({"error": str(exc), "error_code": ErrorCode.INVALID_PARAM_VALUE})
     return _result_to_json(result)
 
 
@@ -3988,7 +4006,8 @@ def _handle_temporal_evolution(conn: psycopg.Connection, args: dict[str, Any]) -
                     "temporal_evolution requires either bibcode_or_query, an "
                     "explicit bibcodes=[...] list, or a non-empty working set "
                     "(call get_paper on one or more papers first)."
-                )
+                ),
+                "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
             }
         )
 
@@ -4004,7 +4023,7 @@ def _handle_temporal_evolution(conn: psycopg.Connection, args: dict[str, Any]) -
             bibcodes=bibcodes or None,
         )
     except ValueError as exc:
-        return json.dumps({"error": str(exc)})
+        return json.dumps({"error": str(exc), "error_code": ErrorCode.INVALID_PARAM_VALUE})
     return _result_to_json(result)
 
 
@@ -4028,7 +4047,7 @@ def _missing_required_params_error(
     return json.dumps(
         {
             "error": message,
-            "error_code": "missing_required_params",
+            "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
             "mode": mode,
             "required": required,
             "got": got,
@@ -4101,7 +4120,7 @@ def _handle_citation_traverse(conn: psycopg.Connection, args: dict[str, Any]) ->
                 mode="chain",
                 required=["source_bibcode", "target_bibcode"],
                 got=got,
-                message=("source_bibcode and target_bibcode are required " "when mode='chain'"),
+                message=("source_bibcode and target_bibcode are required when mode='chain'"),
             )
         max_depth = max(1, min(args.get("max_depth", 5), 5))
         result = search.citation_chain(
@@ -4115,7 +4134,7 @@ def _handle_citation_traverse(conn: psycopg.Connection, args: dict[str, Any]) ->
     return json.dumps(
         {
             "error": f"Invalid mode: {mode!r}. Use 'graph' or 'chain'.",
-            "error_code": "invalid_mode",
+            "error_code": ErrorCode.INVALID_MODE,
         }
     )
 
@@ -4143,7 +4162,7 @@ def _handle_citation_traverse_multi(
     if direction not in ("forward", "backward", "both"):
         err = {
             "error": f"Invalid direction: {direction}. Use 'forward', 'backward', or 'both'.",
-            "error_code": "invalid_direction",
+            "error_code": ErrorCode.INVALID_DIRECTION,
         }
         return json.dumps(
             {
@@ -4367,7 +4386,7 @@ def _handle_citation_graph(conn: psycopg.Connection, args: dict[str, Any]) -> st
     return json.dumps(
         {
             "error": f"Invalid direction: {direction}. Use 'forward', 'backward', or 'both'.",
-            "error_code": "invalid_direction",
+            "error_code": ErrorCode.INVALID_DIRECTION,
         }
     )
 
@@ -4387,7 +4406,7 @@ def _handle_citation_similarity(conn: psycopg.Connection, args: dict[str, Any]) 
         return json.dumps(
             {
                 "error": f"Invalid method: {method}. Use co_citation or coupling.",
-                "error_code": "invalid_method",
+                "error_code": ErrorCode.INVALID_METHOD,
             }
         )
 
@@ -4460,14 +4479,19 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                     f"(bead scix_experiments-c996); see "
                     f"docs/mcp_tool_audit_2026-04.md for the rationale."
                 ),
-                "error_code": "entity_legacy_extraction_type",
+                "error_code": ErrorCode.ENTITY_LEGACY_EXTRACTION_TYPE,
             }
         )
 
     # action='papers' accepts entity_id directly, no query needed when given.
     is_papers_with_id = action == "papers" and args.get("entity_id") is not None
     if not is_papers_with_id and (not query or not query.strip()):
-        return json.dumps({"error": "query must be a non-empty string"})
+        return json.dumps(
+            {
+                "error": "query must be a non-empty string",
+                "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
+            }
+        )
 
     if action == "resolve":
         resolver = EntityResolver(conn)
@@ -4515,7 +4539,8 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                     "error": (
                         f"Invalid entity_type '{entity_type}'. "
                         f"Must be one of: {sorted(_VALID_ENTITY_TYPES)}"
-                    )
+                    ),
+                    "error_code": ErrorCode.INVALID_PARAM_VALUE,
                 }
             )
 
@@ -4531,7 +4556,12 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         sources = args.get("sources")
         if sources is not None:
             if not isinstance(sources, list) or not all(isinstance(s, str) for s in sources):
-                return json.dumps({"error": "sources must be a list of strings"})
+                return json.dumps(
+                    {
+                        "error": "sources must be a list of strings",
+                        "error_code": ErrorCode.INVALID_PARAM_TYPE,
+                    }
+                )
             where_clauses.append("e.source = ANY(%s::text[])")
             params.append(list(sources))
 
@@ -4545,9 +4575,9 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                 return json.dumps(
                     {
                         "error": (
-                            "min_confidence_tier must be 1, 2, or 3; "
-                            f"got {min_confidence_tier!r}"
-                        )
+                            f"min_confidence_tier must be 1, 2, or 3; got {min_confidence_tier!r}"
+                        ),
+                        "error_code": ErrorCode.INVALID_PARAM_VALUE,
                     }
                 )
             where_clauses.append("e.confidence_tier = ANY(%s::text[])")
@@ -4597,7 +4627,10 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             # Fall back to resolving the query first if no entity_id given
             if not query.strip():
                 return json.dumps(
-                    {"error": "entity_id or query must be provided for action='papers'"}
+                    {
+                        "error": "entity_id or query must be provided for action='papers'",
+                        "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
+                    }
                 )
             resolver = EntityResolver(conn)
             cands = resolver.resolve(query.strip(), fuzzy=False)
@@ -4615,7 +4648,12 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         try:
             entity_id = int(entity_id)
         except (TypeError, ValueError):
-            return json.dumps({"error": "entity_id must be an integer"})
+            return json.dumps(
+                {
+                    "error": "entity_id must be an integer",
+                    "error_code": ErrorCode.INVALID_PARAM_TYPE,
+                }
+            )
 
         limit = min(args.get("limit", 20), MAX_WORKING_SET_BIBCODES)
         # Pull entity metadata (entity_type, source) and per-link
@@ -4698,7 +4736,7 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     return json.dumps(
         {
             "error": f"Invalid action: {action}. Use 'search', 'resolve', or 'papers'.",
-            "error_code": "invalid_action",
+            "error_code": ErrorCode.INVALID_ACTION,
         }
     )
 
@@ -4724,10 +4762,9 @@ def _handle_claim_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         return json.dumps(
             {
                 "error": (
-                    f"Invalid action: {action!r}. Must be one of "
-                    f"{sorted(_CLAIM_SEARCH_ACTIONS)}."
+                    f"Invalid action: {action!r}. Must be one of {sorted(_CLAIM_SEARCH_ACTIONS)}."
                 ),
-                "error_code": "invalid_action",
+                "error_code": ErrorCode.INVALID_ACTION,
             }
         )
 
@@ -4741,7 +4778,7 @@ def _handle_claim_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         return json.dumps(
             {
                 "error": f"limit must be an integer, got {raw_limit!r}",
-                "error_code": "invalid_limit",
+                "error_code": ErrorCode.INVALID_LIMIT,
             }
         )
     if limit < 1:
@@ -4914,7 +4951,7 @@ def _handle_graph_context(conn: psycopg.Connection, args: dict[str, Any]) -> str
             conn, bibcode, resolution=resolution, limit=limit, signal=signal
         )
     except ValueError as exc:
-        return json.dumps({"error": str(exc)})
+        return json.dumps({"error": str(exc), "error_code": ErrorCode.INVALID_PARAM_VALUE})
 
     # Merge metrics and community data
     metrics_data = json.loads(_result_to_json(metrics_result))
@@ -4965,8 +5002,9 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         return json.dumps(
             {
                 "error": (
-                    f"Invalid signal: {signal}. " f"Must be one of {sorted(_SIGNAL_COLUMN_PREFIX)}"
-                )
+                    f"Invalid signal: {signal}. Must be one of {sorted(_SIGNAL_COLUMN_PREFIX)}"
+                ),
+                "error_code": ErrorCode.INVALID_PARAM_VALUE,
             }
         )
 
@@ -4975,9 +5013,9 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         return json.dumps(
             {
                 "error": (
-                    f"Invalid resolution: {resolution}. "
-                    f"Must be one of {sorted(_VALID_RESOLUTIONS)}"
-                )
+                    f"Invalid resolution: {resolution}. Must be one of {sorted(_VALID_RESOLUTIONS)}"
+                ),
+                "error_code": ErrorCode.INVALID_PARAM_VALUE,
             }
         )
     community_col = f"{column_prefix}_{resolution}"
@@ -5187,6 +5225,7 @@ def _handle_chunk_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         return json.dumps(
             {
                 "error": "qdrant_disabled",
+                "error_code": ErrorCode.QDRANT_DISABLED,
                 "message": (
                     "chunk_search requires the Qdrant backend "
                     "(set QDRANT_URL and install qdrant-client)."
@@ -5197,7 +5236,13 @@ def _handle_chunk_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
 
     query = args.get("query")
     if not isinstance(query, str) or not query.strip():
-        return json.dumps({"error": "query must be a non-empty string"}, indent=2)
+        return json.dumps(
+            {
+                "error": "query must be a non-empty string",
+                "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
+            },
+            indent=2,
+        )
     query = query.strip()
 
     # --- limit clamp ---
@@ -5206,7 +5251,10 @@ def _handle_chunk_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         limit = int(raw_limit) if raw_limit is not None else 20
     except (TypeError, ValueError):
         return json.dumps(
-            {"error": f"limit must be an integer, got {raw_limit!r}"},
+            {
+                "error": f"limit must be an integer, got {raw_limit!r}",
+                "error_code": ErrorCode.INVALID_LIMIT,
+            },
             indent=2,
         )
     if limit < 1:
@@ -5218,7 +5266,10 @@ def _handle_chunk_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     filters_raw = args.get("filters") or {}
     if not isinstance(filters_raw, dict):
         return json.dumps(
-            {"error": f"filters must be an object, got {type(filters_raw).__name__}"},
+            {
+                "error": f"filters must be an object, got {type(filters_raw).__name__}",
+                "error_code": ErrorCode.INVALID_FILTERS,
+            },
             indent=2,
         )
 
@@ -5235,7 +5286,7 @@ def _handle_chunk_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         bibcode = _normalize_str_list(filters_raw.get("bibcode"))
     except (TypeError, ValueError) as exc:
         return json.dumps(
-            {"error": f"invalid filters: {exc}", "error_code": "invalid_filters"},
+            {"error": f"invalid filters: {exc}", "error_code": ErrorCode.INVALID_FILTERS},
             indent=2,
         )
 
@@ -5249,9 +5300,18 @@ def _handle_chunk_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         vectors = _embed.embed_batch(model, tokenizer, [query], batch_size=1, pooling="mean")
     except Exception as exc:  # noqa: BLE001 — boundary
         logger.exception("chunk_search: INDUS encode failed")
-        return json.dumps({"error": f"encode_failed: {exc}"}, indent=2)
+        return json.dumps(
+            {"error": f"encode_failed: {exc}", "error_code": ErrorCode.ENCODE_FAILED},
+            indent=2,
+        )
     if not vectors:
-        return json.dumps({"error": "encode_failed: no vector returned"}, indent=2)
+        return json.dumps(
+            {
+                "error": "encode_failed: no vector returned",
+                "error_code": ErrorCode.ENCODE_FAILED,
+            },
+            indent=2,
+        )
     vector = vectors[0]
 
     # --- ANN call + snippet hydration ---
@@ -5268,7 +5328,10 @@ def _handle_chunk_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         )
     except Exception as exc:  # noqa: BLE001 — boundary
         logger.exception("chunk_search: Qdrant query failed")
-        return json.dumps({"error": f"qdrant_failed: {exc}"}, indent=2)
+        return json.dumps(
+            {"error": f"qdrant_failed: {exc}", "error_code": ErrorCode.QDRANT_FAILED},
+            indent=2,
+        )
 
     try:
         hits = _qdrant_tools.fetch_chunk_snippets(conn, hits)
@@ -5339,13 +5402,18 @@ def _handle_claim_blame(conn: psycopg.Connection, args: dict[str, Any]) -> str:
 
     claim_text = args.get("claim_text")
     if not isinstance(claim_text, str) or not claim_text.strip():
-        return json.dumps({"error": "claim_text must be a non-empty string"})
+        return json.dumps(
+            {
+                "error": "claim_text must be a non-empty string",
+                "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
+            }
+        )
 
     scope_arg = args.get("scope")
     try:
         scope = scope_from_dict(scope_arg) if scope_arg else None
     except (TypeError, ValueError) as exc:
-        return json.dumps({"error": f"invalid scope: {exc}", "error_code": "invalid_scope"})
+        return json.dumps({"error": f"invalid scope: {exc}", "error_code": ErrorCode.INVALID_SCOPE})
 
     candidate_limit = int(args.get("candidate_limit", 20))
     lineage_limit = int(args.get("lineage_limit", 10))
@@ -5367,17 +5435,27 @@ def _handle_find_replications(conn: psycopg.Connection, args: dict[str, Any]) ->
 
     target_bibcode = args.get("target_bibcode")
     if not isinstance(target_bibcode, str) or not target_bibcode.strip():
-        return json.dumps({"error": "target_bibcode must be a non-empty string"})
+        return json.dumps(
+            {
+                "error": "target_bibcode must be a non-empty string",
+                "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
+            }
+        )
 
     relation = args.get("relation")
     if relation is not None and relation not in VALID_RELATIONS:
-        return json.dumps({"error": f"relation must be one of {sorted(VALID_RELATIONS)} or null"})
+        return json.dumps(
+            {
+                "error": f"relation must be one of {sorted(VALID_RELATIONS)} or null",
+                "error_code": ErrorCode.INVALID_PARAM_VALUE,
+            }
+        )
 
     scope_arg = args.get("scope")
     try:
         scope = scope_from_dict(scope_arg) if scope_arg else None
     except (TypeError, ValueError) as exc:
-        return json.dumps({"error": f"invalid scope: {exc}", "error_code": "invalid_scope"})
+        return json.dumps({"error": f"invalid scope: {exc}", "error_code": ErrorCode.INVALID_SCOPE})
 
     limit = int(args.get("limit", 50))
 
@@ -5434,15 +5512,19 @@ def _handle_cited_by_intent(conn: psycopg.Connection, args: dict[str, Any]) -> s
 
     target_bibcode = args.get("target_bibcode")
     if not isinstance(target_bibcode, str) or not target_bibcode.strip():
-        return json.dumps({"error": "target_bibcode must be a non-empty string"})
+        return json.dumps(
+            {
+                "error": "target_bibcode must be a non-empty string",
+                "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
+            }
+        )
 
     intent = args.get("intent")
     if intent is not None and intent not in _VALID_CITATION_INTENTS:
         return json.dumps(
             {
-                "error": (
-                    f"intent must be one of {sorted(_VALID_CITATION_INTENTS)} " f"or null (any)"
-                )
+                "error": (f"intent must be one of {sorted(_VALID_CITATION_INTENTS)} or null (any)"),
+                "error_code": ErrorCode.INVALID_PARAM_VALUE,
             }
         )
 
@@ -5523,19 +5605,30 @@ def _handle_synthesize_findings(conn: psycopg.Connection, args: dict[str, Any]) 
         bibcodes = [b for b in raw_bibcodes if isinstance(b, str)]
     else:
         return json.dumps(
-            {"error": "working_set_bibcodes must be a list of strings"},
+            {
+                "error": "working_set_bibcodes must be a list of strings",
+                "error_code": ErrorCode.INVALID_PARAM_TYPE,
+            },
         )
 
     sections = args.get("sections")
     if sections is not None and not isinstance(sections, list):
-        return json.dumps({"error": "sections must be a list of strings"})
+        return json.dumps(
+            {
+                "error": "sections must be a list of strings",
+                "error_code": ErrorCode.INVALID_PARAM_TYPE,
+            }
+        )
 
     raw_cap = args.get("max_papers_per_section", 8)
     try:
         max_papers = int(raw_cap)
     except (TypeError, ValueError):
         return json.dumps(
-            {"error": "max_papers_per_section must be an integer"},
+            {
+                "error": "max_papers_per_section must be an integer",
+                "error_code": ErrorCode.INVALID_PARAM_TYPE,
+            },
         )
     # Hard cap to keep payload sizes sane; matches find_gaps' cap.
     max_papers = max(0, min(max_papers, MAX_WORKING_SET_BIBCODES))
@@ -5543,7 +5636,10 @@ def _handle_synthesize_findings(conn: psycopg.Connection, args: dict[str, Any]) 
     raw_overrides = args.get("section_overrides")
     if raw_overrides is not None and not isinstance(raw_overrides, dict):
         return json.dumps(
-            {"error": "section_overrides must be an object {bibcode: section_name}"},
+            {
+                "error": "section_overrides must be an object {bibcode: section_name}",
+                "error_code": ErrorCode.INVALID_PARAM_TYPE,
+            },
         )
 
     # Bead tq0t: two boolean opt-ins for additive grounding fields. Both
@@ -5554,13 +5650,19 @@ def _handle_synthesize_findings(conn: psycopg.Connection, args: dict[str, Any]) 
     raw_full = args.get("include_full_abstracts", False)
     if not isinstance(raw_full, bool):
         return json.dumps(
-            {"error": "include_full_abstracts must be a boolean"},
+            {
+                "error": "include_full_abstracts must be a boolean",
+                "error_code": ErrorCode.INVALID_PARAM_TYPE,
+            },
             indent=2,
         )
     raw_ctx = args.get("include_citation_contexts", False)
     if not isinstance(raw_ctx, bool):
         return json.dumps(
-            {"error": "include_citation_contexts must be a boolean"},
+            {
+                "error": "include_citation_contexts must be a boolean",
+                "error_code": ErrorCode.INVALID_PARAM_TYPE,
+            },
             indent=2,
         )
     include_full_abstracts: bool = raw_full
@@ -5738,7 +5840,7 @@ def _resolve_sections_pool() -> int | None:
         return _SECTIONS_POOL_DEFAULT
     if value <= 0:
         logger.warning(
-            "SCIX_SECTIONS_POOL=%d must be positive (use INF for unbounded); " "falling back to %d",
+            "SCIX_SECTIONS_POOL=%d must be positive (use INF for unbounded); falling back to %d",
             value,
             _SECTIONS_POOL_DEFAULT,
         )
@@ -5903,14 +6005,23 @@ def _handle_section_retrieval(conn: psycopg.Connection, args: dict[str, Any]) ->
     """
     query = args.get("query")
     if not isinstance(query, str) or not query.strip():
-        return json.dumps({"error": "query must be a non-empty string"})
+        return json.dumps(
+            {
+                "error": "query must be a non-empty string",
+                "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
+            }
+        )
 
     try:
         k = int(args.get("k", 10))
     except (TypeError, ValueError):
-        return json.dumps({"error": "k must be an integer"})
+        return json.dumps(
+            {"error": "k must be an integer", "error_code": ErrorCode.INVALID_PARAM_TYPE}
+        )
     if k <= 0:
-        return json.dumps({"error": "k must be positive"})
+        return json.dumps(
+            {"error": "k must be positive", "error_code": ErrorCode.INVALID_PARAM_VALUE}
+        )
     # Cap fanout to keep blast radius bounded; matches the convention used
     # elsewhere in this module (find_gaps caps at MAX_WORKING_SET_BIBCODES).
     k = min(k, MAX_WORKING_SET_BIBCODES)
@@ -5918,7 +6029,7 @@ def _handle_section_retrieval(conn: psycopg.Connection, args: dict[str, Any]) ->
     try:
         filter_sql, filter_params = _section_filter_clauses(args.get("filters"))
     except ValueError as exc:
-        return json.dumps({"error": str(exc)})
+        return json.dumps({"error": str(exc), "error_code": ErrorCode.INVALID_FILTERS})
 
     # Encode the query with the local nomic model.
     try:
@@ -5927,6 +6038,7 @@ def _handle_section_retrieval(conn: psycopg.Connection, args: dict[str, Any]) ->
         return json.dumps(
             {
                 "error": "embedding_dependency_missing",
+                "error_code": ErrorCode.DEPENDENCY_MISSING,
                 "hint": (
                     "section_retrieval requires sentence-transformers. "
                     "Install with: pip install -e .[search]"
@@ -5935,7 +6047,7 @@ def _handle_section_retrieval(conn: psycopg.Connection, args: dict[str, Any]) ->
         )
     except Exception as exc:  # noqa: BLE001 — boundary
         logger.exception("section_retrieval encode failed")
-        return json.dumps({"error": f"encode_failed: {exc}"})
+        return json.dumps({"error": f"encode_failed: {exc}", "error_code": ErrorCode.ENCODE_FAILED})
 
     fanout = max(50, k * 10)
 
@@ -5944,14 +6056,24 @@ def _handle_section_retrieval(conn: psycopg.Connection, args: dict[str, Any]) ->
         dense_rows = _section_dense_retrieve(conn, query_vector, filter_sql, filter_params, fanout)
     except Exception as exc:  # noqa: BLE001 — boundary
         logger.exception("section_retrieval dense leg failed")
-        return json.dumps({"error": f"dense_retrieve_failed: {exc}"})
+        return json.dumps(
+            {
+                "error": f"dense_retrieve_failed: {exc}",
+                "error_code": ErrorCode.DENSE_RETRIEVE_FAILED,
+            }
+        )
 
     # BM25 leg.
     try:
         bm25_rows = _section_bm25_retrieve(conn, query, filter_sql, filter_params, fanout)
     except Exception as exc:  # noqa: BLE001 — boundary
         logger.exception("section_retrieval bm25 leg failed")
-        return json.dumps({"error": f"bm25_retrieve_failed: {exc}"})
+        return json.dumps(
+            {
+                "error": f"bm25_retrieve_failed: {exc}",
+                "error_code": ErrorCode.BM25_RETRIEVE_FAILED,
+            }
+        )
 
     dense_keys: list[tuple[str, int]] = [(b, i) for (b, i, _d) in dense_rows]
     bm25_keys: list[tuple[str, int]] = [(b, i) for (b, i, _r) in bm25_rows]
@@ -6000,11 +6122,21 @@ def _handle_read_paper_claims(conn: psycopg.Connection, args: dict[str, Any]) ->
 
     bibcode = args.get("bibcode")
     if not isinstance(bibcode, str) or not bibcode.strip():
-        return json.dumps({"error": "bibcode must be a non-empty string"})
+        return json.dumps(
+            {
+                "error": "bibcode must be a non-empty string",
+                "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
+            }
+        )
 
     claim_type = args.get("claim_type")
     if claim_type is not None and not isinstance(claim_type, str):
-        return json.dumps({"error": "claim_type must be a string or omitted"})
+        return json.dumps(
+            {
+                "error": "claim_type must be a string or omitted",
+                "error_code": ErrorCode.INVALID_PARAM_TYPE,
+            }
+        )
 
     limit = args.get("limit", 50)
 
@@ -6016,7 +6148,7 @@ def _handle_read_paper_claims(conn: psycopg.Connection, args: dict[str, Any]) ->
             limit=limit,
         )
     except ValueError as exc:
-        return json.dumps({"error": str(exc)})
+        return json.dumps({"error": str(exc), "error_code": ErrorCode.INVALID_PARAM_VALUE})
 
     return json.dumps(
         {
@@ -6041,18 +6173,33 @@ def _handle_find_claims(conn: psycopg.Connection, args: dict[str, Any]) -> str:
 
     query = args.get("query")
     if not isinstance(query, str) or not query.strip():
-        return json.dumps({"error": "query must be a non-empty string"})
+        return json.dumps(
+            {
+                "error": "query must be a non-empty string",
+                "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
+            }
+        )
 
     claim_type = args.get("claim_type")
     if claim_type is not None and not isinstance(claim_type, str):
-        return json.dumps({"error": "claim_type must be a string or omitted"})
+        return json.dumps(
+            {
+                "error": "claim_type must be a string or omitted",
+                "error_code": ErrorCode.INVALID_PARAM_TYPE,
+            }
+        )
 
     entity_id = args.get("entity_id")
     if entity_id is not None:
         try:
             entity_id = int(entity_id)
         except (TypeError, ValueError):
-            return json.dumps({"error": "entity_id must be an integer or omitted"})
+            return json.dumps(
+                {
+                    "error": "entity_id must be an integer or omitted",
+                    "error_code": ErrorCode.INVALID_PARAM_TYPE,
+                }
+            )
 
     limit = args.get("limit", 25)
 
@@ -6065,7 +6212,7 @@ def _handle_find_claims(conn: psycopg.Connection, args: dict[str, Any]) -> str:
             limit=limit,
         )
     except ValueError as exc:
-        return json.dumps({"error": str(exc)})
+        return json.dumps({"error": str(exc), "error_code": ErrorCode.INVALID_PARAM_VALUE})
 
     return json.dumps(
         {
@@ -6089,7 +6236,12 @@ def _handle_entity_profile(conn: psycopg.Connection, args: dict[str, Any]) -> st
     """
     bibcode = args.get("bibcode")
     if not bibcode:
-        return json.dumps({"error": "bibcode is required"})
+        return json.dumps(
+            {
+                "error": "bibcode is required",
+                "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
+            }
+        )
 
     with conn.cursor() as cur:
         cur.execute(

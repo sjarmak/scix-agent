@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from scix.mcp_server import (
     _extract_query_text,
     _extract_result_count,

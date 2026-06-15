@@ -26,6 +26,7 @@ from typing import Any, Iterator
 from unittest.mock import patch
 
 import pytest
+
 from scix.mcp_server import (
     EXPECTED_TOOLS,
     TOOL_TIMEOUTS,

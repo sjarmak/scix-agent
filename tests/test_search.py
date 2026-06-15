@@ -6,6 +6,8 @@ Integration tests (marked with @pytest.mark.integration) require a running scix 
 
 from __future__ import annotations
 
+import logging
+
 import psycopg
 import pytest
 from helpers import (
@@ -29,6 +31,7 @@ from scix.search import (
     _filter_first_vector_search,
     _resolve_lexical_pool,
     _resolve_lexical_rank_flag,
+    _score_sections_ts_rank,
     bibliographic_coupling,
     citation_chain,
     co_citation_analysis,
@@ -591,6 +594,7 @@ class TestHybridSearchEntityFilterWiring:
         fake_embedding = [0.1] * 768
 
         fake_lex = SearchResult(papers=[], total=0, timing_ms={"lexical_ms": 1.0})
+        fake_body = SearchResult(papers=[], total=0, timing_ms={"body_lexical_ms": 1.0})
         fake_vec = SearchResult(
             papers=[{"bibcode": "X"}],
             total=1,
@@ -599,7 +603,7 @@ class TestHybridSearchEntityFilterWiring:
 
         with (
             patch("scix.search.lexical_search", return_value=fake_lex),
-            patch("scix.search.lexical_search_body", return_value=fake_lex),
+            patch("scix.search.lexical_search_body", return_value=fake_body),
             patch("scix.search._estimate_filter_selectivity", return_value=0.5),
             patch("scix.search.vector_search", return_value=fake_vec) as mock_vs,
         ):
@@ -620,15 +624,121 @@ class TestHybridSearchEntityFilterWiring:
         plain_filter = SearchFilters(year_min=2020)
 
         fake_lex = SearchResult(papers=[], total=0, timing_ms={"lexical_ms": 1.0})
+        fake_body = SearchResult(papers=[], total=0, timing_ms={"body_lexical_ms": 1.0})
 
         with (
             patch("scix.search.lexical_search", return_value=fake_lex) as mock_lex,
-            patch("scix.search.lexical_search_body", return_value=fake_lex),
+            patch("scix.search.lexical_search_body", return_value=fake_body),
         ):
             hybrid_search(mock_conn, "x", filters=plain_filter)
             called = mock_lex.call_args.kwargs["filters"]
             assert called.entity_types is None
             assert called.entity_ids is None
+
+
+class TestHybridSearchLaneErrorHandling:
+    """uq28: hybrid_search must split a recoverable QueryCanceled (drop the
+    lane, surface the drop in metadata) from a tx-abort / other psycopg.Error
+    (propagate — never silently return a degraded RRF result)."""
+
+    @staticmethod
+    def _fake_lex() -> SearchResult:
+        return SearchResult(
+            papers=[{"bibcode": "2024ApJ...1A"}], total=1, timing_ms={"lexical_ms": 1.0}
+        )
+
+    def test_body_query_canceled_drops_lane_and_records_signal(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        conn = MagicMock()
+
+        def _timeout(*args: object, **kwargs: object) -> object:
+            raise psycopg.errors.QueryCanceled("statement timeout")
+
+        with (
+            patch("scix.search.lexical_search", return_value=self._fake_lex()),
+            patch("scix.search.lexical_search_body", side_effect=_timeout),
+        ):
+            result = hybrid_search(conn, "dark matter")
+
+        # The body lane is dropped, but the search still returns the main lane
+        # and the drop is surfaced so the caller knows the RRF is degraded.
+        assert result.total == 1
+        assert result.metadata.get("dropped_lanes") == ["body_bm25"]
+
+    def test_body_tx_abort_propagates(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        conn = MagicMock()
+
+        def _abort(*args: object, **kwargs: object) -> object:
+            # Class-25 tx-abort: the outer connection is poisoned. Swallowing
+            # this would make every later lane fail silently.
+            raise psycopg.errors.InFailedSqlTransaction("tx aborted")
+
+        with (
+            patch("scix.search.lexical_search", return_value=self._fake_lex()),
+            patch("scix.search.lexical_search_body", side_effect=_abort),
+            pytest.raises(psycopg.errors.InFailedSqlTransaction),
+        ):
+            hybrid_search(conn, "dark matter")
+
+    def test_clean_run_has_no_dropped_lanes_key(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        conn = MagicMock()
+        fake_body = SearchResult(papers=[], total=0, timing_ms={"body_lexical_ms": 1.0})
+
+        with (
+            patch("scix.search.lexical_search", return_value=self._fake_lex()),
+            patch("scix.search.lexical_search_body", return_value=fake_body),
+        ):
+            result = hybrid_search(conn, "dark matter")
+
+        assert "dropped_lanes" not in result.metadata
+
+
+class TestScoreSectionsTsRank:
+    """uq28: the section scorer degrades to the Python proxy only on a real
+    OperationalError (logged at WARNING, visible at prod INFO), and lets other
+    DB errors propagate so genuine bugs are not masked."""
+
+    @staticmethod
+    def _conn_with_execute_error(exc: Exception) -> object:
+        from unittest.mock import MagicMock
+
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.__enter__ = MagicMock(return_value=cur)
+        cur.__exit__ = MagicMock(return_value=False)
+        cur.execute.side_effect = exc
+        conn.cursor.return_value = cur
+        return conn
+
+    def test_operational_error_falls_back_and_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        conn = self._conn_with_execute_error(psycopg.OperationalError("timeout"))
+        with caplog.at_level(logging.WARNING, logger="scix.search"):
+            scores = _score_sections_ts_rank(conn, ["dark matter halos"], "dark matter")
+        assert len(scores) == 1
+        assert all(isinstance(s, float) for s in scores)
+        assert "falling back to Python proxy" in caplog.text
+
+    def test_query_canceled_subclass_also_falls_back(self) -> None:
+        # QueryCanceled is an OperationalError subclass, so a per-statement
+        # timeout in the section scorer still degrades rather than propagates.
+        conn = self._conn_with_execute_error(psycopg.errors.QueryCanceled("timeout"))
+        scores = _score_sections_ts_rank(conn, ["text one", "text two"], "q")
+        assert len(scores) == 2
+
+    def test_programming_error_propagates(self) -> None:
+        conn = self._conn_with_execute_error(psycopg.ProgrammingError("bad sql"))
+        with pytest.raises(psycopg.ProgrammingError):
+            _score_sections_ts_rank(conn, ["text"], "q")
+
+    def test_empty_sections_short_circuit(self) -> None:
+        from unittest.mock import MagicMock
+
+        assert _score_sections_ts_rank(MagicMock(), [], "q") == []
 
 
 class TestLexicalSearchCandidatePool:

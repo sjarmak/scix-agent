@@ -1020,6 +1020,10 @@ def hybrid_search(
     """
     timing: dict[str, float] = {}
     metadata: dict[str, Any] = {}
+    # Lanes (alias / body-BM25) that were dropped due to a recoverable
+    # per-lane statement_timeout. Surfaced in metadata["dropped_lanes"] so the
+    # caller can tell a full-signal RRF result from a degraded one (bead uq28).
+    dropped_lanes: list[str] = []
 
     # Ontology parsing — lift to filters BEFORE lexical/vector calls so all
     # downstream stages see the augmented scope.
@@ -1086,10 +1090,20 @@ def hybrid_search(
             try:
                 with conn.transaction():
                     lane = lexical_search(conn, lane_query, filters=filters, limit=lexical_limit)
-            except Exception:
+            except psycopg.errors.QueryCanceled:
+                # Recoverable per-lane statement_timeout: the savepoint rolled
+                # back cleanly, so the outer transaction is intact and later
+                # lanes are safe to run. Drop just this lane and record the
+                # degraded-RRF signal. Any other psycopg.Error — notably a
+                # class-25 tx-abort (InFailedSqlTransaction), which poisons the
+                # outer connection — propagates instead of being swallowed, so
+                # the caller never gets a silently-degraded result (bead uq28).
                 logger.warning(
-                    "Alias lexical lane failed for %r; continuing", lane_query, exc_info=True
+                    "Alias lexical lane timed out for %r; dropping lane",
+                    lane_query,
+                    exc_info=True,
                 )
+                dropped_lanes.append(f"alias:{lane_query}")
                 continue
             if lane.papers:
                 results_lists.append(lane.papers)
@@ -1108,8 +1122,13 @@ def hybrid_search(
             timing["body_lexical_ms"] = body_result.timing_ms["body_lexical_ms"]
             if body_result.papers:
                 results_lists.append(body_result.papers)
-        except Exception:
-            logger.warning("Body BM25 search failed; continuing without it", exc_info=True)
+        except psycopg.errors.QueryCanceled:
+            # Recoverable body-lane statement_timeout: savepoint rolled back,
+            # outer transaction intact. Drop the body BM25 signal and record
+            # it. A class-25 tx-abort or any other psycopg.Error propagates
+            # rather than silently dropping up to half the RRF signals (uq28).
+            logger.warning("Body BM25 search timed out; dropping lane", exc_info=True)
+            dropped_lanes.append("body_bm25")
 
     # Cardinality-aware routing: estimate filter selectivity once for reuse.
     # Skipped when the Qdrant gate is active — filter-first is a pg lane over
@@ -1164,6 +1183,11 @@ def hybrid_search(
         timing["rerank_ms"] = 0.0
 
     timing["total_ms"] = round(sum(timing.values()), 2)
+
+    # Surface any recoverable lane drops so the caller can distinguish a
+    # full-signal fusion from a degraded one (only present when non-empty).
+    if dropped_lanes:
+        metadata["dropped_lanes"] = dropped_lanes
 
     return SearchResult(
         papers=fused,
@@ -4197,8 +4221,10 @@ def _score_sections_ts_rank(
 
     Issues a single batched query via ``unnest`` so we get one round-trip
     regardless of section count. Returns scores in input order. Falls back to
-    a deterministic Python proxy when the SQL call raises (keeps the function
-    usable inside unit-test mocks that don't simulate full cursor behaviour).
+    a deterministic Python proxy on a ``psycopg.OperationalError`` (logged at
+    WARNING) or when the row count does not match the input (the path unit-test
+    mocks hit, since they don't simulate full cursor behaviour). Other DB
+    errors propagate so genuine bugs are not masked.
     """
     if not section_texts:
         return []
@@ -4213,8 +4239,14 @@ def _score_sections_ts_rank(
                 (query, list(section_texts)),
             )
             rows = list(cur.fetchall())
-    except Exception:
-        logger.debug(
+    except psycopg.OperationalError:
+        # Real DB-side failure (e.g. statement_timeout / connection drop):
+        # degrade to the deterministic Python proxy, but log at WARNING so the
+        # fallback is visible at prod INFO rather than hidden at DEBUG (uq28).
+        # Other errors (ProgrammingError, etc.) propagate — they signal a bug
+        # we want to surface, not silently mask. Mock cursors that return an
+        # empty/MagicMock fetchall are handled by the length guard below.
+        logger.warning(
             "ts_rank section scoring failed; falling back to Python proxy",
             exc_info=True,
         )

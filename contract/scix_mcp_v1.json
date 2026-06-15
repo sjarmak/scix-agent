@@ -1,0 +1,763 @@
+{
+  "contract_version": "1",
+  "envelope": {
+    "error": {
+      "required": [
+        "error",
+        "error_code"
+      ],
+      "shape": {
+        "error": "<human-readable message>",
+        "error_code": "<member of error_codes>"
+      }
+    },
+    "success": "Tool-specific JSON object; there is no uniform success wrapper."
+  },
+  "error_codes": [
+    "bm25_retrieve_failed",
+    "community_expand_no_seed",
+    "dense_retrieve_failed",
+    "dependency_missing",
+    "encode_failed",
+    "entity_legacy_extraction_type",
+    "internal_error",
+    "invalid_action",
+    "invalid_direction",
+    "invalid_filters",
+    "invalid_limit",
+    "invalid_method",
+    "invalid_mode",
+    "invalid_param_type",
+    "invalid_param_value",
+    "invalid_scope",
+    "missing_required_params",
+    "qdrant_disabled",
+    "qdrant_failed",
+    "seed_too_broad",
+    "tool_removed",
+    "unknown_tool",
+    "unscoped_broad_query",
+    "vector_index_unavailable"
+  ],
+  "tools": [
+    {
+      "inputSchema": {
+        "properties": {
+          "bypass_unscoped_guard": {
+            "default": false,
+            "description": "If true, skip the unscoped-broad-query guard and run the search even when no filters are set and the query is broad (>=3 tokens or >=30 chars). The default is false: such queries are blocked up-front with a structured {error_code: 'unscoped_broad_query', error: '<human msg>', ...} response so the agent can retry with scoping filters instead of waiting for the statement timeout. Use only when you genuinely need an unscoped scan (tests, power-user exploration).",
+            "type": "boolean"
+          },
+          "community_expand": {
+            "default": false,
+            "description": "When true, run a community-expansion lane (entity co-occurrence retrieval) instead of standard hybrid retrieval. The seed entity is taken from filters.entity_ids (when it has exactly one entry); otherwise the server resolves the query string to a single unambiguous entity. If neither resolves to a unique entity, the tool returns a structured {error_code: 'community_expand_no_seed', ...} response. Super-hub seeds (>50k linked papers) are blocked with a {error_code: 'seed_too_broad', ...} envelope. Off by default \u2014 gated behind this flag until per-prop eval lands. See bead scix_experiments-xz4.1.40.",
+            "type": "boolean"
+          },
+          "disambiguate": {
+            "default": true,
+            "description": "If true (default), check the query for ambiguous entity mentions (e.g., 'Hubble' = mission or person). If ambiguity is detected, the server returns disambiguation candidates instead of search results. Set false to run the search directly.",
+            "type": "boolean"
+          },
+          "filters": {
+            "properties": {
+              "arxiv_class": {
+                "type": "string"
+              },
+              "doctype": {
+                "type": "string"
+              },
+              "entity_ids": {
+                "description": "Restrict results to papers linked to at least one of these specific entity ids (from the entities table). Empty list disables the filter. Max 100 items.",
+                "items": {
+                  "type": "integer"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              "entity_types": {
+                "description": "Restrict results to papers linked to at least one entity of these types (e.g. 'instrument', 'mission', 'dataset'). Empty list disables the filter. Max 100 items.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              "first_author": {
+                "type": "string"
+              },
+              "year_max": {
+                "type": "integer"
+              },
+              "year_min": {
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "limit": {
+            "default": 10,
+            "type": "integer"
+          },
+          "mode": {
+            "default": "hybrid",
+            "description": "Search mode: hybrid (default), semantic, or keyword",
+            "enum": [
+              "hybrid",
+              "semantic",
+              "keyword"
+            ],
+            "type": "string"
+          },
+          "query": {
+            "description": "Natural language query or search terms",
+            "type": "string"
+          },
+          "use_rerank": {
+            "default": true,
+            "description": "If true (default) AND the SCIX_RERANK_DEFAULT_MODEL env var is set to a model alias other than 'off' AND limit <= 20, rerank the fused candidate set with a cross-encoder. The production default for SCIX_RERANK_DEFAULT_MODEL is 'off' because the M1 ablation showed both candidate rerankers regress nDCG@10 on this corpus; this flag exists so an operator can flip on a future domain-tuned reranker without code changes. Setting use_rerank=false bypasses reranking even when a model is configured.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "search"
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "discipline": {
+            "description": "Optional discipline hint (currently informational, surfaced in metadata).",
+            "type": "string"
+          },
+          "expand_per_seed": {
+            "default": 20,
+            "description": "Per-seed reference + citation fetch limit (0..50).",
+            "type": "integer"
+          },
+          "expansion_seeds": {
+            "default": 5,
+            "description": "How many top seeds to expand via refs+citations (0..top_seeds).",
+            "type": "integer"
+          },
+          "query": {
+            "description": "Free-text research question or topic.",
+            "type": "string"
+          },
+          "sample_abstracts": {
+            "default": 5,
+            "description": "Number of seeds to attach full abstracts to in the response (0..top_seeds).",
+            "type": "integer"
+          },
+          "top_seeds": {
+            "default": 20,
+            "description": "Hybrid-search seed count (1..100).",
+            "type": "integer"
+          },
+          "year_max": {
+            "description": "Latest publication year to include (inclusive). Filters seeds AND citation-expanded papers.",
+            "type": "integer"
+          },
+          "year_min": {
+            "description": "Earliest publication year to include in seed retrieval (inclusive).",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "lit_review"
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "fallback": {
+            "default": true,
+            "description": "When true (default), free-text queries that resolve to no vocabulary concept fall through to lexical (BM25) search and return those papers with metadata.fallback='lexical_search'. Set false for strict vocabulary-only behavior (legacy).",
+            "type": "boolean"
+          },
+          "include_subtopics": {
+            "default": true,
+            "description": "When the best hit is a UAT concept, include papers tagged with descendants in the hierarchy.",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer"
+          },
+          "query": {
+            "description": "Concept label, alternate label, or URI",
+            "type": "string"
+          },
+          "vocabulary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Restrict search to one or more vocabularies. Allowed: 'uat', 'openalex', 'acm_ccs', 'msc', 'physh', 'gcmd', 'mesh', 'ncbi_tax', 'chebi', 'gene_ontology'. Omit to search all."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "concept_search"
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "bibcode": {
+            "description": "ADS bibcode (e.g., '2024ApJ...962L..15J')",
+            "type": "string"
+          },
+          "include_entities": {
+            "default": false,
+            "description": "Include linked entities from document_context view",
+            "type": "boolean"
+          },
+          "min_precision": {
+            "description": "Optional precision_estimate floor (0..1). Drops linked entities below the threshold; only applies when include_entities=true. Default surfaces all entities with precision metadata attached.",
+            "type": "number"
+          }
+        },
+        "required": [
+          "bibcode"
+        ],
+        "type": "object"
+      },
+      "name": "get_paper"
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "bibcode": {
+            "description": "ADS bibcode of the paper",
+            "type": "string"
+          },
+          "char_offset": {
+            "default": 0,
+            "description": "Character offset for pagination (read mode)",
+            "type": "integer"
+          },
+          "limit": {
+            "default": 5000,
+            "description": "Max characters to return (read mode)",
+            "type": "integer"
+          },
+          "role": {
+            "description": "Optional canonical role. When provided, selects the first parsed section whose name maps to this role (e.g. 'method' picks Methods/Observations/Data). Takes precedence over 'section'.",
+            "enum": [
+              "background",
+              "method",
+              "result",
+              "conclusion",
+              "other"
+            ],
+            "type": "string"
+          },
+          "search_query": {
+            "description": "If provided, search within the paper body instead of reading",
+            "type": "string"
+          },
+          "section": {
+            "default": "full",
+            "description": "Section name: 'full', 'introduction', 'methods', 'results', 'discussion', 'conclusions'",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bibcode"
+        ],
+        "type": "object"
+      },
+      "name": "read_paper"
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "bibcode": {
+            "description": "ADS bibcode (used when mode='graph' and bibcodes is not provided)",
+            "type": "string"
+          },
+          "bibcodes": {
+            "description": "Optional list of bibcodes for working-set expansion (mode='graph' only). When provided, the neighborhood walk runs per source bibcode and results are returned under by_bibcode. When omitted, falls through to the session's focused papers (papers inspected via get_paper).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "direction": {
+            "default": "forward",
+            "description": "forward=citing papers, backward=references, both=all (mode='graph' only)",
+            "enum": [
+              "forward",
+              "backward",
+              "both"
+            ],
+            "type": "string"
+          },
+          "include_context": {
+            "default": false,
+            "description": "Include citation context text (mode='graph' only, slower)",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 20,
+            "description": "Max neighbors to return (mode='graph' only)",
+            "type": "integer"
+          },
+          "max_depth": {
+            "default": 5,
+            "description": "Maximum number of hops 1..5 (mode='chain' only)",
+            "type": "integer"
+          },
+          "mode": {
+            "default": "graph",
+            "description": "graph: walk neighbors of a single bibcode. chain: trace shortest path between source and target.",
+            "enum": [
+              "graph",
+              "chain"
+            ],
+            "type": "string"
+          },
+          "source_bibcode": {
+            "description": "Starting paper of the chain (required when mode='chain')",
+            "type": "string"
+          },
+          "target_bibcode": {
+            "description": "Destination paper of the chain (required when mode='chain')",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "citation_traverse"
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "bibcode": {
+            "description": "ADS bibcode",
+            "type": "string"
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer"
+          },
+          "method": {
+            "default": "co_citation",
+            "description": "co_citation or coupling",
+            "enum": [
+              "co_citation",
+              "coupling"
+            ],
+            "type": "string"
+          },
+          "min_overlap": {
+            "default": 2,
+            "description": "Minimum shared citing/referenced papers",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bibcode"
+        ],
+        "type": "object"
+      },
+      "name": "citation_similarity"
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "action": {
+            "description": "resolve: text mention -> canonical entity records (cross-discipline disambiguation). papers: entity_id (or auto-resolved query) -> papers tagged with that entity via document_entities. search: legacy narrow scan of the extractions table for one of the four containment-payload entity types (methods/datasets/instruments/materials). profile: entity_id -> full entity profile (name, type, discipline, external ids, aliases, related entities, paper count) \u2014 formerly the entity_context tool.",
+            "enum": [
+              "search",
+              "resolve",
+              "papers",
+              "profile"
+            ],
+            "type": "string"
+          },
+          "discipline": {
+            "description": "Discipline for ranking boost (resolve only)",
+            "type": "string"
+          },
+          "entity_id": {
+            "description": "Entity id (from resolve). Used by action='papers' and required by action='profile'.",
+            "type": "integer"
+          },
+          "entity_type": {
+            "description": "Entity type (required for action=search). Searches the in-line containment payload on extractions rows. NOTE: 'negative_result' and 'quant_claim' were removed in 2026-04 (bead scix_experiments-mh14) \u2014 those are claim/finding extractions, not entities. A dedicated tool for surfacing them is tracked as a follow-up; see docs/mcp_tool_audit_2026-04.md.",
+            "enum": [
+              "methods",
+              "datasets",
+              "instruments",
+              "materials"
+            ],
+            "type": "string"
+          },
+          "fuzzy": {
+            "default": false,
+            "description": "Enable fuzzy matching (resolve only)",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer"
+          },
+          "min_confidence_tier": {
+            "description": "Only return extractions whose confidence_tier is >= this value (1=low, 2=medium, 3=high). Omit to include all tiers. Applies to action='search' only.",
+            "enum": [
+              1,
+              2,
+              3
+            ],
+            "type": "integer"
+          },
+          "query": {
+            "description": "Entity name to search for or resolve",
+            "type": "string"
+          },
+          "sources": {
+            "description": "Filter extractions to these provenance sources only (e.g. ['metadata', 'ner', 'llm']). Omit to include all sources. Applies to action='search' only.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "entity"
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "bibcode": {
+            "description": "ADS bibcode",
+            "type": "string"
+          },
+          "include_community": {
+            "default": false,
+            "description": "Include sibling papers from same community",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer"
+          },
+          "resolution": {
+            "default": "medium",
+            "description": "Community resolution level. Default 'medium' matches find_gaps for cross-tool consistency.",
+            "enum": [
+              "coarse",
+              "medium",
+              "fine"
+            ],
+            "type": "string"
+          },
+          "signal": {
+            "default": "semantic",
+            "description": "Community signal to explore for sibling papers: 'citation' (co-citation-derived Leiden), 'semantic' (INDUS-embedding k-means), or 'taxonomic' (arXiv-class). Invalid values return a structured error.",
+            "enum": [
+              "citation",
+              "semantic",
+              "taxonomic"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "bibcode"
+        ],
+        "type": "object"
+      },
+      "name": "graph_context"
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "clear_first": {
+            "default": false,
+            "description": "Reset the focused set before searching",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer"
+          },
+          "query": {
+            "description": "Optional. When the working set is empty, auto-seeds it via concept_search(query) so the gap analysis runs in a single call. Ignored when prior get_paper calls have already populated the working set.",
+            "type": "string"
+          },
+          "resolution": {
+            "default": "medium",
+            "description": "Community resolution. 'medium' (default, k=200) gives sharp CS-readable labels. 'coarse' (k=20) lumps many disciplines into mega-buckets; 'fine' (k=2000) has crisper partitions but TF-IDF labels get noisy as buckets shrink (driven by outlier terms).",
+            "enum": [
+              "coarse",
+              "medium",
+              "fine"
+            ],
+            "type": "string"
+          },
+          "signal": {
+            "default": "semantic",
+            "description": "Which community partition to traverse. 'semantic' covers all 32M papers today; 'citation' is offline until Leiden Phase B lands.",
+            "enum": [
+              "semantic",
+              "citation"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "find_gaps"
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "bibcodes": {
+            "description": "Optional list of bibcodes for working-set aggregate citations-per-year. When omitted, falls through to the session's focused papers.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "query": {
+            "description": "A bibcode (citation trends) or search terms (pub volume). Optional when bibcodes=[...] or the session has focused papers. (The legacy param name 'bibcode_or_query' is still accepted for backward compatibility.)",
+            "type": "string"
+          },
+          "year_end": {
+            "type": "integer"
+          },
+          "year_start": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "temporal_evolution"
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "bibcodes": {
+            "description": "Optional list of bibcodes to scope the facet distribution. When omitted, falls through to the session's focused papers; when neither is set, runs over the full corpus.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "field": {
+            "enum": [
+              "year",
+              "doctype",
+              "arxiv_class",
+              "database",
+              "bibgroup",
+              "property"
+            ],
+            "type": "string"
+          },
+          "filters": {
+            "properties": {
+              "arxiv_class": {
+                "type": "string"
+              },
+              "doctype": {
+                "type": "string"
+              },
+              "entity_ids": {
+                "description": "Restrict results to papers linked to at least one of these specific entity ids (from the entities table). Empty list disables the filter. Max 100 items.",
+                "items": {
+                  "type": "integer"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              "entity_types": {
+                "description": "Restrict results to papers linked to at least one entity of these types (e.g. 'instrument', 'mission', 'dataset'). Empty list disables the filter. Max 100 items.",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              "first_author": {
+                "type": "string"
+              },
+              "year_max": {
+                "type": "integer"
+              },
+              "year_min": {
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "field"
+        ],
+        "type": "object"
+      },
+      "name": "facet_counts"
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "candidate_limit": {
+            "default": 20,
+            "description": "Max claim-asserting candidates to seed.",
+            "type": "integer"
+          },
+          "claim_text": {
+            "description": "Natural-language claim to trace, e.g. 'local H0 measurement is 73 km/s/Mpc'.",
+            "type": "string"
+          },
+          "lineage_limit": {
+            "default": 10,
+            "description": "Max hops to walk per candidate.",
+            "type": "integer"
+          },
+          "scope": {
+            "description": "Optional ResearchScope filters (year_window, community_ids, methodology_class, instruments, exclude_authors, exclude_funders, min_venue_tier, leiden_resolution). All keys optional.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "claim_text"
+        ],
+        "type": "object"
+      },
+      "name": "claim_blame"
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "annotate": {
+            "default": "intent",
+            "description": "Annotation axis. 'intent' = citation-intent classification + excerpt (former cited_by_intent); 'relation' = inferred replication relation + hedge flag (former find_replications).",
+            "enum": [
+              "intent",
+              "relation"
+            ],
+            "type": "string"
+          },
+          "bibcode": {
+            "description": "ADS bibcode whose forward citations (incoming citations) to enumerate. 'target_bibcode' is accepted as a synonym for backward compatibility.",
+            "type": "string"
+          },
+          "intent": {
+            "description": "(annotate='intent' only) Filter to one citation intent: 'method' = papers that used this work's method; 'background' = papers citing it as background; 'result_comparison' = papers comparing results to it. Omit for any-intent.",
+            "enum": [
+              "method",
+              "background",
+              "result_comparison"
+            ],
+            "type": "string"
+          },
+          "limit": {
+            "default": 20,
+            "description": "Max papers to return (1..200).",
+            "type": "integer"
+          },
+          "relation": {
+            "description": "(annotate='relation' only) Filter on relation_inferred. Omit to return all relations including unknown.",
+            "enum": [
+              "replicates",
+              "refutes",
+              "qualifies",
+              "partial"
+            ],
+            "type": "string"
+          },
+          "scope": {
+            "description": "(annotate='relation' only) Optional ResearchScope filters; year_window applies to the citing paper's year.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "bibcode"
+        ],
+        "type": "object"
+      },
+      "name": "forward_citations"
+    },
+    {
+      "inputSchema": {
+        "properties": {
+          "include_citation_contexts": {
+            "default": false,
+            "description": "When true, papers attributed via signal_used='intent_modal' carry a 'citation_excerpts' field with up to 3 {context_text, intent, citing_bibcode} rows from citation_contexts so the agent can see at least one actual citing sentence per intent-bucketed paper. Papers attributed via community / override / citation-count fallback do NOT receive excerpts (their bucket assignment did not come from a citation_contexts row). Default false.",
+            "type": "boolean"
+          },
+          "include_full_abstracts": {
+            "default": false,
+            "description": "When true, every cited_papers row also carries an 'abstract_full' field with the untruncated papers.abstract text alongside the existing 'abstract_snippet'. Use when you need full abstracts for grounded synthesis without round-tripping through read_paper. Default false (preserves the default wire format).",
+            "type": "boolean"
+          },
+          "max_papers_per_section": {
+            "default": 8,
+            "description": "Cap on per-section cited_papers length. Sorted by year desc, bibcode asc for deterministic output.",
+            "type": "integer"
+          },
+          "section_overrides": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Optional {bibcode: section_name} mapping that pins specific papers to specific sections, overriding the intent / community rules. The override target must appear in the requested sections list \u2014 out-of-set targets are ignored and the paper falls back to the normal rules. Use this to re-bucket papers based on the signals exposed in a previous synthesize_findings call.",
+            "maxProperties": 200,
+            "type": "object"
+          },
+          "sections": {
+            "default": [
+              "background",
+              "methods",
+              "results",
+              "open_questions"
+            ],
+            "description": "Section names to emit, in order. Default: background, methods, results, open_questions. Custom names that don't appear in the intent map only receive papers via the community fall-through.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "working_set_bibcodes": {
+            "description": "Bibcodes to synthesise. Omit to fall through to session-focused papers (capped at 200).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "name": "synthesize_findings"
+    }
+  ]
+}

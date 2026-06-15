@@ -1583,7 +1583,7 @@ def _smoke_call_new_tools() -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def create_server(_run_self_test: bool = True):
+def create_server(_run_self_test: bool = True, _preload_model: bool = True):
     """Create and configure the MCP server with the consolidated tool surface.
 
     Eagerly pre-loads the INDUS model so semantic_search is fast from
@@ -1594,6 +1594,10 @@ def create_server(_run_self_test: bool = True):
             the server is built to fail fast on broken tool schemas. Set
             to False internally by ``startup_self_test`` itself to avoid
             infinite recursion.
+        _preload_model: If True (default), eagerly load the INDUS model. Set
+            to False when the server is built only to read the static tool
+            surface (e.g. the contract generator / conformance suite in
+            :mod:`scix.mcp_contract`), which never touches the model.
     """
     try:
         from mcp.server import Server
@@ -1601,7 +1605,8 @@ def create_server(_run_self_test: bool = True):
     except ImportError:
         raise ImportError("mcp SDK is required for the MCP server. Install with: pip install mcp")
 
-    _init_model_impl()
+    if _preload_model:
+        _init_model_impl()
 
     server = Server("scix")
 

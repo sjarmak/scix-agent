@@ -1,0 +1,195 @@
+// Views over the scix model. Planned (#planned) and research (#research)
+// elements/relationships are dimmed + dashed so the "what serves on the corpus
+// vs what is proposed" split is readable at a glance.
+
+views {
+
+  // Landscape — the whole system in context.
+  view index {
+    title 'SciX — system landscape'
+    include *
+
+    style * {
+      opacity 25%
+    }
+    style element.tag == #built, element.tag == #evolving {
+      opacity 100%
+    }
+    style element.tag == #planned {
+      color muted
+      border dashed
+    }
+    style element.tag == #research {
+      color indigo
+      border dashed
+    }
+  }
+
+  // The scix system, decomposed into its containers.
+  view scixSystem of scix {
+    title 'SciX — containers (over one Postgres + pgvector store)'
+    include *
+
+    style element.tag == #planned {
+      color muted
+      border dashed
+    }
+    style element.tag == #research {
+      color indigo
+      border dashed
+    }
+  }
+
+  // Per-container component views.
+  view ingestContainer of scix.ingest {
+    title 'Ingest & sync — components'
+    include *
+  }
+
+  view retrievalContainer of scix.retrieval {
+    title 'Retrieval stack — hybrid RRF + Qdrant dense lane'
+    include *
+
+    style element.tag == #evolving {
+      color amber
+    }
+  }
+
+  view graphContainer of scix.graph {
+    title 'Citation-graph engine — components'
+    include *
+  }
+
+  view entityContainer of scix.entity {
+    title 'Entity & knowledge layer — components'
+    include *
+
+    style element.tag == #research {
+      color indigo
+      border dashed
+    }
+  }
+
+  view mcpContainer of scix.mcp {
+    title 'MCP server — the 15-tool agent surface'
+    include *
+  }
+
+  view vizContainer of scix.viz {
+    title 'Visualization layer — components'
+    include *
+  }
+
+  // Risks & open questions — the elements that carry a #risk flag, with the
+  // open question stated in each box's description. The things a reviewer
+  // should probe, surfaced rather than discovered mid-meeting.
+  view risks {
+    title 'Risks & open questions'
+    include
+      scix,
+      element.tag == #risk,
+      scix.ingest,
+      scix.retrieval,
+      scix.entity,
+      scix.graph,
+      scix.mcp
+
+    style * {
+      opacity 30%
+    }
+    style element.tag == #risk {
+      opacity 100%
+      color red
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Walkthrough flows (dynamic views) — the narrative spine of the review.
+  // ───────────────────────────────────────────────────────────────────────
+
+  // Flow 1 — corpus ingest from ADS + external sources into the store.
+  dynamic view ingestFlow {
+    title 'Walkthrough — corpus ingest pipeline'
+    description 'Metadata harvests universally; body text only through the OA/preprint gate (publisher TDM-clause risk). Validate any new index with a ≤50k scratch build + forced-index-scan smoke test before a multi-hour build.'
+
+    scix.ingest.adsSync -> ads 'harvest year / incremental since(date)'
+    scix.ingest.sourceAdapters -> openalex 'DOI → work + topics'
+    scix.ingest.sourceAdapters -> externalCorpus 'ar5iv / arXiv S3 / S2 body'
+    scix.ingest.sourceAdapters -> scix.ingest.oaGate 'OA/preprint check before body load'
+    scix.ingest.copyLoader -> scix.db 'COPY papers + citation_edges'
+    scix.retrieval.embedPipeline -> models 'INDUS encode title+abstract'
+    scix.retrieval.embedPipeline -> scix.db 'write paper_embeddings'
+    scix.retrieval.denseLane -> qdrant.indusCollection 'upsert dense vectors'
+  }
+
+  // Flow 2 — a hybrid search request, end to end.
+  dynamic view searchFlow {
+    title 'Walkthrough — hybrid search request'
+    description 'RRF (k=60) fuses the INDUS dense lane (Qdrant, ADR-013) with the BM25/lexical lane (ts_rank_cd + body GIN); the cross-encoder rerank is an optional final stage.'
+
+    agent -> scix.mcp.tools 'search(query, mode=hybrid)'
+    scix.mcp.tools -> scix.retrieval.hybrid 'dispatch'
+    scix.retrieval.hybrid -> scix.retrieval.denseLane 'dense kNN'
+    scix.retrieval.denseLane -> qdrant.indusCollection 'INDUS halfvec search'
+    scix.retrieval.hybrid -> scix.retrieval.lexicalLane 'BM25'
+    scix.retrieval.lexicalLane -> scix.db 'ts_rank_cd / GIN body'
+    scix.retrieval.hybrid -> scix.retrieval.reranker 'optional cross-encoder rerank'
+    scix.retrieval.reranker -> models 'pairwise relevance score'
+    scix.retrieval.hybrid -> scix.mcp.tools 'fused, reranked SearchResult'
+    scix.mcp.tools -> agent 'ranked papers + timing'
+  }
+
+  // Flow 3 — claim provenance over the citation graph.
+  dynamic view claimBlameFlow {
+    title 'Walkthrough — claim_blame provenance'
+    description 'Walks reverse references over citation_contexts to the earliest non-retracted origin, weighted by citation intent. Structural-citation coverage is sparse, so the hop chain is best-effort over the covered subgraph.'
+
+    agent -> scix.mcp.tools 'claim_blame(claim)'
+    scix.mcp.tools -> scix.graph.claimBlame 'dispatch'
+    scix.graph.claimBlame -> scix.db 'reverse-reference walk over citation_contexts'
+    scix.graph.context -> scix.db 'intent + intent_weight per hop'
+    scix.graph.grounded -> models 'INDUS cosine tiebreak'
+    scix.graph.claimBlame -> scix.mcp.tools 'origin bibcode + hop chain'
+    scix.mcp.tools -> agent 'earliest origin + provenance trace'
+  }
+
+  // Flow 4 — multi-lane entity resolution.
+  dynamic view entityFlow {
+    title 'Walkthrough — entity resolution (M13 multi-lane)'
+    description 'resolve_entities is the single entry point. The router tries cache, then a 5% local_ner canary, then a bulkheaded live_jit lane, degrading to static-core. local_ner is currently a CPU stub.'
+
+    agent -> scix.mcp.tools 'entity(action=resolve, text)'
+    scix.mcp.tools -> scix.entity.resolver 'dispatch'
+    scix.entity.resolver -> scix.db 'static-core exact / alias lookup'
+    scix.entity.resolver -> scix.entity.jit 'uncached → route'
+    scix.entity.jit -> scix.db 'jit_cache hit / write'
+    scix.entity.jit -> models 'live_jit / local_ner (planned)'
+    scix.entity.resolver -> scix.mcp.tools 'EntityLinkSet (lane provenance)'
+    scix.mcp.tools -> agent 'canonical entities + precision band'
+  }
+
+  // Research lens: the off-surface graph-experiment spike + research tracks.
+  view research {
+    title 'Research & off-surface tracks'
+    include
+      scix,
+      scix.graphExperiment,
+      scix.entity.claims,
+      scix.db,
+      agent
+
+    style * {
+      opacity 30%
+    }
+    style element.tag == #research {
+      opacity 100%
+      color indigo
+      border dashed
+    }
+    style element.tag == #planned {
+      opacity 100%
+      color muted
+      border dashed
+    }
+  }
+}

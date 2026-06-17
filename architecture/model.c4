@@ -1,0 +1,392 @@
+// The `scix` agent-navigable knowledge layer over the NASA ADS/SciX corpus.
+//
+// One PostgreSQL-16 + pgvector system (32.4M papers, 299M citation edges) made
+// navigable to AI agents through a 15-tool MCP server. Five containers sit on
+// top of that store: ingest/sync, the retrieval stack (hybrid RRF + Qdrant
+// dense lane), the citation-graph engine, the entity/knowledge layer, and the
+// visualization layer — with the MCP server as the agent-facing surface.
+//
+// Planned and research work is tagged so it renders distinctly from what is
+// already serving on the corpus (see spec.c4 for the tag legend). Every element
+// links to its source under src/scix/, the schema/migrations, or the docs/ADR &
+// docs/prd that carry the rationale — so any box is one click from code + reason.
+
+model {
+
+  agent = actor 'Research agent' {
+    description 'AI agent that navigates the corpus programmatically via the 15-tool MCP server'
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // External systems — the corpus sources, inference substrates, and the
+  // vector store that the dense lane serves from.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  ads = externalSystem 'NASA ADS / SciX API' {
+    description 'api.adsabs.harvard.edu — metadata, references, citation counts for the full corpus (recoverable upstream source)'
+  }
+
+  openalex = externalSystem 'OpenAlex' {
+    description 'DOI → work linking + topic taxonomy enrichment (polite pool)'
+  }
+
+  externalCorpus = externalSystem 'External full-text sources' {
+    description 'ar5iv (LaTeXML HTML), arXiv S3, Semantic Scholar / S2ORC, docling PDF — OA/preprint-gated body text'
+  }
+
+  vocabSources = externalSystem 'Cross-discipline vocabularies' {
+    description 'UAT, GCMD, ChEBI, MeSH, GO, PHYSH, MSC, ACM-CCS, NCBI taxonomy, Wikidata — concept substrate'
+  }
+
+  models = externalSystem 'Inference models' {
+    description 'INDUS (NASA-IBM, 768d) + nomic embeddings, Anthropic Claude (batch entity/claim extraction), GLiNER / SciBERT NER, cross-encoder rerankers'
+  }
+
+  qdrant = externalSystem 'Qdrant vector store' {
+    description 'Serves the INDUS dense ANN lane per ADR-013 (pgvector/pgvectorscale could not scan the expression index)'
+
+    indusCollection = datastore 'scix_indus_v2_papers_s1' {
+      description 'Paper-level INDUS halfvec (768d) — the production dense lane'
+    }
+    chunkCollection = datastore 'scix_chunks_v1' {
+      description 'Chunk-level INDUS vectors for within-paper retrieval (payload backfill in progress)'
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // The scix system.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  scix = system 'SciX Agent' {
+    description 'Agent-navigable knowledge layer: turns 32.4M papers + 299M citation edges into MCP-navigable structural topology'
+    link ../README.md 'README'
+    link ../AGENTS.md 'AGENTS.md (compasses + invariants)'
+
+    // ── The shared store ───────────────────────────────────────────────────
+    db = datastore 'PostgreSQL 16 + pgvector 0.8.2' {
+      #built
+      description 'Single instance: papers (32.4M), citation_edges (299M), paper_embeddings, papers_fulltext, document_entities (57.7M links), citation_contexts, paper_metrics (communities), JIT cache'
+      link ../schema.sql 'schema.sql'
+      link ../migrations 'migrations/ (001–070)'
+    }
+
+    // ── Ingest / sync ────────────────────────────────────────────────────────
+    ingest = container 'Ingest & sync' {
+      description 'Acquires the corpus from ADS + external sources, normalizes, and loads via COPY with OA/preprint gating'
+      technology 'Python'
+      link ../src/scix/ingest.py 'ingest.py'
+
+      adsSync = component 'ADS sync client' {
+        #built
+        description 'Paginated ADS v1 harvest + incremental_sync(since); resumable SyncState; gzipped JSONL'
+        link ../src/scix/sync.py 'sync.py'
+        link ../src/scix/sync_manager.py 'sync_manager.py'
+      }
+      copyLoader = component 'COPY loader + field mapping' {
+        #built
+        description 'JSONL → papers via COPY; ON CONFLICT merge; reference → citation_edges; index drop/recreate'
+        link ../src/scix/ingest.py 'ingest.py'
+        link ../src/scix/field_mapping.py 'field_mapping.py'
+      }
+      sourceAdapters = component 'sources/ — external adapters' {
+        #evolving
+        description 'OpenAlex, ar5iv (LaTeXML), arXiv S3, Semantic Scholar, docling PDF — body text + topic enrichment'
+        link ../src/scix/sources 'sources/'
+        link ../src/scix/openalex.py 'openalex.py'
+        link ../src/scix/http_client.py 'http_client.py (resilient client)'
+      }
+      oaGate = component 'OA / preprint gate' {
+        #built
+        #risk
+        description 'papers_is_oa_or_preprint predicate — every body-AI pipeline must gate on it. RISK: closed-access TDM clauses (Wiley/Springer) — removing the gate is a publisher-agreement breach, not just a bug'
+        link ../src/scix/oa_gate.py 'oa_gate.py'
+        link ../docs/ADR/009_body_ai_oa_gate.md 'ADR-009 — body-AI OA gate'
+      }
+    }
+
+    // ── Retrieval stack ──────────────────────────────────────────────────────
+    retrieval = container 'Retrieval stack' {
+      description 'Hybrid search: INDUS dense (Qdrant) + BM25/lexical (ts_rank_cd) fused via RRF, optional cross-encoder rerank'
+      technology 'Python'
+      link ../src/scix/search.py 'search.py'
+
+      hybrid = component 'hybrid RRF search' {
+        #built
+        description 'Reciprocal Rank Fusion (k=60) over dense + title/abstract + body lexical signals'
+        link ../src/scix/search.py 'search.py'
+        link ../docs/prd/prd_embedding_hybrid_retrieval_agent_navigation.md 'PRD — hybrid retrieval'
+      }
+      denseLane = component 'INDUS dense lane (Qdrant)' {
+        #built
+        #risk
+        description 'vector_search routes to Qdrant scix_indus_v2_papers_s1 when QDRANT_URL set. RISK: pgvectorscale DiskANN cannot scan the dimensionless expression index (56h build lost 2026-06-11) — dense lane MUST stay on Qdrant per ADR-013'
+        link ../src/scix/qdrant_tools.py 'qdrant_tools.py'
+        link ../docs/ADR/013_dense_lane_qdrant.md 'ADR-013 — Qdrant dense lane'
+      }
+      lexicalLane = component 'BM25 / lexical lane' {
+        #built
+        description 'PostgreSQL ts_rank_cd over title/abstract tsvector + GIN body index (ParadeDB pg_search optional)'
+        link ../src/scix/search.py 'search.py'
+      }
+      embedPipeline = component 'embedding pipeline' {
+        #built
+        description 'INDUS (768d, mean-pool) paper embeddings; SPECTER2/nomic as pilots; COPY into paper_embeddings'
+        link ../src/scix/embed.py 'embed.py'
+        link ../src/scix/embeddings 'embeddings/'
+      }
+      sectionEmbed = component 'section / chunk embeddings' {
+        #evolving
+        description 'nomic section vectors + INDUS chunk vectors → Qdrant scix_chunks_v1 for within-paper retrieval'
+        link ../src/scix/embeddings/section_pipeline.py 'section_pipeline.py'
+        link ../src/scix/extract/chunk_pass 'extract/chunk_pass/'
+        link ../docs/prd/prd_body_chunk_embeddings.md 'PRD — chunk embeddings'
+      }
+      reranker = component 'cross-encoder rerankers' {
+        #evolving
+        description 'bge-reranker-large + nasa-smd-ibm-ranker as optional rerank stage over fused candidates'
+        link ../src/scix/search.py 'search.py (CrossEncoderReranker)'
+        link ../docs/prd/prd_cross_encoder_reranker_local.md 'PRD — local cross-encoder'
+      }
+      queryExpand = component 'query expansion' {
+        #evolving
+        #risk
+        description 'Entity-aware query expansion. RISK: ships an in-memory numpy EntityIndex stub; production pgvector-over-entities path is documented but not deployed'
+        link ../src/scix/query_expansion.py 'query_expansion.py'
+      }
+      evalHarness = component 'eval/ + ir_metrics + benchmark' {
+        #evolving
+        description 'nDCG/recall/MRR, persona + LLM-judge, per-lane deltas, PRD latency benchmark — drives retrieval tuning'
+        link ../src/scix/eval 'eval/'
+        link ../src/scix/ir_metrics.py 'ir_metrics.py'
+        link ../src/scix/benchmark.py 'benchmark.py'
+      }
+    }
+
+    // ── Citation-graph engine ────────────────────────────────────────────────
+    graph = container 'Citation-graph engine' {
+      description 'Graph analytics (PageRank/HITS/Leiden) + citation-context intent, claim provenance, and replication inference'
+      technology 'Python'
+      link ../src/scix/graph_metrics.py 'graph_metrics.py'
+
+      metrics = component 'graph metrics' {
+        #built
+        description 'PageRank, HITS, Leiden community detection at coarse/medium/fine resolution over the full citation graph'
+        link ../src/scix/graph_metrics.py 'graph_metrics.py'
+        link ../docs/prd/prd_community_detection_v2.md 'PRD — community detection v2'
+      }
+      context = component 'citation context + intent' {
+        #evolving
+        #risk
+        description 'Extracts citation windows and classifies intent (method/background/result_comparison) via SciBERT or LLM. RISK: structural-citation coverage is sparse (~0.27% of edges carry an intent context)'
+        link ../src/scix/citation_context.py 'citation_context.py'
+        link ../src/scix/citation_intent.py 'citation_intent.py'
+        link ../docs/citation_contexts_coverage.md 'coverage analysis'
+      }
+      claimBlame = component 'claim_blame + find_replications' {
+        #evolving
+        description 'Trace a claim to its earliest non-retracted origin; enumerate forward citations as replicates/refutes/qualifies'
+        link ../src/scix/claim_blame.py 'claim_blame.py'
+        link ../src/scix/find_replications.py 'find_replications.py'
+      }
+      grounded = component 'citation grounding' {
+        #built
+        description 'Mechanical post-draft gate: assertions must trace to tool-result quotes (substring short-circuit + INDUS cosine)'
+        link ../src/scix/citation_grounded.py 'citation_grounded.py'
+      }
+      negResults = component 'negative-results detector' {
+        #evolving
+        description 'Section-aware null-finding detector (tiered confidence) over results/discussion/conclusions'
+        link ../src/scix/negative_results.py 'negative_results.py'
+      }
+    }
+
+    // ── Entity / knowledge layer ──────────────────────────────────────────────
+    entity = container 'Entity & knowledge layer' {
+      description 'LLM + NER extraction, multi-vocabulary concept substrate, and multi-lane entity resolution (~9M entities, 57.7M links)'
+      technology 'Python'
+      link ../src/scix/resolve_entities.py 'resolve_entities.py'
+
+      extract = component 'extraction (LLM + NER)' {
+        #evolving
+        description 'Anthropic batch extraction (methods/datasets/instruments/…) + GLiNER zero-shot + SOMD-SciBERT software detection'
+        link ../src/scix/extract.py 'extract.py'
+        link ../src/scix/extract/ner_pass.py 'extract/ner_pass.py'
+        link ../src/scix/extract/somd_detect.py 'extract/somd_detect.py'
+        link ../docs/prd/prd_entity_extraction_v3.md 'PRD — extraction v3'
+      }
+      resolver = component 'resolve_entities (M13 entry point)' {
+        #evolving
+        description 'Single entry point routing across static-core / jit_cache / live_jit / local_ner lanes; EntityLinkSet sole output'
+        link ../src/scix/resolve_entities.py 'resolve_entities.py'
+        link ../src/scix/entity_resolver.py 'entity_resolver.py'
+        link ../src/scix/entity_link_set.py 'entity_link_set.py'
+      }
+      jit = component 'jit/ — just-in-time resolution' {
+        #evolving
+        #risk
+        description 'cache → 5% local_ner canary → bulkheaded live_jit → degrade. RISK: local_ner is a CPU stub (returns 0.75 for all candidates); production SciBERT/INDUS-NER lane is not yet wired'
+        link ../src/scix/jit 'jit/'
+        link ../src/scix/jit/router.py 'jit/router.py'
+        link ../docs/mcp_dual_lane_contract.md 'dual-lane contract'
+      }
+      linker = component 'document-entity linker' {
+        #built
+        description 'Tiered linking (Aho-Corasick + alias expansion + Adeft disambiguation) with link-policy gating; writes document_entities'
+        link ../src/scix/link_entities.py 'link_entities.py'
+        link ../src/scix/section_linker.py 'section_linker.py'
+      }
+      concepts = component 'concept substrate' {
+        #built
+        description 'UAT + 9 cross-discipline vocabulary loaders → concepts / concept_relationships tables'
+        link ../src/scix/concepts.py 'concepts.py'
+        link ../src/scix/uat.py 'uat.py'
+        link ../src/scix/concept_loaders 'concept_loaders/'
+      }
+      claims = component 'claim extraction' {
+        #research
+        description 'Nanopub-inspired quantitative-claim extraction (per-section, via Claude Code OAuth subagent — no paid API)'
+        link ../src/scix/claims 'claims/'
+        link ../docs/prd/prd_nanopub_claim_extraction.md 'PRD — nanopub claims'
+      }
+    }
+
+    // ── MCP server — the agent-facing surface ────────────────────────────────
+    mcp = container 'MCP server' {
+      description 'Agent interface: 15 tools (search, citation, entity, provenance, graph, session) over stdio + HTTP, with a pinned contract'
+      technology 'Python / MCP'
+      link ../src/scix/mcp_server.py 'mcp_server.py'
+
+      tools = component '15-tool surface' {
+        #built
+        #risk
+        description 'search / get_paper / read_paper / citation_traverse / entity / claim_blame / graph_context / find_gaps … RISK: hard 15-tool cap — past it, agent tool-selection accuracy degrades; additions are ADR/PRD-gated'
+        link ../src/scix/mcp_server.py 'mcp_server.py'
+        link ../docs/prd/prd_v1_tool_consolidation.md 'PRD — tool consolidation'
+        link ../docs/mcp_tool_audit_2026-04.md 'tool audit'
+      }
+      transport = component 'stdio + HTTP transport' {
+        #built
+        description 'stdio server + StreamableHTTP adapter with bearer auth + per-token rate limiting (60/min, 10/s burst)'
+        link ../src/scix/mcp_server_http.py 'mcp_server_http.py'
+      }
+      contract = component 'versioned contract + error catalog' {
+        #built
+        description 'Deterministically built v1 contract artifact + closed machine-readable error-code catalog; conformance-tested'
+        link ../src/scix/mcp_contract.py 'mcp_contract.py'
+        link ../src/scix/mcp_errors.py 'mcp_errors.py'
+        link ../contract 'contract/ (scix_mcp_v1.json)'
+      }
+      guards = component 'breaker + cost ceiling + scope' {
+        #built
+        description 'Wall-clock circuit breaker on incremental sync, LLM cost ceiling, ResearchScope SQL-clause derivation'
+        link ../src/scix/circuit_breaker.py 'circuit_breaker.py'
+        link ../src/scix/llm_cost_ceiling.py 'llm_cost_ceiling.py'
+        link ../src/scix/research_scope.py 'research_scope.py'
+      }
+      session = component 'agent session state' {
+        #built
+        description 'In-memory working set + focused-papers (FIFO caps) accumulated across tool calls; powers find_gaps'
+        link ../src/scix/session.py 'session.py'
+      }
+    }
+
+    // ── Visualization layer ────────────────────────────────────────────────
+    viz = container 'Visualization layer' {
+      #evolving
+      description 'FastAPI JSON API + SSE trace streaming + static dashboards (sankey / heatmap / streamgraph / umap / ego / provenance)'
+      technology 'Python (FastAPI) + JS'
+      link ../src/scix/viz 'viz/'
+
+      vizApi = component 'viz API + trace stream' {
+        #evolving
+        description 'FastAPI JSON routes + TraceEvent SSE streaming of agent tool calls'
+        link ../src/scix/viz/api.py 'viz/api.py'
+        link ../src/scix/viz/trace_stream.py 'viz/trace_stream.py'
+      }
+      dashboards = component 'web/viz dashboards' {
+        #evolving
+        description 'Static HTML/JS explorers; sankey work tracked in a dedicated worktree'
+        link ../web/viz 'web/viz/'
+        link ../scix-sankey-work 'scix-sankey-work/'
+      }
+    }
+
+    // ── Research track ─────────────────────────────────────────────────────
+    graphExperiment = container 'Graph-experiment spike' {
+      #research
+      description 'Off-surface in-memory igraph snapshot + traversal tools + agent benchmark harness — NOT in the production MCP surface'
+      link ../src/scix/graph_experiment 'graph_experiment/'
+      link ../src/scix/mcp_graph_experiment.py 'mcp_graph_experiment.py'
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Relationships.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Ingest pipeline (sources → store)
+  scix.ingest.adsSync -> ads 'harvest + incremental sync'
+  scix.ingest.sourceAdapters -> openalex 'DOI → work + topics'
+  scix.ingest.sourceAdapters -> externalCorpus 'OA/preprint body text'
+  scix.ingest.copyLoader -> scix.db 'COPY papers + citation_edges'
+  scix.ingest.sourceAdapters -> scix.ingest.oaGate 'gate before body load'
+  scix.ingest.oaGate -> scix.db 'partial index gates body-AI rows'
+
+  // Embeddings → vector store
+  scix.retrieval.embedPipeline -> models 'INDUS encode'
+  scix.retrieval.embedPipeline -> scix.db 'write paper_embeddings'
+  scix.retrieval.denseLane -> qdrant.indusCollection 'kNN over INDUS halfvec'
+  scix.retrieval.sectionEmbed -> qdrant.chunkCollection 'chunk vectors'
+  scix.retrieval.sectionEmbed -> models 'nomic / INDUS encode'
+
+  // Retrieval read paths
+  scix.retrieval.hybrid -> scix.retrieval.denseLane 'dense candidates'
+  scix.retrieval.hybrid -> scix.retrieval.lexicalLane 'BM25 candidates'
+  scix.retrieval.lexicalLane -> scix.db 'ts_rank_cd / GIN'
+  scix.retrieval.hybrid -> scix.retrieval.reranker 'optional cross-encoder rerank'
+  scix.retrieval.reranker -> models 'cross-encoder score'
+  scix.retrieval.evalHarness -> scix.retrieval.hybrid 'graded eval runs'
+  scix.retrieval.evalHarness -> models 'LLM / persona judge'
+
+  // Graph engine read paths
+  scix.graph.metrics -> scix.db 'reads citation_edges, writes paper_metrics'
+  scix.graph.context -> scix.db 'citation_contexts'
+  scix.graph.context -> models 'intent classify (SciBERT / LLM)'
+  scix.graph.claimBlame -> scix.db 'reverse-reference walk'
+  scix.graph.grounded -> models 'INDUS cosine grounding'
+
+  // Entity layer
+  scix.entity.extract -> models 'batch LLM + NER'
+  scix.entity.extract -> scix.db 'writes extractions'
+  scix.entity.linker -> scix.db 'writes document_entities'
+  scix.entity.concepts -> vocabSources 'load vocabularies'
+  scix.entity.concepts -> scix.db 'concepts + relationships'
+  scix.entity.resolver -> scix.entity.jit 'route uncached mentions'
+  scix.entity.resolver -> scix.db 'static-core lookup'
+  scix.entity.jit -> models 'live_jit / local_ner (planned)'
+  scix.entity.claims -> models 'claim extraction (OAuth subagent)'
+
+  // MCP surface → subsystems
+  agent -> scix.mcp.tools 'MCP tool calls'
+  scix.mcp.transport -> scix.mcp.tools 'dispatch'
+  scix.mcp.tools -> scix.retrieval.hybrid 'search / read_paper'
+  scix.mcp.tools -> scix.graph.metrics 'graph_context / citation_traverse'
+  scix.mcp.tools -> scix.graph.claimBlame 'claim_blame / find_replications'
+  scix.mcp.tools -> scix.entity.resolver 'entity resolve / papers'
+  scix.mcp.tools -> scix.mcp.session 'working set (find_gaps)'
+  scix.mcp.tools -> scix.db 'get_paper / facet_counts'
+  scix.mcp.guards -> scix.mcp.tools 'breaker / cost ceiling / scope'
+
+  // Visualization
+  scix.viz.vizApi -> scix.db 'paper + community lookups'
+  scix.viz.vizApi -> scix.mcp.session 'stream agent tool calls'
+  scix.viz.dashboards -> scix.viz.vizApi 'JSON / SSE'
+
+  // Research track
+  scix.graphExperiment -> scix.db 'load igraph slice' {
+    #research
+  }
+  agent -> scix.graphExperiment 'off-surface graph tools' {
+    #research
+  }
+}

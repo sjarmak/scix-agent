@@ -1,0 +1,69 @@
+// Element kinds, tags, and custom colors for the `scix` architecture model.
+//
+// Tags encode delivery state so planned / research work is visually distinct
+// from what is already built and serving on the 32.4M-paper corpus:
+//   #built     — code path exists, exercised on the production corpus
+//   #evolving  — built but the science/contract is still moving
+//   #planned   — designed, not yet implemented (or v1 is a stub/heuristic)
+//   #research  — speculative research track (graph-experiment spike, PRDs)
+
+specification {
+
+  element actor {
+    style {
+      shape person
+      color secondary
+    }
+  }
+
+  element externalSystem {
+    style {
+      shape rectangle
+      color slate
+    }
+  }
+
+  element system
+
+  element container {
+    style {
+      shape rectangle
+    }
+  }
+
+  element component
+
+  element datastore {
+    style {
+      shape cylinder
+    }
+  }
+
+  // Deployment model — where each piece runs at review time.
+  deploymentNode host {
+    style {
+      shape rectangle
+      color slate
+    }
+  }
+  deploymentNode proc
+
+  tag built {
+    color #16a34a
+  }
+  tag evolving {
+    color #d97706
+  }
+  tag planned {
+    color #64748b
+  }
+  tag research {
+    color #6366f1
+  }
+
+  // Cross-cutting: carried by any element that is a known risk / open question
+  // for the design review (in addition to its delivery-state tag).
+  tag risk {
+    color #dc2626
+  }
+}

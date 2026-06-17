@@ -1,0 +1,37 @@
+name: Architecture (LikeC4) → Pages
+on:
+  push:
+    branches: [main]
+    paths: ['architecture/**', '.github/workflows/likec4-pages.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: likec4/actions@v1
+        with:
+          action: build
+          path: architecture
+          output: dist
+          base: /scix-agent/
+          use-hash-history: 'true'
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

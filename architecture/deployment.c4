@@ -1,0 +1,82 @@
+// Deployment model — where each piece runs at review time.
+//
+// One self-hosted GPU/DB host carries the whole stack: PostgreSQL 16 + pgvector
+// is the system of record, Qdrant serves the dense ANN lane (ADR-013), and the
+// Python processes (ingest, MCP server, viz) run beside them. Heavy jobs are
+// memory-fenced because this host ALSO runs the gascity supervisor and oomd
+// will kill a casualty under pressure. A hardened container image + k8s
+// manifests exist for the ADS AWS cluster as the deploy target.
+
+deployment {
+
+  scixHost = host 'SciX DB / GPU host (DS)' {
+    description 'Self-hosted: 1.9TB NVMe, NVIDIA GPU. Runs the corpus, the dense lane, and all Python processes — co-resident with the gascity supervisor'
+
+    pg = proc 'PostgreSQL 16 + pgvector — system of record' {
+      description '32.4M papers, 299M citation edges, embeddings, fulltext, entities. Local prod database `scix`'
+      instanceOf scix.db
+    }
+    qdrantProc = proc 'Qdrant — INDUS dense lane' {
+      description 'Serves scix_indus_v2_papers_s1 + scix_chunks_v1 (ADR-013). Data dir on NVMe, not NAS'
+      instanceOf qdrant
+    }
+    mcpProc = proc 'MCP server (stdio + HTTP)' {
+      description 'Agent-facing surface; HTTP transport behind bearer auth + per-token rate limit'
+      instanceOf scix.mcp
+    }
+    ingestProc = proc 'Ingest / batch jobs' {
+      description 'Heavy jobs run under scix-batch (systemd-run --scope, MemoryHigh=20G) to avoid oomd killing the supervisor'
+      instanceOf scix.ingest
+    }
+    retrievalProc = proc 'Retrieval / graph / entity workers' {
+      instanceOf scix.retrieval
+      instanceOf scix.graph
+      instanceOf scix.entity
+    }
+    vizProc = proc 'Visualization (FastAPI)' {
+      instanceOf scix.viz
+    }
+  }
+
+  nas = host 'NAS (/mnt, 50TB)' {
+    description 'Duplicate-to-NAS redundancy tier (corpus recoverable from ADS). Raw JSONL offload + model snapshots — NOT live DB/Qdrant data dirs'
+  }
+
+  adsCluster = host 'ADS AWS cluster (deploy target)' {
+    description 'Hardened container image + k8s manifests for production deployment alongside ADS/BeeHive'
+    instanceOf scix.mcp
+  }
+
+  adsHost = host 'NASA ADS / SciX' {
+    description 'Upstream corpus source — read-only to scix'
+    instanceOf ads
+    instanceOf openalex
+    instanceOf externalCorpus
+    instanceOf vocabSources
+  }
+
+  inferenceHost = host 'Inference substrate' {
+    description 'Local GPU models (INDUS / nomic / SciBERT / GLiNER / cross-encoders) + Anthropic Claude for batch extraction'
+    instanceOf models
+  }
+
+  // Runtime data & control flow between processes/hosts.
+  ingestProc -> adsHost 'harvest metadata + body text'
+  ingestProc -> pg 'COPY papers + citation_edges'
+  ingestProc -> inferenceHost 'embed + extract'
+  retrievalProc -> pg 'lexical / metadata reads'
+  retrievalProc -> qdrantProc 'dense kNN'
+  retrievalProc -> inferenceHost 'encode + rerank + judge'
+  mcpProc -> pg 'tool queries'
+  mcpProc -> retrievalProc 'search / graph / entity dispatch'
+  vizProc -> pg 'paper + community reads'
+  pg -> nas 'raw JSONL offload duplicate'
+}
+
+views {
+
+  deployment view deployment {
+    title 'Deployment — where each piece runs'
+    include *
+  }
+}

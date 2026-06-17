@@ -19,20 +19,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Export view figures (PNG)
-        uses: likec4/actions@v1
-        with:
-          export: png
-          path: architecture
-          output: _site/figures
-      - name: Build interactive explorer
-        uses: likec4/actions@v1
-        with:
-          action: build
-          path: architecture
-          output: _site/explore
-          base: /scix-agent/explore/
-          use-hash-history: 'true'
+      - name: Check model source links resolve (drift guard)
+        run: node architecture/site/check-links.mjs
+      - uses: likec4/actions@v1
+        with: { export: png, path: architecture, output: _site/figures }
+      - uses: likec4/actions@v1
+        with: { action: build, path: architecture, output: _site/explore, base: /scix-agent/explore/, use-hash-history: 'true' }
       - name: Assemble website-matched landing page
         run: |
           sudo chown -R "$USER":"$USER" _site

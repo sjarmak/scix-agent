@@ -16,16 +16,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: likec4/actions@v1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Export view figures (PNG)
+        uses: likec4/actions@v1
+        with:
+          export: png
+          path: architecture
+          output: _site/figures
+      - name: Build interactive explorer
+        uses: likec4/actions@v1
         with:
           action: build
           path: architecture
-          output: dist
-          base: /scix-agent/
+          output: _site/explore
+          base: /scix-agent/explore/
           use-hash-history: 'true'
+      - name: Assemble website-matched landing page
+        run: |
+          sudo chown -R "$USER":"$USER" _site
+          npx -y likec4@latest export json architecture -o model.json
+          node architecture/site/build-page.mjs --model model.json --figures _site/figures --out _site/index.html --repo scix-agent --explore ./explore/
+          cp architecture/site/styles.css architecture/site/favicon.svg _site/
+          cp -r architecture/site/fonts _site/fonts
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: _site
   deploy:
     needs: build
     runs-on: ubuntu-latest

@@ -1099,10 +1099,13 @@ def _wrap_deprecated(result_json: str, original_name: str, use_instead: str) -> 
     try:
         data = json.loads(result_json)
         if isinstance(data, dict):
-            data["deprecated"] = True
-            data["use_instead"] = use_instead
-            data["original_tool"] = original_name
-            return json.dumps(data, indent=2, default=str)
+            wrapped = {
+                **data,
+                "deprecated": True,
+                "use_instead": use_instead,
+                "original_tool": original_name,
+            }
+            return json.dumps(wrapped, indent=2, default=str)
     except (json.JSONDecodeError, TypeError):
         pass
     return result_json

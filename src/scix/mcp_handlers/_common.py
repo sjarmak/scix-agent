@@ -7,7 +7,7 @@ import logging
 from typing import Any
 
 from scix.mcp_errors import ErrorCode
-from scix.mcp_server import (
+from scix.mcp_runtime import (
     _session_state,
 )
 

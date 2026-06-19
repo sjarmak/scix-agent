@@ -14,7 +14,7 @@ from scix.mcp_handlers._common import (
     _missing_required_params_error,
     _resolve_working_set_bibcodes,
 )
-from scix.mcp_server import (
+from scix.mcp_runtime import (
     DEFAULT_RESULT_LIMIT,
     _annotate_working_set,
     _result_to_json,

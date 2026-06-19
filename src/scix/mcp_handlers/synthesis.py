@@ -12,7 +12,7 @@ from scix.mcp_errors import ErrorCode
 from scix.mcp_handlers._common import (
     _session_fallthrough_bibcodes,
 )
-from scix.mcp_server import (
+from scix.mcp_runtime import (
     DEFAULT_RESULT_LIMIT,
 )
 from scix.synthesize import MAX_WORKING_SET_BIBCODES

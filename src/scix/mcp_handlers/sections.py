@@ -11,7 +11,7 @@ import psycopg
 
 from scix import mcp_server as _srv
 from scix.mcp_errors import ErrorCode
-from scix.mcp_server import (
+from scix.mcp_runtime import (
     _NOMIC_QUERY_PREFIX,
     _RRF_K_DEFAULT,
     _SNIPPET_MAX_CHARS,

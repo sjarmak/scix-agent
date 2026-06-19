@@ -15,17 +15,16 @@ from scix.mcp_errors import ErrorCode
 from scix.mcp_handlers._common import (
     _resolve_working_set_bibcodes,
 )
-from scix.mcp_server import (
+from scix.mcp_runtime import (
     _RERANK_TOP_K_CAP,
     _coerce_year,
-    _get_default_reranker,
     _parse_filters,
-    _qdrant_tools,
     _result_to_json,
     _session_state,
     _unscoped_broad_response,
     _vector_index_names,
 )
+from scix.mcp_server import _qdrant_tools
 from scix.synthesize import MAX_WORKING_SET_BIBCODES
 
 logger = logging.getLogger("scix.mcp_server")
@@ -274,7 +273,9 @@ def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     reranker: Any = None
     # per PRD prd_cross_encoder_reranker_local.md M3: rerank only top_k <= 20
     if use_rerank and limit <= _RERANK_TOP_K_CAP:
-        reranker = _get_default_reranker()
+        # Call-time access via mcp_server so tests patching the reranker /
+        # CrossEncoderReranker on that namespace take effect (bead 2qx3).
+        reranker = _srv._get_default_reranker()
 
     result = search.hybrid_search(
         conn,

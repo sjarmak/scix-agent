@@ -11,11 +11,11 @@ import psycopg
 
 from scix import search
 from scix.mcp_errors import ErrorCode
-from scix.mcp_server import (
-    _inject_coverage_note,
+from scix.mcp_runtime import (
     _result_to_json,
     _session_state,
 )
+from scix.mcp_server import _inject_coverage_note
 
 logger = logging.getLogger("scix.mcp_server")
 

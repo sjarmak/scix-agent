@@ -327,12 +327,17 @@ def test_every_emitted_error_code_is_in_the_closed_catalog() -> None:
 
     A new code-free error return, or a typo'd raw literal, fails here.
     """
-    src = Path(mcp_server.__file__).read_text()
+    # The handlers were split out of mcp_server into the mcp_handlers
+    # subpackage (bead scix_experiments-pebe); scan the server plus every
+    # handler module so the guard follows the moved emit sites.
+    pkg_dir = Path(mcp_server.__file__).parent
+    sources = [Path(mcp_server.__file__)] + sorted((pkg_dir / "mcp_handlers").glob("*.py"))
+    src = "\n".join(p.read_text() for p in sources)
 
     referenced = set(re.findall(r"ErrorCode\.([A-Z_][A-Z0-9_]*)", src))
     unknown_refs = {name for name in referenced if not hasattr(ErrorCode, name)}
     assert not unknown_refs, (
-        f"mcp_server references ErrorCode constants that don't exist: {sorted(unknown_refs)}"
+        f"mcp_server/handlers reference ErrorCode constants that don't exist: {sorted(unknown_refs)}"
     )
     # Every referenced constant must serialize to a catalog member.
     assert {getattr(ErrorCode, name) for name in referenced} <= CATALOG
@@ -340,7 +345,7 @@ def test_every_emitted_error_code_is_in_the_closed_catalog() -> None:
     raw_literals = set(re.findall(r'"error_code"\s*:\s*"([^"]+)"', src))
     illegal = raw_literals - CATALOG
     assert not illegal, (
-        f"mcp_server emits raw error_code string literals outside the closed "
-        f"catalog: {sorted(illegal)}. Use an ErrorCode constant and add it to "
-        f"src/scix/mcp_errors.py."
+        f"mcp_server/handlers emit raw error_code string literals outside the "
+        f"closed catalog: {sorted(illegal)}. Use an ErrorCode constant and add "
+        f"it to src/scix/mcp_errors.py."
     )

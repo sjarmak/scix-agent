@@ -38,6 +38,20 @@ def _string_keys(node: ast.Dict) -> set[str]:
     return {k.value for k in node.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
 
 
+def _mcp_source_files() -> list[Path]:
+    """Every source file that can emit an MCP error envelope.
+
+    The handlers were split out of ``mcp_server`` into the ``mcp_handlers``
+    subpackage (bead scix_experiments-pebe), so the error-envelope scans must
+    follow the moved code or they silently stop guarding two-thirds of the
+    surface. Covers the server, every handler module, and the tool-spec data.
+    """
+    pkg_dir = Path(mcp_server.__file__).parent
+    files = [Path(mcp_server.__file__), pkg_dir / "mcp_tool_specs.py"]
+    files += sorted((pkg_dir / "mcp_handlers").glob("*.py"))
+    return [f for f in files if f.exists()]
+
+
 @pytest.fixture(scope="module")
 def contract() -> dict:
     return mcp_contract.build_contract()
@@ -103,18 +117,20 @@ def test_every_error_return_carries_an_error_code() -> None:
     ``test_mcp_error_envelopes.py`` (which checks emitted codes are *in* the
     closed catalog, but not that a code is present at all).
     """
-    tree = ast.parse(Path(mcp_server.__file__).read_text())
-    offenders = sorted(
-        node.lineno
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Dict)
-        and "error" in _string_keys(node)
-        and "error_code" not in _string_keys(node)
-    )
+    offenders = []
+    for path in _mcp_source_files():
+        tree = ast.parse(path.read_text())
+        offenders += [
+            f"{path.name}:{node.lineno}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Dict)
+            and "error" in _string_keys(node)
+            and "error_code" not in _string_keys(node)
+        ]
     assert not offenders, (
-        "mcp_server has error-envelope dict literals with no error_code at "
-        f"lines {offenders}. Every error return must carry an error_code from "
-        "the closed catalog (src/scix/mcp_errors.py)."
+        "MCP server/handlers have error-envelope dict literals with no "
+        f"error_code at {sorted(offenders)}. Every error return must carry an "
+        "error_code from the closed catalog (src/scix/mcp_errors.py)."
     )
 
 

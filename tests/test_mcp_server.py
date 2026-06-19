@@ -16,12 +16,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scix.mcp_server import (
-    _DEPRECATED_ALIASES,
+    _ALIAS_TRANSFORMS,
     _coerce_year,
     _dispatch_tool,
     _hnsw_index_cache,
     _hnsw_index_exists,
-    _hnsw_index_name,
     _parse_filters,
     _result_to_json,
     _session_state,
@@ -1119,7 +1118,7 @@ class TestSessionToolsRemoved:
             "get_session_summary",
             "clear_working_set",
         ]:
-            assert old_name in _DEPRECATED_ALIASES
+            assert old_name in _ALIAS_TRANSFORMS
 
 
 # ---------------------------------------------------------------------------
@@ -1157,19 +1156,19 @@ class TestDeprecatedAliases:
 
     def test_all_deprecated_aliases_log_original(self) -> None:
         """AC19: verify all deprecated aliases exist and map correctly."""
-        assert "semantic_search" in _DEPRECATED_ALIASES
-        assert "keyword_search" in _DEPRECATED_ALIASES
-        assert "get_citations" in _DEPRECATED_ALIASES
-        assert "get_references" in _DEPRECATED_ALIASES
-        assert "co_citation_analysis" in _DEPRECATED_ALIASES
-        assert "bibliographic_coupling" in _DEPRECATED_ALIASES
-        assert "entity_search" in _DEPRECATED_ALIASES
-        assert "resolve_entity" in _DEPRECATED_ALIASES
+        assert "semantic_search" in _ALIAS_TRANSFORMS
+        assert "keyword_search" in _ALIAS_TRANSFORMS
+        assert "get_citations" in _ALIAS_TRANSFORMS
+        assert "get_references" in _ALIAS_TRANSFORMS
+        assert "co_citation_analysis" in _ALIAS_TRANSFORMS
+        assert "bibliographic_coupling" in _ALIAS_TRANSFORMS
+        assert "entity_search" in _ALIAS_TRANSFORMS
+        assert "resolve_entity" in _ALIAS_TRANSFORMS
 
     def test_health_check_not_deprecated(self) -> None:
         """health_check must NOT be tagged deprecated (it is an internal tool,
         not a renamed tool)."""
-        assert "health_check" not in _DEPRECATED_ALIASES
+        assert "health_check" not in _ALIAS_TRANSFORMS
 
 
 class TestEntityProfileLegacy:
@@ -1237,17 +1236,15 @@ class TestHnswIndexGuard:
     def teardown_method(self) -> None:
         _hnsw_index_cache.clear()
 
-    def test_index_name_convention(self) -> None:
-        assert _hnsw_index_name("indus") == "idx_embed_hnsw_indus"
-        assert _hnsw_index_name("specter2") == "idx_embed_hnsw_specter2"
-
     def test_vector_index_names_includes_hnsw_and_diskann(self) -> None:
         # The dense lane is served by either the legacy HNSW index or the
-        # pgvectorscale DiskANN index; the gate must accept both.
+        # pgvectorscale DiskANN index; the gate must accept both. This also
+        # pins the per-model HNSW name convention (idx_embed_hnsw_<model>).
         assert _vector_index_names("indus") == (
             "idx_embed_hnsw_indus",
             "idx_embed_diskann_indus",
         )
+        assert _vector_index_names("specter2")[0] == "idx_embed_hnsw_specter2"
 
     def test_gate_queries_both_index_names(self) -> None:
         # Regression: after the DiskANN cutover the gate must look for the

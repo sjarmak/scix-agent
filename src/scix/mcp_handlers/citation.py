@@ -613,13 +613,3 @@ def _handle_cited_by_intent(conn: psycopg.Connection, args: dict[str, Any]) -> s
         default=str,
     )
 
-def _handle_citation_chain(conn: psycopg.Connection, args: dict[str, Any]) -> str:
-    """Legacy citation_chain direct dispatch (agent surface: citation_traverse)."""
-    max_depth = max(1, min(args.get("max_depth", 5), 5))
-    result = search.citation_chain(
-        conn,
-        args["source_bibcode"],
-        args["target_bibcode"],
-        max_depth=max_depth,
-    )
-    return _result_to_json(result)

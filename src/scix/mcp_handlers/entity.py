@@ -611,25 +611,3 @@ def _handle_entity_profile(conn: psycopg.Connection, args: dict[str, Any]) -> st
         indent=2,
         default=str,
     )
-
-def _handle_entity_context(conn: psycopg.Connection, args: dict[str, Any]) -> str:
-    """Legacy entity_context direct dispatch (agent surface: entity action=profile)."""
-    entity_id = args.get("entity_id")
-    if entity_id is None:
-        return json.dumps(
-            {
-                "error": "entity_id is required",
-                "error_code": ErrorCode.MISSING_REQUIRED_PARAMS,
-            }
-        )
-    try:
-        entity_id = int(entity_id)
-    except (TypeError, ValueError):
-        return json.dumps(
-            {
-                "error": "entity_id must be an integer",
-                "error_code": ErrorCode.INVALID_PARAM_TYPE,
-            }
-        )
-    result = search.get_entity_context(conn, entity_id)
-    return _result_to_json(result)

@@ -649,7 +649,7 @@ _TOOL_SPECS: tuple[dict[str, Any], ...] = (
         },
     ),
     # entity_context folded into entity(action='profile') (bead 9afa);
-    # the old name remains callable via _DEPRECATED_ALIASES.
+    # the old name remains callable via _ALIAS_TRANSFORMS.
     # --- S2: graph_context (merges get_paper_metrics + explore_community) ---
     dict(
         name="graph_context",

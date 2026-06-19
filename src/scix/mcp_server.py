@@ -16,7 +16,7 @@ Consolidation (v3, 2026-04-25):
     (qdrant backend out of active use), and ratified the additions of
     claim_blame, find_replications, and section_retrieval that landed
     after the original audit was written.
-    Old tool names still work via ``_DEPRECATED_ALIASES`` but return
+    Old tool names still work via ``_ALIAS_TRANSFORMS`` but return
     ``deprecated: true`` and ``use_instead`` metadata.
 
 File size (bead scix_experiments-2qx3): the pure, stateless helper layer was
@@ -97,7 +97,6 @@ from scix.mcp_runtime import (  # noqa: F401  re-export: historical patch/import
     _filters_are_scoped,
     _hnsw_index_cache,
     _hnsw_index_exists,
-    _hnsw_index_name,
     _is_unscoped_broad_query,
     _log_query,
     _LogQueryConnection,
@@ -515,46 +514,9 @@ def _set_timeout(conn: psycopg.Connection, tool_name: str) -> None:
         cur.execute(f"SET LOCAL statement_timeout = {timeout_ms}")
 
 
-# ---------------------------------------------------------------------------
-# Deprecated aliases — old tool names map to new consolidated names
-# ---------------------------------------------------------------------------
-
-_DEPRECATED_ALIASES: dict[str, str] = {
-    "semantic_search": "search",
-    "keyword_search": "search",
-    # Citation tools merged into citation_traverse (2026-04-25).
-    "citation_graph": "citation_traverse",
-    "citation_chain": "citation_traverse",
-    "get_citations": "citation_traverse",
-    "get_references": "citation_traverse",
-    "get_citation_context": "citation_traverse",
-    "co_citation_analysis": "citation_similarity",
-    "bibliographic_coupling": "citation_similarity",
-    "entity_search": "entity",
-    "resolve_entity": "entity",
-    # entity_context folded into entity(action='profile') (bead 9afa, 2026-06).
-    "entity_context": "entity",
-    # cited_by_intent + find_replications merged into forward_citations
-    # (bead 9afa, 2026-06) behind annotate='intent' | 'relation'.
-    "cited_by_intent": "forward_citations",
-    "find_replications": "forward_citations",
-    # entity_profile has a unique schema (raw extractions table rows). It
-    # is routed to a dedicated handler via _transform_deprecated_args, but
-    # use_instead points at get_paper(include_entities=true) as the modern
-    # equivalent for agents migrating off the old schema.
-    "entity_profile": "get_paper",
-    "get_paper_metrics": "graph_context",
-    "explore_community": "graph_context",
-    "document_context": "get_paper",
-    "get_openalex_topics": "get_paper",
-    "get_author_papers": "search",
-    "add_to_working_set": "get_paper",
-    "get_working_set": "find_gaps",
-    "get_session_summary": "find_gaps",
-    "clear_working_set": "find_gaps",
-    "read_paper_section": "read_paper",
-    "search_within_paper": "read_paper",
-}
+# Deprecated-alias routing (old tool name -> consolidated target + modern-tool
+# guidance) lives in the single ``_ALIAS_TRANSFORMS`` table further down, next
+# to the rewriter that consumes it.
 
 
 # ---------------------------------------------------------------------------
@@ -948,7 +910,8 @@ def call_tool(name: str, arguments: dict[str, Any]) -> str:
     log row and one trace event per call.
     """
     with _get_conn() as conn:
-        resolved_name = _DEPRECATED_ALIASES.get(name, name)
+        spec = _ALIAS_TRANSFORMS.get(name)
+        resolved_name = spec.guidance if spec is not None else name
         _set_timeout(conn, resolved_name)
         t0 = time.monotonic()
         success = True
@@ -997,13 +960,14 @@ def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) ->
     original_name = name
     use_instead: str | None = None
 
-    if name in _DEPRECATED_ALIASES:
-        use_instead = _DEPRECATED_ALIASES[name]
+    spec = _ALIAS_TRANSFORMS.get(name)
+    if spec is not None:
+        use_instead = spec.guidance
         deprecated = True
         logger.info("deprecated_alias: %s -> %s", name, use_instead)
 
         # Transform args from old format to new format
-        name, args = _transform_deprecated_args(original_name, use_instead, args)
+        name, args = _transform_deprecated_args(original_name, args)
 
     # Dispatch to the actual handler
     result_json = _dispatch_consolidated(conn, name, args)
@@ -1047,17 +1011,34 @@ class _AliasTransform:
     force-set on the args (mode/action/method/direction/annotate flags).
     ``arg_fn`` is an in-place massage for the few aliases that rename keys
     (only three need it); ``None`` for the purely declarative majority.
+
+    ``use_instead`` is the modern tool name advertised to agents in the
+    deprecation envelope. It defaults to ``target`` and only diverges for the
+    seven self-targeting passthroughs that still dispatch to their own
+    dedicated handler but point migrating agents at a different modern tool
+    (e.g. ``get_citation_context`` dispatches to itself but advertises
+    ``citation_traverse``). Folding it in here retires the parallel
+    ``_DEPRECATED_ALIASES`` map that had to be hand-synced with this table.
     """
 
     target: str
     set_args: Mapping[str, Any] = dataclasses.field(default_factory=dict)
     arg_fn: Callable[[dict[str, Any]], None] | None = None
+    use_instead: str | None = None
+
+    @property
+    def guidance(self) -> str:
+        """Modern tool name to advertise; the dispatch target unless overridden."""
+        return self.use_instead or self.target
 
 
-# Single source of truth for deprecated-alias rewriting, replacing the former
-# 24-branch if-chain that had to be kept in sync with ``_DEPRECATED_ALIASES`` by
-# hand. An entry whose ``target`` equals its key is a pure legacy passthrough
-# (the consolidated dispatcher routes it to a dedicated handler).
+# Single source of truth for deprecated-alias routing: target, forced args, any
+# key rename, AND the modern-tool guidance advertised to agents (``use_instead``,
+# defaulting to ``target``). Replaces both the former 24-branch if-chain and the
+# parallel ``_DEPRECATED_ALIASES`` map, which had to be hand-synced with this
+# table. An entry whose ``target`` equals its key is a pure legacy passthrough
+# (the consolidated dispatcher routes it to a dedicated handler); those carry an
+# explicit ``use_instead`` pointing at the modern equivalent.
 _ALIAS_TRANSFORMS: dict[str, _AliasTransform] = {
     "semantic_search": _AliasTransform("search", {"mode": "semantic"}),
     "keyword_search": _AliasTransform("search", {"mode": "keyword"}, _kw_terms_to_query),
@@ -1080,26 +1061,33 @@ _ALIAS_TRANSFORMS: dict[str, _AliasTransform] = {
     "get_openalex_topics": _AliasTransform("get_paper", {"include_entities": True}),
     "get_paper_metrics": _AliasTransform("graph_context", {"include_community": False}),
     "explore_community": _AliasTransform("graph_context", {"include_community": True}),
-    "get_author_papers": _AliasTransform("get_author_papers"),
+    "get_author_papers": _AliasTransform("get_author_papers", use_instead="search"),
     "read_paper_section": _AliasTransform("read_paper"),
     "search_within_paper": _AliasTransform("read_paper", arg_fn=_query_to_search_query),
-    "get_citation_context": _AliasTransform("get_citation_context"),
-    "add_to_working_set": _AliasTransform("add_to_working_set"),
-    "get_working_set": _AliasTransform("get_working_set"),
-    "get_session_summary": _AliasTransform("get_session_summary"),
-    "clear_working_set": _AliasTransform("clear_working_set"),
-    "entity_profile": _AliasTransform("entity_profile"),
+    "get_citation_context": _AliasTransform("get_citation_context", use_instead="citation_traverse"),
+    "add_to_working_set": _AliasTransform("add_to_working_set", use_instead="get_paper"),
+    "get_working_set": _AliasTransform("get_working_set", use_instead="find_gaps"),
+    "get_session_summary": _AliasTransform("get_session_summary", use_instead="find_gaps"),
+    "clear_working_set": _AliasTransform("clear_working_set", use_instead="find_gaps"),
+    "entity_profile": _AliasTransform("entity_profile", use_instead="get_paper"),
 }
 
 
 def _transform_deprecated_args(
-    old_name: str, new_name: str, args: dict[str, Any]
+    old_name: str, args: dict[str, Any]
 ) -> tuple[str, dict[str, Any]]:
-    """Transform arguments from old tool format to new consolidated format."""
+    """Rewrite a deprecated alias call to ``(target, new_args)``.
+
+    Copies ``args`` (callers reuse the original for logging), applies the
+    alias's optional key-rename ``arg_fn`` and forced ``set_args``, and returns
+    the consolidated target name. An unknown ``old_name`` (no transform entry)
+    is the identity transform — ``(old_name, copy-of-args)`` — though in
+    practice :func:`_dispatch_tool` only calls this for known aliases.
+    """
     new_args = dict(args)
     spec = _ALIAS_TRANSFORMS.get(old_name)
     if spec is None:
-        return new_name, new_args
+        return old_name, new_args
     if spec.arg_fn is not None:
         spec.arg_fn(new_args)
     new_args.update(spec.set_args)
@@ -1125,11 +1113,12 @@ def _dispatch_consolidated(conn: psycopg.Connection, name: str, args: dict[str, 
 
     Looks ``name`` up in :data:`_HANDLER_REGISTRY` (the single source of truth
     for tool -> handler routing) and invokes it; an unknown name returns the
-    structured ``unknown_tool`` error. Legacy/deprecated names reach here only
-    after :func:`_transform_deprecated_args` has rewritten the agent-visible
-    aliases, but several legacy names (citation_graph/_chain, the session tools,
-    entity_profile, ...) are also routed directly for in-process callers that
-    bypass the alias layer — so the registry carries them too.
+    structured ``unknown_tool`` error. Deprecated aliases reach here only after
+    :func:`_transform_deprecated_args` has rewritten them to their consolidated
+    target, so the registry holds only reachable names: the consolidated tools,
+    the self-targeting legacy passthroughs (the session tools, get_author_papers,
+    get_citation_context, entity_profile — whose ``_AliasTransform.target`` is
+    the name itself), and the hard-removed ``find_similar_by_examples`` stub.
     """
     handler = _handler_registry().get(name)
     if handler is None:
@@ -1245,19 +1234,14 @@ def _build_handler_registry() -> dict[str, Callable[[psycopg.Connection, dict[st
         "get_paper": paper._handle_get_paper,
         "read_paper": paper._handle_read_paper,
         "citation_traverse": citation._handle_citation_traverse,
-        "citation_graph": citation._handle_citation_graph,
-        "citation_chain": citation._handle_citation_chain,
         "citation_similarity": citation._handle_citation_similarity,
         "entity": entity._handle_entity,
-        "entity_context": entity._handle_entity_context,
         "graph_context": entity._handle_graph_context,
         "find_gaps": entity._handle_find_gaps,
         "temporal_evolution": search_handlers._handle_temporal_evolution,
         "facet_counts": search_handlers._handle_facet_counts,
         "claim_blame": citation._handle_claim_blame,
         "forward_citations": citation._handle_forward_citations,
-        "find_replications": citation._handle_find_replications,
-        "cited_by_intent": citation._handle_cited_by_intent,
         "claim_search": claim._handle_claim_search,
         "synthesize_findings": synthesis._handle_synthesize_findings,
         "section_retrieval": sections._handle_section_retrieval,

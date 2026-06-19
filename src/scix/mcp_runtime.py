@@ -57,11 +57,6 @@ _hnsw_index_cache: dict[str, tuple[bool, float]] = {}
 _HNSW_CACHE_TTL_MISS_SEC = 30.0
 
 
-def _hnsw_index_name(model_name: str) -> str:
-    """Return the conventional HNSW partial-index name for a given embedding model."""
-    return f"idx_embed_hnsw_{model_name}"
-
-
 def _vector_index_names(model_name: str) -> tuple[str, ...]:
     """Return the candidate ANN partial-index names for a given embedding model.
 

@@ -15,10 +15,11 @@ The contract under test (see ``mcp_server`` near ``_ALIAS_TRANSFORMS``):
   any forced ``set_args`` (mode / action / method / direction / annotate flag),
   and the three key-renaming aliases (keyword_search, entity_search,
   search_within_paper) move their old arg into the new key.
-* ``_dispatch_tool`` injects ``use_instead`` guidance from
-  ``_DEPRECATED_ALIASES`` — which for seven aliases deliberately differs from
-  the dispatch target (e.g. ``get_citation_context`` dispatches to its own
-  handler but advertises ``citation_traverse`` as the modern equivalent).
+* ``_dispatch_tool`` injects ``use_instead`` guidance from each transform's
+  ``guidance`` (the ``use_instead`` field, defaulting to ``target``) — which
+  for seven aliases deliberately differs from the dispatch target (e.g.
+  ``get_citation_context`` dispatches to its own handler but advertises
+  ``citation_traverse`` as the modern equivalent).
 * An unknown tool name returns the structured ``unknown_tool`` error envelope.
 """
 
@@ -34,7 +35,6 @@ from scix import mcp_server
 from scix.mcp_errors import ErrorCode
 from scix.mcp_server import (
     _ALIAS_TRANSFORMS,
-    _DEPRECATED_ALIASES,
     _dispatch_consolidated,
     _dispatch_tool,
     _transform_deprecated_args,
@@ -150,37 +150,25 @@ _TRANSFORM_CASES: list[tuple[str, dict[str, Any], str, dict[str, Any]]] = [
 
 
 # ---------------------------------------------------------------------------
-# Structural invariants — the two tables must stay in lockstep.
+# Structural invariants — the single alias table is the source of truth.
 # ---------------------------------------------------------------------------
-
-
-def test_alias_tables_have_identical_keys() -> None:
-    """Every deprecated alias must have exactly one transform entry.
-
-    A name in ``_DEPRECATED_ALIASES`` but not ``_ALIAS_TRANSFORMS`` would be
-    dispatched straight to its ``use_instead`` target with un-rewritten args
-    (``_transform_deprecated_args`` returns the input unchanged when ``spec is
-    None``); a name in ``_ALIAS_TRANSFORMS`` but not ``_DEPRECATED_ALIASES``
-    would never reach the alias path at all.
-    """
-    assert set(_DEPRECATED_ALIASES) == set(_ALIAS_TRANSFORMS)
 
 
 def test_every_alias_is_covered_by_this_module() -> None:
     """Guard against silent drift: a new alias must add a transform case here."""
-    assert {alias for alias, *_ in _TRANSFORM_CASES} == set(_DEPRECATED_ALIASES)
+    assert {alias for alias, *_ in _TRANSFORM_CASES} == set(_ALIAS_TRANSFORMS)
 
 
 def test_passthrough_aliases_advertise_a_different_modern_tool() -> None:
     """The seven aliases that dispatch to their own dedicated handler
-    (``target == alias``) must still advertise a *different* modern tool in
-    ``use_instead`` — that divergence is the whole reason both tables exist.
-    A refactor collapsing ``use_instead`` onto the dispatch target would be a
-    real behaviour change, so pin it explicitly rather than only via the
-    per-alias dispatch assertions below."""
+    (``target == alias``) must still advertise a *different* modern tool via
+    ``guidance`` (the ``use_instead`` override). That divergence is why the
+    field exists: a refactor collapsing ``use_instead`` onto the dispatch
+    target would be a real behaviour change, so pin it explicitly rather than
+    only via the per-alias dispatch assertions below."""
     passthrough = {a for a, spec in _ALIAS_TRANSFORMS.items() if spec.target == a}
     assert passthrough, "expected some self-targeting passthrough aliases"
-    assert all(_DEPRECATED_ALIASES[a] != a for a in passthrough)
+    assert all(_ALIAS_TRANSFORMS[a].guidance != a for a in passthrough)
 
 
 # ---------------------------------------------------------------------------
@@ -196,8 +184,7 @@ def test_passthrough_aliases_advertise_a_different_modern_tool() -> None:
 def test_transform_rewrites_to_target_and_args(
     alias: str, input_args: dict[str, Any], expected_target: str, expected_args: dict[str, Any]
 ) -> None:
-    use_instead = _DEPRECATED_ALIASES[alias]
-    target, new_args = _transform_deprecated_args(alias, use_instead, dict(input_args))
+    target, new_args = _transform_deprecated_args(alias, dict(input_args))
     assert target == expected_target
     assert new_args == expected_args
 
@@ -206,14 +193,14 @@ def test_transform_does_not_mutate_input_args() -> None:
     """The rewriter must copy: callers reuse the original args dict for logging."""
     original = {"terms": "black holes", "limit": 5}
     snapshot = dict(original)
-    _transform_deprecated_args("keyword_search", "search", original)
+    _transform_deprecated_args("keyword_search", original)
     assert original == snapshot
 
 
 def test_transform_unknown_alias_passes_through_unchanged() -> None:
-    """No transform entry -> (new_name, copy-of-args), no rewriting applied."""
-    target, new_args = _transform_deprecated_args("not_an_alias", "search", {"query": "x"})
-    assert target == "search"
+    """No transform entry -> identity (old_name, copy-of-args), no rewriting."""
+    target, new_args = _transform_deprecated_args("not_an_alias", {"query": "x"})
+    assert target == "not_an_alias"
     assert new_args == {"query": "x"}
 
 
@@ -224,31 +211,29 @@ def test_transform_unknown_alias_passes_through_unchanged() -> None:
 
 
 def test_kw_terms_to_query_keeps_existing_query_when_terms_absent() -> None:
-    _, args = _transform_deprecated_args("keyword_search", "search", {"query": "existing"})
+    _, args = _transform_deprecated_args("keyword_search", {"query": "existing"})
     assert args["query"] == "existing"
 
 
 def test_kw_terms_to_query_defaults_to_empty_when_both_absent() -> None:
-    _, args = _transform_deprecated_args("keyword_search", "search", {})
+    _, args = _transform_deprecated_args("keyword_search", {})
     assert args["query"] == ""
 
 
 def test_kw_terms_wins_over_query_when_both_present() -> None:
-    _, args = _transform_deprecated_args("keyword_search", "search", {"terms": "t", "query": "q"})
+    _, args = _transform_deprecated_args("keyword_search", {"terms": "t", "query": "q"})
     assert args["query"] == "t"
     assert "terms" not in args
 
 
 def test_entity_name_does_not_clobber_explicit_query() -> None:
     """entity_search keeps an explicit ``query``; ``entity_name`` is left as-is."""
-    _, args = _transform_deprecated_args(
-        "entity_search", "entity", {"entity_name": "e", "query": "q"}
-    )
+    _, args = _transform_deprecated_args("entity_search", {"entity_name": "e", "query": "q"})
     assert args["query"] == "q"
 
 
 def test_query_to_search_query_noop_when_query_absent() -> None:
-    _, args = _transform_deprecated_args("search_within_paper", "read_paper", {"bibcode": "B"})
+    _, args = _transform_deprecated_args("search_within_paper", {"bibcode": "B"})
     assert "search_query" not in args
 
 
@@ -294,7 +279,7 @@ def test_dispatch_tool_routes_alias_to_target_with_transformed_args(
     data = json.loads(out)
     assert data["deprecated"] is True
     assert data["original_tool"] == alias
-    assert data["use_instead"] == _DEPRECATED_ALIASES[alias]
+    assert data["use_instead"] == _ALIAS_TRANSFORMS[alias].guidance
 
 
 def test_dispatch_tool_does_not_mutate_caller_args(

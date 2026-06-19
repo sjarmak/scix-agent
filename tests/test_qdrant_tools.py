@@ -111,7 +111,7 @@ class TestRetiredToolDispatch:
 
         # Use _dispatch_consolidated directly — _dispatch_tool runs the
         # alias layer, but find_similar_by_examples is NOT in
-        # _DEPRECATED_ALIASES (it was hard-removed, not renamed).
+        # _ALIAS_TRANSFORMS (it was hard-removed, not renamed).
         out = _dispatch_consolidated(
             None,  # conn unused for the retired-tool branch
             "find_similar_by_examples",

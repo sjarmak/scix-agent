@@ -9,7 +9,7 @@ This pass:
    as full first-class tools (they were missed by the original audit).
 
 Final active tool count is 15. The deprecated names ``citation_graph``
-and ``citation_chain`` continue to work via the ``_DEPRECATED_ALIASES``
+and ``citation_chain`` continue to work via the ``_ALIAS_TRANSFORMS``
 shim and arrive at the new handler with the appropriate ``mode``
 injected.
 """
@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scix.mcp_server import (
-    _DEPRECATED_ALIASES,
+    _ALIAS_TRANSFORMS,
     EXPECTED_TOOLS,
     _dispatch_consolidated,
     _dispatch_tool,
@@ -354,10 +354,10 @@ class TestCitationTraverseStructuredValidation:
 
 class TestDeprecatedCitationAliases:
     def test_citation_graph_in_deprecated_aliases(self) -> None:
-        assert _DEPRECATED_ALIASES["citation_graph"] == "citation_traverse"
+        assert _ALIAS_TRANSFORMS["citation_graph"].target == "citation_traverse"
 
     def test_citation_chain_in_deprecated_aliases(self) -> None:
-        assert _DEPRECATED_ALIASES["citation_chain"] == "citation_traverse"
+        assert _ALIAS_TRANSFORMS["citation_chain"].target == "citation_traverse"
 
     @patch("scix.mcp_server._log_query")
     @patch("scix.search.get_citations")
@@ -446,7 +446,7 @@ class TestFindSimilarByExamplesRetired:
 
     def test_not_in_deprecated_aliases(self) -> None:
         """find_similar_by_examples is hard-removed, not renamed."""
-        assert "find_similar_by_examples" not in _DEPRECATED_ALIASES
+        assert "find_similar_by_examples" not in _ALIAS_TRANSFORMS
 
     def test_not_in_expected_tool_set(self) -> None:
         assert "find_similar_by_examples" not in _expected_tool_set()
@@ -490,17 +490,15 @@ class TestListToolsCount:
         """Bead 9afa: forward_citations replaces the two forward-citation tools;
         entity_context is folded into entity. The retired names live only as
         deprecated aliases, not in EXPECTED_TOOLS."""
-        from scix.mcp_server import _DEPRECATED_ALIASES
-
         assert "forward_citations" in EXPECTED_TOOLS
         assert "claim_blame" in EXPECTED_TOOLS
         # Retired surface names: gone from EXPECTED_TOOLS, present as aliases.
         for retired in ("cited_by_intent", "find_replications", "entity_context"):
             assert retired not in EXPECTED_TOOLS
-            assert retired in _DEPRECATED_ALIASES
-        assert _DEPRECATED_ALIASES["cited_by_intent"] == "forward_citations"
-        assert _DEPRECATED_ALIASES["find_replications"] == "forward_citations"
-        assert _DEPRECATED_ALIASES["entity_context"] == "entity"
+            assert retired in _ALIAS_TRANSFORMS
+        assert _ALIAS_TRANSFORMS["cited_by_intent"].guidance == "forward_citations"
+        assert _ALIAS_TRANSFORMS["find_replications"].guidance == "forward_citations"
+        assert _ALIAS_TRANSFORMS["entity_context"].guidance == "entity"
         # find_similar_by_examples remains retired (no alias, hard-removed).
         assert "find_similar_by_examples" not in EXPECTED_TOOLS
 
@@ -541,7 +539,7 @@ class TestListToolsCount:
 # ---------------------------------------------------------------------------
 # Bead scix_experiments-4c5v: no LIVE tool description should reference the
 # retired ``citation_graph`` tool name. The deprecation alias entry in
-# ``_DEPRECATED_ALIASES`` and internal handler names (``_handle_citation_graph``)
+# ``_ALIAS_TRANSFORMS`` and internal handler names (``_handle_citation_graph``)
 # are infrastructure, not agent-visible surface, and are explicitly allowed.
 # ---------------------------------------------------------------------------
 

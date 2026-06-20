@@ -71,13 +71,13 @@ if str(_REPO_ROOT / "scripts") not in sys.path:
 
 # Reuse the gold loader + metric primitives — single source of truth.
 from eval_retrieval_50q import (  # noqa: E402  (path injected above)
-    BUCKETS,
     RECALL_K,
     RRF_K,
     EvalQuery,
     _dedupe_preserving_order,
     aggregate_metrics,
     load_queries,
+    recall_at_k,
     rrf_fuse_bibcodes,
     score_query,
 )
@@ -261,6 +261,18 @@ def bm25_lane(conn: Any, query_text: str, *, pool: int) -> Lane:
 # ---------------------------------------------------------------------------
 
 
+def _mean_recall(fused_by_query: list[tuple[EvalQuery, list[str]]], k: int) -> float:
+    """Mean recall@k over (query, fused) pairs, skipping empty-gold queries.
+
+    ``score_query`` only reports recall at the fixed ``RECALL_K`` cutoff; the
+    recall gold set is graded at the shallower 10/20 cutoffs the bead asks for,
+    so we recompute recall here from the same ``recall_at_k`` primitive.
+    """
+    vals = [recall_at_k(fused, list(q.gold_bibcodes), k) for q, fused in fused_by_query]
+    scored = [v for v in vals if v is not None]
+    return sum(scored) / len(scored) if scored else 0.0
+
+
 def evaluate_config(
     config: FusionConfig,
     lanes_by_query: list[tuple[EvalQuery, Lane, Lane]],
@@ -268,18 +280,26 @@ def evaluate_config(
     k: int,
 ) -> dict[str, Any]:
     """Apply one fusion config across all queries and aggregate metrics."""
-    per_query: list[tuple[EvalQuery, dict[str, float | None]]] = []
+    scored: list[tuple[EvalQuery, dict[str, float | None]]] = []
+    fused_by_query: list[tuple[EvalQuery, list[str]]] = []
     for q, dense, bm25 in lanes_by_query:
         try:
             fused = config.run(dense, bm25)
         except Exception:
             logger.exception("fusion %s failed on %r — scoring empty", config.name, q.query)
             fused = []
-        per_query.append((q, score_query(fused, list(q.gold_bibcodes), k=k)))
-    overall = aggregate_metrics([row for _, row in per_query])
+        scored.append((q, score_query(fused, list(q.gold_bibcodes), k=k)))
+        fused_by_query.append((q, fused))
+    overall = aggregate_metrics([row for _, row in scored])
+    overall["recall_at_10"] = _mean_recall(fused_by_query, 10)
+    overall["recall_at_20"] = _mean_recall(fused_by_query, 20)
+    # Bucket the report by whatever buckets the gold set actually uses (the 50q
+    # set has four; the 1200q recall set has one, ``recall_decile``) so the
+    # per-bucket table never renders rows for absent buckets.
+    buckets_present = _dedupe_preserving_order(q.bucket for q, _ in scored)
     by_bucket = {
-        bucket: aggregate_metrics([row for q, row in per_query if q.bucket == bucket])
-        for bucket in BUCKETS
+        bucket: aggregate_metrics([row for q, row in scored if q.bucket == bucket])
+        for bucket in buckets_present
     }
     return {"overall": overall, "by_bucket": by_bucket}
 
@@ -335,7 +355,7 @@ def render_markdown(
     lines.append("# Fusion-calibration sweep — v1")
     lines.append("")
     lines.append(f"- Gold set: `{queries_path}` ({n_queries} queries)")
-    lines.append(f"- nDCG/MRR cutoff: {k}; Recall cutoff: {RECALL_K}")
+    lines.append(f"- nDCG/MRR cutoff: {k}; Recall cutoffs: 10, 20, {RECALL_K}")
     lines.append(
         "- Lanes: INDUS dense (Qdrant, ADR-013) vs combined PG BM25 "
         "(title+abstract ⊕ body, RRF). READ-ONLY."
@@ -343,14 +363,18 @@ def render_markdown(
     lines.append("")
     lines.append("## Overall (ranked by nDCG@10)")
     lines.append("")
-    lines.append("| Fusion config | nDCG@10 | MRR@10 | Recall@50 | ΔnDCG vs dense_only |")
-    lines.append("|---|---|---|---|---|")
+    lines.append(
+        "| Fusion config | nDCG@10 | MRR@10 | Recall@10 | Recall@20 | Recall@50 | "
+        "ΔnDCG vs dense_only |"
+    )
+    lines.append("|---|---|---|---|---|---|---|")
     for name, block in rows:
         o = block["overall"]
         delta = float(o.get("ndcg_at_10", 0.0)) - dense_ndcg
         lines.append(
             f"| {name} | {_fmt(o.get('ndcg_at_10', 0.0))} | "
-            f"{_fmt(o.get('mrr_at_10', 0.0))} | {_fmt(o.get('recall_at_50', 0.0))} | "
+            f"{_fmt(o.get('mrr_at_10', 0.0))} | {_fmt(o.get('recall_at_10', 0.0))} | "
+            f"{_fmt(o.get('recall_at_20', 0.0))} | {_fmt(o.get('recall_at_50', 0.0))} | "
             f"{delta:+.4f} |"
         )
     lines.append("")
@@ -404,7 +428,7 @@ def render_markdown(
     lines.append("")
     lines.append("| Bucket | dense_only | " + headline_name + " |")
     lines.append("|---|---|---|")
-    for bucket in BUCKETS:
+    for bucket in headline.get("by_bucket", {}):
         d = float(
             results.get("dense_only", {})
             .get("by_bucket", {})

@@ -393,18 +393,19 @@ def render_markdown(
     lines.append("## Verdict")
     lines.append("")
     if not dense_dominates:
+        headline_ndcg = float(headline["overall"].get("ndcg_at_10", 0.0))
         lines.append(
             f"**Premise does NOT reproduce on this gold set.** dense_only nDCG@10 "
-            f"{_fmt(dense_ndcg)} is *below* bm25_only {_fmt(bm25_ndcg)}, so the "
+            f"{_fmt(dense_ndcg)} is *below* bm25_only {_fmt(bm25_ndcg)} on "
+            f"`{queries_path}` ({n_queries} queries), so the "
             f'"naive RRF hurts top-rank vs dense-alone" regime — which assumes a '
-            f"dominant dense lane — does not hold here. Any hybrid that beats "
-            f"dense-alone is merely outrunning a weak dense lane, NOT a defensible "
-            f"paper number. A transferable fusion result needs a dense-dominant "
-            f"instrument (e.g. `eval/recall_gold_v1.jsonl`, 1200q decile recall); "
-            f"this 50q curated set has documented findability gaps and cannot "
-            f"answer the question. Best raw config here is `{headline_name}` at "
-            f"nDCG@10 {_fmt(headline['overall'].get('ndcg_at_10', 0.0))} — report "
-            f"as diagnostic only."
+            f"dominant dense lane — does not hold here. The dense lane is not "
+            f"dominant on this set, so any hybrid lift over dense-alone partly "
+            f"reflects outrunning a non-dominant dense lane rather than a clean "
+            f"top-rank fusion gain. Best config here is `{headline_name}` at "
+            f"nDCG@10 {_fmt(headline_ndcg)} (+{_fmt(headline_ndcg - dense_ndcg)} "
+            f"over dense-alone); report the hybrid number with that caveat, not "
+            f"as a dense-dominant result."
         )
     elif beats:
         gain = beats[0][1]

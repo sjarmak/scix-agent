@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from scix import mcp_server
 from scix.db import get_connection
+from scix.mcp_handlers.entity import _VALID_ENTITY_TYPES as _SEARCHABLE_ENTITY_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -484,35 +485,6 @@ _STOPWORDS: frozenset[str] = frozenset(
     }
 )
 
-# Keyword → entity_type map used by /viz/api/demo/disambig. Pure lookup —
-# mechanical routing, no semantic classification.
-_ENTITY_TYPE_HINTS: dict[str, str] = {
-    "telescope": "instruments",
-    "telescopes": "instruments",
-    "instrument": "instruments",
-    "instruments": "instruments",
-    "jwst": "instruments",
-    "hst": "instruments",
-    "chandra": "instruments",
-    "spitzer": "instruments",
-    "dataset": "datasets",
-    "datasets": "datasets",
-    "catalog": "datasets",
-    "catalogs": "datasets",
-    "survey": "datasets",
-    "method": "methods",
-    "methods": "methods",
-    "algorithm": "methods",
-    "algorithms": "methods",
-    "pipeline": "methods",
-    "model": "methods",
-    "material": "materials",
-    "materials": "materials",
-    "alloy": "materials",
-    "compound": "materials",
-}
-
-
 def _call_mcp(name: str, arguments: dict) -> tuple[dict, float]:
     """Invoke an MCP tool and return ``(parsed_result, latency_ms)``.
 
@@ -596,13 +568,25 @@ def _concept_terms(titles: list[str], *, fallback_query: str) -> list[str]:
     return [term for term, _ in ranked[:2]]
 
 
-def _guess_entity_type(query: str) -> str:
-    """Map free-text to ``{instruments,datasets,methods,materials}``; default instruments."""
-    lowered = query.lower()
-    for token, bucket in _ENTITY_TYPE_HINTS.items():
-        if token in lowered:
-            return bucket
-    return "instruments"
+def _searchable_entity_type(candidates: list[dict]) -> str | None:
+    """Pick the typed-search bucket from already-resolved entity candidates.
+
+    ``entity(action='resolve')`` returns candidates carrying ``entity_type``
+    straight from the entity graph (already sorted by descending confidence),
+    so type selection is the graph's classification rather than a keyword
+    guess off the raw query. ``entity(action='search')`` only accepts the four
+    extraction-backed containment buckets (:data:`_SEARCHABLE_ENTITY_TYPES`),
+    so we return the highest-confidence candidate whose type is one of those —
+    or ``None`` when no candidate maps to a searchable bucket, in which case
+    the caller skips the typed-search step entirely.
+    """
+    for cand in candidates:
+        if not isinstance(cand, dict):
+            continue
+        etype = cand.get("entity_type")
+        if isinstance(etype, str) and etype in _SEARCHABLE_ENTITY_TYPES:
+            return etype
+    return None
 
 
 def _record_step(
@@ -866,7 +850,8 @@ def demo_methods(payload: DemoSearchRequest) -> dict:
 def demo_disambig(payload: DemoSearchRequest) -> dict:
     """Entity-disambiguation scenario.
 
-    Pipeline: ``entity(resolve)`` → ``entity(search)`` → ``entity_context``
+    Pipeline: ``entity(resolve)`` → ``entity(search)`` (only when the resolved
+    entity_type is one of the typed-search buckets) → ``entity_context``
     → ``search(filtered by entity_ids)`` → optional unfiltered ``search``
     fallback (fires only when the entity filter zeroes out, common for
     newer instruments with sparse entity coverage) → ``graph_context×3``
@@ -879,7 +864,6 @@ def demo_disambig(payload: DemoSearchRequest) -> dict:
 
     t_start = time.monotonic()
     steps: list[dict] = []
-    entity_type = _guess_entity_type(query)
 
     # 1 — resolve.
     resolve_args: dict = {"action": "resolve", "query": query, "fuzzy": True}
@@ -901,29 +885,36 @@ def demo_disambig(payload: DemoSearchRequest) -> dict:
         error=_error_of(resolved_res),
     )
 
-    # 2 — typed entity search.
-    type_args: dict = {
-        "action": "search",
-        "query": query,
-        "entity_type": entity_type,
-        "limit": 10,
-    }
-    typed_res, ms = _call_mcp("entity", type_args)
-    typed_candidates = typed_res.get("candidates") if isinstance(typed_res, dict) else None
-    if isinstance(typed_candidates, list):
-        for c in typed_candidates:
-            if isinstance(c, dict) and isinstance(c.get("entity_id"), int):
-                eid = int(c["entity_id"])
-                if eid not in resolved_ids:
-                    resolved_ids.append(eid)
-    _record_step(
-        steps,
-        tool="entity",
-        args={"action": "search", "entity_type": entity_type, "query": query[:120]},
-        bibcodes=[],
-        latency_ms=ms,
-        error=_error_of(typed_res),
-    )
+    # entity_type is the entity graph's own classification of what the query
+    # resolved to — not a keyword guess off the raw text. None means no
+    # resolved candidate fell into a typed-search bucket, so step 2 is skipped.
+    entity_type = _searchable_entity_type(resolved_candidates)
+
+    # 2 — typed entity search (only when the graph classified the query into a
+    # searchable bucket; otherwise there is nothing meaningful to type-search).
+    if entity_type is not None:
+        type_args: dict = {
+            "action": "search",
+            "query": query,
+            "entity_type": entity_type,
+            "limit": 10,
+        }
+        typed_res, ms = _call_mcp("entity", type_args)
+        typed_candidates = typed_res.get("candidates") if isinstance(typed_res, dict) else None
+        if isinstance(typed_candidates, list):
+            for c in typed_candidates:
+                if isinstance(c, dict) and isinstance(c.get("entity_id"), int):
+                    eid = int(c["entity_id"])
+                    if eid not in resolved_ids:
+                        resolved_ids.append(eid)
+        _record_step(
+            steps,
+            tool="entity",
+            args={"action": "search", "entity_type": entity_type, "query": query[:120]},
+            bibcodes=[],
+            latency_ms=ms,
+            error=_error_of(typed_res),
+        )
 
     # 3 — entity_context on the top candidate.
     if resolved_ids:

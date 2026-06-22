@@ -2582,14 +2582,32 @@ def lit_review(
     seed_bibs = [p["bibcode"] for p in seeds if p.get("bibcode")]
 
     # ---- Step 2: citation expansion ----------------------------------------
+    # Each per-seed citation lane runs inside a savepoint (conn.transaction) so
+    # a statement_timeout (QueryCanceled) rolls back to the savepoint without
+    # leaving the outer transaction InFailedSqlTransaction — which would poison
+    # every later query in this lit_review call (the structural-characterization
+    # query below, and downstream tool calls sharing the connection). Mirrors
+    # the alias / body-BM25 lanes in hybrid_search (beads wzqz/uq28). Only
+    # QueryCanceled is caught: any other psycopg.Error — notably a class-25
+    # tx-abort — propagates rather than being silently swallowed.
     expanded: set[str] = set()
     if expansion_seeds and expand_per_seed:
         for bib in seed_bibs[:expansion_seeds]:
             for fn in (get_references, get_citations):
                 try:
-                    cit = fn(conn, bib, limit=expand_per_seed)
-                except Exception:
-                    # Skip missing / error rows; lit_review is best-effort.
+                    with conn.transaction():
+                        cit = fn(conn, bib, limit=expand_per_seed)
+                except psycopg.errors.QueryCanceled:
+                    # Recoverable per-lane statement_timeout: the savepoint
+                    # rolled back cleanly, so the outer transaction is intact
+                    # and later seeds / lanes are safe to run. lit_review is
+                    # best-effort, so drop just this lane and continue.
+                    logger.warning(
+                        "Citation expansion (%s) timed out for %r; dropping lane",
+                        fn.__name__,
+                        bib,
+                        exc_info=True,
+                    )
                     continue
                 for p in cit.papers:
                     b = p.get("bibcode")

@@ -39,6 +39,7 @@ from scix.search import (
     get_paper,
     hybrid_search,
     lexical_search,
+    lit_review,
     rrf_fuse,
     temporal_evolution,
     vector_search,
@@ -696,6 +697,95 @@ class TestHybridSearchLaneErrorHandling:
             result = hybrid_search(conn, "dark matter")
 
         assert "dropped_lanes" not in result.metadata
+
+
+class TestLitReviewCitationExpansionErrorHandling:
+    """otsm (DEEP_AUDIT A1): the citation-expansion loop in lit_review must wrap
+    each get_references/get_citations call in a savepoint and catch only a
+    recoverable QueryCanceled (statement_timeout) — dropping just that lane.
+    Any other psycopg.Error (e.g. a class-25 tx-abort) must propagate rather
+    than be swallowed by a bare ``except Exception``, which would let a poisoned
+    connection silently degrade every later query in the same call."""
+
+    @staticmethod
+    def _seed_result() -> SearchResult:
+        # Two seeds so the expansion loop iterates; bibcodes drive the working set.
+        return SearchResult(
+            papers=[{"bibcode": "2024ApJ...1A"}, {"bibcode": "2024ApJ...2B"}],
+            total=2,
+            timing_ms={"query_ms": 1.0},
+        )
+
+    @staticmethod
+    def _empty_conn() -> object:
+        """A MagicMock connection whose savepoints don't suppress exceptions and
+        whose Step 4-6 cursors return empty result sets so lit_review can finish."""
+        from unittest.mock import MagicMock
+
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.__enter__ = MagicMock(return_value=cur)
+        cur.__exit__ = MagicMock(return_value=False)
+        cur.fetchall.return_value = []
+        cur.fetchone.return_value = (0,)
+        conn.cursor.return_value = cur
+        # conn.transaction() is a MagicMock context manager; its default __exit__
+        # returns False, so a QueryCanceled raised inside it propagates to our
+        # except clause rather than being silently suppressed.
+        return conn
+
+    def test_query_canceled_lane_is_dropped_and_review_completes(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from unittest.mock import MagicMock, patch
+
+        conn = self._empty_conn()
+
+        def _timeout(*args: object, **kwargs: object) -> object:
+            raise psycopg.errors.QueryCanceled("statement timeout")
+
+        # __name__ mirrors the real function attribute the warning log reads.
+        refs = MagicMock(side_effect=_timeout, __name__="get_references")
+        expansion = SearchResult(
+            papers=[{"bibcode": "2020ApJ...9X", "year": 2020}], total=1, timing_ms={}
+        )
+        cites = MagicMock(return_value=expansion, __name__="get_citations")
+
+        with (
+            patch("scix.search.hybrid_search", return_value=self._seed_result()),
+            patch("scix.search.get_references", refs),
+            patch("scix.search.get_citations", cites),
+            caplog.at_level(logging.WARNING, logger="scix.search"),
+        ):
+            result = lit_review(conn, "dark matter", expansion_seeds=1, expand_per_seed=5)
+
+        # The references lane timed out and was dropped, but lit_review still
+        # returns: seeds intact, the surviving citations lane folded in, and the
+        # drop logged at WARNING.
+        ws = result.metadata["working_set_bibcodes"]
+        assert "2024ApJ...1A" in ws
+        assert "2020ApJ...9X" in ws  # from the citations lane that survived
+        assert "timed out" in caplog.text
+
+    def test_tx_abort_in_expansion_propagates(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        conn = self._empty_conn()
+
+        def _abort(*args: object, **kwargs: object) -> object:
+            # Class-25 tx-abort: the outer connection is poisoned. A bare
+            # ``except Exception`` would swallow this and let every later query
+            # in the call fail silently.
+            raise psycopg.errors.InFailedSqlTransaction("tx aborted")
+
+        refs = MagicMock(side_effect=_abort, __name__="get_references")
+
+        with (
+            patch("scix.search.hybrid_search", return_value=self._seed_result()),
+            patch("scix.search.get_references", refs),
+            pytest.raises(psycopg.errors.InFailedSqlTransaction),
+        ):
+            lit_review(conn, "dark matter", expansion_seeds=1, expand_per_seed=5)
 
 
 class TestScoreSectionsTsRank:

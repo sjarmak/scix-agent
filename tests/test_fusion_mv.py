@@ -80,6 +80,51 @@ class TestMigrationFileText:
 
 
 # ---------------------------------------------------------------------------
+# No-DB unit checks for the extracted SQL constant
+# ---------------------------------------------------------------------------
+
+
+class _RecordingCursor:
+    """Minimal cursor stub that records the SQL passed to ``execute``."""
+
+    def __init__(self) -> None:
+        self.executed: list[str] = []
+
+    def __enter__(self) -> "_RecordingCursor":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def execute(self, sql: str, params: object = None) -> None:
+        self.executed.append(sql)
+
+
+class _RecordingConn:
+    """Connection stub exposing only the surface ``mark_dirty`` touches."""
+
+    def __init__(self) -> None:
+        self.cursor_obj = _RecordingCursor()
+
+    def cursor(self) -> _RecordingCursor:
+        return self.cursor_obj
+
+
+class TestMarkDirtySql:
+    def test_constant_is_an_upsert(self) -> None:
+        sql = fusion_mv._MARK_DIRTY_SQL
+        assert "INSERT INTO fusion_mv_state" in sql
+        assert "ON CONFLICT (id) DO UPDATE SET dirty = true" in sql
+
+    def test_caller_conn_branch_uses_shared_constant(self) -> None:
+        conn = _RecordingConn()
+        fusion_mv.mark_dirty(conn)
+        # The conn-supplied branch returns early; it must issue exactly the
+        # shared constant and nothing else.
+        assert conn.cursor_obj.executed == [fusion_mv._MARK_DIRTY_SQL]
+
+
+# ---------------------------------------------------------------------------
 # DB-backed integration tests (require SCIX_TEST_DSN)
 # ---------------------------------------------------------------------------
 

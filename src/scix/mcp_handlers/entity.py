@@ -338,8 +338,16 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                 p["precision_band"] = precision_band(pe)
             except Exception:
                 # Quality profile is best-effort; never break the response
-                # on a profile lookup failure.
-                pass
+                # on a profile lookup failure — but leave a trace so a
+                # regression that silently drops the fields is diagnosable.
+                logger.debug(
+                    "precision profile lookup failed for entity_id=%s "
+                    "(entity_type=%r, source=%r); omitting precision fields",
+                    entity_id,
+                    etype,
+                    esrc,
+                    exc_info=True,
+                )
             if entity_type_val is None:
                 entity_type_val = etype
 

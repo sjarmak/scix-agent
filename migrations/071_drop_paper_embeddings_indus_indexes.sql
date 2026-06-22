@@ -1,0 +1,53 @@
+-- Migration 071: Drop the INDUS HNSW indexes on paper_embeddings (ADR-015 Stage 1)
+--
+-- ADR: docs/ADR/015_offload_drop_paper_embeddings_indus.md
+-- PRD: docs/prd/qdrant_nas_migration.md (MH-17 day-31 decommission; this is the
+--      never-authored "058_drop_paper_embeddings_indus_indexes.sql" the PRD names —
+--      slot 058 on disk is correction_events, so it lands here as 071).
+--
+-- WHAT THIS DOES
+-- --------------
+-- Drops the two INDUS-only partial HNSW indexes:
+--   * idx_embed_hnsw_indus     — vector_cosine_ops on (embedding::vector(768))  (~120 GB, ADR-013)
+--   * idx_embed_hnsw_indus_hv  — halfvec_cosine_ops on embedding_hv             (migration 054)
+-- Both carry WHERE model_name='indus', so the pilot-model indexes
+-- (idx_embed_hnsw_nomic, idx_embed_hnsw_specter2) and ALL rows — including the
+-- INDUS rows — are untouched. DROP INDEX unlinks the index relation files at
+-- commit: the space returns to the OS IMMEDIATELY. No VACUUM FULL, no pg_repack,
+-- no ~450 GB-free precondition (that ADR-011 caveat applies to in-table
+-- DROP COLUMN/DELETE reclaim — i.e. ADR-015 Stage 2 — NOT to this index drop).
+--
+-- WHY DROP INDEXES, NOT THE TABLE OR ROWS
+-- ---------------------------------------
+-- paper_embeddings is multi-model and the INDUS rows remain (a) the ADR-013
+-- rollback source of truth (rebuild-from-PG = 3.2 h) and (b) the migration-070
+-- outbox source. Keeping the rows preserves rollback; dropping just the indexes
+-- frees the dominant disk consumer. Row/column reclaim is the later, separately
+-- gated Stage 2 (see ADR-015).
+--
+-- PRECONDITIONS (operator-verified before applying — DO NOT APPLY BLINDLY)
+-- -----------------------------------------------------------------------
+--   1. Audit green: `scix-batch python scripts/audit_paper_embeddings.py
+--      --allow-prod` reports VERDICT READY — i.e. PG indus row count == Qdrant
+--      `scix_indus_v2_papers_s1` points_count (derived cache covers the source).
+--   2. Soak satisfied: ≥30 days since the 2026-06-11 ADR-013 cutover
+--      (clears 2026-07-11), OR a documented evidence-based early-retirement
+--      sign-off per feedback_no_destructive_cleanup_without_evidence.md.
+--   3. Acknowledged: after this runs, pgvector rollback requires REBUILDING the
+--      index from the (retained) rows before the env-flag flip is meaningful —
+--      rollback degrades from "instant" to "rebuild-then-rollback". See the
+--      ADR-015 Rollback Plan for the exact CREATE INDEX CONCURRENTLY recipe.
+--
+-- LOCKING
+-- -------
+-- DROP INDEX CONCURRENTLY takes only a SHARE UPDATE EXCLUSIVE lock and cannot
+-- run inside a transaction block. Apply with autocommit, e.g.:
+--   psql "$SCIX_DSN" -v ON_ERROR_STOP=1 -f migrations/071_drop_paper_embeddings_indus_indexes.sql
+-- (Do NOT wrap in BEGIN/COMMIT.) If a drop is interrupted it is safely
+-- re-runnable: IF EXISTS makes it idempotent.
+--
+-- IDEMPOTENCY: DROP INDEX CONCURRENTLY IF EXISTS.
+
+DROP INDEX CONCURRENTLY IF EXISTS idx_embed_hnsw_indus_hv;
+
+DROP INDEX CONCURRENTLY IF EXISTS idx_embed_hnsw_indus;

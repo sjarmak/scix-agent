@@ -162,20 +162,37 @@ variable (wired in commit `1ea69b7`).
 
 **Active value: `SCIX_RERANK_DEFAULT_MODEL=off` (the shipped default).**
 
-This default exists because the M1 ablation (commit `06a6cc3`,
-[`results/retrieval_eval_50q_rerank_local.md`](../results/retrieval_eval_50q_rerank_local.md))
-showed both candidate rerankers regress nDCG@10 vs the unranked
-INDUS-hybrid baseline at the Bonferroni-corrected α=0.025 threshold:
+This default is backed by the current real-corpus reranker A/B
+([`results/retrieval_eval_50q_rerank_indus.md`](../results/retrieval_eval_50q_rerank_indus.md),
+2026-06-12 — the production Qdrant stack per ADR-013). It re-baselines the
+earlier April ablation (commit `06a6cc3`,
+[`results/retrieval_eval_50q_rerank_local.md`](../results/retrieval_eval_50q_rerank_local.md)),
+whose `paper_embeddings.embedding` pgvector pool was dropped in the Qdrant
+migration, so the April absolute numbers are no longer reproducible. Four
+configs share one top-50 candidate pool per seed; ground truth is binary
+citation relevance from `citation_edges`. Wilcoxon significance threshold
+is Bonferroni-corrected α=0.05 / 3 = 0.0167:
 
-| Config             | nDCG@10 | Δ vs baseline | Wilcoxon p | Verdict             |
-|--------------------|---------|---------------|------------|---------------------|
-| `hybrid_indus`     | 0.3255  | —             | —          | baseline (winner)   |
-| `minilm`           | 0.2802  | −0.0453       | 0.042      | regression          |
-| `bge-large`        | 0.2699  | −0.0556       | 0.026      | regression          |
+| Config          | nDCG@10 | Δ vs baseline | Wilcoxon p | p95 rerank | Verdict                       |
+|-----------------|---------|---------------|------------|------------|-------------------------------|
+| `hybrid_indus`  | 0.2242  | —             | —          | —          | unranked baseline             |
+| `minilm`        | 0.2731  | +0.0489       | 0.199      | 73 ms      | nominal lift, not significant |
+| `bge-large`     | 0.2440  | +0.0197       | 0.513      | 362 ms     | nominal lift, not significant |
+| `indus_ranker`  | 0.1843  | −0.0400       | 0.074      | 150 ms     | regression — NO-GO            |
 
-Neither candidate clears the gate, so M4 closed with rerank disabled.
-The negative result is documented above so future operators don't re-run
-the same A/B with the same models expecting a different answer.
+The domain-tuned INDUS cross-encoder (`nasa-impact/nasa-smd-ibm-ranker`)
+is the config the gate hinged on (bead `scix_experiments-4skc`), and it
+*regresses* the baseline — the worst of all four on nDCG@10, MRR,
+Recall@10 and P@10 — so M5 closed **NO-GO** and rerank stays disabled.
+This is not a wiring artifact: on its own home benchmark the model beats
+first-stage BM25 (nDCG@10 0.7535 → 0.7590,
+[`results/indus_ranker_benchmark_m2.json`](../results/indus_ranker_benchmark_m2.json));
+it simply does not transfer to paper-to-paper citation reranking here. The
+generic `minilm`/`bge-large` lifts are not statistically significant and
+*flip sign* between the April pgvector pool (both regressed) and this
+Qdrant re-baseline (both nominally positive) — direct evidence that
+paper-level rerank gains on this corpus are pool-dependent and not robust.
+A flip would need its own bead with a significant, pool-stable result.
 
 ### Flipping rerank on (operator opt-in)
 
@@ -195,14 +212,17 @@ docker restart scix-mcp
 
 Implications:
 
-- Per-call latency grows by the rerank stage. M1 measurements: MiniLM
-  p95 ≈ 70 ms (CPU, 50 candidates); bge-reranker-large p95 ≈ 570 ms (GPU)
-  / 4+ s (CPU). On the deployed server (CPU-only) bge-reranker-large is
-  in 4-second territory per call.
-- Retrieval quality is *expected to drop* on the 50-query gold set per
-  M1. If the operator's experiment depends on a different metric (e.g.
-  per-query Top-1 quality on a domain-specific subset) that's a valid
-  reason to flip, but the headline nDCG@10 number will look worse.
+- Per-call latency grows by the rerank stage. On the GPU eval host over a
+  50-candidate pool the current A/B measured MiniLM p95 ≈ 73 ms,
+  bge-reranker-large p95 ≈ 362 ms, and `nasa-smd-ibm-ranker` p95 ≈ 150 ms.
+  On the deployed server (CPU-only) bge-reranker-large is in multi-second
+  territory per call.
+- Retrieval quality on the 50-query gold set does not improve
+  significantly from any candidate, and the domain-tuned reranker
+  regresses it — treat a flip as an experiment, not an upgrade. If the
+  operator's experiment depends on a different metric (e.g. per-query
+  Top-1 quality on a domain-specific subset) that's a valid reason to
+  flip, but the headline nDCG@10 number will not improve.
 - Roll back by restoring `SCIX_RERANK_DEFAULT_MODEL=off` (or removing
   the line entirely; `off` is the hard-coded fallback) and restarting
   the container.

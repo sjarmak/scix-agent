@@ -87,6 +87,23 @@ the domain-tuned reranker eval; not a primary citation source anymore.
 - **Result**: zero references in any in-repo external-facing doc. The file itself
   (`results/within_paper_rerank_eval.md`) already opens with a
   `SUPERSEDED / INVALID` banner pointing to the valid evals.
+- **Full-tree confirmation** (scope item 1's broad clause — *any* `docs/*.md` /
+  `results/*.md`): a repo-wide grep for `within_paper` / `within-paper` returns
+  hits only in PRDs and the tool audit, and **every one refers to the legitimate
+  `search_within_paper` MCP tool or the within-paper retrieval capability — none
+  cite the void eval's result.** Specifically:
+  - `docs/prd/prd_full_text_applications_v2.md:138` mentions `nDCG@3` only as a
+    **forward-looking acceptance target** for a *future* M5 cross-encoder rerank
+    deliverable ("nDCG@3 improves by ≥5% over the BM25-only baseline"), not as an
+    achieved result. This is the legitimate future version of what the void eval
+    faked; it does not present the bad eval as evidence. No action.
+  - `docs/mcp_tool_audit_2026-04.md`, `prd_body_chunk_embeddings.md`,
+    `prd_full_text_applications.md`, the `tool-audit/*` artifacts, and
+    `architecture/model.c4` reference only the `search_within_paper` tool /
+    within-paper retrieval — no eval claims.
+  - **No tracked doc anywhere links to `within_paper_rerank_eval.md` as
+    evidence.** (`grep -rn within_paper_rerank_eval` over `docs/ README.md
+    AGENTS.md architecture/ deploy/ results/*.md` returns only this audit memo.)
 - **Implication**: the copy Stephanie flagged is on the **live website**, whose
   source is not in this repo. That fix is gated on an operator pointer + publish
   approval (out of scope for this bead). Flagging for the website-copy follow-up.

@@ -48,7 +48,9 @@ logger = logging.getLogger("build_hnsw_baseline")
 
 DEFAULT_OUT = Path("results/pgvs_benchmark/hnsw_baseline.json")
 DEFAULT_INDEX_NAME = "idx_hnsw_baseline_indus"
-DEFAULT_DSN = os.environ.get("SCIX_PILOT_DSN") or os.environ.get("SCIX_DSN", "dbname=scix_pgvs_pilot")
+DEFAULT_DSN = os.environ.get("SCIX_PILOT_DSN") or os.environ.get(
+    "SCIX_DSN", "dbname=scix_pgvs_pilot"
+)
 
 # Production database names this script must NEVER run against.
 _PRODUCTION_DB_NAMES: frozenset[str] = frozenset({"scix"})
@@ -65,6 +67,7 @@ EMBEDDING_DIM = 768
 # DSN safety
 # ---------------------------------------------------------------------------
 
+
 def assert_pilot_dsn(dsn: str) -> None:
     """Raise ValueError if ``dsn`` points at a production database.
 
@@ -73,9 +76,7 @@ def assert_pilot_dsn(dsn: str) -> None:
     both 'production' and 'refuse' to satisfy callers that grep for either.
     """
     if not dsn or not dsn.strip():
-        raise ValueError(
-            "Empty DSN — refuse to run without an explicit pilot DSN."
-        )
+        raise ValueError("Empty DSN — refuse to run without an explicit pilot DSN.")
     try:
         params = conninfo_to_dict(dsn)
     except psycopg.ProgrammingError as exc:
@@ -92,6 +93,7 @@ def assert_pilot_dsn(dsn: str) -> None:
 # ---------------------------------------------------------------------------
 # DDL + EXPLAIN helpers
 # ---------------------------------------------------------------------------
+
 
 def build_ddl(index_name: str, *, concurrent: bool) -> str:
     """Return the CREATE INDEX DDL string for the baseline HNSW index."""
@@ -131,6 +133,7 @@ def _peak_rss_bytes() -> int:
 # ---------------------------------------------------------------------------
 # Build + measurement
 # ---------------------------------------------------------------------------
+
 
 def _fetch_postgres_version(conn: psycopg.Connection) -> str:
     with conn.cursor() as cur:
@@ -252,6 +255,7 @@ def dry_run_result(index_name: str, *, concurrent: bool) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def _default_dry_run_out(out: Path) -> Path:
     """Append '-dry-run' suffix before the extension."""

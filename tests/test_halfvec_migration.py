@@ -57,12 +57,18 @@ def _captured_sql(model_name: str, *, halfvec_enabled: bool = True) -> str:
     capture = _Capture()
     cm.__enter__.return_value = capture
 
+    # This asserts the pgvector SQL string, so the Qdrant dense lane must be
+    # off regardless of ambient QDRANT_URL (it routes INDUS to Qdrant and emits
+    # no SQL). Mirrors the delenv guard in test_search.py's pg-path tests.
     original = search._HALFVEC_ENABLED
+    original_qdrant = os.environ.pop("QDRANT_URL", None)
     search._HALFVEC_ENABLED = halfvec_enabled
     try:
         vector_search(conn, [0.1] * 768, model_name=model_name, limit=5)
     finally:
         search._HALFVEC_ENABLED = original
+        if original_qdrant is not None:
+            os.environ["QDRANT_URL"] = original_qdrant
     return capture.last_query
 
 
@@ -139,9 +145,7 @@ def test_migration_053_054_apply_idempotently() -> None:
                 text=True,
                 check=False,
             )
-            assert result.returncode == 0, (
-                f"{migration} failed: {result.stderr}"
-            )
+            assert result.returncode == 0, f"{migration} failed: {result.stderr}"
 
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute(
@@ -152,10 +156,7 @@ def test_migration_053_054_apply_idempotently() -> None:
         row = cur.fetchone()
         assert row is not None and row[0] == "halfvec(768)", row
 
-        cur.execute(
-            "SELECT indexdef FROM pg_indexes "
-            "WHERE indexname='idx_embed_hnsw_indus_hv'"
-        )
+        cur.execute("SELECT indexdef FROM pg_indexes " "WHERE indexname='idx_embed_hnsw_indus_hv'")
         idx = cur.fetchone()
         assert idx is not None
         assert "halfvec_cosine_ops" in idx[0]

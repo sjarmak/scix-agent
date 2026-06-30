@@ -80,12 +80,14 @@ def validate(dsn: str) -> bool:
         latency_ms = (time.perf_counter() - t0) * 1000
         logger.info(
             "Sample top-k query: entity_id=%d, %.1f ms",
-            top_entity, latency_ms,
+            top_entity,
+            latency_ms,
         )
         if latency_ms > QUERY_LATENCY_MS:
             logger.error(
                 "FAIL: query latency %.1f ms exceeds %d ms budget",
-                latency_ms, QUERY_LATENCY_MS,
+                latency_ms,
+                QUERY_LATENCY_MS,
             )
             ok = False
 
@@ -96,7 +98,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dsn", default=DEFAULT_DSN, help="PostgreSQL DSN")
     parser.add_argument(
-        "--allow-prod", action="store_true",
+        "--allow-prod",
+        action="store_true",
         help="Required to run against production DSN",
     )
     args = parser.parse_args()
@@ -123,7 +126,9 @@ def main() -> int:
     if elapsed > BUDGET_SECONDS:
         logger.error(
             "FAIL: refresh took %.1f s (%.1f min), exceeds budget of %d s",
-            elapsed, elapsed / 60, BUDGET_SECONDS,
+            elapsed,
+            elapsed / 60,
+            BUDGET_SECONDS,
         )
         return 1
 

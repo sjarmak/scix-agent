@@ -96,8 +96,7 @@ def _build_synthetic_edges(rng: random.Random) -> list[tuple[str, str]]:
 def _cleanup(conn: psycopg.Connection) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            "DELETE FROM citation_edges "
-            "WHERE source_bibcode LIKE %s OR target_bibcode LIKE %s",
+            "DELETE FROM citation_edges " "WHERE source_bibcode LIKE %s OR target_bibcode LIKE %s",
             (f"{BIB_PREFIX}%", f"{BIB_PREFIX}%"),
         )
         cur.execute(
@@ -258,9 +257,7 @@ class TestRecomputeCitationCommunities:
         run_meta = _invoke_script(test_dsn, seed=42, log_dir=log_dir)
 
         assert run_meta["giant_component_size"] == len(synthetic_graph["giant"])
-        assert run_meta["small_component_node_count"] == len(
-            synthetic_graph["satellite"]
-        )
+        assert run_meta["small_component_node_count"] == len(synthetic_graph["satellite"])
 
         all_bibs = synthetic_graph["giant"] + synthetic_graph["satellite"]
         rows = _fetch_memberships(test_dsn, all_bibs)
@@ -302,6 +299,6 @@ class TestRecomputeCitationCommunities:
         for idx in (0, 1, 2):
             map_a = {bib: rows_a[bib][idx] for bib in synthetic_graph["giant"]}
             map_b = {bib: rows_b[bib][idx] for bib in synthetic_graph["giant"]}
-            assert _canonical_relabel(map_a) == _canonical_relabel(map_b), (
-                f"non-deterministic at resolution index {idx}"
-            )
+            assert _canonical_relabel(map_a) == _canonical_relabel(
+                map_b
+            ), f"non-deterministic at resolution index {idx}"

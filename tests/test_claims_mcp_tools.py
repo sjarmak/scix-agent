@@ -69,15 +69,21 @@ class TestToolRegistration:
         except ImportError:
             pytest.skip("mcp SDK not installed")
 
-        with patch("scix.mcp_server._init_model_impl"):
+        # read_paper_claims/find_claims are default-hidden from tools/list
+        # (paper_claims data not populated — see mcp_server._HIDDEN_TOOLS).
+        # Registration is still asserted here by showing all tools.
+        with (
+            patch("scix.mcp_server._init_model_impl"),
+            patch("scix.mcp_server._HIDDEN_TOOLS", frozenset()),
+        ):
             from scix.mcp_server import create_server
 
             server = create_server(_run_self_test=False)
 
-        handler = server.request_handlers[ListToolsRequest]
-        result = asyncio.run(handler(ListToolsRequest(method="tools/list")))
-        tools = result.root.tools if hasattr(result, "root") else result.tools
-        names = {t.name for t in tools}
+            handler = server.request_handlers[ListToolsRequest]
+            result = asyncio.run(handler(ListToolsRequest(method="tools/list")))
+            tools = result.root.tools if hasattr(result, "root") else result.tools
+            names = {t.name for t in tools}
         assert "read_paper_claims" in names
         assert "find_claims" in names
 
@@ -89,14 +95,20 @@ class TestToolRegistration:
         except ImportError:
             pytest.skip("mcp SDK not installed")
 
-        with patch("scix.mcp_server._init_model_impl"):
+        # read_paper_claims/find_claims are default-hidden from tools/list
+        # (paper_claims data not populated — see mcp_server._HIDDEN_TOOLS).
+        # Registration is still asserted here by showing all tools.
+        with (
+            patch("scix.mcp_server._init_model_impl"),
+            patch("scix.mcp_server._HIDDEN_TOOLS", frozenset()),
+        ):
             from scix.mcp_server import create_server
 
             server = create_server(_run_self_test=False)
 
-        handler = server.request_handlers[ListToolsRequest]
-        result = asyncio.run(handler(ListToolsRequest(method="tools/list")))
-        tools = result.root.tools if hasattr(result, "root") else result.tools
+            handler = server.request_handlers[ListToolsRequest]
+            result = asyncio.run(handler(ListToolsRequest(method="tools/list")))
+            tools = result.root.tools if hasattr(result, "root") else result.tools
         by_name = {t.name: t for t in tools}
         schema = by_name["read_paper_claims"].inputSchema
 
@@ -115,14 +127,20 @@ class TestToolRegistration:
         except ImportError:
             pytest.skip("mcp SDK not installed")
 
-        with patch("scix.mcp_server._init_model_impl"):
+        # read_paper_claims/find_claims are default-hidden from tools/list
+        # (paper_claims data not populated — see mcp_server._HIDDEN_TOOLS).
+        # Registration is still asserted here by showing all tools.
+        with (
+            patch("scix.mcp_server._init_model_impl"),
+            patch("scix.mcp_server._HIDDEN_TOOLS", frozenset()),
+        ):
             from scix.mcp_server import create_server
 
             server = create_server(_run_self_test=False)
 
-        handler = server.request_handlers[ListToolsRequest]
-        result = asyncio.run(handler(ListToolsRequest(method="tools/list")))
-        tools = result.root.tools if hasattr(result, "root") else result.tools
+            handler = server.request_handlers[ListToolsRequest]
+            result = asyncio.run(handler(ListToolsRequest(method="tools/list")))
+            tools = result.root.tools if hasattr(result, "root") else result.tools
         by_name = {t.name: t for t in tools}
         schema = by_name["find_claims"].inputSchema
 
@@ -171,9 +189,7 @@ class TestDispatchErrorEnvelopes:
         assert "error" in data
 
     def test_read_paper_claims_unknown_claim_type(self) -> None:
-        out = _handle_read_paper_claims(
-            _NoOpConn(), {"bibcode": "x", "claim_type": "bogus"}
-        )
+        out = _handle_read_paper_claims(_NoOpConn(), {"bibcode": "x", "claim_type": "bogus"})
         data = json.loads(out)
         assert "error" in data
 
@@ -189,9 +205,7 @@ class TestDispatchErrorEnvelopes:
         assert "error" in data
 
     def test_find_claims_non_int_entity_id(self) -> None:
-        out = _handle_find_claims(
-            _NoOpConn(), {"query": "x", "entity_id": "abc"}
-        )
+        out = _handle_find_claims(_NoOpConn(), {"query": "x", "entity_id": "abc"})
         data = json.loads(out)
         assert "error" in data
         assert "entity_id" in data["error"]
@@ -244,9 +258,7 @@ def applied_migration(dsn: str) -> str:
         text=True,
         check=False,
     )
-    assert result.returncode == 0, (
-        f"migration 062 failed to apply: stderr=\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"migration 062 failed to apply: stderr=\n{result.stderr}"
     return dsn
 
 
@@ -260,8 +272,7 @@ def _ensure_test_bibcode(dsn: str) -> str:
             return row[0]
         synthetic = "9999paper_claims_mcp_X"
         cur.execute(
-            "INSERT INTO papers (bibcode) VALUES (%s) "
-            "ON CONFLICT (bibcode) DO NOTHING",
+            "INSERT INTO papers (bibcode) VALUES (%s) " "ON CONFLICT (bibcode) DO NOTHING",
             (synthetic,),
         )
         conn.commit()
@@ -343,9 +354,7 @@ class TestDispatchReadPaperClaims:
     """End-to-end ``_dispatch_tool('read_paper_claims', ...)``."""
 
     @patch("scix.mcp_server._log_query")
-    def test_returns_seeded_rows(
-        self, _mock_log: Any, seeded_claims: dict[str, Any]
-    ) -> None:
+    def test_returns_seeded_rows(self, _mock_log: Any, seeded_claims: dict[str, Any]) -> None:
         import psycopg
 
         dsn = seeded_claims["dsn"]
@@ -379,9 +388,7 @@ class TestDispatchReadPaperClaims:
             assert required_keys <= set(claim.keys()), claim
 
     @patch("scix.mcp_server._log_query")
-    def test_claim_type_filter(
-        self, _mock_log: Any, seeded_claims: dict[str, Any]
-    ) -> None:
+    def test_claim_type_filter(self, _mock_log: Any, seeded_claims: dict[str, Any]) -> None:
         import psycopg
 
         dsn = seeded_claims["dsn"]
@@ -420,14 +427,10 @@ class TestDispatchFindClaims:
         seeded = [c for c in data["claims"] if c["bibcode"] == bibcode]
         # The seed contains exactly one row mentioning "Hubble tension".
         assert len(seeded) >= 1
-        assert any(
-            "Hubble tension" in c["claim_text"] for c in seeded
-        )
+        assert any("Hubble tension" in c["claim_text"] for c in seeded)
 
     @patch("scix.mcp_server._log_query")
-    def test_limit_is_honored(
-        self, _mock_log: Any, seeded_claims: dict[str, Any]
-    ) -> None:
+    def test_limit_is_honored(self, _mock_log: Any, seeded_claims: dict[str, Any]) -> None:
         import psycopg
 
         dsn = seeded_claims["dsn"]

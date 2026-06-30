@@ -129,9 +129,7 @@ def main() -> int:
         questions = questions[: args.max_questions]
         logger.info("capped to %d questions", len(questions))
     if not questions:
-        logger.error(
-            "no questions materialized — slice too thin or pickers misconfigured"
-        )
+        logger.error("no questions materialized — slice too thin or pickers misconfigured")
         return 3
 
     write_jsonl(args.questions_out, questions)

@@ -163,9 +163,7 @@ def collect_events(
         elif src == "openalex":
             yield from openalex_corrections.harvest(fetcher=fetchers.get("openalex"))
         elif src == "crossref":
-            yield from crossref_update_to.harvest(
-                crossref_dois, fetcher=fetchers.get("crossref")
-            )
+            yield from crossref_update_to.harvest(crossref_dois, fetcher=fetchers.get("crossref"))
         elif src == "journal_rss":
             yield from journal_errata_rss.harvest(fetcher=fetchers.get("journal_rss"))
         else:
@@ -210,9 +208,7 @@ def apply_events(
             else:
                 existing = []
 
-            merged, added, earliest_retraction = merge_events_for_paper(
-                existing, doi_events
-            )
+            merged, added, earliest_retraction = merge_events_for_paper(existing, doi_events)
             if added == 0:
                 continue
             new_events_inserted += added

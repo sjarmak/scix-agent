@@ -6,6 +6,8 @@ Integration tests (marked with @pytest.mark.integration) require a running scix 
 
 from __future__ import annotations
 
+import logging
+
 import psycopg
 import pytest
 from helpers import (
@@ -19,6 +21,7 @@ from helpers import (
 
 from scix.search import (
     _LEXICAL_POOL_DEFAULT,
+    _LEXICAL_RANK_FLAG_DEFAULT,
     _TS_CONFIG_WHITELIST,
     SELECTIVITY_THRESHOLD,
     SearchFilters,
@@ -27,6 +30,8 @@ from scix.search import (
     _estimate_filter_selectivity,
     _filter_first_vector_search,
     _resolve_lexical_pool,
+    _resolve_lexical_rank_flag,
+    _score_sections_ts_rank,
     bibliographic_coupling,
     citation_chain,
     co_citation_analysis,
@@ -34,6 +39,7 @@ from scix.search import (
     get_paper,
     hybrid_search,
     lexical_search,
+    lit_review,
     rrf_fuse,
     temporal_evolution,
     vector_search,
@@ -381,7 +387,6 @@ class TestCardinalityRouting:
         selective_filters = SearchFilters(year_min=2026, year_max=2026, doctype="article")
 
         # Make _estimate_filter_selectivity return very low selectivity
-        # Make _model_has_embeddings return False (skip OpenAI)
         # Make _filter_first_vector_search return a result
         # Make lexical_search return a result
         fake_search_result = SearchResult(
@@ -403,7 +408,6 @@ class TestCardinalityRouting:
                 return_value=fake_search_result,
             ) as mock_ff,
             patch("scix.search.lexical_search", return_value=fake_lex_result),
-            patch("scix.search._model_has_embeddings", return_value=False),
         ):
             result = hybrid_search(
                 mock_conn,
@@ -448,7 +452,6 @@ class TestCardinalityRouting:
             patch("scix.search._estimate_filter_selectivity", return_value=0.5),
             patch("scix.search.vector_search", return_value=fake_vec_result) as mock_vs,
             patch("scix.search.lexical_search", return_value=fake_lex_result),
-            patch("scix.search._model_has_embeddings", return_value=False),
         ):
             result = hybrid_search(
                 mock_conn,
@@ -545,7 +548,6 @@ class TestQdrantFilteredRouting:
             patch("scix.search.vector_search", return_value=fake_vec_result) as mock_vs,
             patch("scix.search.lexical_search", return_value=fake_lex_result),
             patch("scix.search.lexical_search_body", return_value=fake_body_result),
-            patch("scix.search._model_has_embeddings", return_value=False),
         ):
             result = hybrid_search(
                 mock_conn,
@@ -559,22 +561,6 @@ class TestQdrantFilteredRouting:
         mock_vs.assert_called_once()
         assert mock_vs.call_args.kwargs["filters"] is selective_filters
         assert isinstance(result, SearchResult)
-
-    def test_model_has_embeddings_false_when_table_dropped(self) -> None:
-        """_model_has_embeddings must treat the ADR-013-dropped table as
-        "no embeddings" instead of propagating UndefinedTable."""
-        from unittest.mock import MagicMock
-
-        from scix.search import _model_has_embeddings
-
-        conn = MagicMock()
-        cursor = MagicMock()
-        cursor.__enter__ = MagicMock(return_value=cursor)
-        cursor.__exit__ = MagicMock(return_value=False)
-        cursor.execute.side_effect = psycopg.errors.UndefinedTable()
-        conn.cursor.return_value = cursor
-
-        assert _model_has_embeddings(conn, "text-embedding-3-large") is False
 
 
 class TestHybridSearchEntityFilterWiring:
@@ -592,7 +578,6 @@ class TestHybridSearchEntityFilterWiring:
         with (
             patch("scix.search.lexical_search", return_value=fake_lex) as mock_lex,
             patch("scix.search.lexical_search_body", return_value=fake_body),
-            patch("scix.search._model_has_embeddings", return_value=False),
         ):
             hybrid_search(mock_conn, "jwst", filters=entity_filter)
             assert mock_lex.call_count == 1
@@ -610,6 +595,7 @@ class TestHybridSearchEntityFilterWiring:
         fake_embedding = [0.1] * 768
 
         fake_lex = SearchResult(papers=[], total=0, timing_ms={"lexical_ms": 1.0})
+        fake_body = SearchResult(papers=[], total=0, timing_ms={"body_lexical_ms": 1.0})
         fake_vec = SearchResult(
             papers=[{"bibcode": "X"}],
             total=1,
@@ -618,10 +604,9 @@ class TestHybridSearchEntityFilterWiring:
 
         with (
             patch("scix.search.lexical_search", return_value=fake_lex),
-            patch("scix.search.lexical_search_body", return_value=fake_lex),
+            patch("scix.search.lexical_search_body", return_value=fake_body),
             patch("scix.search._estimate_filter_selectivity", return_value=0.5),
             patch("scix.search.vector_search", return_value=fake_vec) as mock_vs,
-            patch("scix.search._model_has_embeddings", return_value=False),
         ):
             hybrid_search(
                 mock_conn,
@@ -640,11 +625,11 @@ class TestHybridSearchEntityFilterWiring:
         plain_filter = SearchFilters(year_min=2020)
 
         fake_lex = SearchResult(papers=[], total=0, timing_ms={"lexical_ms": 1.0})
+        fake_body = SearchResult(papers=[], total=0, timing_ms={"body_lexical_ms": 1.0})
 
         with (
             patch("scix.search.lexical_search", return_value=fake_lex) as mock_lex,
-            patch("scix.search.lexical_search_body", return_value=fake_lex),
-            patch("scix.search._model_has_embeddings", return_value=False),
+            patch("scix.search.lexical_search_body", return_value=fake_body),
         ):
             hybrid_search(mock_conn, "x", filters=plain_filter)
             called = mock_lex.call_args.kwargs["filters"]
@@ -652,39 +637,198 @@ class TestHybridSearchEntityFilterWiring:
             assert called.entity_ids is None
 
 
-class TestOpenAISignalSkipped:
-    """Verify OpenAI embedding signal is skipped when model has 0 rows."""
+class TestHybridSearchLaneErrorHandling:
+    """uq28: hybrid_search must split a recoverable QueryCanceled (drop the
+    lane, surface the drop in metadata) from a tx-abort / other psycopg.Error
+    (propagate — never silently return a degraded RRF result)."""
 
-    def test_openai_skipped_when_no_rows(self) -> None:
-        from unittest.mock import MagicMock, patch
-
-        mock_conn = MagicMock()
-
-        fake_lex_result = SearchResult(
-            papers=[{"bibcode": "A"}],
-            total=1,
-            timing_ms={"lexical_ms": 1.0},
+    @staticmethod
+    def _fake_lex() -> SearchResult:
+        return SearchResult(
+            papers=[{"bibcode": "2024ApJ...1A"}], total=1, timing_ms={"lexical_ms": 1.0}
         )
 
+    def test_body_query_canceled_drops_lane_and_records_signal(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        conn = MagicMock()
+
+        def _timeout(*args: object, **kwargs: object) -> object:
+            raise psycopg.errors.QueryCanceled("statement timeout")
+
         with (
-            patch("scix.search.lexical_search", return_value=fake_lex_result),
-            patch("scix.search._model_has_embeddings", return_value=False) as mock_check,
-            patch("scix.search.vector_search") as mock_vs,
+            patch("scix.search.lexical_search", return_value=self._fake_lex()),
+            patch("scix.search.lexical_search_body", side_effect=_timeout),
         ):
-            result = hybrid_search(
-                mock_conn,
-                "test query",
-                openai_embedding=[0.1] * 3072,
-            )
+            result = hybrid_search(conn, "dark matter")
 
-            # _model_has_embeddings should be called for text-embedding-3-large
-            mock_check.assert_called_once_with(mock_conn, "text-embedding-3-large")
+        # The body lane is dropped, but the search still returns the main lane
+        # and the drop is surfaced so the caller knows the RRF is degraded.
+        assert result.total == 1
+        assert result.metadata.get("dropped_lanes") == ["body_bm25"]
 
-            # vector_search should NOT be called (no primary embedding, no openai)
-            mock_vs.assert_not_called()
+    def test_body_tx_abort_propagates(self) -> None:
+        from unittest.mock import MagicMock, patch
 
-            # OpenAI timing should be 0
-            assert result.timing_ms["openai_vector_ms"] == 0.0
+        conn = MagicMock()
+
+        def _abort(*args: object, **kwargs: object) -> object:
+            # Class-25 tx-abort: the outer connection is poisoned. Swallowing
+            # this would make every later lane fail silently.
+            raise psycopg.errors.InFailedSqlTransaction("tx aborted")
+
+        with (
+            patch("scix.search.lexical_search", return_value=self._fake_lex()),
+            patch("scix.search.lexical_search_body", side_effect=_abort),
+            pytest.raises(psycopg.errors.InFailedSqlTransaction),
+        ):
+            hybrid_search(conn, "dark matter")
+
+    def test_clean_run_has_no_dropped_lanes_key(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        conn = MagicMock()
+        fake_body = SearchResult(papers=[], total=0, timing_ms={"body_lexical_ms": 1.0})
+
+        with (
+            patch("scix.search.lexical_search", return_value=self._fake_lex()),
+            patch("scix.search.lexical_search_body", return_value=fake_body),
+        ):
+            result = hybrid_search(conn, "dark matter")
+
+        assert "dropped_lanes" not in result.metadata
+
+
+class TestLitReviewCitationExpansionErrorHandling:
+    """otsm (DEEP_AUDIT A1): the citation-expansion loop in lit_review must wrap
+    each get_references/get_citations call in a savepoint and catch only a
+    recoverable QueryCanceled (statement_timeout) — dropping just that lane.
+    Any other psycopg.Error (e.g. a class-25 tx-abort) must propagate rather
+    than be swallowed by a bare ``except Exception``, which would let a poisoned
+    connection silently degrade every later query in the same call."""
+
+    @staticmethod
+    def _seed_result() -> SearchResult:
+        # Two seeds so the expansion loop iterates; bibcodes drive the working set.
+        return SearchResult(
+            papers=[{"bibcode": "2024ApJ...1A"}, {"bibcode": "2024ApJ...2B"}],
+            total=2,
+            timing_ms={"query_ms": 1.0},
+        )
+
+    @staticmethod
+    def _empty_conn() -> object:
+        """A MagicMock connection whose savepoints don't suppress exceptions and
+        whose Step 4-6 cursors return empty result sets so lit_review can finish."""
+        from unittest.mock import MagicMock
+
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.__enter__ = MagicMock(return_value=cur)
+        cur.__exit__ = MagicMock(return_value=False)
+        cur.fetchall.return_value = []
+        cur.fetchone.return_value = (0,)
+        conn.cursor.return_value = cur
+        # conn.transaction() is a MagicMock context manager; its default __exit__
+        # returns False, so a QueryCanceled raised inside it propagates to our
+        # except clause rather than being silently suppressed.
+        return conn
+
+    def test_query_canceled_lane_is_dropped_and_review_completes(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from unittest.mock import MagicMock, patch
+
+        conn = self._empty_conn()
+
+        def _timeout(*args: object, **kwargs: object) -> object:
+            raise psycopg.errors.QueryCanceled("statement timeout")
+
+        # __name__ mirrors the real function attribute the warning log reads.
+        refs = MagicMock(side_effect=_timeout, __name__="get_references")
+        expansion = SearchResult(
+            papers=[{"bibcode": "2020ApJ...9X", "year": 2020}], total=1, timing_ms={}
+        )
+        cites = MagicMock(return_value=expansion, __name__="get_citations")
+
+        with (
+            patch("scix.search.hybrid_search", return_value=self._seed_result()),
+            patch("scix.search.get_references", refs),
+            patch("scix.search.get_citations", cites),
+            caplog.at_level(logging.WARNING, logger="scix.search"),
+        ):
+            result = lit_review(conn, "dark matter", expansion_seeds=1, expand_per_seed=5)
+
+        # The references lane timed out and was dropped, but lit_review still
+        # returns: seeds intact, the surviving citations lane folded in, and the
+        # drop logged at WARNING.
+        ws = result.metadata["working_set_bibcodes"]
+        assert "2024ApJ...1A" in ws
+        assert "2020ApJ...9X" in ws  # from the citations lane that survived
+        assert "timed out" in caplog.text
+
+    def test_tx_abort_in_expansion_propagates(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        conn = self._empty_conn()
+
+        def _abort(*args: object, **kwargs: object) -> object:
+            # Class-25 tx-abort: the outer connection is poisoned. A bare
+            # ``except Exception`` would swallow this and let every later query
+            # in the call fail silently.
+            raise psycopg.errors.InFailedSqlTransaction("tx aborted")
+
+        refs = MagicMock(side_effect=_abort, __name__="get_references")
+
+        with (
+            patch("scix.search.hybrid_search", return_value=self._seed_result()),
+            patch("scix.search.get_references", refs),
+            pytest.raises(psycopg.errors.InFailedSqlTransaction),
+        ):
+            lit_review(conn, "dark matter", expansion_seeds=1, expand_per_seed=5)
+
+
+class TestScoreSectionsTsRank:
+    """uq28: the section scorer degrades to the Python proxy only on a real
+    OperationalError (logged at WARNING, visible at prod INFO), and lets other
+    DB errors propagate so genuine bugs are not masked."""
+
+    @staticmethod
+    def _conn_with_execute_error(exc: Exception) -> object:
+        from unittest.mock import MagicMock
+
+        conn = MagicMock()
+        cur = MagicMock()
+        cur.__enter__ = MagicMock(return_value=cur)
+        cur.__exit__ = MagicMock(return_value=False)
+        cur.execute.side_effect = exc
+        conn.cursor.return_value = cur
+        return conn
+
+    def test_operational_error_falls_back_and_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        conn = self._conn_with_execute_error(psycopg.OperationalError("timeout"))
+        with caplog.at_level(logging.WARNING, logger="scix.search"):
+            scores = _score_sections_ts_rank(conn, ["dark matter halos"], "dark matter")
+        assert len(scores) == 1
+        assert all(isinstance(s, float) for s in scores)
+        assert "falling back to Python proxy" in caplog.text
+
+    def test_query_canceled_subclass_also_falls_back(self) -> None:
+        # QueryCanceled is an OperationalError subclass, so a per-statement
+        # timeout in the section scorer still degrades rather than propagates.
+        conn = self._conn_with_execute_error(psycopg.errors.QueryCanceled("timeout"))
+        scores = _score_sections_ts_rank(conn, ["text one", "text two"], "q")
+        assert len(scores) == 2
+
+    def test_programming_error_propagates(self) -> None:
+        conn = self._conn_with_execute_error(psycopg.ProgrammingError("bad sql"))
+        with pytest.raises(psycopg.ProgrammingError):
+            _score_sections_ts_rank(conn, ["text"], "q")
+
+    def test_empty_sections_short_circuit(self) -> None:
+        from unittest.mock import MagicMock
+
+        assert _score_sections_ts_rank(MagicMock(), [], "q") == []
 
 
 class TestLexicalSearchCandidatePool:
@@ -729,6 +873,33 @@ class TestLexicalSearchCandidatePool:
     def test_ts_config_unknown_config_rejected(self) -> None:
         with pytest.raises(ValueError, match="ts_config must be one of"):
             lexical_search(None, "galaxy", ts_config="simple")
+
+
+class TestLexicalRankFlag:
+    """Unit tests for the SCIX_LEXICAL_RANK_FLAG env hook (bead q9k5)."""
+
+    def test_default_when_env_unset(self, monkeypatch) -> None:
+        monkeypatch.delenv("SCIX_LEXICAL_RANK_FLAG", raising=False)
+        assert _resolve_lexical_rank_flag() == _LEXICAL_RANK_FLAG_DEFAULT
+
+    @pytest.mark.parametrize("token,expected", [("0", 0), ("32", 32), ("33", 33), ("48", 48)])
+    def test_valid_flags(self, monkeypatch, token, expected) -> None:
+        monkeypatch.setenv("SCIX_LEXICAL_RANK_FLAG", token)
+        assert _resolve_lexical_rank_flag() == expected
+
+    def test_whitespace_tolerated(self, monkeypatch) -> None:
+        monkeypatch.setenv("SCIX_LEXICAL_RANK_FLAG", "  48  ")
+        assert _resolve_lexical_rank_flag() == 48
+
+    def test_non_integer_falls_back_to_default(self, monkeypatch) -> None:
+        monkeypatch.setenv("SCIX_LEXICAL_RANK_FLAG", "dense")
+        assert _resolve_lexical_rank_flag() == _LEXICAL_RANK_FLAG_DEFAULT
+
+    @pytest.mark.parametrize("token", ["-1", "64", "100"])
+    def test_bits_outside_mask_fall_back_to_default(self, monkeypatch, token) -> None:
+        # 64 sets a bit above the defined 0..63 normalization mask; -1 is negative.
+        monkeypatch.setenv("SCIX_LEXICAL_RANK_FLAG", token)
+        assert _resolve_lexical_rank_flag() == _LEXICAL_RANK_FLAG_DEFAULT
 
 
 # ---------------------------------------------------------------------------
@@ -1438,3 +1609,34 @@ class TestVectorSearchQdrantLane:
 
         params = client.query_points.call_args.kwargs["search_params"]
         assert params.exact is True
+
+    def test_points_missing_bibcode_payload_are_skipped_not_crashed(self) -> None:
+        """A Qdrant point whose payload lacks 'bibcode' (transitional
+        payload-backfill window, bead 8m0a) must be skipped + logged, not
+        raise KeyError that crashes the whole search request (bead lq32)."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock, patch
+
+        from scix.search import _vector_search_qdrant
+
+        # Mix of well-formed points and degenerate ones: a None payload, an
+        # empty-dict payload, and a payload with unrelated keys only.
+        points = [
+            SimpleNamespace(payload={"bibcode": "B1"}, score=0.9),
+            SimpleNamespace(payload=None, score=0.85),
+            SimpleNamespace(payload={}, score=0.8),
+            SimpleNamespace(payload={"other": "x"}, score=0.75),
+            SimpleNamespace(payload={"bibcode": "B2"}, score=0.7),
+        ]
+        client = MagicMock()
+        client.query_points.return_value = SimpleNamespace(points=points)
+        conn, _cursor = self._fake_conn([self._row("B1"), self._row("B2")])
+
+        with patch("scix.search._get_qdrant_dense_client", return_value=client):
+            result = _vector_search_qdrant(
+                conn, [0.1] * 768, model_name="indus", filters=None, limit=10, ef_search=100
+            )
+
+        # Only the two bibcode-bearing points survive, in Qdrant rank order.
+        assert [p["bibcode"] for p in result.papers] == ["B1", "B2"]
+        assert [p["score"] for p in result.papers] == [0.9, 0.7]

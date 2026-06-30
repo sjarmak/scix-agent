@@ -174,7 +174,8 @@ def _histogram(conn: psycopg.Connection) -> list[tuple[str, int]]:
     Missing buckets (no rows) are emitted as 0 so the output shape is stable.
     """
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             WITH b AS (
               SELECT CASE
                 WHEN jsonb_array_length(sections) = 0 THEN 0
@@ -187,7 +188,8 @@ def _histogram(conn: psycopg.Connection) -> list[tuple[str, int]]:
               FROM papers_fulltext
             )
             SELECT ord, count(*)::bigint FROM b GROUP BY ord ORDER BY ord
-            """)
+            """
+        )
         counts = {int(ord_): int(count) for (ord_, count) in cur.fetchall()}
     return [(label, counts.get(ord_, 0)) for (ord_, label) in BUCKET_LABELS]
 

@@ -275,9 +275,7 @@ def test_compute_confidence_monotone_in_n_sections() -> None:
     hi = compute_confidence(n_sections=6, coverage_frac=0.5, first_heading_offset=100)
     assert lo < mid < hi
     # Saturates at the cap (6 headings), so going above doesn't move the score.
-    sat = compute_confidence(
-        n_sections=20, coverage_frac=0.5, first_heading_offset=100
-    )
+    sat = compute_confidence(n_sections=20, coverage_frac=0.5, first_heading_offset=100)
     assert sat == pytest.approx(hi)
 
 

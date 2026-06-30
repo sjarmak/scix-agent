@@ -350,9 +350,7 @@ def summarize_config(
                 "seed_bibcode": sr.seed_bibcode,
                 "judge_ndcg_10": round(ndcg_at_k(ranking, judge_rel_map, k=k), 4),
                 "citation_ndcg_10": round(ndcg_at_k(ranking, citation_rel_map, k=k), 4),
-                "mean_judge_score_top10": round(
-                    sum(top10_scores) / max(len(top10_scores), 1), 4
-                ),
+                "mean_judge_score_top10": round(sum(top10_scores) / max(len(top10_scores), 1), 4),
                 "judged_relevant_at_10": sum(1 for s in top10_scores if s >= RELEVANT_THRESHOLD),
                 "n_judged_union": len(judged),
             }
@@ -375,12 +373,8 @@ def summarize_config(
         n_queries=n,
         judge_ndcg_10=round(sum(q["judge_ndcg_10"] for q in per_query) / n, 4),
         citation_ndcg_10=round(sum(q["citation_ndcg_10"] for q in per_query) / n, 4),
-        mean_judge_score_top10=round(
-            sum(q["mean_judge_score_top10"] for q in per_query) / n, 4
-        ),
-        judged_relevant_at_10=round(
-            sum(q["judged_relevant_at_10"] for q in per_query) / n, 4
-        ),
+        mean_judge_score_top10=round(sum(q["mean_judge_score_top10"] for q in per_query) / n, 4),
+        judged_relevant_at_10=round(sum(q["judged_relevant_at_10"] for q in per_query) / n, 4),
         score_hist_top10=_histogram(pooled_top10_scores),
         per_query=tuple(per_query),
     )
@@ -512,7 +506,7 @@ def write_outputs(
         "> **Provenance**: in-house authored. Graded relevance from the "
         "`umbrela_judge` OAuth subagent (verbatim Castorini UMBRELA rubric, "
         "0-3), dispatched via `claude -p` — no paid API. Seeds and the shared "
-        f"INDUS-hybrid pool match `scripts/eval_rerank_local_ab.py` (bead 4skc). "
+        "INDUS-hybrid pool match `scripts/eval_rerank_local_ab.py` (bead 4skc). "
         "Self-reported engineering signal, not an external benchmark."
     )
     lines.append("")
@@ -532,7 +526,9 @@ def write_outputs(
         "| Config | judge nDCG@10 | citation nDCG@10 | mean judge score (top-10) "
         "| judged-relevant@10 (≥2) |"
     )
-    lines.append("|--------|---------------|------------------|---------------------------|-------------------------|")
+    lines.append(
+        "|--------|---------------|------------------|---------------------------|-------------------------|"
+    )
     for name in JUDGED_CONFIGS:
         s = summaries[name]
         lines.append(
@@ -567,8 +563,12 @@ def write_outputs(
         "other does not:"
     )
     lines.append("")
-    lines.append("| Disjoint set | n papers | mean judge score | frac relevant (≥2) | hist 0/1/2/3 |")
-    lines.append("|--------------|----------|------------------|--------------------|--------------|")
+    lines.append(
+        "| Disjoint set | n papers | mean judge score | frac relevant (≥2) | hist 0/1/2/3 |"
+    )
+    lines.append(
+        "|--------------|----------|------------------|--------------------|--------------|"
+    )
     lines.append(
         f"| `indus_ranker` only | {io['n_papers']} | {io['mean_judge_score']:.4f} | "
         f"{io['frac_relevant']:.4f} | "
@@ -745,7 +745,10 @@ def main(argv: Iterable[str] | None = None) -> int:
             if rr is None:
                 continue
             try:
-                rr("warmup query", [{"bibcode": "_warm", "title": "warmup", "abstract_snippet": ""}])
+                rr(
+                    "warmup query",
+                    [{"bibcode": "_warm", "title": "warmup", "abstract_snippet": ""}],
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("warmup failed for %s: %s", label, exc)
 
@@ -760,9 +763,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             if not pool:
                 continue
             seed_rankings.append(
-                build_seed_rankings(
-                    seed, pool, ground_truth[seed.bibcode], rerankers, k=args.k
-                )
+                build_seed_rankings(seed, pool, ground_truth[seed.bibcode], rerankers, k=args.k)
             )
         logger.info("Built rankings for %d seeds", len(seed_rankings))
     finally:

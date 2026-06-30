@@ -22,7 +22,7 @@ from pptx.util import Emu, Pt
 SLIDE_W = Emu(12192000)
 SLIDE_H = Emu(6858000)
 
-MARGIN_X = Emu(457200)          # 0.5"
+MARGIN_X = Emu(457200)  # 0.5"
 FOOTER_Y = Emu(6492240)
 
 FONT = "Inter"
@@ -88,9 +88,11 @@ def _add_text(
             p.line_spacing = line_spacing
         if align == "center":
             from pptx.enum.text import PP_ALIGN
+
             p.alignment = PP_ALIGN.CENTER
         elif align == "right":
             from pptx.enum.text import PP_ALIGN
+
             p.alignment = PP_ALIGN.RIGHT
         run = p.add_run()
         run.text = line
@@ -124,6 +126,7 @@ def _fit_picture(slide, path: Path, *, box_left, box_top, box_w, box_h, align="c
     can never overlap the image.
     """
     from PIL import Image
+
     with Image.open(path) as im:
         iw, ih = im.size
     aspect = ih / iw
@@ -346,8 +349,7 @@ def slide_scale_problem(prs, page, total):
     stats = [
         ("3M+", "scientific papers published per year", "doubling every ~12 years"),
         ("20–30%", "of a researcher's time", "spent on literature search"),
-        ("AI-accelerated", "both code and research output",
-         "the same growth curve hits both"),
+        ("AI-accelerated", "both code and research output", "the same growth curve hits both"),
     ]
     stat_y = Emu(2011680)
     col_w = Emu(3500000)
@@ -414,20 +416,28 @@ def slide_fragmentation(prs, page, total):
     )
 
     left_col = [
-        ("Citations encode more than dependency",
-         "Prestige, convention, self-citation, availability bias. A clean "
-         "technical DAG is not what the citation graph actually is."),
-        ("Disciplinary silos hide transferable methods",
-         "A technique useful in one field may have been solved in a "
-         "neighbouring one years earlier — under different vocabulary."),
+        (
+            "Citations encode more than dependency",
+            "Prestige, convention, self-citation, availability bias. A clean "
+            "technical DAG is not what the citation graph actually is.",
+        ),
+        (
+            "Disciplinary silos hide transferable methods",
+            "A technique useful in one field may have been solved in a "
+            "neighbouring one years earlier — under different vocabulary.",
+        ),
     ]
     right_col = [
-        ("Connections happen through serendipity, not systems",
-         "Whether two lines of work meet depends on who read what, when. "
-         "It is not a structural property of the knowledge itself."),
-        ("The shift worth making",
-         "Turn serendipitous discovery into retrievable relevance — so an "
-         "agent can surface it, and a researcher can rely on it."),
+        (
+            "Connections happen through serendipity, not systems",
+            "Whether two lines of work meet depends on who read what, when. "
+            "It is not a structural property of the knowledge itself.",
+        ),
+        (
+            "The shift worth making",
+            "Turn serendipitous discovery into retrievable relevance — so an "
+            "agent can surface it, and a researcher can rely on it.",
+        ),
     ]
 
     y0 = Emu(2150000)
@@ -472,22 +482,48 @@ def slide_codebase_analogy(prs, page, total):
 
     # Three parallel rows: software -> science mapping
     rows = [
-        ("Dependencies", "what code relies on to run",
-         "Reused methods and datasets", "what a result relies on to hold"),
-        ("Call graphs", "chains of function calls",
-         "Chains of reasoning", "a claim that rests on a claim that rests on a dataset"),
-        ("Blast radius", "what breaks if this changes",
-         "Result impact", "which follow-on findings are at risk if this one is wrong"),
+        (
+            "Dependencies",
+            "what code relies on to run",
+            "Reused methods and datasets",
+            "what a result relies on to hold",
+        ),
+        (
+            "Call graphs",
+            "chains of function calls",
+            "Chains of reasoning",
+            "a claim that rests on a claim that rests on a dataset",
+        ),
+        (
+            "Blast radius",
+            "what breaks if this changes",
+            "Result impact",
+            "which follow-on findings are at risk if this one is wrong",
+        ),
     ]
 
     header_y = Emu(1900000)
     _add_text(
-        slide, left=MARGIN_X, top=header_y, width=Emu(5400000), height=Emu(320000),
-        text="Software engineering", font_size=Pt(14), bold=True, color=MUTED,
+        slide,
+        left=MARGIN_X,
+        top=header_y,
+        width=Emu(5400000),
+        height=Emu(320000),
+        text="Software engineering",
+        font_size=Pt(14),
+        bold=True,
+        color=MUTED,
     )
     _add_text(
-        slide, left=Emu(6400000), top=header_y, width=Emu(5400000), height=Emu(320000),
-        text="Science", font_size=Pt(14), bold=True, color=ACCENT,
+        slide,
+        left=Emu(6400000),
+        top=header_y,
+        width=Emu(5400000),
+        height=Emu(320000),
+        text="Science",
+        font_size=Pt(14),
+        bold=True,
+        color=ACCENT,
     )
 
     row_h = Emu(1150000)
@@ -503,20 +539,46 @@ def slide_codebase_analogy(prs, page, total):
             fill=DIVIDER,
         )
         _add_text(
-            slide, left=MARGIN_X, top=y, width=Emu(5400000), height=Emu(360000),
-            text=sw_head, font_size=Pt(17), bold=True, color=INK,
+            slide,
+            left=MARGIN_X,
+            top=y,
+            width=Emu(5400000),
+            height=Emu(360000),
+            text=sw_head,
+            font_size=Pt(17),
+            bold=True,
+            color=INK,
         )
         _add_text(
-            slide, left=MARGIN_X, top=y + Emu(400000), width=Emu(5400000),
-            height=Emu(600000), text=sw_body, font_size=Pt(13), color=BODY,
+            slide,
+            left=MARGIN_X,
+            top=y + Emu(400000),
+            width=Emu(5400000),
+            height=Emu(600000),
+            text=sw_body,
+            font_size=Pt(13),
+            color=BODY,
         )
         _add_text(
-            slide, left=Emu(6400000), top=y, width=Emu(5400000), height=Emu(360000),
-            text=sci_head, font_size=Pt(17), bold=True, color=INK,
+            slide,
+            left=Emu(6400000),
+            top=y,
+            width=Emu(5400000),
+            height=Emu(360000),
+            text=sci_head,
+            font_size=Pt(17),
+            bold=True,
+            color=INK,
         )
         _add_text(
-            slide, left=Emu(6400000), top=y + Emu(400000), width=Emu(5400000),
-            height=Emu(600000), text=sci_body, font_size=Pt(13), color=BODY,
+            slide,
+            left=Emu(6400000),
+            top=y + Emu(400000),
+            width=Emu(5400000),
+            height=Emu(600000),
+            text=sci_body,
+            font_size=Pt(13),
+            color=BODY,
         )
 
     _add_text(
@@ -559,8 +621,15 @@ def slide_debugging_science(prs, page, total):
     y = Emu(1950000)
     head, items = top_box[0]
     _add_text(
-        slide, left=MARGIN_X, top=y, width=Emu(11247120), height=Emu(400000),
-        text=head, font_size=Pt(18), bold=True, color=INK,
+        slide,
+        left=MARGIN_X,
+        top=y,
+        width=Emu(11247120),
+        height=Emu(400000),
+        text=head,
+        font_size=Pt(18),
+        bold=True,
+        color=INK,
     )
     for i, line in enumerate(items):
         _add_text(
@@ -577,20 +646,34 @@ def slide_debugging_science(prs, page, total):
     # What an agent-navigable layer unlocks
     unlock_y = Emu(3900000)
     _add_text(
-        slide, left=MARGIN_X, top=unlock_y, width=Emu(11247120), height=Emu(400000),
+        slide,
+        left=MARGIN_X,
+        top=unlock_y,
+        width=Emu(11247120),
+        height=Emu(400000),
         text="What a navigable layer unlocks",
-        font_size=Pt(18), bold=True, color=ACCENT,
+        font_size=Pt(18),
+        bold=True,
+        color=ACCENT,
     )
 
     unlocks = [
-        ("Automated consistency checks",
-         "Flag claims that contradict well-established adjacent results."),
-        ("Conflicting-result detection",
-         "Surface studies that disagree rather than burying the tension in citations."),
-        ("Missing-link identification",
-         "Point out papers that should cite each other but don't — and why."),
-        ("Method-reuse surfacing",
-         "Find transferable techniques across silos, not just nearest-neighbor prose."),
+        (
+            "Automated consistency checks",
+            "Flag claims that contradict well-established adjacent results.",
+        ),
+        (
+            "Conflicting-result detection",
+            "Surface studies that disagree rather than burying the tension in citations.",
+        ),
+        (
+            "Missing-link identification",
+            "Point out papers that should cite each other but don't — and why.",
+        ),
+        (
+            "Method-reuse surfacing",
+            "Find transferable techniques across silos, not just nearest-neighbor prose.",
+        ),
     ]
     col_w = Emu(5400000)
     ry = unlock_y + Emu(500000)
@@ -600,12 +683,26 @@ def slide_debugging_science(prs, page, total):
         x = MARGIN_X + col * (col_w + Emu(450000))
         yy = ry + row * Emu(950000)
         _add_text(
-            slide, left=x, top=yy, width=col_w, height=Emu(340000),
-            text=h, font_size=Pt(14), bold=True, color=INK,
+            slide,
+            left=x,
+            top=yy,
+            width=col_w,
+            height=Emu(340000),
+            text=h,
+            font_size=Pt(14),
+            bold=True,
+            color=INK,
         )
         _add_text(
-            slide, left=x, top=yy + Emu(360000), width=col_w, height=Emu(600000),
-            text=b, font_size=Pt(12), color=BODY, line_spacing=1.2,
+            slide,
+            left=x,
+            top=yy + Emu(360000),
+            width=col_w,
+            height=Emu(600000),
+            text=b,
+            font_size=Pt(12),
+            color=BODY,
+            line_spacing=1.2,
         )
 
     _footer(slide, page_number=page, total_pages=total)
@@ -623,7 +720,10 @@ def slide_navigable_means(prs, page, total):
     right_h = "Agent (given the right primitives)"
 
     left_items = [
-        ("Ranked list", "Scans titles, opens a few, satisfied — same primitive an agent uses for cheap queries."),
+        (
+            "Ranked list",
+            "Scans titles, opens a few, satisfied — same primitive an agent uses for cheap queries.",
+        ),
         ("One-shot query", "Session state lives in the researcher's head."),
         ("Visual cues", "Journal, authors, year, formatting."),
         ("Stops when tired", "Implicit budget, intuition-driven."),
@@ -631,18 +731,35 @@ def slide_navigable_means(prs, page, total):
     right_items = [
         ("Graph topology", "Which papers bridge communities? Which are structurally central?"),
         ("Session working set", "Accumulates, dedupes, tags, reasons across turns."),
-        ("Structured returns", "Bibcodes, IDs, community labels, provenance — composes with other tools."),
+        (
+            "Structured returns",
+            "Bibcodes, IDs, community labels, provenance — composes with other tools.",
+        ),
         ("Multi-hop moves", "Citation chains, co-citation, bridge-paper gaps, temporal."),
     ]
 
     hdr_y = Emu(1828800)
     _add_text(
-        slide, left=Emu(548640), top=hdr_y, width=Emu(5303520), height=Emu(457200),
-        text=left_h, font_size=Pt(20), bold=True, color=MUTED,
+        slide,
+        left=Emu(548640),
+        top=hdr_y,
+        width=Emu(5303520),
+        height=Emu(457200),
+        text=left_h,
+        font_size=Pt(20),
+        bold=True,
+        color=MUTED,
     )
     _add_text(
-        slide, left=Emu(6309360), top=hdr_y, width=Emu(5303520), height=Emu(457200),
-        text=right_h, font_size=Pt(20), bold=True, color=ACCENT,
+        slide,
+        left=Emu(6309360),
+        top=hdr_y,
+        width=Emu(5303520),
+        height=Emu(457200),
+        text=right_h,
+        font_size=Pt(20),
+        bold=True,
+        color=ACCENT,
     )
 
     y0 = Emu(2651760)
@@ -650,20 +767,48 @@ def slide_navigable_means(prs, page, total):
     for i, ((lh, lb), (rh, rb)) in enumerate(zip(left_items, right_items)):
         y = y0 + i * row
         _add_text(
-            slide, left=Emu(548640), top=y, width=Emu(5303520), height=Emu(320040),
-            text=lh, font_size=Pt(15), bold=True, color=INK,
+            slide,
+            left=Emu(548640),
+            top=y,
+            width=Emu(5303520),
+            height=Emu(320040),
+            text=lh,
+            font_size=Pt(15),
+            bold=True,
+            color=INK,
         )
         _add_text(
-            slide, left=Emu(548640), top=y + Emu(320040), width=Emu(5303520),
-            height=Emu(502920), text=lb, font_size=Pt(13), color=BODY, line_spacing=1.2,
+            slide,
+            left=Emu(548640),
+            top=y + Emu(320040),
+            width=Emu(5303520),
+            height=Emu(502920),
+            text=lb,
+            font_size=Pt(13),
+            color=BODY,
+            line_spacing=1.2,
         )
         _add_text(
-            slide, left=Emu(6309360), top=y, width=Emu(5303520), height=Emu(320040),
-            text=rh, font_size=Pt(15), bold=True, color=INK,
+            slide,
+            left=Emu(6309360),
+            top=y,
+            width=Emu(5303520),
+            height=Emu(320040),
+            text=rh,
+            font_size=Pt(15),
+            bold=True,
+            color=INK,
         )
         _add_text(
-            slide, left=Emu(6309360), top=y + Emu(320040), width=Emu(5303520),
-            height=Emu(502920), text=rb, font_size=Pt(13), color=BODY, line_spacing=1.2,
+            slide,
+            left=Emu(6309360),
+            top=y + Emu(320040),
+            width=Emu(5303520),
+            height=Emu(502920),
+            text=rb,
+            font_size=Pt(13),
+            color=BODY,
+            line_spacing=1.2,
         )
 
     _footer(slide, page_number=page, total_pages=total)
@@ -678,13 +823,27 @@ def slide_hybrid_retrieval(prs, page, total):
     )
 
     blocks = [
-        ("Semantic", "Dense vectors — domain-tuned plus general-purpose, fused via reciprocal rank."),
-        ("Lexical", "BM25 on titles, abstracts, keywords. Catches specific terms that embeddings blur."),
-        ("Structural", "Graph moves: citation chains, co-citation, shortest paths, community lenses."),
-        ("Symbolic", "Entity and claim extraction — instruments, datasets, methods, results as first-class objects."),
-        ("Iterative",
-         "An agent chooses the next move based on what it just learned. "
-         "The loop — not any single tool — is where the leverage lives."),
+        (
+            "Semantic",
+            "Dense vectors — domain-tuned plus general-purpose, fused via reciprocal rank.",
+        ),
+        (
+            "Lexical",
+            "BM25 on titles, abstracts, keywords. Catches specific terms that embeddings blur.",
+        ),
+        (
+            "Structural",
+            "Graph moves: citation chains, co-citation, shortest paths, community lenses.",
+        ),
+        (
+            "Symbolic",
+            "Entity and claim extraction — instruments, datasets, methods, results as first-class objects.",
+        ),
+        (
+            "Iterative",
+            "An agent chooses the next move based on what it just learned. "
+            "The loop — not any single tool — is where the leverage lives.",
+        ),
     ]
 
     y = Emu(1950000)
@@ -693,28 +852,64 @@ def slide_hybrid_retrieval(prs, page, total):
     for i, (h, b) in enumerate(blocks[:4]):
         x = MARGIN_X + (i % 3) * (col_w + gap)
         yy = y + (i // 3) * Emu(1850000)
-        _add_rect(slide, left=x, top=yy, width=col_w, height=Emu(1600000),
-                  fill=RGBColor(0xF8, 0xFA, 0xFC), line=DIVIDER)
-        _add_text(slide, left=x + Emu(200000), top=yy + Emu(200000),
-                  width=col_w - Emu(400000), height=Emu(400000),
-                  text=h, font_size=Pt(18), bold=True, color=ACCENT)
-        _add_text(slide, left=x + Emu(200000), top=yy + Emu(650000),
-                  width=col_w - Emu(400000), height=Emu(900000),
-                  text=b, font_size=Pt(13), color=BODY, line_spacing=1.3)
+        _add_rect(
+            slide,
+            left=x,
+            top=yy,
+            width=col_w,
+            height=Emu(1600000),
+            fill=RGBColor(0xF8, 0xFA, 0xFC),
+            line=DIVIDER,
+        )
+        _add_text(
+            slide,
+            left=x + Emu(200000),
+            top=yy + Emu(200000),
+            width=col_w - Emu(400000),
+            height=Emu(400000),
+            text=h,
+            font_size=Pt(18),
+            bold=True,
+            color=ACCENT,
+        )
+        _add_text(
+            slide,
+            left=x + Emu(200000),
+            top=yy + Emu(650000),
+            width=col_w - Emu(400000),
+            height=Emu(900000),
+            text=b,
+            font_size=Pt(13),
+            color=BODY,
+            line_spacing=1.3,
+        )
 
     # Iterative spans the bottom wide
     iy = y + Emu(1850000)
     x = MARGIN_X + col_w + gap
-    _add_rect(slide, left=x, top=iy, width=col_w, height=Emu(1600000),
-              fill=ACCENT, line=None)
-    _add_text(slide, left=x + Emu(200000), top=iy + Emu(200000),
-              width=col_w - Emu(400000), height=Emu(400000),
-              text=blocks[4][0], font_size=Pt(18), bold=True,
-              color=RGBColor(0xFF, 0xFF, 0xFF))
-    _add_text(slide, left=x + Emu(200000), top=iy + Emu(650000),
-              width=col_w - Emu(400000), height=Emu(900000),
-              text=blocks[4][1], font_size=Pt(13),
-              color=RGBColor(0xE5, 0xEE, 0xFB), line_spacing=1.3)
+    _add_rect(slide, left=x, top=iy, width=col_w, height=Emu(1600000), fill=ACCENT, line=None)
+    _add_text(
+        slide,
+        left=x + Emu(200000),
+        top=iy + Emu(200000),
+        width=col_w - Emu(400000),
+        height=Emu(400000),
+        text=blocks[4][0],
+        font_size=Pt(18),
+        bold=True,
+        color=RGBColor(0xFF, 0xFF, 0xFF),
+    )
+    _add_text(
+        slide,
+        left=x + Emu(200000),
+        top=iy + Emu(650000),
+        width=col_w - Emu(400000),
+        height=Emu(900000),
+        text=blocks[4][1],
+        font_size=Pt(13),
+        color=RGBColor(0xE5, 0xEE, 0xFB),
+        line_spacing=1.3,
+    )
 
     _footer(slide, page_number=page, total_pages=total)
 
@@ -728,17 +923,27 @@ def slide_why_mcp(prs, page, total):
     )
 
     items = [
-        ("Tool-calling primitives",
-         "First-class: name, typed args, typed returns. The agent knows what it can do."),
-        ("Session context",
-         "Stateful per-connection. Working sets live on the server, not in the prompt."),
-        ("Structured responses",
-         "JSON objects, not HTML snippets. Compose cleanly with other tools."),
-        ("Transport-agnostic",
-         "stdio, HTTP, WebSocket. Works with Claude Desktop, Cursor, custom agents."),
-        ("Portable discipline",
-         "If your research copilot speaks MCP, the same knowledge layer can be "
-         "hosted by ADS, arXiv, your own group, or someone else."),
+        (
+            "Tool-calling primitives",
+            "First-class: name, typed args, typed returns. The agent knows what it can do.",
+        ),
+        (
+            "Session context",
+            "Stateful per-connection. Working sets live on the server, not in the prompt.",
+        ),
+        (
+            "Structured responses",
+            "JSON objects, not HTML snippets. Compose cleanly with other tools.",
+        ),
+        (
+            "Transport-agnostic",
+            "stdio, HTTP, WebSocket. Works with Claude Desktop, Cursor, custom agents.",
+        ),
+        (
+            "Portable discipline",
+            "If your research copilot speaks MCP, the same knowledge layer can be "
+            "hosted by ADS, arXiv, your own group, or someone else.",
+        ),
     ]
 
     col_w = Emu(5400000)
@@ -749,10 +954,28 @@ def slide_why_mcp(prs, page, total):
         row = i // 2
         x = MARGIN_X + col * (col_w + Emu(450000))
         y = y0 + row * row_h
-        _add_text(slide, left=x, top=y, width=col_w, height=Emu(360000),
-                  text=h, font_size=Pt(16), bold=True, color=INK)
-        _add_text(slide, left=x, top=y + Emu(380000), width=col_w, height=Emu(700000),
-                  text=b, font_size=Pt(13), color=BODY, line_spacing=1.25)
+        _add_text(
+            slide,
+            left=x,
+            top=y,
+            width=col_w,
+            height=Emu(360000),
+            text=h,
+            font_size=Pt(16),
+            bold=True,
+            color=INK,
+        )
+        _add_text(
+            slide,
+            left=x,
+            top=y + Emu(380000),
+            width=col_w,
+            height=Emu(700000),
+            text=b,
+            font_size=Pt(13),
+            color=BODY,
+            line_spacing=1.25,
+        )
 
     _footer(slide, page_number=page, total_pages=total)
 
@@ -807,28 +1030,51 @@ def slide_coverage_matters(prs, page, total):
     )
 
     points = [
-        ("Citation graphs are shape-sensitive",
-         "A partial corpus breaks PageRank, community detection, and co-citation — "
-         "not by a few percent, but structurally. Recent papers cite older papers; "
-         "a rolling window systematically excludes the very papers its contents reference."),
-        ("The practical question for a user",
-         "What does the copilot's corpus actually include? Where do its edges dangle? "
-         "If you ask it 'which papers are foundational here,' is the answer computed "
-         "over a 6-year window or over the full field?"),
-        ("The engineering answer is boring",
-         "Full-corpus ingest is feasible. ADS → Postgres via binary COPY, ~4 hours on "
-         "one machine. There is no excuse for partial-graph analytics."),
+        (
+            "Citation graphs are shape-sensitive",
+            "A partial corpus breaks PageRank, community detection, and co-citation — "
+            "not by a few percent, but structurally. Recent papers cite older papers; "
+            "a rolling window systematically excludes the very papers its contents reference.",
+        ),
+        (
+            "The practical question for a user",
+            "What does the copilot's corpus actually include? Where do its edges dangle? "
+            "If you ask it 'which papers are foundational here,' is the answer computed "
+            "over a 6-year window or over the full field?",
+        ),
+        (
+            "The engineering answer is boring",
+            "Full-corpus ingest is feasible. ADS → Postgres via binary COPY, ~4 hours on "
+            "one machine. There is no excuse for partial-graph analytics.",
+        ),
     ]
 
     y0 = Emu(1950000)
     row_h = Emu(1350000)
     for i, (h, b) in enumerate(points):
         y = y0 + i * row_h
-        _add_text(slide, left=MARGIN_X, top=y, width=Emu(11247120), height=Emu(400000),
-                  text=h, font_size=Pt(17), bold=True, color=INK)
-        _add_text(slide, left=MARGIN_X, top=y + Emu(430000), width=Emu(11247120),
-                  height=Emu(900000), text=b, font_size=Pt(13), color=BODY,
-                  line_spacing=1.3)
+        _add_text(
+            slide,
+            left=MARGIN_X,
+            top=y,
+            width=Emu(11247120),
+            height=Emu(400000),
+            text=h,
+            font_size=Pt(17),
+            bold=True,
+            color=INK,
+        )
+        _add_text(
+            slide,
+            left=MARGIN_X,
+            top=y + Emu(430000),
+            width=Emu(11247120),
+            height=Emu(900000),
+            text=b,
+            font_size=Pt(13),
+            color=BODY,
+            line_spacing=1.3,
+        )
 
     _footer(slide, page_number=page, total_pages=total)
 
@@ -866,11 +1112,26 @@ def slide_two_vector_stores(prs, page, total):
     y = Emu(1950000)
     for i, (head, bullets) in enumerate(cols):
         x = MARGIN_X + i * (col_w + gap)
-        _add_rect(slide, left=x, top=y, width=col_w, height=Emu(3700000),
-                  fill=RGBColor(0xF8, 0xFA, 0xFC), line=DIVIDER)
-        _add_text(slide, left=x + Emu(220000), top=y + Emu(220000),
-                  width=col_w - Emu(440000), height=Emu(440000),
-                  text=head, font_size=Pt(18), bold=True, color=ACCENT)
+        _add_rect(
+            slide,
+            left=x,
+            top=y,
+            width=col_w,
+            height=Emu(3700000),
+            fill=RGBColor(0xF8, 0xFA, 0xFC),
+            line=DIVIDER,
+        )
+        _add_text(
+            slide,
+            left=x + Emu(220000),
+            top=y + Emu(220000),
+            width=col_w - Emu(440000),
+            height=Emu(440000),
+            text=head,
+            font_size=Pt(18),
+            bold=True,
+            color=ACCENT,
+        )
         for j, line in enumerate(bullets):
             _add_text(
                 slide,
@@ -910,24 +1171,36 @@ def slide_tool_design(prs, page, total):
     )
 
     items = [
-        ("Fewer, composable tools > many specific tools",
-         "Agent tool-selection accuracy degrades past a point. Prefer a small set "
-         "of primitives the agent can combine over a catalog of bespoke endpoints."),
-        ("Return compact stubs, full text on request",
-         "bibcode · title · first_author · year · citation_count · snippet. Full "
-         "paper only when the agent asks for it. Context is the scarcest resource."),
-        ("Stable, typed schemas",
-         "JSON, no free-text fields that need parsing. Every response composes "
-         "cleanly with whatever the agent does next."),
-        ("Include provenance",
-         "Which tool returned this? Which query? The agent can reason about its "
-         "own trail — and so can you, when you read the trace."),
-        ("Cursor-based pagination",
-         "Never return 10,000 bibcodes in one payload. Give the agent a cursor "
-         "and let it ask for more if it needs more."),
-        ("Idempotent reads, explicit side effects",
-         "Same inputs → same outputs. Caching is trivial. Anything that writes "
-         "state is called out in the tool name."),
+        (
+            "Fewer, composable tools > many specific tools",
+            "Agent tool-selection accuracy degrades past a point. Prefer a small set "
+            "of primitives the agent can combine over a catalog of bespoke endpoints.",
+        ),
+        (
+            "Return compact stubs, full text on request",
+            "bibcode · title · first_author · year · citation_count · snippet. Full "
+            "paper only when the agent asks for it. Context is the scarcest resource.",
+        ),
+        (
+            "Stable, typed schemas",
+            "JSON, no free-text fields that need parsing. Every response composes "
+            "cleanly with whatever the agent does next.",
+        ),
+        (
+            "Include provenance",
+            "Which tool returned this? Which query? The agent can reason about its "
+            "own trail — and so can you, when you read the trace.",
+        ),
+        (
+            "Cursor-based pagination",
+            "Never return 10,000 bibcodes in one payload. Give the agent a cursor "
+            "and let it ask for more if it needs more.",
+        ),
+        (
+            "Idempotent reads, explicit side effects",
+            "Same inputs → same outputs. Caching is trivial. Anything that writes "
+            "state is called out in the tool name.",
+        ),
     ]
 
     col_w = Emu(5400000)
@@ -938,10 +1211,28 @@ def slide_tool_design(prs, page, total):
         row = i // 2
         x = MARGIN_X + col * (col_w + Emu(450000))
         y = y0 + row * row_h
-        _add_text(slide, left=x, top=y, width=col_w, height=Emu(360000),
-                  text=h, font_size=Pt(15), bold=True, color=INK)
-        _add_text(slide, left=x, top=y + Emu(380000), width=col_w, height=Emu(700000),
-                  text=b, font_size=Pt(13), color=BODY, line_spacing=1.25)
+        _add_text(
+            slide,
+            left=x,
+            top=y,
+            width=col_w,
+            height=Emu(360000),
+            text=h,
+            font_size=Pt(15),
+            bold=True,
+            color=INK,
+        )
+        _add_text(
+            slide,
+            left=x,
+            top=y + Emu(380000),
+            width=col_w,
+            height=Emu(700000),
+            text=b,
+            font_size=Pt(13),
+            color=BODY,
+            line_spacing=1.25,
+        )
 
     _footer(slide, page_number=page, total_pages=total)
 
@@ -955,23 +1246,33 @@ def slide_unlocks(prs, page, total):
     )
 
     items = [
-        ("Bridge papers between communities",
-         "'Which papers are cited by both the exoplanet community and the "
-         "atmospheric-chemistry community?' — a single structural query, not a "
-         "month of hallway conversations."),
-        ("Citation chains (what this claim depends on)",
-         "Follow the chain of results the current paper rests on. Where does the "
-         "chain terminate — a dataset? a theorem? an assumption someone flagged?"),
-        ("Co-citation and bibliographic coupling",
-         "Find papers that are read-alike (cited together) or reference-alike "
-         "(share references). These are invisible-college detectors."),
-        ("Temporal evolution",
-         "Which subfields are growing? Which are consolidating into review papers? "
-         "Which had a flurry five years ago and went quiet?"),
-        ("Multi-lens community assignment",
-         "Three lenses — citation, semantic, taxonomic — and their disagreements "
-         "are informative. A paper that's semantically central but citationally "
-         "isolated is often an 'outsider with a good idea.'"),
+        (
+            "Bridge papers between communities",
+            "'Which papers are cited by both the exoplanet community and the "
+            "atmospheric-chemistry community?' — a single structural query, not a "
+            "month of hallway conversations.",
+        ),
+        (
+            "Citation chains (what this claim depends on)",
+            "Follow the chain of results the current paper rests on. Where does the "
+            "chain terminate — a dataset? a theorem? an assumption someone flagged?",
+        ),
+        (
+            "Co-citation and bibliographic coupling",
+            "Find papers that are read-alike (cited together) or reference-alike "
+            "(share references). These are invisible-college detectors.",
+        ),
+        (
+            "Temporal evolution",
+            "Which subfields are growing? Which are consolidating into review papers? "
+            "Which had a flurry five years ago and went quiet?",
+        ),
+        (
+            "Multi-lens community assignment",
+            "Three lenses — citation, semantic, taxonomic — and their disagreements "
+            "are informative. A paper that's semantically central but citationally "
+            "isolated is often an 'outsider with a good idea.'",
+        ),
     ]
 
     col_w = Emu(5400000)
@@ -982,19 +1283,54 @@ def slide_unlocks(prs, page, total):
         row = i // 2
         x = MARGIN_X + col * (col_w + Emu(450000))
         y = y0 + row * row_h
-        _add_text(slide, left=x, top=y, width=col_w, height=Emu(360000),
-                  text=h, font_size=Pt(15), bold=True, color=INK)
-        _add_text(slide, left=x, top=y + Emu(380000), width=col_w, height=Emu(700000),
-                  text=b, font_size=Pt(12), color=BODY, line_spacing=1.22)
+        _add_text(
+            slide,
+            left=x,
+            top=y,
+            width=col_w,
+            height=Emu(360000),
+            text=h,
+            font_size=Pt(15),
+            bold=True,
+            color=INK,
+        )
+        _add_text(
+            slide,
+            left=x,
+            top=y + Emu(380000),
+            width=col_w,
+            height=Emu(700000),
+            text=b,
+            font_size=Pt(12),
+            color=BODY,
+            line_spacing=1.22,
+        )
 
     # The 5th item spans the bottom
     y5 = y0 + 2 * row_h
     h, b = items[4]
-    _add_text(slide, left=MARGIN_X, top=y5, width=Emu(11247120), height=Emu(360000),
-              text=h, font_size=Pt(15), bold=True, color=INK)
-    _add_text(slide, left=MARGIN_X, top=y5 + Emu(380000), width=Emu(11247120),
-              height=Emu(500000), text=b, font_size=Pt(12), color=BODY,
-              line_spacing=1.22)
+    _add_text(
+        slide,
+        left=MARGIN_X,
+        top=y5,
+        width=Emu(11247120),
+        height=Emu(360000),
+        text=h,
+        font_size=Pt(15),
+        bold=True,
+        color=INK,
+    )
+    _add_text(
+        slide,
+        left=MARGIN_X,
+        top=y5 + Emu(380000),
+        width=Emu(11247120),
+        height=Emu(500000),
+        text=b,
+        font_size=Pt(12),
+        color=BODY,
+        line_spacing=1.22,
+    )
 
     _footer(slide, page_number=page, total_pages=total)
 
@@ -1048,14 +1384,36 @@ def slide_community_lenses(prs, page, total):
     y = Emu(1950000)
     for i, (name, tag, bullets) in enumerate(cols):
         x = MARGIN_X + i * (col_w + gap)
-        _add_rect(slide, left=x, top=y, width=col_w, height=Emu(3800000),
-                  fill=RGBColor(0xF8, 0xFA, 0xFC), line=DIVIDER)
-        _add_text(slide, left=x + Emu(220000), top=y + Emu(200000),
-                  width=col_w - Emu(440000), height=Emu(420000),
-                  text=name, font_size=Pt(20), bold=True, color=ACCENT)
-        _add_text(slide, left=x + Emu(220000), top=y + Emu(650000),
-                  width=col_w - Emu(440000), height=Emu(320000),
-                  text=tag, font_size=Pt(12), color=MUTED)
+        _add_rect(
+            slide,
+            left=x,
+            top=y,
+            width=col_w,
+            height=Emu(3800000),
+            fill=RGBColor(0xF8, 0xFA, 0xFC),
+            line=DIVIDER,
+        )
+        _add_text(
+            slide,
+            left=x + Emu(220000),
+            top=y + Emu(200000),
+            width=col_w - Emu(440000),
+            height=Emu(420000),
+            text=name,
+            font_size=Pt(20),
+            bold=True,
+            color=ACCENT,
+        )
+        _add_text(
+            slide,
+            left=x + Emu(220000),
+            top=y + Emu(650000),
+            width=col_w - Emu(440000),
+            height=Emu(320000),
+            text=tag,
+            font_size=Pt(12),
+            color=MUTED,
+        )
         for j, line in enumerate(bullets):
             _add_text(
                 slide,
@@ -1094,8 +1452,15 @@ def slide_live_demo(prs, page, total):
     )
 
     _add_text(
-        slide, left=MARGIN_X, top=Emu(1950000), width=Emu(11247120), height=Emu(400000),
-        text="User prompt", font_size=Pt(14), bold=True, color=MUTED,
+        slide,
+        left=MARGIN_X,
+        top=Emu(1950000),
+        width=Emu(11247120),
+        height=Emu(400000),
+        text="User prompt",
+        font_size=Pt(14),
+        bold=True,
+        color=MUTED,
     )
     _add_text(
         slide,
@@ -1114,8 +1479,15 @@ def slide_live_demo(prs, page, total):
     )
 
     _add_text(
-        slide, left=MARGIN_X, top=Emu(3300000), width=Emu(11247120), height=Emu(400000),
-        text="Moves the copilot makes", font_size=Pt(14), bold=True, color=MUTED,
+        slide,
+        left=MARGIN_X,
+        top=Emu(3300000),
+        width=Emu(11247120),
+        height=Emu(400000),
+        text="Moves the copilot makes",
+        font_size=Pt(14),
+        bold=True,
+        color=MUTED,
     )
     moves = [
         ("search", "broad hybrid hit on 'exoplanet atmospheric characterization'"),
@@ -1129,16 +1501,36 @@ def slide_live_demo(prs, page, total):
     for i, (tool, desc) in enumerate(moves):
         row_y = y + i * Emu(370000)
         _add_text(
-            slide, left=MARGIN_X, top=row_y, width=Emu(350000), height=Emu(320000),
-            text=str(i + 1), font_size=Pt(16), bold=True, color=ACCENT_BRIGHT,
+            slide,
+            left=MARGIN_X,
+            top=row_y,
+            width=Emu(350000),
+            height=Emu(320000),
+            text=str(i + 1),
+            font_size=Pt(16),
+            bold=True,
+            color=ACCENT_BRIGHT,
         )
         _add_text(
-            slide, left=Emu(840000), top=row_y, width=Emu(3000000), height=Emu(320000),
-            text=tool, font_size=Pt(14), bold=True, color=INK,
+            slide,
+            left=Emu(840000),
+            top=row_y,
+            width=Emu(3000000),
+            height=Emu(320000),
+            text=tool,
+            font_size=Pt(14),
+            bold=True,
+            color=INK,
         )
         _add_text(
-            slide, left=Emu(4000000), top=row_y, width=Emu(8000000), height=Emu(320000),
-            text=desc, font_size=Pt(13), color=BODY,
+            slide,
+            left=Emu(4000000),
+            top=row_y,
+            width=Emu(8000000),
+            height=Emu(320000),
+            text=desc,
+            font_size=Pt(13),
+            color=BODY,
         )
 
     _footer(slide, page_number=page, total_pages=total)
@@ -1207,26 +1599,36 @@ def slide_for_users(prs, page, total):
         slide,
         title="What this means if you're using a research copilot",
         subtitle="Most of you will be integrating one, not building the knowledge layer. "
-                 "The questions to ask are the same.",
+        "The questions to ask are the same.",
     )
 
     items = [
-        ("What does the corpus cover?",
-         "Full field or a rolling window? Do the graph metrics it returns mean "
-         "what you think they mean?"),
-        ("What moves does it support beyond search?",
-         "Citation chains, co-citation, community bridges, temporal slices. If "
-         "the only primitive is search, you have a faster librarian — not a "
-         "navigation layer."),
-        ("Does it return structured objects?",
-         "A bibcode, not a snippet. IDs compose; prose doesn't. Tools that return "
-         "prose force the agent to parse its own context."),
-        ("Can you trace what it consulted?",
-         "Every answer should come with the tool calls it made. This is how you "
-         "trust it, debug it, and teach it."),
-        ("How does it complement, not replace, your judgement?",
-         "Use it to expand the landscape and surface blind spots. Reserve peer "
-         "review, interpretation, and prioritization for the human."),
+        (
+            "What does the corpus cover?",
+            "Full field or a rolling window? Do the graph metrics it returns mean "
+            "what you think they mean?",
+        ),
+        (
+            "What moves does it support beyond search?",
+            "Citation chains, co-citation, community bridges, temporal slices. If "
+            "the only primitive is search, you have a faster librarian — not a "
+            "navigation layer.",
+        ),
+        (
+            "Does it return structured objects?",
+            "A bibcode, not a snippet. IDs compose; prose doesn't. Tools that return "
+            "prose force the agent to parse its own context.",
+        ),
+        (
+            "Can you trace what it consulted?",
+            "Every answer should come with the tool calls it made. This is how you "
+            "trust it, debug it, and teach it.",
+        ),
+        (
+            "How does it complement, not replace, your judgement?",
+            "Use it to expand the landscape and surface blind spots. Reserve peer "
+            "review, interpretation, and prioritization for the human.",
+        ),
     ]
 
     col_w = Emu(5400000)
@@ -1237,18 +1639,53 @@ def slide_for_users(prs, page, total):
         row = i // 2
         x = MARGIN_X + col * (col_w + Emu(450000))
         y = y0 + row * row_h
-        _add_text(slide, left=x, top=y, width=col_w, height=Emu(360000),
-                  text=h, font_size=Pt(15), bold=True, color=INK)
-        _add_text(slide, left=x, top=y + Emu(380000), width=col_w, height=Emu(600000),
-                  text=b, font_size=Pt(12), color=BODY, line_spacing=1.22)
+        _add_text(
+            slide,
+            left=x,
+            top=y,
+            width=col_w,
+            height=Emu(360000),
+            text=h,
+            font_size=Pt(15),
+            bold=True,
+            color=INK,
+        )
+        _add_text(
+            slide,
+            left=x,
+            top=y + Emu(380000),
+            width=col_w,
+            height=Emu(600000),
+            text=b,
+            font_size=Pt(12),
+            color=BODY,
+            line_spacing=1.22,
+        )
 
     y5 = y0 + 2 * row_h
     h, b = items[4]
-    _add_text(slide, left=MARGIN_X, top=y5, width=Emu(11247120), height=Emu(360000),
-              text=h, font_size=Pt(15), bold=True, color=ACCENT)
-    _add_text(slide, left=MARGIN_X, top=y5 + Emu(380000), width=Emu(11247120),
-              height=Emu(600000), text=b, font_size=Pt(12), color=BODY,
-              line_spacing=1.22)
+    _add_text(
+        slide,
+        left=MARGIN_X,
+        top=y5,
+        width=Emu(11247120),
+        height=Emu(360000),
+        text=h,
+        font_size=Pt(15),
+        bold=True,
+        color=ACCENT,
+    )
+    _add_text(
+        slide,
+        left=MARGIN_X,
+        top=y5 + Emu(380000),
+        width=Emu(11247120),
+        height=Emu(600000),
+        text=b,
+        font_size=Pt(12),
+        color=BODY,
+        line_spacing=1.22,
+    )
 
     _footer(slide, page_number=page, total_pages=total)
 
@@ -1268,16 +1705,37 @@ def slide_takeaway(prs, page, total):
     for i, (a, b) in enumerate(lines):
         y = y0 + i * row_h
         _add_text(
-            slide, left=MARGIN_X, top=y, width=Emu(4500000), height=Emu(560000),
-            text=a, font_size=Pt(30), bold=True, color=MUTED,
+            slide,
+            left=MARGIN_X,
+            top=y,
+            width=Emu(4500000),
+            height=Emu(560000),
+            text=a,
+            font_size=Pt(30),
+            bold=True,
+            color=MUTED,
         )
         _add_text(
-            slide, left=Emu(5200000), top=y, width=Emu(200000), height=Emu(560000),
-            text="→", font_size=Pt(30), bold=True, color=MUTED,
+            slide,
+            left=Emu(5200000),
+            top=y,
+            width=Emu(200000),
+            height=Emu(560000),
+            text="→",
+            font_size=Pt(30),
+            bold=True,
+            color=MUTED,
         )
         _add_text(
-            slide, left=Emu(5550000), top=y, width=Emu(6500000), height=Emu(560000),
-            text=b, font_size=Pt(30), bold=True, color=ACCENT,
+            slide,
+            left=Emu(5550000),
+            top=y,
+            width=Emu(6500000),
+            height=Emu(560000),
+            text=b,
+            font_size=Pt(30),
+            bold=True,
+            color=ACCENT,
         )
 
     _add_text(
@@ -1420,5 +1878,10 @@ def build(output: Path):
 
 
 if __name__ == "__main__":
-    out = Path(__file__).resolve().parent.parent / "docs" / "slides" / "mlops_community_research_copilot.pptx"
+    out = (
+        Path(__file__).resolve().parent.parent
+        / "docs"
+        / "slides"
+        / "mlops_community_research_copilot.pptx"
+    )
     build(out)

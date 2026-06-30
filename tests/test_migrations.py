@@ -154,11 +154,13 @@ def _enum_values(conn: psycopg.Connection, typename: str) -> list[str]:
 class TestMigration028:
     def test_tier_column_exists_and_not_null(self, conn: psycopg.Connection) -> None:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT data_type, is_nullable, column_default
                   FROM information_schema.columns
                  WHERE table_name = 'document_entities' AND column_name = 'tier'
-                """)
+                """
+            )
             row = cur.fetchone()
         assert row is not None, "tier column missing"
         data_type, is_nullable, _default = row
@@ -167,11 +169,13 @@ class TestMigration028:
 
     def test_tier_version_column_exists(self, conn: psycopg.Connection) -> None:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT data_type, is_nullable, column_default
                   FROM information_schema.columns
                  WHERE table_name = 'document_entities' AND column_name = 'tier_version'
-                """)
+                """
+            )
             row = cur.fetchone()
         assert row is not None, "tier_version column missing"
         data_type, is_nullable, default = row
@@ -270,10 +274,12 @@ class TestMigration029:
     def test_source_version_column_exists(self, conn: psycopg.Connection) -> None:
         assert _column_exists(conn, "entities", "source_version")
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT data_type FROM information_schema.columns
                  WHERE table_name = 'entities' AND column_name = 'source_version'
-                """)
+                """
+            )
             assert cur.fetchone()[0] == "text"
 
     def test_supersedes_id_column_exists(self, conn: psycopg.Connection) -> None:
@@ -281,13 +287,15 @@ class TestMigration029:
 
     def test_supersedes_self_fk_exists(self, conn: psycopg.Connection) -> None:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT conname
                   FROM pg_constraint
                  WHERE conrelid = 'public.entities'::regclass
                    AND contype  = 'f'
                    AND confrelid = 'public.entities'::regclass
-                """)
+                """
+            )
             rows = [row[0] for row in cur.fetchall()]
         assert any("supersedes" in name for name in rows), rows
 
@@ -313,14 +321,16 @@ class TestMigration030:
         the canonical function exists with the consolidated signature.
         """
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT p.proname, pg_get_function_arguments(p.oid),
                        pg_get_function_result(p.oid)
                   FROM pg_proc p
                   JOIN pg_namespace n ON n.oid = p.pronamespace
                  WHERE n.nspname = 'public'
                    AND p.proname = 'promote_harvest'
-                """)
+                """
+            )
             rows = cur.fetchall()
         assert len(rows) >= 1, "promote_harvest function missing"
         # Find the consolidated version (returns jsonb, not integer)
@@ -334,12 +344,14 @@ class TestMigration030:
     def test_promote_harvest_v2_absent(self, conn: psycopg.Connection) -> None:
         """After migration 043, promote_harvest_v2 must not exist."""
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT 1 FROM pg_proc p
                   JOIN pg_namespace n ON n.oid = p.pronamespace
                  WHERE n.nspname = 'public'
                    AND p.proname = 'promote_harvest_v2'
-                """)
+                """
+            )
             assert cur.fetchone() is None, "promote_harvest_v2 should have been dropped"
 
 
@@ -378,11 +390,13 @@ class TestMigration031:
 
     def test_is_test_default_false(self, conn: psycopg.Connection) -> None:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT column_default, is_nullable
                   FROM information_schema.columns
                  WHERE table_name = 'query_log' AND column_name = 'is_test'
-                """)
+                """
+            )
             default, is_nullable = cur.fetchone()
         assert is_nullable == "NO"
         assert default is not None and "false" in default.lower()
@@ -419,21 +433,25 @@ class TestCleanupHarvestZombies:
     ) -> None:
         # Insert a fixture zombie row (started 10 hours ago).
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO harvest_runs (source, started_at, status)
                 VALUES ('__u01_zombie_src__',
                         now() - interval '10 hours',
                         'running')
                 RETURNING id
-                """)
+                """
+            )
             zombie_id = cur.fetchone()[0]
 
             # Also insert a fresh running row that should NOT be touched.
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO harvest_runs (source, started_at, status)
                 VALUES ('__u01_fresh_src__', now(), 'running')
                 RETURNING id
-                """)
+                """
+            )
             fresh_id = cur.fetchone()[0]
         conn.commit()
 
@@ -473,13 +491,15 @@ class TestCleanupHarvestZombies:
 
     def test_script_dry_run_does_not_update(self, conn: psycopg.Connection, dsn: str) -> None:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO harvest_runs (source, started_at, status)
                 VALUES ('__u01_zombie_dry__',
                         now() - interval '10 hours',
                         'running')
                 RETURNING id
-                """)
+                """
+            )
             zombie_id = cur.fetchone()[0]
         conn.commit()
 

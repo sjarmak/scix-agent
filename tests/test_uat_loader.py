@@ -61,13 +61,15 @@ def _fixture_relationships() -> list[UATRelationship]:
 
 def _has_uat_tables(conn: psycopg.Connection) -> bool:
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT COUNT(*) FROM information_schema.tables
             WHERE table_schema = 'public'
               AND table_name IN (
                   'uat_concepts', 'uat_relationships', 'paper_uat_mappings'
               )
-            """)
+            """
+        )
         return cur.fetchone()[0] == 3
 
 

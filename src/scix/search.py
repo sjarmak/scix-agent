@@ -68,11 +68,15 @@ def _qdrant_dense_gated(model_name: str) -> bool:
 def _get_qdrant_dense_client() -> Any:
     global _qdrant_dense_client
     if _qdrant_dense_client is None:
+        url = _qdrant_dense_url()
+        if url is None:
+            raise RuntimeError(
+                "Qdrant dense client requested but QDRANT_URL is unset. "
+                "Callers must check _qdrant_dense_gated() first (ADR-013)."
+            )
         from qdrant_client import QdrantClient
 
-        _qdrant_dense_client = QdrantClient(
-            url=_qdrant_dense_url(), prefer_grpc=False, timeout=30
-        )
+        _qdrant_dense_client = QdrantClient(url=url, prefer_grpc=False, timeout=30)
     return _qdrant_dense_client
 
 
@@ -294,12 +298,55 @@ def _resolve_lexical_pool() -> int | None:
         return _LEXICAL_POOL_DEFAULT
     if value <= 0:
         logger.warning(
-            "SCIX_LEXICAL_POOL=%d must be positive (use INF for unbounded); "
-            "falling back to %d",
+            "SCIX_LEXICAL_POOL=%d must be positive (use INF for unbounded); " "falling back to %d",
             value,
             _LEXICAL_POOL_DEFAULT,
         )
         return _LEXICAL_POOL_DEFAULT
+    return value
+
+
+# ts_rank_cd normalization flag (4th arg). The default 32 = rank/(rank+1), a
+# monotonic squash into [0,1) that does NOT length-normalize: a short, dense
+# doc still outranks a long one on the same term (verified, bead q9k5). The
+# length-aware bits are 1 = /(1+log(length)), 2 = /length, 16 =
+# /(1+log(unique words)); they OR with 32, e.g. 33 = 32|1, 48 = 32|16.
+# Exposed as an env hook (mirror SCIX_LEXICAL_POOL) so eval harnesses can A/B
+# the flag against the short-doc-dominates-broad-queries bias without a code
+# change. Only the six defined normalization bits are accepted (mask 0..63).
+_LEXICAL_RANK_FLAG_DEFAULT: int = 32
+_LEXICAL_RANK_FLAG_MASK: int = 63  # 1|2|4|8|16|32 — Postgres' defined bits
+
+
+def _resolve_lexical_rank_flag() -> int:
+    """Resolve the ts_rank_cd normalization flag from ``SCIX_LEXICAL_RANK_FLAG``.
+
+    Read on every call so operators/eval harnesses can tune the running process
+    without a restart. Misconfigured values (non-integer, negative, or with bits
+    outside the defined 0..63 mask) log a warning and fall back to
+    :data:`_LEXICAL_RANK_FLAG_DEFAULT`.
+    """
+    raw = os.environ.get("SCIX_LEXICAL_RANK_FLAG")
+    if raw is None:
+        return _LEXICAL_RANK_FLAG_DEFAULT
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        logger.warning(
+            "SCIX_LEXICAL_RANK_FLAG=%r is not an integer; falling back to %d",
+            raw,
+            _LEXICAL_RANK_FLAG_DEFAULT,
+        )
+        return _LEXICAL_RANK_FLAG_DEFAULT
+    if value < 0 or value & ~_LEXICAL_RANK_FLAG_MASK:
+        logger.warning(
+            "SCIX_LEXICAL_RANK_FLAG=%d has bits outside the defined 0..%d "
+            "normalization mask; falling back to %d",
+            value,
+            _LEXICAL_RANK_FLAG_MASK,
+            _LEXICAL_RANK_FLAG_DEFAULT,
+        )
+        return _LEXICAL_RANK_FLAG_DEFAULT
     return value
 
 
@@ -353,6 +400,7 @@ def lexical_search(
     entity_clause, entity_params = effective.to_entity_filter_clause("p")
 
     pool_size = _resolve_lexical_pool()
+    rank_flag = _resolve_lexical_rank_flag()
     cand_columns = STUB_COLUMNS.replace("p.", "cand.")
 
     # plainto_tsquery is more robust than websearch_to_tsquery for programmatic
@@ -377,14 +425,12 @@ def lexical_search(
             LIMIT %s
         )
         SELECT {cand_columns},
-               ts_rank_cd(cand.tsv, q.tsq, 32) AS rank
+               ts_rank_cd(cand.tsv, q.tsq, {rank_flag}) AS rank
         FROM cand, q
         ORDER BY rank DESC
         LIMIT %s
     """
-    params: list[Any] = (
-        [query_text] + filter_params + entity_params + [pool_size, limit]
-    )
+    params: list[Any] = [query_text] + filter_params + entity_params + [pool_size, limit]
 
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(query, params)
@@ -438,10 +484,11 @@ def lexical_search_body(
     effective = filters or SearchFilters()
     filter_clause, filter_params = effective.to_where_clause("p")
     entity_clause, entity_params = effective.to_entity_filter_clause("p")
+    rank_flag = _resolve_lexical_rank_flag()
 
     query = f"""
         SELECT {STUB_COLUMNS},
-               ts_rank_cd(p.tsv, plainto_tsquery('english', %s), 32) AS rank
+               ts_rank_cd(p.tsv, plainto_tsquery('english', %s), {rank_flag}) AS rank
         FROM papers p
         WHERE p.body IS NOT NULL
           AND length(p.body) <= {_BODY_TSVECTOR_MAX_BYTES}
@@ -517,9 +564,25 @@ def _vector_search_qdrant(
         timeout=120,
     ).points
     # Cosine similarity, same semantics as the pgvector path's
-    # ``1 - (vec <=> query)``.
-    score_by_bibcode = {p.payload["bibcode"]: float(p.score) for p in points}
-    ranked_bibcodes = [p.payload["bibcode"] for p in points]
+    # ``1 - (vec <=> query)``. Points missing a ``bibcode`` payload (possible
+    # during the payload-backfill window, bead 8m0a) are skipped rather than
+    # crashing the request — we cannot join them to PG metadata anyway.
+    score_by_bibcode: dict[str, float] = {}
+    ranked_bibcodes: list[str] = []
+    skipped = 0
+    for p in points:
+        bibcode = (p.payload or {}).get("bibcode")
+        if bibcode is None:
+            skipped += 1
+            continue
+        score_by_bibcode[bibcode] = float(p.score)
+        ranked_bibcodes.append(bibcode)
+    if skipped:
+        logger.warning(
+            "Skipped %d Qdrant point(s) missing 'bibcode' payload in %s",
+            skipped,
+            _QDRANT_DENSE_COLLECTIONS[model_name],
+        )
     qdrant_ms = _elapsed_ms(t0)
 
     query = f"""
@@ -825,25 +888,6 @@ def _filter_first_vector_search(
     )
 
 
-def _model_has_embeddings(conn: psycopg.Connection, model_name: str) -> bool:
-    """Fast EXISTS check for whether a model has any rows in paper_embeddings.
-
-    paper_embeddings was dropped in ADR-013; a missing table means "no
-    embeddings". The savepoint keeps the failed statement from poisoning
-    the outer transaction.
-    """
-    try:
-        with conn.transaction():
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT EXISTS(SELECT 1 FROM paper_embeddings WHERE model_name = %s LIMIT 1)",
-                    (model_name,),
-                )
-                return cur.fetchone()[0]
-    except psycopg.errors.UndefinedTable:
-        return False
-
-
 # ---------------------------------------------------------------------------
 # Entity-aware query intent (alias expansion + ontology parsing)
 # ---------------------------------------------------------------------------
@@ -936,7 +980,6 @@ def hybrid_search(
     query_embedding: list[float] | None = None,
     *,
     model_name: str = "indus",
-    openai_embedding: list[float] | None = None,
     filters: SearchFilters | None = None,
     vector_limit: int = 60,
     lexical_limit: int = 60,
@@ -952,8 +995,6 @@ def hybrid_search(
     """Hybrid search combining vector and lexical via RRF, with optional reranking.
 
     If query_embedding is None, falls back to lexical-only mode (BM25-only).
-    If openai_embedding is provided *and* text-embedding-3-large has rows in
-    paper_embeddings, runs a second vector search and fuses via RRF.
     If reranker is provided, re-ranks the top RRF results.
 
     Cardinality-aware routing: when filters match <1% of the corpus, uses a
@@ -961,7 +1002,6 @@ def hybrid_search(
 
     Args:
         model_name: Embedding model for primary vector search (default: indus).
-        openai_embedding: Optional pre-computed OpenAI text-embedding-3-large vector.
         reranker: Optional callable(query_text, papers) -> list[dict] with 'rerank_score'.
         include_body: When True (default), runs body BM25 as a 4th RRF signal
             against the GIN expression index on papers.body. Set to False to
@@ -980,6 +1020,10 @@ def hybrid_search(
     """
     timing: dict[str, float] = {}
     metadata: dict[str, Any] = {}
+    # Lanes (alias / body-BM25) that were dropped due to a recoverable
+    # per-lane statement_timeout. Surfaced in metadata["dropped_lanes"] so the
+    # caller can tell a full-signal RRF result from a degraded one (bead uq28).
+    dropped_lanes: list[str] = []
 
     # Ontology parsing — lift to filters BEFORE lexical/vector calls so all
     # downstream stages see the augmented scope.
@@ -1045,13 +1089,21 @@ def hybrid_search(
         for lane_query in alias_lane_queries:
             try:
                 with conn.transaction():
-                    lane = lexical_search(
-                        conn, lane_query, filters=filters, limit=lexical_limit
-                    )
-            except Exception:
+                    lane = lexical_search(conn, lane_query, filters=filters, limit=lexical_limit)
+            except psycopg.errors.QueryCanceled:
+                # Recoverable per-lane statement_timeout: the savepoint rolled
+                # back cleanly, so the outer transaction is intact and later
+                # lanes are safe to run. Drop just this lane and record the
+                # degraded-RRF signal. Any other psycopg.Error — notably a
+                # class-25 tx-abort (InFailedSqlTransaction), which poisons the
+                # outer connection — propagates instead of being swallowed, so
+                # the caller never gets a silently-degraded result (bead uq28).
                 logger.warning(
-                    "Alias lexical lane failed for %r; continuing", lane_query, exc_info=True
+                    "Alias lexical lane timed out for %r; dropping lane",
+                    lane_query,
+                    exc_info=True,
                 )
+                dropped_lanes.append(f"alias:{lane_query}")
                 continue
             if lane.papers:
                 results_lists.append(lane.papers)
@@ -1070,8 +1122,13 @@ def hybrid_search(
             timing["body_lexical_ms"] = body_result.timing_ms["body_lexical_ms"]
             if body_result.papers:
                 results_lists.append(body_result.papers)
-        except Exception:
-            logger.warning("Body BM25 search failed; continuing without it", exc_info=True)
+        except psycopg.errors.QueryCanceled:
+            # Recoverable body-lane statement_timeout: savepoint rolled back,
+            # outer transaction intact. Drop the body BM25 signal and record
+            # it. A class-25 tx-abort or any other psycopg.Error propagates
+            # rather than silently dropping up to half the RRF signals (uq28).
+            logger.warning("Body BM25 search timed out; dropping lane", exc_info=True)
+            dropped_lanes.append("body_bm25")
 
     # Cardinality-aware routing: estimate filter selectivity once for reuse.
     # Skipped when the Qdrant gate is active — filter-first is a pg lane over
@@ -1112,30 +1169,6 @@ def hybrid_search(
     else:
         timing["vector_ms"] = 0.0
 
-    # OpenAI vector search — skip entirely when model has 0 rows. Savepoint
-    # for the same poisoned-connection reason as the lexical lanes above.
-    timing["openai_vector_ms"] = 0.0
-    if openai_embedding is not None and _model_has_embeddings(conn, "text-embedding-3-large"):
-        try:
-            with conn.transaction():
-                openai_vec_result = vector_search(
-                    conn,
-                    openai_embedding,
-                    model_name="text-embedding-3-large",
-                    filters=filters,
-                    limit=vector_limit,
-                    ef_search=ef_search,
-                )
-            timing["openai_vector_ms"] = openai_vec_result.timing_ms["vector_ms"]
-            results_lists.append(openai_vec_result.papers)
-        except Exception:
-            logger.warning(
-                "OpenAI vector search failed; falling back to primary+lexical only",
-                exc_info=True,
-            )
-    elif openai_embedding is not None:
-        logger.debug("Skipping OpenAI vector search: text-embedding-3-large has 0 rows")
-
     # RRF fusion
     t_fuse = time.perf_counter()
     fused = rrf_fuse(results_lists, k=rrf_k, top_n=top_n)
@@ -1150,6 +1183,11 @@ def hybrid_search(
         timing["rerank_ms"] = 0.0
 
     timing["total_ms"] = round(sum(timing.values()), 2)
+
+    # Surface any recoverable lane drops so the caller can distinguish a
+    # full-signal fusion from a degraded one (only present when non-empty).
+    if dropped_lanes:
+        metadata["dropped_lanes"] = dropped_lanes
 
     return SearchResult(
         papers=fused,
@@ -2544,14 +2582,32 @@ def lit_review(
     seed_bibs = [p["bibcode"] for p in seeds if p.get("bibcode")]
 
     # ---- Step 2: citation expansion ----------------------------------------
+    # Each per-seed citation lane runs inside a savepoint (conn.transaction) so
+    # a statement_timeout (QueryCanceled) rolls back to the savepoint without
+    # leaving the outer transaction InFailedSqlTransaction — which would poison
+    # every later query in this lit_review call (the structural-characterization
+    # query below, and downstream tool calls sharing the connection). Mirrors
+    # the alias / body-BM25 lanes in hybrid_search (beads wzqz/uq28). Only
+    # QueryCanceled is caught: any other psycopg.Error — notably a class-25
+    # tx-abort — propagates rather than being silently swallowed.
     expanded: set[str] = set()
     if expansion_seeds and expand_per_seed:
         for bib in seed_bibs[:expansion_seeds]:
             for fn in (get_references, get_citations):
                 try:
-                    cit = fn(conn, bib, limit=expand_per_seed)
-                except Exception:
-                    # Skip missing / error rows; lit_review is best-effort.
+                    with conn.transaction():
+                        cit = fn(conn, bib, limit=expand_per_seed)
+                except psycopg.errors.QueryCanceled:
+                    # Recoverable per-lane statement_timeout: the savepoint
+                    # rolled back cleanly, so the outer transaction is intact
+                    # and later seeds / lanes are safe to run. lit_review is
+                    # best-effort, so drop just this lane and continue.
+                    logger.warning(
+                        "Citation expansion (%s) timed out for %r; dropping lane",
+                        fn.__name__,
+                        bib,
+                        exc_info=True,
+                    )
                     continue
                 for p in cit.papers:
                     b = p.get("bibcode")
@@ -3741,8 +3797,15 @@ def _read_section_from_papers_fulltext(
         )
         row = cur.fetchone()
     if row is None:
-        return None
-    sections_json = row.get("sections") or []
+        # Cold tier (ADR-016): a sealed year is no longer in Postgres — fetch the
+        # structured sections from the year's NAS shard. A true PG miss only;
+        # a present-but-empty sections row is left to the body-parse fallback.
+        # No-op until the sealed rows are dropped (Phase 1b).
+        from scix.coldtext.route import fetch_sections_cold
+
+        sections_json = fetch_sections_cold(conn, bibcode) or []
+    else:
+        sections_json = row.get("sections") or []
     if not sections_json:
         return None
 
@@ -4183,8 +4246,10 @@ def _score_sections_ts_rank(
 
     Issues a single batched query via ``unnest`` so we get one round-trip
     regardless of section count. Returns scores in input order. Falls back to
-    a deterministic Python proxy when the SQL call raises (keeps the function
-    usable inside unit-test mocks that don't simulate full cursor behaviour).
+    a deterministic Python proxy on a ``psycopg.OperationalError`` (logged at
+    WARNING) or when the row count does not match the input (the path unit-test
+    mocks hit, since they don't simulate full cursor behaviour). Other DB
+    errors propagate so genuine bugs are not masked.
     """
     if not section_texts:
         return []
@@ -4199,8 +4264,14 @@ def _score_sections_ts_rank(
                 (query, list(section_texts)),
             )
             rows = list(cur.fetchall())
-    except Exception:
-        logger.debug(
+    except psycopg.OperationalError:
+        # Real DB-side failure (e.g. statement_timeout / connection drop):
+        # degrade to the deterministic Python proxy, but log at WARNING so the
+        # fallback is visible at prod INFO rather than hidden at DEBUG (uq28).
+        # Other errors (ProgrammingError, etc.) propagate — they signal a bug
+        # we want to surface, not silently mask. Mock cursors that return an
+        # empty/MagicMock fetchall are handled by the length guard below.
+        logger.warning(
             "ts_rank section scoring failed; falling back to Python proxy",
             exc_info=True,
         )

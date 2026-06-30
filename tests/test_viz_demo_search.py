@@ -58,9 +58,7 @@ def test_demo_search_dispatches_through_mcp_call_tool(
     captured_calls: list[tuple[str, dict[str, Any]]],
 ) -> None:
     """One ``search`` call followed by three ``get_paper`` drill calls."""
-    response = client.post(
-        "/viz/api/demo/search", json={"query": "dark matter", "top_n": 5}
-    )
+    response = client.post("/viz/api/demo/search", json={"query": "dark matter", "top_n": 5})
 
     assert response.status_code == 200, response.text
     body = response.json()
@@ -129,9 +127,7 @@ def test_demo_search_surfaces_tool_error(
 
     monkeypatch.setattr(viz_api.mcp_server, "call_tool", _error_call_tool)
 
-    response = client.post(
-        "/viz/api/demo/search", json={"query": "x" * 5, "top_n": 5}
-    )
+    response = client.post("/viz/api/demo/search", json={"query": "x" * 5, "top_n": 5})
     assert response.status_code == 502
     assert "backend unavailable" in response.json()["detail"]
 
@@ -163,9 +159,7 @@ def test_demo_search_drill_tolerates_get_paper_failure(
 
     monkeypatch.setattr(viz_api.mcp_server, "call_tool", _flaky_call_tool)
 
-    response = client.post(
-        "/viz/api/demo/search", json={"query": "test query", "top_n": 5}
-    )
+    response = client.post("/viz/api/demo/search", json={"query": "test query", "top_n": 5})
     assert response.status_code == 200, response.text
     body = response.json()
     # Drill only records bibcodes whose call succeeded.

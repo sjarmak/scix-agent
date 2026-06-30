@@ -146,9 +146,7 @@ def _ndcg_at_k(retrieved: Sequence[str], gold: Sequence[str], k: int) -> float |
     if not gold:
         return None
     gold_set = set(gold)
-    dcg = sum(
-        (1.0 / math.log2(i + 2)) for i, bib in enumerate(retrieved[:k]) if bib in gold_set
-    )
+    dcg = sum((1.0 / math.log2(i + 2)) for i, bib in enumerate(retrieved[:k]) if bib in gold_set)
     n_ideal = min(len(gold_set), k)
     idcg = sum(1.0 / math.log2(i + 2) for i in range(n_ideal))
     return 0.0 if idcg == 0.0 else dcg / idcg
@@ -283,9 +281,7 @@ def _indus_encode(query: str) -> list[float]:
         _indus_state.update(loaded=True, model=model, tokenizer=tokenizer, embed_batch=embed_batch)
         logger.info("Loaded INDUS model for baseline query encoding")
     embed_batch = _indus_state["embed_batch"]
-    vectors = embed_batch(
-        _indus_state["model"], _indus_state["tokenizer"], [query], pooling="mean"
-    )
+    vectors = embed_batch(_indus_state["model"], _indus_state["tokenizer"], [query], pooling="mean")
     if not vectors:
         raise RuntimeError("INDUS embed_batch returned no vectors")
     return vectors[0]
@@ -363,7 +359,9 @@ def _empty_metrics_block(n_queries: int) -> dict[str, Any]:
     }
 
 
-def _empty_mode_block(queries: list[EvalQuery], skipped_reason: str | None = None) -> dict[str, Any]:
+def _empty_mode_block(
+    queries: list[EvalQuery], skipped_reason: str | None = None
+) -> dict[str, Any]:
     by_bucket = {b: _empty_metrics_block(sum(1 for q in queries if q.bucket == b)) for b in BUCKETS}
     overall = _empty_metrics_block(len(queries))
     if skipped_reason:
@@ -431,20 +429,12 @@ def run_mode(
                 if section_cache is not None:
                     section_cache[q.query] = retrieved
             elif mode == "fused":
-                base = (
-                    baseline_cache.get(q.query)
-                    if baseline_cache is not None
-                    else None
-                )
+                base = baseline_cache.get(q.query) if baseline_cache is not None else None
                 if base is None:
                     base = baseline_search(conn, q.query, top_n=RECALL_K)
                     if baseline_cache is not None:
                         baseline_cache[q.query] = base
-                sect = (
-                    section_cache.get(q.query)
-                    if section_cache is not None
-                    else None
-                )
+                sect = section_cache.get(q.query) if section_cache is not None else None
                 if sect is None:
                     sect = section_search(conn, q.query, k=RECALL_K)
                     if section_cache is not None:
@@ -471,9 +461,7 @@ def _parse_modes(raw: str) -> list[str]:
         raise argparse.ArgumentTypeError("--modes requires at least one mode")
     bad = [p for p in parts if p not in VALID_MODES]
     if bad:
-        raise argparse.ArgumentTypeError(
-            f"unknown mode(s): {bad}. Valid modes: {VALID_MODES}"
-        )
+        raise argparse.ArgumentTypeError(f"unknown mode(s): {bad}. Valid modes: {VALID_MODES}")
     # Preserve insertion order, dedupe.
     seen: set[str] = set()
     out: list[str] = []
@@ -576,9 +564,7 @@ def main(argv: list[str] | None = None) -> int:
                         "section_embeddings is empty; section/fused modes will emit zero-stubs."
                     )
             except Exception:
-                logger.exception(
-                    "section_embeddings probe failed; assuming unavailable"
-                )
+                logger.exception("section_embeddings probe failed; assuming unavailable")
                 section_available = False
 
         baseline_cache: dict[str, list[str]] = {}

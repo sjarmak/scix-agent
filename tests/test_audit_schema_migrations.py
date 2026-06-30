@@ -55,13 +55,9 @@ class TestParseMigration:
         assert probe.kind == "table"
         assert probe.qualified_name == "public.widgets"
 
-    def test_auto_probe_handles_qualified_table_names(
-        self, tmp_path: Path
-    ) -> None:
+    def test_auto_probe_handles_qualified_table_names(self, tmp_path: Path) -> None:
         f = tmp_path / "099_extractions_columns.sql"
-        f.write_text(
-            "ALTER TABLE staging.extractions ADD COLUMN x TEXT;"
-        )
+        f.write_text("ALTER TABLE staging.extractions ADD COLUMN x TEXT;")
         parsed = audit.parse_migration(f)
         assert parsed is not None
         probe = parsed.auto_probe()
@@ -87,9 +83,7 @@ class TestParseMigration:
         assert parsed is not None
         assert parsed.auto_probe() == audit.Probe("table", "public.real_table")
 
-    def test_auto_probe_ignores_create_in_line_comments(
-        self, tmp_path: Path
-    ) -> None:
+    def test_auto_probe_ignores_create_in_line_comments(self, tmp_path: Path) -> None:
         """A comment like ``-- CREATE TABLE IF NOT EXISTS,`` (trailing comma)
         previously caused the regex to capture ``IF`` as the table name."""
         f = tmp_path / "099_real.sql"
@@ -222,14 +216,10 @@ class TestMarkerProbeShape:
         assert audit._MARKER_SHAPE_RE.match("ingest_log")
 
     def test_rejects_semicolon(self) -> None:
-        assert not audit._MARKER_SHAPE_RE.match(
-            "ingest_log; DROP TABLE papers; --"
-        )
+        assert not audit._MARKER_SHAPE_RE.match("ingest_log; DROP TABLE papers; --")
 
     def test_rejects_drop_inside_where(self) -> None:
-        assert not audit._MARKER_SHAPE_RE.match(
-            "ingest_log WHERE 1=1; DROP TABLE papers; --"
-        )
+        assert not audit._MARKER_SHAPE_RE.match("ingest_log WHERE 1=1; DROP TABLE papers; --")
 
 
 class TestProbeDB:
@@ -277,9 +267,7 @@ class TestProbeDB:
             assert (
                 audit.probe_target(
                     conn,
-                    audit.Probe(
-                        "column", "information_schema.tables.table_name"
-                    ),
+                    audit.Probe("column", "information_schema.tables.table_name"),
                 )
                 is True
             )

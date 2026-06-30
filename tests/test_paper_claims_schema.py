@@ -105,7 +105,9 @@ class TestMigrationFileStatic:
         assert "gen_random_uuid()" in sql_content
 
     def test_extracted_at_default_now(self, sql_content: str) -> None:
-        assert re.search(r"extracted_at\s+timestamptz\s+NOT\s+NULL\s+DEFAULT\s+now\(\)", sql_content)
+        assert re.search(
+            r"extracted_at\s+timestamptz\s+NOT\s+NULL\s+DEFAULT\s+now\(\)", sql_content
+        )
 
     def test_indexes_use_if_not_exists_and_naming_convention(self, sql_content: str) -> None:
         """All 5 indexes use IF NOT EXISTS and the ix_paper_claims_* prefix."""
@@ -188,9 +190,9 @@ def applied_migration(dsn: str) -> str:
         text=True,
         check=False,
     )
-    assert result.returncode == 0, (
-        f"migration 062 failed to apply: stderr=\n{result.stderr}\nstdout=\n{result.stdout}"
-    )
+    assert (
+        result.returncode == 0
+    ), f"migration 062 failed to apply: stderr=\n{result.stderr}\nstdout=\n{result.stdout}"
     return dsn
 
 
@@ -257,9 +259,7 @@ class TestPaperClaimsIndexesExist:
         import psycopg
 
         with psycopg.connect(applied_migration) as conn, conn.cursor() as cur:
-            cur.execute(
-                "SELECT indexname FROM pg_indexes WHERE tablename = 'paper_claims'"
-            )
+            cur.execute("SELECT indexname FROM pg_indexes WHERE tablename = 'paper_claims'")
             actual = {row[0] for row in cur.fetchall()}
 
         for idx in EXPECTED_INDEXES:
@@ -396,9 +396,9 @@ class TestPaperClaimsIdempotency:
             text=True,
             check=False,
         )
-        assert result.returncode == 0, (
-            f"second migration apply failed: stderr=\n{result.stderr}\nstdout=\n{result.stdout}"
-        )
+        assert (
+            result.returncode == 0
+        ), f"second migration apply failed: stderr=\n{result.stderr}\nstdout=\n{result.stdout}"
 
 
 # ---------------------------------------------------------------------------

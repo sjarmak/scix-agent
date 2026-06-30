@@ -355,13 +355,10 @@ TEST_DSN = get_test_dsn()
 TEST_BIBCODE_PREFIX = "FTCOVTEST."
 
 
-pytestmark_integration = pytest.mark.skipif(
-    TEST_DSN is None,
-    reason=(
-        "SCIX_TEST_DSN is not set or points at production — "
-        "report_fulltext_coverage integration tests require a dedicated test DB"
-    ),
-)
+# These exercise the real report script against a *populated* DB, so CI (which
+# runs against schema-only scix_test) deselects them via -m "not integration".
+# The integration_dsn fixture still skips when SCIX_TEST_DSN is unset.
+pytestmark_integration = pytest.mark.integration
 
 
 def _bib(i: int) -> str:

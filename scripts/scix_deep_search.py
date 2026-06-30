@@ -93,9 +93,7 @@ DEFAULT_RUNS_DIR: Path = Path.home() / ".scix" / "deep_search_runs"
 # 4 digits + 14 chars of mixed alpha/digit/``.``/``&`` + uppercase
 # initial. False positives on this regex are harmless for
 # time-to-first-useful-output.
-BIBCODE_RE: re.Pattern[str] = re.compile(
-    r"\b\d{4}[A-Za-z&\.\d]{14}[A-Z]\b"
-)
+BIBCODE_RE: re.Pattern[str] = re.compile(r"\b\d{4}[A-Za-z&\.\d]{14}[A-Z]\b")
 
 SKEPTIC_NOT_IMPLEMENTED_MSG: str = (
     "SH-2 skeptic_subagent_debate not yet implemented "
@@ -204,9 +202,7 @@ class RealDispatcher:
     claude_binary: str = "claude"
     timeout_s: float = 600.0
 
-    async def __call__(
-        self, prompt: str, max_turns: int
-    ) -> AsyncIterator[dict[str, Any]]:
+    async def __call__(self, prompt: str, max_turns: int) -> AsyncIterator[dict[str, Any]]:
         # Local import to keep the test path import-light and to localize
         # the dependency on the persona-judge helper.
         proc = await asyncio.create_subprocess_exec(
@@ -242,16 +238,12 @@ class RealDispatcher:
             except asyncio.TimeoutError as exc:
                 proc.kill()
                 await proc.wait()
-                raise RuntimeError(
-                    f"claude -p timed out after {self.timeout_s}s"
-                ) from exc
+                raise RuntimeError(f"claude -p timed out after {self.timeout_s}s") from exc
 
         if proc.returncode != 0:
             stderr_bytes = await proc.stderr.read() if proc.stderr else b""
             stderr = stderr_bytes.decode("utf-8", errors="replace")[:500]
-            raise RuntimeError(
-                f"claude -p exited {proc.returncode}: stderr={stderr!r}"
-            )
+            raise RuntimeError(f"claude -p exited {proc.returncode}: stderr={stderr!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -429,9 +421,7 @@ def run_deep_search(
         persona_path=persona_path,
         rigor=rigor,
         skeptic=skeptic,
-        time_to_first_useful_output=(
-            None if time_to_first is None else round(time_to_first, 3)
-        ),
+        time_to_first_useful_output=(None if time_to_first is None else round(time_to_first, 3)),
     )
 
     run_dir = runs_dir / run_id

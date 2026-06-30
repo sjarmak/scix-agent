@@ -92,12 +92,14 @@ def main() -> None:
                 for b in dense_only:
                     mark = "NEW" if b in new_dense else "in-review"
                     out.append(f"  - [{mark}] {b} ({years.get(b)}) {titles.get(b, '')}")
-            summary_rows.append(
-                f"| {name} | {len(spec['queries'])} | {total_new_dense} |"
-            )
+            summary_rows.append(f"| {name} | {len(spec['queries'])} | {total_new_dense} |")
 
-    out.insert(2, "\n| review | queries | dense-surfaced papers not in review |\n|---|---|---|\n"
-                  + "\n".join(summary_rows) + "\n")
+    out.insert(
+        2,
+        "\n| review | queries | dense-surfaced papers not in review |\n|---|---|---|\n"
+        + "\n".join(summary_rows)
+        + "\n",
+    )
     dest = REPO / "results/litreview_rerun_2026-06-11.md"
     dest.write_text("\n".join(out) + "\n")
     print(f"wrote {dest}")

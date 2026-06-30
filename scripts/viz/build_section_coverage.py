@@ -148,9 +148,7 @@ def summarize_paper(headings: Sequence[Optional[str]]) -> PaperSections:
     )
 
 
-def load_samples_from_db(
-    dsn: str, sample_size: int
-) -> list[PaperSections]:
+def load_samples_from_db(dsn: str, sample_size: int) -> list[PaperSections]:
     """Sample full-text papers and project just their section headings.
 
     Uses ``TABLESAMPLE SYSTEM`` (block sampling) so the planner reads a small
@@ -181,9 +179,7 @@ def load_samples_from_db(
     return out
 
 
-def load_decades_from_db(
-    dsn: str, year_min: int, year_max: int
-) -> list[DecadeCoverage]:
+def load_decades_from_db(dsn: str, year_min: int, year_max: int) -> list[DecadeCoverage]:
     """Exact full-text-vs-total paper counts per decade.
 
     Two indexed aggregations: the full-text join (``papers_fulltext ⋈ papers``)
@@ -219,9 +215,7 @@ def load_decades_from_db(
     return _merge_decades(fulltext, total)
 
 
-def _merge_decades(
-    fulltext: dict[int, int], total: dict[int, int]
-) -> list[DecadeCoverage]:
+def _merge_decades(fulltext: dict[int, int], total: dict[int, int]) -> list[DecadeCoverage]:
     decades = sorted(set(fulltext) | set(total))
     return [
         DecadeCoverage(

@@ -85,9 +85,7 @@ class TestExtractBibcodes:
         assert _extract_bibcodes_from_result("[1,2,3]") == ()
 
     def test_multi_paper_result(self) -> None:
-        payload = json.dumps(
-            {"papers": [{"bibcode": "2024A"}, {"bibcode": "2024B"}]}
-        )
+        payload = json.dumps({"papers": [{"bibcode": "2024A"}, {"bibcode": "2024B"}]})
         assert _extract_bibcodes_from_result(payload) == ("2024A", "2024B")
 
     def test_single_paper_shape(self) -> None:
@@ -122,9 +120,7 @@ class TestExtractBibcodes:
 
 
 class TestEmitTraceEvent:
-    def test_success_publishes_one_event(
-        self, captured_events: list[TraceEvent]
-    ) -> None:
+    def test_success_publishes_one_event(self, captured_events: list[TraceEvent]) -> None:
         result_json = json.dumps({"papers": [{"bibcode": "2024A"}], "total": 1})
         _emit_trace_event("search", 12.5, {"query": "dark matter"}, result_json, True)
 
@@ -148,16 +144,12 @@ class TestEmitTraceEvent:
         assert ev.result_summary == "error: bad arg"
         assert ev.bibcodes == ()
 
-    def test_missing_trace_stream_is_noop(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_trace_stream_is_noop(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(mcp_server, "_trace_stream", None)
         # Must not raise; no events to assert on.
         _emit_trace_event("search", 1.0, {}, "{}", True)
 
-    def test_publish_exception_is_swallowed(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_publish_exception_is_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         broken = MagicMock()
         broken.TraceEvent = TraceEvent
         broken.publish.side_effect = RuntimeError("kaboom")
@@ -166,9 +158,7 @@ class TestEmitTraceEvent:
         _emit_trace_event("search", 1.0, {"q": "x"}, "{}", True)
         broken.publish.assert_called_once()
 
-    def test_none_params_handled(
-        self, captured_events: list[TraceEvent]
-    ) -> None:
+    def test_none_params_handled(self, captured_events: list[TraceEvent]) -> None:
         # `dict(params) if params else {}` should handle an empty dict
         # without issue; confirm empty dict produces empty params.
         _emit_trace_event("search", 1.0, {}, None, True)
@@ -212,9 +202,7 @@ class TestCallToolEmission:
         monkeypatch.setattr(
             mcp_server,
             "_dispatch_tool",
-            lambda conn, name, args: json.dumps(
-                {"papers": [{"bibcode": "2024X"}], "total": 1}
-            ),
+            lambda conn, name, args: json.dumps({"papers": [{"bibcode": "2024X"}], "total": 1}),
         )
         # Avoid the self-test path.
         monkeypatch.setattr(mcp_server, "startup_self_test", lambda srv: None)
@@ -298,9 +286,7 @@ class TestCallToolEmission:
 
 
 class TestOverhead:
-    def test_overhead_under_100ms_for_100_calls(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_overhead_under_100ms_for_100_calls(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Directly time the _emit_trace_event hook over 100 invocations
         vs the no-op path. The delta must stay under 100 ms total."""
         result_json = json.dumps({"papers": [{"bibcode": "2024A"}], "total": 1})

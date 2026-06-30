@@ -42,6 +42,7 @@ from scripts.viz.project_embeddings_umap import (
 
 def test_synthetic_end_to_end(tmp_path: Path) -> None:
     """``main --synthetic 200 --output ... --backend umap-learn`` writes valid JSON."""
+    pytest.importorskip("umap")
     out = tmp_path / "umap.json"
     rc = main(
         [
@@ -209,6 +210,7 @@ def test_validate_projection_payload_rejects_non_list() -> None:
 
 
 def test_dry_run_writes_no_file(tmp_path: Path) -> None:
+    pytest.importorskip("umap")
     out = tmp_path / "should_not_exist.json"
     rc = main(
         [
@@ -273,6 +275,7 @@ def test_load_embeddings_from_db_rejects_unknown_resolution() -> None:
 
 
 def test_pick_backend_umap_learn_small_n() -> None:
+    pytest.importorskip("umap")
     choice = pick_backend("umap-learn", n=10)
     assert choice.label == "umap-learn"
     # n_neighbors must be safe for small n (<= n-1).
@@ -281,6 +284,7 @@ def test_pick_backend_umap_learn_small_n() -> None:
 
 def test_pick_backend_auto_falls_back_without_cuml() -> None:
     # cuml is not installed in this environment; auto must land on umap-learn.
+    pytest.importorskip("umap")
     choice = pick_backend("auto", n=30)
     assert choice.label in ("cuml", "umap-learn")
 
@@ -296,6 +300,7 @@ def test_pick_backend_rejects_unknown() -> None:
 
 
 def test_project_and_build_points_roundtrip() -> None:
+    pytest.importorskip("umap")
     bibcodes, embeddings, community_ids = load_embeddings_synthetic(80, seed=1)
     choice = pick_backend("umap-learn", n=len(bibcodes))
     xy = project(embeddings, choice.backend)
@@ -327,11 +332,7 @@ def test_build_points_rejects_unknown_resolution() -> None:
 
 
 def test_serialize_writes_valid_json(tmp_path: Path) -> None:
-    points = (
-        ProjectedPoint(
-            bibcode="a", x=1.0, y=2.0, community_id=0, resolution="coarse"
-        ),
-    )
+    points = (ProjectedPoint(bibcode="a", x=1.0, y=2.0, community_id=0, resolution="coarse"),)
     out = tmp_path / "nested" / "out.json"
     serialize(points, out)
     assert out.exists()

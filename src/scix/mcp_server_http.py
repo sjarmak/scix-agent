@@ -119,9 +119,7 @@ class _RateLimitWrap:
         if now - self._last_cleanup < self._CLEANUP_INTERVAL:
             return
         self._last_cleanup = now
-        stale = [
-            k for k, (_, ts) in self._buckets.items() if now - ts > 120.0
-        ]
+        stale = [k for k, (_, ts) in self._buckets.items() if now - ts > 120.0]
         for k in stale:
             del self._buckets[k]
 

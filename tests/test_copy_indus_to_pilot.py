@@ -30,9 +30,7 @@ SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "copy_indus_t
 
 
 def _load_module():
-    spec = importlib.util.spec_from_file_location(
-        "copy_indus_to_pilot", SCRIPT_PATH
-    )
+    spec = importlib.util.spec_from_file_location("copy_indus_to_pilot", SCRIPT_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules["copy_indus_to_pilot"] = module
@@ -114,9 +112,7 @@ class TestDryRun:
     def test_dry_run_never_opens_connection(self, mod, monkeypatch, capsys):
         monkeypatch.delenv("SCIX_DSN", raising=False)
 
-        connect_spy = MagicMock(
-            side_effect=AssertionError("psycopg.connect should not be called")
-        )
+        connect_spy = MagicMock(side_effect=AssertionError("psycopg.connect should not be called"))
         # Patch any reachable psycopg.connect: the script imports psycopg
         # lazily inside _run_copy, so patching the already-loaded module is
         # sufficient if it's been imported; otherwise we stub the module.
@@ -125,9 +121,7 @@ class TestDryRun:
         monkeypatch.setattr("psycopg.connect", connect_spy)
 
         # Stub capture_env lazy-import to avoid requiring the helper.
-        monkeypatch.setattr(
-            mod, "_lazy_import_capture_env", lambda: (lambda: {"git_sha": "x"})
-        )
+        monkeypatch.setattr(mod, "_lazy_import_capture_env", lambda: (lambda: {"git_sha": "x"}))
 
         rc = mod.main(
             [
@@ -144,9 +138,7 @@ class TestDryRun:
         assert "no connections opened" in captured
         connect_spy.assert_not_called()
 
-    def test_dry_run_refuses_production_dest_before_printing(
-        self, mod, monkeypatch
-    ):
+    def test_dry_run_refuses_production_dest_before_printing(self, mod, monkeypatch):
         """Safety guard fires even with --dry-run — prod dest is always rejected."""
         monkeypatch.delenv("SCIX_DSN", raising=False)
         with pytest.raises(ValueError) as exc:
@@ -183,9 +175,7 @@ class TestArgparse:
         # Re-parse a fresh parser each time because argparse freezes defaults
         # at parser construction.
         fresh = _load_module()
-        parsed = fresh.build_arg_parser().parse_args(
-            ["--dest-dsn", "dbname=scix_pilot"]
-        )
+        parsed = fresh.build_arg_parser().parse_args(["--dest-dsn", "dbname=scix_pilot"])
         assert parsed.source_dsn == "dbname=from_env"
         assert parsed.dry_run is False
         assert parsed.batch_size == 100_000
@@ -215,9 +205,7 @@ class TestArgparse:
 
 class TestSqlBuilders:
     def test_source_sql_includes_where_and_format_binary(self, mod):
-        sql = mod.build_source_copy_sql(
-            ["bibcode", "model_name", "embedding"], limit=None
-        )
+        sql = mod.build_source_copy_sql(["bibcode", "model_name", "embedding"], limit=None)
         assert "paper_embeddings" in sql
         assert "model_name = 'indus'" in sql
         assert "FORMAT BINARY" in sql
@@ -244,9 +232,11 @@ class TestCaptureEnvImport:
         # Remove any cached module.
         monkeypatch.delitem(sys.modules, "pgvs_bench_env", raising=False)
 
-        original_import = __builtins__["__import__"] if isinstance(
-            __builtins__, dict
-        ) else __builtins__.__import__
+        original_import = (
+            __builtins__["__import__"]
+            if isinstance(__builtins__, dict)
+            else __builtins__.__import__
+        )
 
         def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
             if name == "pgvs_bench_env":

@@ -96,9 +96,7 @@ def assert_pilot_dsn(dsn: str | None) -> None:
     are rejected so the guard is never silently bypassed.
     """
     if not dsn or not dsn.strip():
-        raise ValueError(
-            "Empty DSN — refuse to run without an explicit pilot DSN."
-        )
+        raise ValueError("Empty DSN — refuse to run without an explicit pilot DSN.")
     try:
         # Prefer the shared implementation when available.
         from scix.db import is_production_dsn  # type: ignore[import-not-found]
@@ -526,6 +524,7 @@ def run_benchmark(
 
     # Environment metadata.
     from pgvs_bench_env import capture_env  # type: ignore[import-not-found]
+
     env = capture_env(dsn=dsn)
 
     queries = load_queries_from_eval(eval_path)
@@ -552,7 +551,9 @@ def run_benchmark(
         conn.autocommit = True
 
         # --- 1. Exact baseline: sample + compute ground truth top-10 per query.
-        logger.info("Sampling %d bibcodes for exact baseline (seed=%d)...", sample_size, random_seed)
+        logger.info(
+            "Sampling %d bibcodes for exact baseline (seed=%d)...", sample_size, random_seed
+        )
         sampled = _sample_bibcodes(conn, sample_size, random_seed)
         logger.info("Fetched %d sampled bibcodes", len(sampled))
 
@@ -616,9 +617,7 @@ def run_benchmark(
                     "embedding_text": emb_text,
                 }
             )
-            result["queries"].append(
-                {"seed_bibcode": bib, "relevant_count": len(relevant)}
-            )
+            result["queries"].append({"seed_bibcode": bib, "relevant_count": len(relevant)})
 
         # --- 3. Run each index variant.
         for name in index_names:
@@ -636,9 +635,7 @@ def run_benchmark(
                 # Citation-based recall against `relevant`.
                 row = _per_query_metrics(ranked, ctx["relevant"], latency_ms)
                 # Also capture true Recall@10 against exact ground truth.
-                row["true_recall_10"] = round(
-                    recall_at_k(ranked, set(ctx["exact_top10"]), 10), 6
-                )
+                row["true_recall_10"] = round(recall_at_k(ranked, set(ctx["exact_top10"]), 10), 6)
                 row["seed_bibcode"] = ctx["seed_bibcode"]
                 per_query.append(row)
             result["indexes"].append(
@@ -698,21 +695,15 @@ def render_markdown(payload: dict[str, Any]) -> str:
     lines.append(f"- Dry run: `{payload.get('dry_run', False)}`")
     lines.append(f"- Model: `{payload.get('model_name', MODEL_NAME)}`")
     lines.append(f"- Eval queries: `{payload.get('eval_path', '')}`")
-    lines.append(
-        f"- Exact baseline sample size: `{payload.get('exact_baseline_sample_size', 0)}`"
-    )
+    lines.append(f"- Exact baseline sample size: `{payload.get('exact_baseline_sample_size', 0)}`")
     lines.append(f"- Random seed: `{payload.get('random_seed', DEFAULT_RANDOM_SEED)}`")
     lines.append("")
 
     # Summary table.
     lines.append("## Summary")
     lines.append("")
-    lines.append(
-        "| Index | nDCG@10 | Recall@10 | Recall@20 | MRR | p50 (ms) | p95 (ms) |"
-    )
-    lines.append(
-        "|-------|---------|-----------|-----------|-----|----------|----------|"
-    )
+    lines.append("| Index | nDCG@10 | Recall@10 | Recall@20 | MRR | p50 (ms) | p95 (ms) |")
+    lines.append("|-------|---------|-----------|-----------|-----|----------|----------|")
 
     def _fmt(v: Any) -> str:
         if v is None:
@@ -747,9 +738,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
     lines.append("| Variant | nDCG@10 | Δ vs HNSW | Verdict |")
     lines.append("|---------|---------|-----------|---------|")
     if hnsw_entry is None:
-        lines.append(
-            "| _hnsw row not present — cannot annotate PASS/FAIL_ |  |  |  |"
-        )
+        lines.append("| _hnsw row not present — cannot annotate PASS/FAIL_ |  |  |  |")
     else:
         hnsw_ndcg = hnsw_entry.get("metrics", {}).get("ndcg_at_10")
         for entry in payload.get("indexes", []):
@@ -764,20 +753,14 @@ def render_markdown(payload: dict[str, Any]) -> str:
                 delta = float(v) - float(hnsw_ndcg)
                 delta_str = f"{delta:+.4f}"
                 verdict = "PASS" if abs(delta) <= NDCG_PASS_DELTA else "FAIL"
-            lines.append(
-                f"| {name} | {_fmt(v)} | {delta_str} | {verdict} |"
-            )
+            lines.append(f"| {name} | {_fmt(v)} | {delta_str} | {verdict} |")
 
     # Significance.
     lines.append("")
     lines.append("## Pairwise Significance (Wilcoxon signed-rank on per-query nDCG@10)")
     lines.append("")
-    lines.append(
-        "| Compared | n | Mean Δ | p-value | Bonferroni-adjusted p |"
-    )
-    lines.append(
-        "|----------|---|--------|---------|------------------------|"
-    )
+    lines.append("| Compared | n | Mean Δ | p-value | Bonferroni-adjusted p |")
+    lines.append("|----------|---|--------|---------|------------------------|")
     for sig in payload.get("pairwise_significance", []):
         p_val = sig.get("p_value")
         adj = sig.get("bonferroni_adjusted_p")
@@ -956,8 +939,7 @@ def main(argv: list[str] | None = None) -> int:
     dsn = args.dsn
     if dsn is None:
         print(
-            "ERROR: --dsn is required (pilot/benchmark DB). "
-            "Refusing to default to production.",
+            "ERROR: --dsn is required (pilot/benchmark DB). " "Refusing to default to production.",
             file=sys.stderr,
         )
         return 2
@@ -978,9 +960,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if args.dry_run:
-        payload = dry_run_payload(
-            index_names, index_map, args.sample_size, args.eval_path
-        )
+        payload = dry_run_payload(index_names, index_map, args.sample_size, args.eval_path)
     else:
         payload = run_benchmark(
             dsn=dsn,

@@ -151,13 +151,15 @@ def _get_sample_embedding(
 def _get_sample_bibcode(conn: psycopg.Connection) -> str | None:
     """Get a bibcode with citation edges for graph benchmarks."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT p.bibcode FROM papers p
             JOIN citation_edges ce ON ce.source_bibcode = p.bibcode
             WHERE p.citation_count > 0
             ORDER BY p.citation_count DESC NULLS LAST
             LIMIT 1
-        """)
+        """
+        )
         row = cur.fetchone()
         return row[0] if row else None
 
@@ -165,12 +167,14 @@ def _get_sample_bibcode(conn: psycopg.Connection) -> str | None:
 def _get_sample_author(conn: psycopg.Connection) -> str | None:
     """Get an author name for author search benchmarks."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT first_author FROM papers
             WHERE first_author IS NOT NULL
             ORDER BY citation_count DESC NULLS LAST
             LIMIT 1
-        """)
+        """
+        )
         row = cur.fetchone()
         return row[0] if row else None
 
@@ -187,13 +191,15 @@ def bench_lexical(
             t0 = time.perf_counter()
             result = lexical_search(conn, q, limit=20)
             latency = round((time.perf_counter() - t0) * 1000, 2)
-            runs.append(BenchmarkRun(
-                query=q,
-                mode="lexical",
-                latency_ms=latency,
-                result_count=result.total,
-                timing_breakdown=result.timing_ms,
-            ))
+            runs.append(
+                BenchmarkRun(
+                    query=q,
+                    mode="lexical",
+                    latency_ms=latency,
+                    result_count=result.total,
+                    timing_breakdown=result.timing_ms,
+                )
+            )
     return runs
 
 
@@ -210,13 +216,15 @@ def bench_vector(
             t0 = time.perf_counter()
             result = vector_search(conn, query_embedding, limit=20)
             latency = round((time.perf_counter() - t0) * 1000, 2)
-            runs.append(BenchmarkRun(
-                query=q,
-                mode="vector",
-                latency_ms=latency,
-                result_count=result.total,
-                timing_breakdown=result.timing_ms,
-            ))
+            runs.append(
+                BenchmarkRun(
+                    query=q,
+                    mode="vector",
+                    latency_ms=latency,
+                    result_count=result.total,
+                    timing_breakdown=result.timing_ms,
+                )
+            )
     return runs
 
 
@@ -233,17 +241,17 @@ def bench_hybrid(
     for _ in range(iterations):
         for q in queries:
             t0 = time.perf_counter()
-            result = hybrid_search(
-                conn, q, query_embedding, top_n=20, reranker=reranker
-            )
+            result = hybrid_search(conn, q, query_embedding, top_n=20, reranker=reranker)
             latency = round((time.perf_counter() - t0) * 1000, 2)
-            runs.append(BenchmarkRun(
-                query=q,
-                mode=mode,
-                latency_ms=latency,
-                result_count=result.total,
-                timing_breakdown=result.timing_ms,
-            ))
+            runs.append(
+                BenchmarkRun(
+                    query=q,
+                    mode=mode,
+                    latency_ms=latency,
+                    result_count=result.total,
+                    timing_breakdown=result.timing_ms,
+                )
+            )
     return runs
 
 
@@ -267,13 +275,15 @@ def bench_graph(
             t0 = time.perf_counter()
             result = func()
             latency = round((time.perf_counter() - t0) * 1000, 2)
-            results[func_name].append(BenchmarkRun(
-                query=bibcode,
-                mode=func_name,
-                latency_ms=latency,
-                result_count=result.total,
-                timing_breakdown=result.timing_ms,
-            ))
+            results[func_name].append(
+                BenchmarkRun(
+                    query=bibcode,
+                    mode=func_name,
+                    latency_ms=latency,
+                    result_count=result.total,
+                    timing_breakdown=result.timing_ms,
+                )
+            )
     return results
 
 
@@ -288,13 +298,15 @@ def bench_author(
         t0 = time.perf_counter()
         result = get_author_papers(conn, author, limit=50)
         latency = round((time.perf_counter() - t0) * 1000, 2)
-        runs.append(BenchmarkRun(
-            query=author,
-            mode="author_search",
-            latency_ms=latency,
-            result_count=result.total,
-            timing_breakdown=result.timing_ms,
-        ))
+        runs.append(
+            BenchmarkRun(
+                query=author,
+                mode="author_search",
+                latency_ms=latency,
+                result_count=result.total,
+                timing_breakdown=result.timing_ms,
+            )
+        )
     return runs
 
 
@@ -309,13 +321,15 @@ def bench_facets(
             t0 = time.perf_counter()
             result = facet_counts(conn, facet_field, limit=50)
             latency = round((time.perf_counter() - t0) * 1000, 2)
-            runs.append(BenchmarkRun(
-                query=facet_field,
-                mode="facet_counts",
-                latency_ms=latency,
-                result_count=result.total,
-                timing_breakdown=result.timing_ms,
-            ))
+            runs.append(
+                BenchmarkRun(
+                    query=facet_field,
+                    mode="facet_counts",
+                    latency_ms=latency,
+                    result_count=result.total,
+                    timing_breakdown=result.timing_ms,
+                )
+            )
     return runs
 
 
@@ -345,16 +359,18 @@ def generate_report(
             f"| {s.mean_ms} | {s.min_ms} | {s.max_ms} | {s.avg_results} |"
         )
 
-    lines.extend([
-        "",
-        "## Notes",
-        "",
-        "- All timings include PostgreSQL query execution and Python processing.",
-        "- p50/p95/p99 are wall-clock latencies from the client perspective.",
-        "- Vector search uses HNSW with ef_search=100 (default).",
-        "- Hybrid search fetches top-60 from each source, fuses with RRF (k=60), returns top-20.",
-        f"- {'Embeddings available: vector and hybrid modes benchmarked.' if has_vectors else 'No embeddings found: lexical-only mode benchmarked.'}",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Notes",
+            "",
+            "- All timings include PostgreSQL query execution and Python processing.",
+            "- p50/p95/p99 are wall-clock latencies from the client perspective.",
+            "- Vector search uses HNSW with ef_search=100 (default).",
+            "- Hybrid search fetches top-60 from each source, fuses with RRF (k=60), returns top-20.",
+            f"- {'Embeddings available: vector and hybrid modes benchmarked.' if has_vectors else 'No embeddings found: lexical-only mode benchmarked.'}",
+        ]
+    )
 
     return "\n".join(lines)
 
@@ -362,27 +378,36 @@ def generate_report(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Benchmark SciX search pipeline")
     parser.add_argument(
-        "--iterations", type=int, default=5,
+        "--iterations",
+        type=int,
+        default=5,
         help="Number of iterations per query (default: 5)",
     )
     parser.add_argument(
-        "--output", type=str, default=None,
+        "--output",
+        type=str,
+        default=None,
         help="Output file for markdown report (default: stdout)",
     )
     parser.add_argument(
-        "--dsn", default=None,
+        "--dsn",
+        default=None,
         help="PostgreSQL DSN (default: SCIX_DSN env var or 'dbname=scix')",
     )
     parser.add_argument(
-        "--lexical-only", action="store_true",
+        "--lexical-only",
+        action="store_true",
         help="Skip vector/hybrid benchmarks even if embeddings exist",
     )
     parser.add_argument(
-        "--include-reranker", action="store_true",
+        "--include-reranker",
+        action="store_true",
         help="Include cross-encoder reranker in hybrid benchmark",
     )
     parser.add_argument(
-        "-v", "--verbose", action="store_true",
+        "-v",
+        "--verbose",
+        action="store_true",
         help="Enable debug logging",
     )
 
@@ -444,7 +469,8 @@ def main() -> None:
             summaries.append(summarize("hybrid+rerank", rerank_runs))
             logger.info(
                 "  hybrid+rerank p50=%.1fms p95=%.1fms",
-                summaries[-1].p50_ms, summaries[-1].p95_ms,
+                summaries[-1].p50_ms,
+                summaries[-1].p95_ms,
             )
         except ImportError:
             logger.warning("Skipping reranker benchmark (sentence-transformers not installed)")

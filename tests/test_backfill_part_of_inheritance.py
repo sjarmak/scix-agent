@@ -23,9 +23,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 _SCRIPT_PATH = REPO_ROOT / "scripts" / "backfill_part_of_inheritance.py"
-_spec = importlib.util.spec_from_file_location(
-    "backfill_part_of_inheritance", _SCRIPT_PATH
-)
+_spec = importlib.util.spec_from_file_location("backfill_part_of_inheritance", _SCRIPT_PATH)
 backfill_mod = importlib.util.module_from_spec(_spec)
 sys.modules["backfill_part_of_inheritance"] = backfill_mod
 assert _spec.loader is not None
@@ -116,9 +114,7 @@ class TestQuote:
 
 class TestExtractMissionAcronyms:
     def test_extracts_uppercase_runs(self) -> None:
-        out = backfill_mod.extract_mission_acronyms(
-            ("James Webb Space Telescope", "JWST")
-        )
+        out = backfill_mod.extract_mission_acronyms(("James Webb Space Telescope", "JWST"))
         assert "jwst" in out
 
     def test_handles_multiple_aliases(self) -> None:
@@ -283,10 +279,7 @@ class _FakeCursor:
             self.rowcount = 1
             return
 
-        if (
-            "INSERT INTO document_entities" in normalized
-            and "matched AS" in normalized
-        ):
+        if "INSERT INTO document_entities" in normalized and "matched AS" in normalized:
             inserted = self._conn.insert_instrument_doc_entities(params)
             self.rowcount = inserted
             self._last_rows = []
@@ -307,9 +300,7 @@ class _FakeCursor:
             self._last_rows = []
             return
 
-        raise AssertionError(
-            f"Unexpected SQL in test: {normalized[:140]} (params={params!r})"
-        )
+        raise AssertionError(f"Unexpected SQL in test: {normalized[:140]} (params={params!r})")
 
     def fetchone(self) -> Optional[tuple[Any, ...]]:
         if not self._last_rows:
@@ -362,9 +353,7 @@ class FakeConnection:
 
     # --- emulated SQL ----------------------------------------------------
 
-    def fetch_part_of_edges(
-        self, params: dict[str, Any]
-    ) -> list[tuple[Any, ...]]:
+    def fetch_part_of_edges(self, params: dict[str, Any]) -> list[tuple[Any, ...]]:
         sources = params.get("sources") or []
         rows: list[tuple[Any, ...]] = []
         for e in self.edges:
@@ -417,9 +406,7 @@ class FakeConnection:
     def delete_prior_backfill(self, params: dict[str, Any]) -> int:
         methods = {params["instrument_method"], params["parent_method"]}
         before = len(self.doc_entities)
-        self.doc_entities = [
-            d for d in self.doc_entities if d.get("match_method") not in methods
-        ]
+        self.doc_entities = [d for d in self.doc_entities if d.get("match_method") not in methods]
         return before - len(self.doc_entities)
 
     def insert_parent_doc_entities(self, params: dict[str, Any]) -> int:
@@ -801,13 +788,7 @@ class TestResolveDsn:
         assert backfill_mod._resolve_dsn("scix_test") == "dbname=scix_test"
 
     def test_full_keyvalue(self) -> None:
-        assert (
-            backfill_mod._resolve_dsn("dbname=foo host=bar")
-            == "dbname=foo host=bar"
-        )
+        assert backfill_mod._resolve_dsn("dbname=foo host=bar") == "dbname=foo host=bar"
 
     def test_uri(self) -> None:
-        assert (
-            backfill_mod._resolve_dsn("postgresql://u:p@h/db")
-            == "postgresql://u:p@h/db"
-        )
+        assert backfill_mod._resolve_dsn("postgresql://u:p@h/db") == "postgresql://u:p@h/db"

@@ -85,13 +85,15 @@ def measure_component_summary(conn: psycopg.Connection) -> dict[str, Any]:
     t0 = time.perf_counter()
 
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT
                 COUNT(*) AS total,
                 COUNT(CASE WHEN community_id_coarse = -1 THEN 1 END) AS non_giant,
                 COUNT(CASE WHEN community_id_coarse IS NULL THEN 1 END) AS giant_component
             FROM paper_metrics
-        """)
+        """
+        )
         row = cur.fetchone()
 
     total = row["total"]
@@ -140,7 +142,8 @@ def measure_degree_distribution(conn: psycopg.Connection) -> dict[str, Any]:
 
     for direction, col in [("out_degree", "source_bibcode"), ("in_degree", "target_bibcode")]:
         with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(f"""
+            cur.execute(
+                f"""
                 WITH deg AS (
                     SELECT {col} AS bibcode, COUNT(*) AS degree
                     FROM citation_edges
@@ -156,7 +159,8 @@ def measure_degree_distribution(conn: psycopg.Connection) -> dict[str, Any]:
                     PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY degree) AS p99_deg,
                     COUNT(*) AS n_papers_with_edges
                 FROM deg
-            """)
+            """
+            )
             row = cur.fetchone()
 
         result[direction] = {
@@ -219,14 +223,16 @@ def measure_leiden_status(conn: psycopg.Connection) -> dict[str, Any]:
     logger.info("Checking Leiden community status...")
 
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT
                 COUNT(CASE WHEN community_id_coarse >= 0 THEN 1 END) AS has_coarse,
                 COUNT(CASE WHEN community_id_medium >= 0 THEN 1 END) AS has_medium,
                 COUNT(CASE WHEN community_id_fine >= 0 THEN 1 END) AS has_fine,
                 COUNT(CASE WHEN community_taxonomic IS NOT NULL THEN 1 END) AS has_taxonomic
             FROM paper_metrics
-        """)
+        """
+        )
         row = cur.fetchone()
 
     return {

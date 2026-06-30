@@ -257,14 +257,14 @@ class LatencyProbe:
                 await self.dispatcher.judge(triple)
                 elapsed = self.clock() - start
                 timings.append(
-                    TurnTiming(
-                        run_index=run_idx, turn_index=turn_idx, elapsed_s=float(elapsed)
-                    )
+                    TurnTiming(run_index=run_idx, turn_index=turn_idx, elapsed_s=float(elapsed))
                 )
         return tuple(timings)
 
 
-def aggregate(timings: Sequence[TurnTiming], *, runs: int, turns: int, dry_run: bool) -> ProbeResult:
+def aggregate(
+    timings: Sequence[TurnTiming], *, runs: int, turns: int, dry_run: bool
+) -> ProbeResult:
     """Compute p50/p95 + verdict from raw timings."""
     elapsed = [t.elapsed_s for t in timings]
     p50 = compute_percentile(elapsed, 50.0)
@@ -379,12 +379,10 @@ def render_report(
     p50_status = "OK" if result.p50_s <= P50_THRESHOLD_S else "OVER"
     p95_status = "OK" if result.p95_s <= P95_THRESHOLD_S else "OVER"
     lines.append(
-        f"| p50 per-turn overhead | {result.p50_s:.3f} | "
-        f"{P50_THRESHOLD_S:.1f} | {p50_status} |"
+        f"| p50 per-turn overhead | {result.p50_s:.3f} | " f"{P50_THRESHOLD_S:.1f} | {p50_status} |"
     )
     lines.append(
-        f"| p95 per-turn overhead | {result.p95_s:.3f} | "
-        f"{P95_THRESHOLD_S:.1f} | {p95_status} |"
+        f"| p95 per-turn overhead | {result.p95_s:.3f} | " f"{P95_THRESHOLD_S:.1f} | {p95_status} |"
     )
     lines.append("")
 
@@ -475,10 +473,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--json-out",
         type=Path,
         default=None,
-        help=(
-            "Path to the JSON sidecar with raw timings + p50/p95. Defaults "
-            "to <report>.json."
-        ),
+        help=("Path to the JSON sidecar with raw timings + p50/p95. Defaults " "to <report>.json."),
     )
     p.add_argument(
         "--dry-run",
@@ -494,23 +489,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default="claude",
         help="Path or name of the ``claude`` CLI (real-mode only).",
     )
-    p.add_argument(
-        "-v", "--verbose", action="store_true", help="Verbose logging."
-    )
+    p.add_argument("-v", "--verbose", action="store_true", help="Verbose logging.")
     return p
 
 
 def _resolve_json_path(report: Path, json_out: Path | None) -> Path:
     if json_out is not None:
         return json_out
-    return report.with_suffix(report.suffix + ".json") if report.suffix else (
-        report.parent / (report.name + ".json")
+    return (
+        report.with_suffix(report.suffix + ".json")
+        if report.suffix
+        else (report.parent / (report.name + ".json"))
     )
 
 
-async def _run_real_probe(
-    *, runs: int, turns: int, claude_binary: str
-) -> ProbeResult:
+async def _run_real_probe(*, runs: int, turns: int, claude_binary: str) -> ProbeResult:
     """Run the real probe against ``ClaudeSubprocessDispatcher``."""
     from scix.eval.persona_judge import ClaudeSubprocessDispatcher
 
@@ -533,9 +526,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = aggregate(timings, runs=args.runs, turns=args.turns, dry_run=True)
     else:
         result = asyncio.run(
-            _run_real_probe(
-                runs=args.runs, turns=args.turns, claude_binary=args.claude_binary
-            )
+            _run_real_probe(runs=args.runs, turns=args.turns, claude_binary=args.claude_binary)
         )
 
     write_report(result, args.report, json_path)

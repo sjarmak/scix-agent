@@ -277,8 +277,7 @@ def run(cfg: BackfillConfig) -> int:
             if batches % 10 == 0 or batches == 1:
                 rate = total_updated / max(1.0, time.perf_counter() - t_start)
                 logger.info(
-                    "batch=%d updated=%d cumulative=%d rate=%.0f rows/s "
-                    "batch_ms=%.0f cursor=%s",
+                    "batch=%d updated=%d cumulative=%d rate=%.0f rows/s " "batch_ms=%.0f cursor=%s",
                     batches,
                     updated,
                     total_updated,
@@ -303,7 +302,9 @@ def run(cfg: BackfillConfig) -> int:
 
 
 def parse_args(argv: list[str] | None = None) -> BackfillConfig:
-    p = argparse.ArgumentParser(description="Backfill paper_embeddings.embedding_hv from embedding.")
+    p = argparse.ArgumentParser(
+        description="Backfill paper_embeddings.embedding_hv from embedding."
+    )
     p.add_argument("--dsn", default=os.environ.get("SCIX_DSN", "dbname=scix"))
     p.add_argument("--model", dest="model_name", default="indus")
     p.add_argument("--batch-size", type=int, default=20000)

@@ -191,14 +191,16 @@ def populate(conn: psycopg.Connection, *, dry_run: bool = False) -> None:
 def overall_stats(conn: psycopg.Connection) -> OverallStats:
     """Compute top-level summary from citation_diff."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT
                 COUNT(*)                                               AS total,
                 COUNT(*) FILTER (WHERE in_ads AND NOT in_openalex)     AS ads_only,
                 COUNT(*) FILTER (WHERE NOT in_ads AND in_openalex)     AS oa_only,
                 COUNT(*) FILTER (WHERE in_ads AND in_openalex)         AS both
             FROM citation_diff
-        """)
+        """
+        )
         row = cur.fetchone()
         if row is None or row[0] == 0:
             return OverallStats(
@@ -225,12 +227,14 @@ def overall_stats(conn: psycopg.Connection) -> OverallStats:
 def by_year(conn: psycopg.Connection) -> list[YearBucket]:
     """Per-year breakdown from the materialized view."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT pub_year, total_edges, both_count,
                    ads_only_count, openalex_only_count, overlap_pct
             FROM citation_diff_by_year
             ORDER BY pub_year
-        """)
+        """
+        )
         return [
             YearBucket(
                 pub_year=r[0],

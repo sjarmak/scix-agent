@@ -107,29 +107,132 @@ _AUTHOR_CITATION_RE = re.compile(r"[\s,;:.]+et\s+al", re.IGNORECASE)
 # capitalised) but are never software/dataset names. Lower-cased membership.
 _STOPWORDS: frozenset[str] = frozenset(
     {
-        "the", "a", "an", "this", "that", "these", "those", "our", "their",
-        "its", "his", "her", "we", "they", "it", "all", "both", "each",
-        "such", "same", "above", "below", "following", "previous", "new",
-        "standard", "default", "various", "several", "many", "two", "three",
-        "four", "one", "data", "dataset", "method", "methods", "model",
-        "models", "result", "results", "analysis", "approach", "approaches",
-        "technique", "techniques", "code", "codes", "software", "package",
-        "library", "toolkit", "pipeline", "framework", "module", "routine",
-        "algorithm", "algorithms", "tool", "tools", "sample", "samples",
-        "survey", "catalog", "catalogue", "database", "archive", "simulation",
-        "simulations", "version", "figure", "table", "section", "equation",
-        "value", "values", "function", "set", "test", "paper", "work",
-        "study", "and", "or", "of", "for", "with", "from", "via", "using",
-        "used", "use", "which", "what", "where", "when", "i", "ii", "iii",
+        "the",
+        "a",
+        "an",
+        "this",
+        "that",
+        "these",
+        "those",
+        "our",
+        "their",
+        "its",
+        "his",
+        "her",
+        "we",
+        "they",
+        "it",
+        "all",
+        "both",
+        "each",
+        "such",
+        "same",
+        "above",
+        "below",
+        "following",
+        "previous",
+        "new",
+        "standard",
+        "default",
+        "various",
+        "several",
+        "many",
+        "two",
+        "three",
+        "four",
+        "one",
+        "data",
+        "dataset",
+        "method",
+        "methods",
+        "model",
+        "models",
+        "result",
+        "results",
+        "analysis",
+        "approach",
+        "approaches",
+        "technique",
+        "techniques",
+        "code",
+        "codes",
+        "software",
+        "package",
+        "library",
+        "toolkit",
+        "pipeline",
+        "framework",
+        "module",
+        "routine",
+        "algorithm",
+        "algorithms",
+        "tool",
+        "tools",
+        "sample",
+        "samples",
+        "survey",
+        "catalog",
+        "catalogue",
+        "database",
+        "archive",
+        "simulation",
+        "simulations",
+        "version",
+        "figure",
+        "table",
+        "section",
+        "equation",
+        "value",
+        "values",
+        "function",
+        "set",
+        "test",
+        "paper",
+        "work",
+        "study",
+        "and",
+        "or",
+        "of",
+        "for",
+        "with",
+        "from",
+        "via",
+        "using",
+        "used",
+        "use",
+        "which",
+        "what",
+        "where",
+        "when",
+        "i",
+        "ii",
+        "iii",
         # Descriptive / method / quantity terms that recur as the candidate in
         # "X simulation" / "X catalog" / "X survey" but never name a resource on
         # their own. Curated from a real-corpus precision sweep (bead dbl.18);
         # named simulations (IllustrisTNG, EAGLE) survive — only the generic
         # method words are blocked.
-        "monte", "carlo", "numerical", "computer", "microlensing", "velocity",
-        "galaxy", "galaxies", "luminosity", "wavelength", "multiwavelength",
-        "multi-wavelength", "large", "area", "cosmological", "hydrodynamic",
-        "hydrodynamical", "spectroscopic", "photometric", "stellar", "magnitude",
+        "monte",
+        "carlo",
+        "numerical",
+        "computer",
+        "microlensing",
+        "velocity",
+        "galaxy",
+        "galaxies",
+        "luminosity",
+        "wavelength",
+        "multiwavelength",
+        "multi-wavelength",
+        "large",
+        "area",
+        "cosmological",
+        "hydrodynamic",
+        "hydrodynamical",
+        "spectroscopic",
+        "photometric",
+        "stellar",
+        "magnitude",
     }
 )
 
@@ -160,9 +263,19 @@ _TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+/-]*\Z")
 # cue like "... Library" must not promote them. Matched per-token, lower-cased.
 _DENY_TOKENS: frozenset[str] = frozenset(
     {
-        "wolbach", "harvard", "observatory", "college", "university",
-        "library", "institute", "department", "microfilmed", "sternwarte",
-        "smithsonian", "nasa", "ads",
+        "wolbach",
+        "harvard",
+        "observatory",
+        "college",
+        "university",
+        "library",
+        "institute",
+        "department",
+        "microfilmed",
+        "sternwarte",
+        "smithsonian",
+        "nasa",
+        "ads",
     }
 )
 
@@ -184,30 +297,72 @@ _DENY_TOKENS: frozenset[str] = frozenset(
 _LEADING_ADJECTIVES: frozenset[str] = frozenset(
     {
         # quality / fidelity
-        "high-quality", "low-quality", "high-fidelity", "high-precision",
+        "high-quality",
+        "low-quality",
+        "high-fidelity",
+        "high-precision",
         # resolution / dimensionality
-        "high-resolution", "low-resolution", "high-dimensional",
-        "low-dimensional", "high-contrast",
+        "high-resolution",
+        "low-resolution",
+        "high-dimensional",
+        "low-dimensional",
+        "high-contrast",
         # performance / throughput
-        "high-performance", "high-throughput", "high-speed", "high-level",
-        "low-level", "low-cost", "general-purpose", "special-purpose",
+        "high-performance",
+        "high-throughput",
+        "high-speed",
+        "high-level",
+        "low-level",
+        "low-cost",
+        "general-purpose",
+        "special-purpose",
         # scale
-        "large-scale", "small-scale", "full-scale", "web-scale",
+        "large-scale",
+        "small-scale",
+        "full-scale",
+        "web-scale",
         # availability / openness
-        "open-source", "closed-source", "open-access", "publicly-available",
-        "freely-available", "ready-to-use", "easy-to-use",
+        "open-source",
+        "closed-source",
+        "open-access",
+        "publicly-available",
+        "freely-available",
+        "ready-to-use",
+        "easy-to-use",
         # maturity / familiarity
-        "state-of-the-art", "well-known", "well-studied", "well-tested",
-        "well-defined", "well-established", "well-calibrated", "well-sampled",
-        "up-to-date", "real-time", "real-world",
+        "state-of-the-art",
+        "well-known",
+        "well-studied",
+        "well-tested",
+        "well-defined",
+        "well-established",
+        "well-calibrated",
+        "well-sampled",
+        "up-to-date",
+        "real-time",
+        "real-world",
         # granularity
-        "fine-grained", "coarse-grained", "ground-truth",
+        "fine-grained",
+        "coarse-grained",
+        "ground-truth",
         # single-word processing / quality descriptors (namey only when
         # sentence-initial-capitalised; never a standalone resource name)
-        "standardized", "standardised", "normalized", "normalised",
-        "augmented", "synthetic", "annotated", "curated", "preprocessed",
-        "pre-processed", "labeled", "labelled", "unlabeled", "unlabelled",
-        "balanced", "cleaned",
+        "standardized",
+        "standardised",
+        "normalized",
+        "normalised",
+        "augmented",
+        "synthetic",
+        "annotated",
+        "curated",
+        "preprocessed",
+        "pre-processed",
+        "labeled",
+        "labelled",
+        "unlabeled",
+        "unlabelled",
+        "balanced",
+        "cleaned",
     }
 )
 
@@ -397,40 +552,77 @@ def _c(pattern: str) -> "re.Pattern[str]":
 
 _CUES: tuple[_Cue, ...] = (
     # --- software, prefix cues -------------------------------------------
-    _Cue("implemented_in",
-         _c(r"\bimplemented\s+(?:in|with|using)\s+(?:the\s+)?"),
-         ENTITY_TYPE_SOFTWARE, 0.88, "prefix"),
-    _Cue("run_with",
-         _c(r"\b(?:run|ran|executed?|performed)\s+(?:with|using)\s+(?:the\s+)?"),
-         ENTITY_TYPE_SOFTWARE, 0.78, "prefix"),
-    _Cue("we_used",
-         _c(r"\bwe\s+(?:use|used|employ|employed|adopt|adopted|"
-            r"utilis\w+|utiliz\w+|appl(?:y|ied))\s+(?:the\s+)?"),
-         ENTITY_TYPE_SOFTWARE, 0.70, "prefix", strict_candidate=True),
-    _Cue("via",
-         _c(r"\bvia\s+(?:the\s+)?"),
-         ENTITY_TYPE_SOFTWARE, 0.62, "prefix", strict_candidate=True),
+    _Cue(
+        "implemented_in",
+        _c(r"\bimplemented\s+(?:in|with|using)\s+(?:the\s+)?"),
+        ENTITY_TYPE_SOFTWARE,
+        0.88,
+        "prefix",
+    ),
+    _Cue(
+        "run_with",
+        _c(r"\b(?:run|ran|executed?|performed)\s+(?:with|using)\s+(?:the\s+)?"),
+        ENTITY_TYPE_SOFTWARE,
+        0.78,
+        "prefix",
+    ),
+    _Cue(
+        "we_used",
+        _c(
+            r"\bwe\s+(?:use|used|employ|employed|adopt|adopted|"
+            r"utilis\w+|utiliz\w+|appl(?:y|ied))\s+(?:the\s+)?"
+        ),
+        ENTITY_TYPE_SOFTWARE,
+        0.70,
+        "prefix",
+        strict_candidate=True,
+    ),
+    _Cue(
+        "via",
+        _c(r"\bvia\s+(?:the\s+)?"),
+        ENTITY_TYPE_SOFTWARE,
+        0.62,
+        "prefix",
+        strict_candidate=True,
+    ),
     # --- software, suffix cues -------------------------------------------
-    _Cue("software_head",
-         _c(r"\s+(?:software|package|library|toolkit|pipeline|"
-            r"codebase|framework)\b"),
-         ENTITY_TYPE_SOFTWARE, 0.90, "suffix"),
-    _Cue("code_head",
-         _c(r"\s+code\b"),
-         ENTITY_TYPE_SOFTWARE, 0.74, "suffix"),
+    _Cue(
+        "software_head",
+        _c(r"\s+(?:software|package|library|toolkit|pipeline|" r"codebase|framework)\b"),
+        ENTITY_TYPE_SOFTWARE,
+        0.90,
+        "suffix",
+    ),
+    _Cue("code_head", _c(r"\s+code\b"), ENTITY_TYPE_SOFTWARE, 0.74, "suffix"),
     # --- dataset, prefix cues --------------------------------------------
-    _Cue("data_from",
-         _c(r"\bdata\s+(?:from|drawn\s+from|taken\s+from|obtained\s+from|"
-            r"retrieved\s+from)\s+(?:the\s+)?"),
-         ENTITY_TYPE_DATASET, 0.82, "prefix"),
+    _Cue(
+        "data_from",
+        _c(
+            r"\bdata\s+(?:from|drawn\s+from|taken\s+from|obtained\s+from|"
+            r"retrieved\s+from)\s+(?:the\s+)?"
+        ),
+        ENTITY_TYPE_DATASET,
+        0.82,
+        "prefix",
+    ),
     # --- dataset, suffix cues --------------------------------------------
-    _Cue("dataset_head",
-         _c(r"\s+(?:dataset|data\s+set|catalog|catalogue|survey|database|"
-            r"archive|simulations?)\b"),
-         ENTITY_TYPE_DATASET, 0.90, "suffix"),
-    _Cue("data_release",
-         _c(r"\s+(?:DR\s*\d|data\s+release\s*\d)"),
-         ENTITY_TYPE_DATASET, 0.88, "suffix"),
+    _Cue(
+        "dataset_head",
+        _c(
+            r"\s+(?:dataset|data\s+set|catalog|catalogue|survey|database|"
+            r"archive|simulations?)\b"
+        ),
+        ENTITY_TYPE_DATASET,
+        0.90,
+        "suffix",
+    ),
+    _Cue(
+        "data_release",
+        _c(r"\s+(?:DR\s*\d|data\s+release\s*\d)"),
+        ENTITY_TYPE_DATASET,
+        0.88,
+        "suffix",
+    ),
 )
 
 
@@ -475,7 +667,7 @@ def _locate_name(body: str, cue: _Cue, match: "re.Match[str]") -> tuple[str, int
     """
     if cue.position == "prefix":
         win_lo = match.end()
-        window = body[win_lo:win_lo + _NAME_WINDOW_CHARS]
+        window = body[win_lo : win_lo + _NAME_WINDOW_CHARS]
         span = _leading_name_span(window)
         if span is None:
             return None
@@ -484,7 +676,7 @@ def _locate_name(body: str, cue: _Cue, match: "re.Match[str]") -> tuple[str, int
             return None  # weak cue + lower-case method phrase
         start = win_lo + ws
         end = win_lo + we
-        if _AUTHOR_CITATION_RE.match(body[end:end + 8]):
+        if _AUTHOR_CITATION_RE.match(body[end : end + 8]):
             return None  # "data from Cohen et al." — an author, not a source
         return name, start, end
 
@@ -612,9 +804,7 @@ def insert_mentions(
                 "end": m.end_char,
             }
         )
-        rows.append(
-            (bibcode, eid, LINK_TYPE, m.confidence, MATCH_METHOD, LAFIA_TIER, evidence)
-        )
+        rows.append((bibcode, eid, LINK_TYPE, m.confidence, MATCH_METHOD, LAFIA_TIER, evidence))
     if not rows:
         return 0
     with conn.cursor() as cur:

@@ -248,9 +248,7 @@ def _largest_remainder_allocation(
     if total == 0 or sample_size <= 0:
         return {k: 0 for k in bucket_sizes}
 
-    raw: dict[str, float] = {
-        k: (size / total) * sample_size for k, size in bucket_sizes.items()
-    }
+    raw: dict[str, float] = {k: (size / total) * sample_size for k, size in bucket_sizes.items()}
     floor_alloc: dict[str, int] = {k: int(math.floor(v)) for k, v in raw.items()}
     remainders: list[tuple[float, str]] = sorted(
         ((raw[k] - floor_alloc[k], k) for k in raw),
@@ -319,9 +317,7 @@ def stratified_sample(
     # the real strata cannot satisfy the requested sample size.
     bucket_sizes = {k: len(v) for k, v in real_strata.items()}
     real_total = sum(bucket_sizes.values())
-    allocation = _largest_remainder_allocation(
-        bucket_sizes, min(sample_size, real_total)
-    )
+    allocation = _largest_remainder_allocation(bucket_sizes, min(sample_size, real_total))
 
     sampled: list[CohortPaper] = []
     for stratum, n in allocation.items():
@@ -359,9 +355,7 @@ def _normalize_pred_map(
         ent_map: dict[str, frozenset[str]] = {}
         for etype, items in (by_type or {}).items():
             cleaned = {
-                _normalize_entity(x)
-                for x in (items or [])
-                if isinstance(x, str) and x.strip()
+                _normalize_entity(x) for x in (items or []) if isinstance(x, str) and x.strip()
             }
             ent_map[etype] = frozenset(cleaned)
         result[bib] = ent_map
@@ -372,11 +366,7 @@ def _prf(tp: int, fp: int, fn: int) -> tuple[float, float, float]:
     """Precision, recall, F1 with safe divide-by-zero handling."""
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    f1 = (
-        (2 * precision * recall / (precision + recall))
-        if (precision + recall) > 0
-        else 0.0
-    )
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
     return precision, recall, f1
 
 
@@ -853,9 +843,7 @@ def _resolve_predictions_and_gold(
     """
     if args.mock_all:
         if args.predictions_fixture is None or args.gold_fixture is None:
-            raise SystemExit(
-                "--mock-all requires both --predictions-fixture and --gold-fixture"
-            )
+            raise SystemExit("--mock-all requires both --predictions-fixture and --gold-fixture")
         preds = _load_predictions_fixture(args.predictions_fixture)
         gold = _load_gold_fixture(args.gold_fixture)
         return preds, gold, "mock_all"

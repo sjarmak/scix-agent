@@ -209,9 +209,7 @@ def _format_passage_for_judge(passage: str, max_chars: int = 2000) -> str:
 
 def binary_cohen_kappa(human: list[int], judge: list[int]) -> float:
     """Unweighted Cohen's kappa on 2-class labels."""
-    return quadratic_weighted_kappa(
-        human, judge, min_score=0, max_score=1
-    )
+    return quadratic_weighted_kappa(human, judge, min_score=0, max_score=1)
 
 
 def auroc(scores: list[float], labels: list[int]) -> float:
@@ -284,22 +282,16 @@ async def run_transfer_test(
         "n_pos": sum(golds),
         "n_neg": len(golds) - sum(golds),
         "mean_score_pos": (
-            sum(s for s, g in zip(raw_scores, golds) if g == 1)
-            / max(sum(golds), 1)
+            sum(s for s, g in zip(raw_scores, golds) if g == 1) / max(sum(golds), 1)
         ),
         "mean_score_neg": (
-            sum(s for s, g in zip(raw_scores, golds) if g == 0)
-            / max(len(golds) - sum(golds), 1)
+            sum(s for s, g in zip(raw_scores, golds) if g == 0) / max(len(golds) - sum(golds), 1)
         ),
         "auroc": auroc([float(s) for s in raw_scores], golds),
         "binary_kappa": binary_cohen_kappa(golds, judge_binary),
         "confusion_matrix": confusion_matrix(golds, judge_binary),
-        "score_dist_pos": _histogram(
-            [s for s, g in zip(raw_scores, golds) if g == 1]
-        ),
-        "score_dist_neg": _histogram(
-            [s for s, g in zip(raw_scores, golds) if g == 0]
-        ),
+        "score_dist_pos": _histogram([s for s, g in zip(raw_scores, golds) if g == 1]),
+        "score_dist_neg": _histogram([s for s, g in zip(raw_scores, golds) if g == 0]),
     }
     metrics["passes_auroc"] = metrics["auroc"] > AUROC_SUCCESS
     metrics["passes_kappa"] = metrics["binary_kappa"] >= KAPPA_SUCCESS
@@ -349,7 +341,9 @@ def write_csv(path: Path, rows: list[tuple[Pair, int, int | None, str]]) -> None
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--n-pos", type=int, default=100, help="Number of positive pairs to sample.")
     p.add_argument("--n-neg", type=int, default=100, help="Number of negative pairs to sample.")
     p.add_argument("--seed", type=int, default=20260422)
@@ -357,9 +351,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--output-json", type=Path, default=DEFAULT_OUTPUT_JSON)
     p.add_argument("--concurrency", type=int, default=DEFAULT_MAX_CONCURRENCY)
     p.add_argument("--claude-binary", default=os.environ.get("CLAUDE_BINARY", "claude-auto"))
-    p.add_argument(
-        "--stub", action="store_true", help="Use StubDispatcher — wiring check only."
-    )
+    p.add_argument("--stub", action="store_true", help="Use StubDispatcher — wiring check only.")
     p.add_argument("--log-level", default="INFO")
     return p.parse_args(argv)
 
@@ -397,14 +389,14 @@ def main(argv: list[str] | None = None) -> int:
         # metric plumbing end-to-end without calling Claude. We key on
         # gold_relevant by attaching a sentinel score in advance; implemented
         # with a closure-wrapping dispatcher.
-        dispatcher = _GoldAwareStubDispatcher({p.corpus_id + "|" + p.query_id: p.gold_relevant for p in pairs})
+        dispatcher = _GoldAwareStubDispatcher(
+            {p.corpus_id + "|" + p.query_id: p.gold_relevant for p in pairs}
+        )
     else:
         dispatcher = ClaudeSubprocessDispatcher(claude_binary=args.claude_binary)
 
     rows, metrics = asyncio.run(
-        run_transfer_test(
-            pairs=pairs, dispatcher=dispatcher, max_concurrency=args.concurrency
-        )
+        run_transfer_test(pairs=pairs, dispatcher=dispatcher, max_concurrency=args.concurrency)
     )
 
     write_csv(args.output_csv, rows)
@@ -417,10 +409,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  n_pos / n_neg  : {metrics['n_pos']} / {metrics['n_neg']}")
     print(f"  mean score pos : {metrics['mean_score_pos']:+.3f}")
     print(f"  mean score neg : {metrics['mean_score_neg']:+.3f}")
-    print(f"  AUROC          : {metrics['auroc']:+.3f}  "
-          f"(threshold > {AUROC_SUCCESS}; passes={metrics['passes_auroc']})")
-    print(f"  binary kappa   : {metrics['binary_kappa']:+.3f}  "
-          f"(threshold >= {KAPPA_SUCCESS}; passes={metrics['passes_kappa']})")
+    print(
+        f"  AUROC          : {metrics['auroc']:+.3f}  "
+        f"(threshold > {AUROC_SUCCESS}; passes={metrics['passes_auroc']})"
+    )
+    print(
+        f"  binary kappa   : {metrics['binary_kappa']:+.3f}  "
+        f"(threshold >= {KAPPA_SUCCESS}; passes={metrics['passes_kappa']})"
+    )
     cm = metrics["confusion_matrix"]
     print(f"  confusion (h/j)  TP={cm['tp']}  FN={cm['fn']}  FP={cm['fp']}  TN={cm['tn']}")
     print(f"  pos score dist : {metrics['score_dist_pos']}")
@@ -456,7 +452,7 @@ class _GoldAwareStubDispatcher:
                 break
         if match is None:
             # Fall back: random 0/3 but deterministic on the bibcode.
-            match = (hash(triple.bibcode) % 2)
+            match = hash(triple.bibcode) % 2
         return JudgeScore(
             score=3 if match else 0,
             reason="stub",

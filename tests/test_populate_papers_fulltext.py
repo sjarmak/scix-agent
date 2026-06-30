@@ -53,10 +53,20 @@ if TEST_DSN is None:
 elif is_production_dsn(TEST_DSN):
     _integration_skip_reason = "SCIX_TEST_DSN points at production"
 
-integration = pytest.mark.skipif(
-    _integration_skip_reason is not None,
-    reason=_integration_skip_reason or "no DSN",
-)
+
+def integration(func):
+    """Mark a DB-backed driver test as integration AND skip it locally when no
+    usable test DB is configured.
+
+    The integration mark is what lets CI deselect these via
+    ``-m "not integration"`` (they need a populated DB, not schema-only). The
+    skipif keeps them from erroring when SCIX_TEST_DSN is unset / points at prod.
+    """
+    func = pytest.mark.integration(func)
+    return pytest.mark.skipif(
+        _integration_skip_reason is not None,
+        reason=_integration_skip_reason or "no DSN",
+    )(func)
 
 
 # ---------------------------------------------------------------------------
@@ -645,9 +655,7 @@ _OLD_VERSION = "ads_body_regex@v1"
 
 def test_reparse_cli_flag_accepted_by_argparse():
     """--reparse-from-version is recognised by argparse and exposed on args."""
-    args = driver._build_arg_parser().parse_args(
-        ["--reparse-from-version", _OLD_VERSION]
-    )
+    args = driver._build_arg_parser().parse_args(["--reparse-from-version", _OLD_VERSION])
     assert args.reparse_from_version == _OLD_VERSION
 
 
@@ -888,6 +896,7 @@ def test_run_reparse_mode_increments_reparsed_counter(monkeypatch):
     iter_candidate_papers to yield a small list of rows, and stub
     upsert_batch / write_batch so we can assert which writer was called.
     """
+
     # Stub the connection factory with a no-op context manager yielding a fake.
     class _Noop:
         def __enter__(self):
@@ -1026,9 +1035,7 @@ def test_run_default_mode_uses_copy_writer_not_upsert(monkeypatch):
 def test_prod_guard_fires_in_reparse_mode(monkeypatch):
     """Prod-guard still rejects a prod DSN even in reparse mode (DSN-based)."""
     monkeypatch.setattr(driver, "is_production_dsn", lambda dsn: True)
-    rc = driver.main(
-        ["--dsn", "dbname=scix", "--reparse-from-version", _OLD_VERSION]
-    )
+    rc = driver.main(["--dsn", "dbname=scix", "--reparse-from-version", _OLD_VERSION])
     assert rc != 0
 
 

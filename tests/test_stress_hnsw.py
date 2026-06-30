@@ -63,7 +63,9 @@ class TestIngestStats:
 
 
 class TestPrintReport:
-    def _make_results(self, *, index_valid: bool = True, ann_ok: bool = True, deadlocks: int = 0) -> list[ScenarioResult]:
+    def _make_results(
+        self, *, index_valid: bool = True, ann_ok: bool = True, deadlocks: int = 0
+    ) -> list[ScenarioResult]:
         serial = ScenarioResult(
             name="Serial build (baseline)",
             build_seconds=10.0,

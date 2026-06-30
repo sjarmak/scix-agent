@@ -93,16 +93,14 @@ def mock_conn() -> MagicMock:
 class TestStartupSelfTest:
     """Validates the server's self-test catches missing/broken tools."""
 
-    def test_expected_tools_has_21_entries(self) -> None:
-        # 2026-04-25 consolidation: citation_graph + citation_chain merged
-        # into citation_traverse (-1), find_similar_by_examples retired
-        # (was opt-in, now hard-removed). Subsequent PRDs added
-        # claim_blame, find_replications, section_retrieval, the two
-        # paper_claims retrieval tools, and cited_by_intent. Bead cfh9
-        # added synthesize_findings. Bead c996 (2026-04-27) added
-        # claim_search (default-hidden). Final = 21.
-        assert len(EXPECTED_TOOLS) == 21
-        assert len(set(EXPECTED_TOOLS)) == 21  # no duplicates
+    def test_expected_tools_has_19_entries(self) -> None:
+        # Bead 9afa (Option A, docs/mcp_tool_audit_2026-06.md §6A): folded
+        # entity_context into entity(action='profile') (-1) and merged
+        # cited_by_intent + find_replications into forward_citations (-1),
+        # taking the registry from 21 -> 19 and the agent-visible surface
+        # back to the ADR-pinned 15 (19 minus the 4 default-hidden tools).
+        assert len(EXPECTED_TOOLS) == 19
+        assert len(set(EXPECTED_TOOLS)) == 19  # no duplicates
 
     def test_self_test_passes_on_fresh_server(self) -> None:
         """A freshly created server must pass the self-test.
@@ -603,6 +601,67 @@ class TestToolSmoke:
             {"query": "dark matter halo"},
         )
         _assert_non_error(out, "lit_review")
+
+    @patch("scix.mcp_server._log_query")
+    @patch("scix.citation_contexts_coverage.compute_coverage")
+    def test_forward_citations(
+        self,
+        mock_cov: MagicMock,
+        _mock_log: MagicMock,
+        mock_conn: MagicMock,
+    ) -> None:
+        """Bead 9afa: forward_citations dispatches both annotation axes.
+
+        annotate='intent' (default) delegates to the cited_by_intent path
+        (papers + coverage envelope); annotate='relation' delegates to the
+        find_replications path (citations envelope). The new ``bibcode`` anchor
+        and the legacy ``target_bibcode`` synonym must both work.
+        """
+        mock_cov.return_value = {
+            "covered_seeds": 0,
+            "total_seeds": 1,
+            "coverage_pct": 0.0,
+            "note": "smoke",
+        }
+        from types import SimpleNamespace
+
+        cursor = mock_conn.cursor.return_value
+        cursor.description = [
+            SimpleNamespace(name=c)
+            for c in (
+                "source_bibcode",
+                "intent",
+                "context_excerpt",
+                "title",
+                "year",
+                "first_author",
+                "citation_count",
+                "n_contexts",
+            )
+        ]
+        cursor.fetchall.return_value = []
+
+        # Default annotate='intent', using the new canonical 'bibcode' key.
+        out = _dispatch_tool(
+            mock_conn,
+            "forward_citations",
+            {"bibcode": "2024TST.....1A"},
+        )
+        data = _assert_non_error(out, "forward_citations[intent]")
+        assert "papers" in data
+        assert "coverage" in data
+        assert data["total"] == 0
+
+        # annotate='relation' delegates to the find_replications path; the
+        # legacy 'target_bibcode' synonym must still be accepted.
+        out = _dispatch_tool(
+            mock_conn,
+            "forward_citations",
+            {"target_bibcode": "2011ApJ...730..119R", "annotate": "relation"},
+        )
+        data = _assert_non_error(out, "forward_citations[relation]")
+        assert "citations" in data
+        assert "total" in data
 
     @patch("scix.mcp_server._log_query")
     @patch("scix.citation_contexts_coverage.compute_coverage")

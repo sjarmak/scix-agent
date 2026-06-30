@@ -200,9 +200,7 @@ class TestClaudeCliClientNoSdkImport:
         client = ClaudeCliLLMClient(cli_path="/usr/local/bin/claude-canary")
         assert client._cli_path == "/usr/local/bin/claude-canary"
 
-    def test_missing_binary_raises_jsondecodeerror(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_binary_raises_jsondecodeerror(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Point at a binary that doesn't exist; .extract() should convert the
         # FileNotFoundError into a JSONDecodeError so the pipeline can skip.
         client = ClaudeCliLLMClient(cli_path="/nonexistent/claude-binary-xyz")
@@ -267,9 +265,9 @@ def applied_migration(dsn: str) -> str:
         text=True,
         check=False,
     )
-    assert result.returncode == 0, (
-        f"migration 062 failed to apply: stderr=\n{result.stderr}\nstdout=\n{result.stdout}"
-    )
+    assert (
+        result.returncode == 0
+    ), f"migration 062 failed to apply: stderr=\n{result.stderr}\nstdout=\n{result.stdout}"
     return dsn
 
 
@@ -393,9 +391,9 @@ class TestHappyPath:
             assert paragraph_index == 0
             assert span_start == expected_anchor[0]
             assert span_end == expected_anchor[1]
-            assert PARAGRAPH[span_start:span_end] == PARAGRAPH[
-                expected_anchor[0] : expected_anchor[1]
-            ]
+            assert (
+                PARAGRAPH[span_start:span_end] == PARAGRAPH[expected_anchor[0] : expected_anchor[1]]
+            )
         # Provenance for first row: "We measure ... TOI-1452 b" must be a verbatim slice.
         assert PARAGRAPH[rows[0][2] : rows[0][3]].startswith("We measure a rotation period")
         # Model + prompt-version columns recorded.
@@ -659,7 +657,9 @@ class TestPipelineWithMockedConn:
         # We should see at least the index-create plus 2 INSERT statements.
         sqls = [s[0] for s in conn.statements]
         assert any("CREATE UNIQUE INDEX" in s for s in sqls)
-        assert sum(1 for s in sqls if s.lstrip().upper().startswith("INSERT INTO PAPER_CLAIMS")) == 2
+        assert (
+            sum(1 for s in sqls if s.lstrip().upper().startswith("INSERT INTO PAPER_CLAIMS")) == 2
+        )
 
     def test_mocked_pipeline_section_role_filter(self) -> None:
         sections = [

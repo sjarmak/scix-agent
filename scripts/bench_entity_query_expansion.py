@@ -71,9 +71,15 @@ BENCHMARK_QUERIES: list[dict[str, str]] = [
     {"id": "alias_05", "query": "CMB anisotropy measurements from WMAP"},
     {"id": "alias_06", "query": "X-ray binaries detected by Chandra"},
     # ontology-heavy
-    {"id": "ontology_01", "query": "M-type asteroid metallic composition from near-infrared spectroscopy"},
+    {
+        "id": "ontology_01",
+        "query": "M-type asteroid metallic composition from near-infrared spectroscopy",
+    },
     {"id": "ontology_03", "query": "C-type asteroid water and organics content"},
-    {"id": "ontology_04", "query": "infrared instruments on space telescopes for exoplanet detection"},
+    {
+        "id": "ontology_04",
+        "query": "infrared instruments on space telescopes for exoplanet detection",
+    },
     {"id": "ontology_07", "query": "flagship NASA missions to the outer solar system"},
     # mixed (both signals plausible)
     {"id": "mixed_01", "query": "Kepler space telescope exoplanet occurrence statistics"},
@@ -141,8 +147,7 @@ def _entity_linked_bibcodes(
         return set()
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT bibcode FROM document_entities_canonical "
-            "WHERE entity_id = ANY(%s) LIMIT %s",
+            "SELECT bibcode FROM document_entities_canonical " "WHERE entity_id = ANY(%s) LIMIT %s",
             (list(entity_ids), cap),
         )
         return {row[0] for row in cur.fetchall()}
@@ -277,9 +282,7 @@ def run_benchmark(dsn: str | None, output: Path, oracle_k: int = 30) -> dict[str
                     coverage = float("nan")
                 variants[variant_name] = {
                     "ndcg_at_10": round(ndcg, 4),
-                    "entity_coverage_top10": (
-                        round(coverage, 4) if coverage == coverage else None
-                    ),
+                    "entity_coverage_top10": (round(coverage, 4) if coverage == coverage else None),
                     "top10": top10,
                     "timing_ms": timing,
                     "search_metadata": metadata,
@@ -326,15 +329,11 @@ def run_benchmark(dsn: str | None, output: Path, oracle_k: int = 30) -> dict[str
                 pq["variants"][variant]["timing_ms"].get("wallclock_ms", 0.0)
                 for pq in scored_queries
             ]
-            timeouts = sum(
-                1 for pq in scored_queries if pq["variants"][variant].get("timeout")
-            )
+            timeouts = sum(1 for pq in scored_queries if pq["variants"][variant].get("timeout"))
             summary[variant] = {
                 "mean_ndcg_at_10": round(statistics.mean(ndcgs), 4) if ndcgs else None,
                 "median_ndcg_at_10": round(statistics.median(ndcgs), 4) if ndcgs else None,
-                "mean_entity_coverage_top10": (
-                    round(statistics.mean(covs), 4) if covs else None
-                ),
+                "mean_entity_coverage_top10": (round(statistics.mean(covs), 4) if covs else None),
                 "mean_wallclock_ms": (
                     round(statistics.mean(wallclocks), 2) if wallclocks else None
                 ),

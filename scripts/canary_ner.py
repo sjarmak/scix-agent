@@ -129,9 +129,7 @@ def load_baseline(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text())
     except json.JSONDecodeError as exc:
-        raise FileFormatError(
-            f"Baseline at {path} is not valid JSON: {exc}"
-        ) from exc
+        raise FileFormatError(f"Baseline at {path} is not valid JSON: {exc}") from exc
 
     if not isinstance(payload, dict):
         raise FileFormatError(
@@ -147,9 +145,7 @@ def load_baseline(path: Path) -> dict[str, Any]:
 
     per_entity = payload.get("per_entity")
     if not isinstance(per_entity, dict) or not per_entity:
-        raise FileFormatError(
-            f"Baseline at {path} 'per_entity' must be a non-empty object."
-        )
+        raise FileFormatError(f"Baseline at {path} 'per_entity' must be a non-empty object.")
 
     for entity_type, metrics in per_entity.items():
         if not isinstance(metrics, dict):
@@ -192,15 +188,11 @@ def load_reference(path: Path) -> list[ReferencePaper]:
         raise FileFormatError(f"Reference fixture not found at {path}.")
     payload = json.loads(path.read_text())
     if not isinstance(payload, dict) or "papers" not in payload:
-        raise FileFormatError(
-            f"Reference fixture at {path} must have a top-level 'papers' list."
-        )
+        raise FileFormatError(f"Reference fixture at {path} must have a top-level 'papers' list.")
 
     papers_raw = payload["papers"]
     if not isinstance(papers_raw, list) or not papers_raw:
-        raise FileFormatError(
-            f"Reference fixture at {path} 'papers' must be a non-empty list."
-        )
+        raise FileFormatError(f"Reference fixture at {path} 'papers' must be a non-empty list.")
 
     papers: list[ReferencePaper] = []
     for row in papers_raw:
@@ -212,11 +204,7 @@ def load_reference(path: Path) -> list[ReferencePaper]:
             )
             for e in row.get("gold_entities", [])
         )
-        papers.append(
-            ReferencePaper(
-                id=row["id"], text=row["text"], gold_entities=entities
-            )
-        )
+        papers.append(ReferencePaper(id=row["id"], text=row["text"], gold_entities=entities))
     return papers
 
 
@@ -240,9 +228,7 @@ def load_model(revision: str) -> Any:
     )
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, revision=revision)
-    model = AutoModelForTokenClassification.from_pretrained(
-        MODEL_NAME, revision=revision
-    )
+    model = AutoModelForTokenClassification.from_pretrained(MODEL_NAME, revision=revision)
     ner = pipeline(
         task="token-classification",
         model=model,
@@ -326,11 +312,7 @@ def compute_per_entity_f1(
         f_n = fn.get(etype, 0)
         precision = t / (t + f_p) if (t + f_p) else 0.0
         recall = t / (t + f_n) if (t + f_n) else 0.0
-        f1 = (
-            (2 * precision * recall) / (precision + recall)
-            if (precision + recall)
-            else 0.0
-        )
+        f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) else 0.0
         out[etype] = {"precision": precision, "recall": recall, "f1": f1}
     return out
 
@@ -365,15 +347,9 @@ def compute_drift(
     return drift
 
 
-def evaluate_drift(
-    drift_map: dict[str, dict[str, float]], threshold: float
-) -> tuple[float, bool]:
+def evaluate_drift(drift_map: dict[str, dict[str, float]], threshold: float) -> tuple[float, bool]:
     """Return (max_drift, exceeded)."""
-    comparable = [
-        float(v["drift"])
-        for v in drift_map.values()
-        if v.get("drift") is not None
-    ]
+    comparable = [float(v["drift"]) for v in drift_map.values() if v.get("drift") is not None]
     if not comparable:
         return 0.0, False
     max_drift = max(comparable)

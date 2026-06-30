@@ -52,9 +52,7 @@ def _fake_search(query: str) -> dict:
 
 def _fake_co_citation(bib: str) -> dict:
     return {
-        "papers": [
-            {"bibcode": f"{bib}-cc{i}", "title": f"co-cited {i}"} for i in range(3)
-        ],
+        "papers": [{"bibcode": f"{bib}-cc{i}", "title": f"co-cited {i}"} for i in range(3)],
         "total": 3,
         "timing_ms": {"query_ms": 4.0},
     }
@@ -62,10 +60,7 @@ def _fake_co_citation(bib: str) -> dict:
 
 def _fake_coupling(bib: str) -> dict:
     return {
-        "papers": [
-            {"bibcode": f"Coupled{i}", "title": f"coupled paper {i}"}
-            for i in range(5)
-        ],
+        "papers": [{"bibcode": f"Coupled{i}", "title": f"coupled paper {i}"} for i in range(5)],
         "total": 5,
         "timing_ms": {"query_ms": 4.0},
     }
@@ -129,9 +124,7 @@ def _fake_entity_search(query: str) -> dict:
 
 def _fake_entity_context(entity_id: int) -> dict:
     return {
-        "papers": [
-            {"bibcode": f"Entity-{entity_id}-paper{i}"} for i in range(2)
-        ],
+        "papers": [{"bibcode": f"Entity-{entity_id}-paper{i}"} for i in range(2)],
         "total": 2,
     }
 
@@ -245,9 +238,7 @@ class TestDemoSurvey:
         assert response.status_code == 200, response.text
         publish_spy.assert_not_called()
 
-    def test_tolerates_intermediate_tool_failure(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_tolerates_intermediate_tool_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A raising citation_similarity must not break the rest of the sequence."""
         calls: list[str] = []
 
@@ -341,7 +332,9 @@ class TestDemoDisambig:
         body = response.json()
 
         assert body["scenario"] == "disambig"
-        # "jwst" triggers the instruments bucket via _guess_entity_type.
+        # entity_type is taken from the resolved candidates' own classification
+        # (entity graph), not a keyword guess — the resolve fake returns
+        # "instruments" candidates, so the typed-search bucket is "instruments".
         assert body["entity_type"] == "instruments"
         # Both resolve and search return two plus one unique entity_id.
         assert set(body["resolved_entity_ids"]) >= {101, 102, 103}
@@ -360,6 +353,57 @@ class TestDemoDisambig:
         assert captured_calls[1][1]["action"] == "search"
         assert captured_calls[1][1]["entity_type"] == "instruments"
 
+    def test_non_searchable_entity_type_skips_typed_search(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When the resolved entity_type is not one of the typed-search
+        buckets, the type comes back ``None`` and step 2 (entity search) is
+        skipped — proving entity_type is routed through the graph's
+        classification rather than guessed from query keywords.
+
+        ``"mission"`` is a real entity-graph type but is not in the four
+        extraction-backed buckets ``entity(action='search')`` accepts.
+        """
+        calls: list[tuple[str, dict[str, Any]]] = []
+
+        def _fake(name: str, arguments: dict[str, Any]) -> str:
+            calls.append((name, dict(arguments)))
+            if name == "entity" and arguments.get("action") == "resolve":
+                return json.dumps(
+                    {
+                        "query": arguments.get("query", ""),
+                        "candidates": [
+                            {
+                                "entity_id": 201,
+                                "canonical_name": "Kepler",
+                                "entity_type": "mission",
+                                "confidence": 0.9,
+                            }
+                        ],
+                        "total": 1,
+                    }
+                )
+            return _dispatch(name, arguments)
+
+        monkeypatch.setattr(viz_api.mcp_server, "call_tool", _fake)
+
+        response = client.post(
+            "/viz/api/demo/disambig",
+            json={"query": "Kepler mission", "top_n": 5},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+
+        # No searchable bucket → no typed search step.
+        assert body["entity_type"] is None
+        entity_actions = [a.get("action") for n, a in calls if n == "entity"]
+        assert entity_actions == ["resolve"]
+        # The resolved id still drives the rest of the pipeline.
+        assert body["resolved_entity_ids"] == [201]
+        # Pipeline stays rich without the typed-search step:
+        # resolve + entity_context + search + graph_context×3 + temporal + get_paper.
+        assert len(calls) >= 8
+
     def test_filtered_search_carries_entity_ids(
         self, captured_calls: list[tuple[str, dict[str, Any]]]
     ) -> None:
@@ -369,9 +413,7 @@ class TestDemoDisambig:
             json={"query": "JWST NIRCam", "top_n": 4},
         )
 
-        search_call = next(
-            args for name, args in captured_calls if name == "search"
-        )
+        search_call = next(args for name, args in captured_calls if name == "search")
         assert search_call["filters"]["entity_ids"] == [101, 102, 103]
 
     def test_no_hand_coded_publish_trace(

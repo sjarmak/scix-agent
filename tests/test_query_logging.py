@@ -231,8 +231,11 @@ class TestCallToolLogging:
 
         from scix.mcp_server import create_server
 
+        # _dispatch_tool is patched to always raise, so the startup self-test's
+        # smoke calls would fail; skip it — this test exercises the request
+        # handler's logging path, not startup validation.
         with patch("scix.mcp_server._init_model_impl"):
-            server = create_server()
+            server = create_server(_run_self_test=False)
 
         handler = server.request_handlers[CallToolRequest]
 

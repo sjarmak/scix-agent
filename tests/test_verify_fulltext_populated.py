@@ -270,10 +270,12 @@ def _require_test_dsn() -> str:
 
 def _ensure_papers_fulltext_exists(conn: psycopg.Connection) -> None:
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT 1 FROM information_schema.tables
              WHERE table_schema='public' AND table_name='papers_fulltext'
-            """)
+            """
+        )
         if cur.fetchone() is None:
             pytest.skip(
                 "papers_fulltext table missing in scix_test — "

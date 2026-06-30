@@ -89,9 +89,7 @@ def test_s2orc_sibling_does_not_trigger_serve_sibling() -> None:
 
 def test_s2orc_sibling_plus_ads_body_routes_to_tier1() -> None:
     """Non-LaTeX sibling falls through; ADS body then wins."""
-    decision = route_fulltext_request(
-        _mk(sibling_row_source="s2orc", has_ads_body=True)
-    )
+    decision = route_fulltext_request(_mk(sibling_row_source="s2orc", has_ads_body=True))
     assert decision.tier == "tier1_ads_body"
 
 
@@ -143,9 +141,7 @@ def test_r2_ineligible_doctype_routes_to_abstract_only() -> None:
 
 
 def test_r2_missing_doi_routes_to_abstract_only() -> None:
-    decision = route_fulltext_request(
-        _mk(doctype="article", doi=None, openalex_has_pdf_url=True)
-    )
+    decision = route_fulltext_request(_mk(doctype="article", doi=None, openalex_has_pdf_url=True))
     assert decision.tier == "abstract_only"
 
 

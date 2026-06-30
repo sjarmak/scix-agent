@@ -297,9 +297,7 @@ def test_empty_target_returns_empty_citations() -> None:
 
 
 def test_dispatch_with_explicit_conn_does_not_call_pool() -> None:
-    cursor = _FakeCursor(
-        rows=[_row("CITER", 2020, "result_comparison", "we confirm [REF]")]
-    )
+    cursor = _FakeCursor(rows=[_row("CITER", 2020, "result_comparison", "we confirm [REF]")])
     conn = _FakeConnection(cursor)
 
     out = find_replications("X", conn=conn)

@@ -465,9 +465,14 @@ needs_test_db = pytest.mark.skipif(
 )
 
 
+@pytest.mark.integration
 @needs_test_db
 class TestS2DatasetsIntegration:
-    """Integration tests that run against scix_test database."""
+    """Integration tests that run against scix_test database.
+
+    Marked integration: they assert migration-042 objects (papers_s2orc_raw,
+    citation_edges.edge_attrs) that the schema-only CI dump does not carry.
+    """
 
     @pytest.fixture(autouse=True)
     def _guard_not_production(self) -> None:

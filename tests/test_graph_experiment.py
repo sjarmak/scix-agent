@@ -213,9 +213,7 @@ def test_materialize_templates_skips_when_picker_returns_wrong_count() -> None:
     # also resolve. seed_count >= 2 templates are skipped because the
     # picker returns only 1.
     template_ids = {q.id for q in out}
-    one_or_zero = {
-        t.template_id for t in BENCHMARK_TEMPLATES if t.seed_count in (0, 1)
-    }
+    one_or_zero = {t.template_id for t in BENCHMARK_TEMPLATES if t.seed_count in (0, 1)}
     multi = {t.template_id for t in BENCHMARK_TEMPLATES if t.seed_count >= 2}
     assert template_ids == one_or_zero
     assert template_ids.isdisjoint(multi)
@@ -326,9 +324,7 @@ def test_compare_summaries_reports_depth_shift(tmp_path: Path) -> None:
             },
         ],
     )
-    cmp = compare_summaries(
-        summarize_traces([control_path]), summarize_traces([treatment_path])
-    )
+    cmp = compare_summaries(summarize_traces([control_path]), summarize_traces([treatment_path]))
     assert cmp["depth_shift_max"] == 4
     assert cmp["freeform_query_emergence"] == 1
     assert "multi_hop_neighbors" in cmp["new_tool_usage"]
@@ -450,7 +446,9 @@ def test_parse_stream_json_handles_malformed_lines() -> None:
 
     stream = (
         "not json\n"
-        + json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "ok"}]}})
+        + json.dumps(
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "ok"}]}}
+        )
         + "\n"
     )
     parsed = _parse_stream_json(stream)
@@ -484,9 +482,7 @@ def _bench_graph() -> ig.Graph:
     g.vs["year"] = [2015, 2018, 2021, 2010, 2012, 2024, 2019, 2022]
     g.vs["citation_count"] = [500, 250, 150, 120, 80, 30, 5, 60]
     # triangle A-B-C, plus assorted edges
-    g.add_edges(
-        [(0, 1), (1, 2), (2, 0), (0, 3), (1, 4), (5, 0), (7, 5), (6, 7)]
-    )
+    g.add_edges([(0, 1), (1, 2), (2, 0), (0, 3), (1, 4), (5, 0), (7, 5), (6, 7)])
     return g
 
 
@@ -514,9 +510,7 @@ def test_pick_top_cited_title_contains() -> None:
     from scix.graph_experiment.bench_runner import pick_top_cited
 
     g = _bench_graph()
-    ids = pick_top_cited(
-        g, min_count=100, title_contains=("method", "algorithm", "technique")
-    )
+    ids = pick_top_cited(g, min_count=100, title_contains=("method", "algorithm", "technique"))
     names = {g.vs[i]["name"] for i in ids}
     # A(method), B(algorithm), C(technique) — D's title has no match
     assert names == {"A", "B", "C"}

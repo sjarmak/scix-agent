@@ -97,9 +97,7 @@ def assert_pilot_dsn(dsn: str) -> None:
     scripts/build_hnsw_baseline.py.
     """
     if not dsn or not dsn.strip():
-        raise ValueError(
-            "Empty DSN — refuse to run without an explicit pilot DSN."
-        )
+        raise ValueError("Empty DSN — refuse to run without an explicit pilot DSN.")
     try:
         params = conninfo_to_dict(dsn)
     except psycopg.ProgrammingError as exc:
@@ -134,13 +132,9 @@ def parse_thread_counts(raw: str) -> list[int]:
         try:
             value = int(token)
         except ValueError as exc:
-            raise ValueError(
-                f"Invalid thread count {token!r}: not an integer"
-            ) from exc
+            raise ValueError(f"Invalid thread count {token!r}: not an integer") from exc
         if value <= 0:
-            raise ValueError(
-                f"Thread counts must be positive integers, got {value}"
-            )
+            raise ValueError(f"Thread counts must be positive integers, got {value}")
         out.append(value)
     if not out:
         raise ValueError("--thread-counts parsed to an empty list")
@@ -302,7 +296,9 @@ def run_stress_cell(
 
     logger.info(
         "Stress cell: index=%s threads=%d duration=%ds",
-        index.label, thread_count, duration_seconds,
+        index.label,
+        thread_count,
+        duration_seconds,
     )
 
     pool = ConnectionPool(
@@ -315,9 +311,7 @@ def run_stress_cell(
     try:
         # Per-thread stats containers so we never touch shared mutable state
         # from two threads at once.
-        stats_by_worker: list[WorkerStats] = [
-            WorkerStats() for _ in range(thread_count)
-        ]
+        stats_by_worker: list[WorkerStats] = [WorkerStats() for _ in range(thread_count)]
         deadline = time.monotonic() + duration_seconds
         t0 = time.monotonic()
         with ThreadPoolExecutor(max_workers=thread_count) as executor:
@@ -506,10 +500,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--thread-counts",
         default=DEFAULT_THREAD_COUNTS,
-        help=(
-            "Comma-separated list of thread counts to sweep "
-            "(default: %(default)s)."
-        ),
+        help=("Comma-separated list of thread counts to sweep " "(default: %(default)s)."),
     )
     parser.add_argument(
         "--duration-seconds",
@@ -524,18 +515,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--out",
         type=Path,
         default=DEFAULT_OUT,
-        help=(
-            "Output JSON path. A sibling .md file is written alongside. "
-            "Default: %(default)s"
-        ),
+        help=("Output JSON path. A sibling .md file is written alongside. " "Default: %(default)s"),
     )
     parser.add_argument(
         "--query-set-size",
         type=int,
         default=DEFAULT_QUERY_SET_SIZE,
         help=(
-            "Number of query embeddings to sample from paper_embeddings "
-            "(default: %(default)s)."
+            "Number of query embeddings to sample from paper_embeddings " "(default: %(default)s)."
         ),
     )
     parser.add_argument(
@@ -587,7 +574,8 @@ def main(argv: list[str] | None = None) -> int:
     # Load query embeddings once (shared across all cells).
     logger.info(
         "Loading up to %d query embeddings from %s",
-        args.query_set_size, args.dsn,
+        args.query_set_size,
+        args.dsn,
     )
     query_set = load_query_embeddings(args.dsn, limit=args.query_set_size)
     if not query_set:

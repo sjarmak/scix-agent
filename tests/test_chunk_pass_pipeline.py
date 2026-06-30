@@ -5,6 +5,7 @@ HuggingFace model downloads — because the pipeline is a thin orchestrator
 and the interesting properties are structural (resumability, idempotency,
 dry-run semantics, log fields, deterministic ordering).
 """
+
 from __future__ import annotations
 
 import logging
@@ -275,7 +276,9 @@ class TestIterPaperBatches:
     def test_since_bibcode_passed_as_watermark(self) -> None:
         # AC 13: since_bibcode -> only papers strictly greater.
         conn = StubConn(script=[[_paper_row("2024Z.....9Z")]])
-        out = list(iter_paper_batches(conn, batch_size=5, since_bibcode="2024A.....1A", max_papers=1))
+        out = list(
+            iter_paper_batches(conn, batch_size=5, since_bibcode="2024A.....1A", max_papers=1)
+        )
         assert len(out) == 1
         # The first executed query used the watermark in its first param.
         sql, params = conn.executed[0]
@@ -387,8 +390,8 @@ class TestRun:
         conn = StubConn(
             script=[
                 [_paper_row("2024A.....1A")],  # iter_paper_batches batch 1
-                _no_checkpoint,                # is_batch_done lookup
-                [],                            # iter_paper_batches batch 2 (drain)
+                _no_checkpoint,  # is_batch_done lookup
+                [],  # iter_paper_batches batch 2 (drain)
             ]
         )
         embedder = StubEmbedder()
@@ -439,9 +442,9 @@ class TestRun:
         # AC 8: pre-checkpointed batch -> embedder + qdrant NOT called.
         conn = StubConn(
             script=[
-                [_paper_row("2024A.....1A")],   # iter_paper_batches batch 1
-                _existing_checkpoint,            # is_batch_done -> 'complete'
-                [],                              # iter_paper_batches drain
+                [_paper_row("2024A.....1A")],  # iter_paper_batches batch 1
+                _existing_checkpoint,  # is_batch_done -> 'complete'
+                [],  # iter_paper_batches drain
             ]
         )
         embedder = StubEmbedder()
@@ -460,11 +463,11 @@ class TestRun:
         # AC 9: re-running with all batches checkpointed yields 0 new uploads.
         conn = StubConn(
             script=[
-                [_paper_row("2024A.....1A")],   # batch 1
-                _existing_checkpoint,            # batch 1 already done
-                [_paper_row("2024A.....2A")],   # batch 2
-                _existing_checkpoint,            # batch 2 already done
-                [],                              # drain
+                [_paper_row("2024A.....1A")],  # batch 1
+                _existing_checkpoint,  # batch 1 already done
+                [_paper_row("2024A.....2A")],  # batch 2
+                _existing_checkpoint,  # batch 2 already done
+                [],  # drain
             ]
         )
         embedder = StubEmbedder()

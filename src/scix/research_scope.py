@@ -110,9 +110,7 @@ class ResearchScope:
         if self.year_window is not None:
             start, end = self.year_window
             if start > end:
-                raise ValueError(
-                    f"year_window start ({start}) must be <= end ({end})"
-                )
+                raise ValueError(f"year_window start ({start}) must be <= end ({end})")
 
 
 def _alias(table_aliases: dict[str, str], logical: str) -> str:
@@ -123,9 +121,7 @@ def _alias(table_aliases: dict[str, str], logical: str) -> str:
         return table_aliases[logical]
     if logical in _DEFAULT_ALIASES:
         return _DEFAULT_ALIASES[logical]
-    raise KeyError(
-        f"No alias provided for logical table {logical!r} and no default known"
-    )
+    raise KeyError(f"No alias provided for logical table {logical!r} and no default known")
 
 
 def scope_to_sql_clauses(
@@ -239,16 +235,13 @@ def scope_from_dict(d: dict[str, Any]) -> ResearchScope:
     unknown = set(d) - known
     if unknown:
         raise ValueError(
-            f"Unknown ResearchScope keys: {sorted(unknown)}. "
-            f"Allowed keys: {sorted(known)}"
+            f"Unknown ResearchScope keys: {sorted(unknown)}. " f"Allowed keys: {sorted(known)}"
         )
 
     year_window = d.get("year_window")
     if year_window is not None:
         if not (isinstance(year_window, (list, tuple)) and len(year_window) == 2):
-            raise ValueError(
-                f"year_window must be a 2-element list/tuple, got {year_window!r}"
-            )
+            raise ValueError(f"year_window must be a 2-element list/tuple, got {year_window!r}")
         year_window = (int(year_window[0]), int(year_window[1]))
 
     community_ids = d.get("community_ids")

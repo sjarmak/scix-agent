@@ -67,25 +67,13 @@ SYNTHETIC_BODIES: dict[str, str] = {
         "MNIST accuracy reached 99.2%.\n"
     ),
     # 3. Pure introduction — no kept sections.
-    "intro_only": (
-        "Introduction\n"
-        "Background context for the study.\n"
-    ),
+    "intro_only": ("Introduction\n" "Background context for the study.\n"),
     # 4. Pure references — no kept sections.
-    "refs_only": (
-        "References\n"
-        "Smith et al. 2020. Jones et al. 2021.\n"
-    ),
+    "refs_only": ("References\n" "Smith et al. 2020. Jones et al. 2021.\n"),
     # 5. Methods alone.
-    "methods_only": (
-        "Methods\n"
-        "We used the Pandas library to wrangle the data.\n"
-    ),
+    "methods_only": ("Methods\n" "We used the Pandas library to wrangle the data.\n"),
     # 6. Results alone.
-    "results_only": (
-        "Results\n"
-        "The Spitzer telescope detected the source at 24 microns.\n"
-    ),
+    "results_only": ("Results\n" "The Spitzer telescope detected the source at 24 microns.\n"),
     # 7. Intro + Methods + Discussion + Conclusion — only methods kept.
     "no_results": (
         "Introduction\n"
@@ -234,10 +222,7 @@ class TestSelectKeptSections:
 
     def test_skipped_sections_include_bibliography_and_introduction(self) -> None:
         # Build a body whose only headers are introduction + bibliography.
-        body = (
-            "Introduction\nIntroduction text here.\n\n"
-            "Bibliography\nSmith 2021.\n"
-        )
+        body = "Introduction\nIntroduction text here.\n\n" "Bibliography\nSmith 2021.\n"
         assert r.select_kept_sections(body) == []
 
 
@@ -446,9 +431,7 @@ class TestMcpSourcesFilter:
                 "methods,results",
                 42,
                 {
-                    "sections": [
-                        {"name": "methods", "role": "method", "mentions": []}
-                    ],
+                    "sections": [{"name": "methods", "role": "method", "mentions": []}],
                     "model": "gliner-test",
                 },
             )
@@ -514,15 +497,15 @@ class TestIterPaperBatchesOaGate:
 
     def test_default_oa_only_appends_predicate(self) -> None:
         sql = self._capture_iter_paper_batches_sql(oa_only=True)
-        assert "papers_is_oa_or_preprint" in sql, (
-            "default (oa_only=True) must gate the query on the OA function"
-        )
+        assert (
+            "papers_is_oa_or_preprint" in sql
+        ), "default (oa_only=True) must gate the query on the OA function"
 
     def test_include_closed_drops_predicate(self) -> None:
         sql = self._capture_iter_paper_batches_sql(oa_only=False)
-        assert "papers_is_oa_or_preprint" not in sql, (
-            "oa_only=False must skip the gate (operator --include-closed)"
-        )
+        assert (
+            "papers_is_oa_or_preprint" not in sql
+        ), "oa_only=False must skip the gate (operator --include-closed)"
 
 
 class TestRunNerBodiesCli:

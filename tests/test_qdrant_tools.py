@@ -15,9 +15,11 @@ date to validate the retirement contract:
   4. The dispatch path for the retired name returns a clear
      "tool_removed" error.
 """
+
 from __future__ import annotations
 
 import dataclasses
+import importlib.util
 import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -25,6 +27,15 @@ from unittest.mock import MagicMock
 import pytest
 
 from scix import mcp_server, qdrant_tools
+
+# The server self-test builds the MCP server, which imports the optional `mcp`
+# package; the rest of this module exercises qdrant_tools directly and needs no
+# such dependency. CI installs the lightweight .[dev] set without `mcp`, so gate
+# only the self-test class on it (scix_experiments-o835).
+_needs_mcp = pytest.mark.skipif(
+    importlib.util.find_spec("mcp") is None,
+    reason="mcp package not installed (CI .[dev]); MCP server self-test skipped",
+)
 
 
 @pytest.fixture
@@ -85,9 +96,9 @@ class TestExpectedToolSet:
         # any default-hidden tools removed. The retired tool is gone from
         # both groups.
         tools = mcp_server._expected_tool_set()
-        expected = (
-            set(mcp_server.EXPECTED_TOOLS) | set(mcp_server._OPTIONAL_TOOLS)
-        ) - set(mcp_server._HIDDEN_TOOLS)
+        expected = (set(mcp_server.EXPECTED_TOOLS) | set(mcp_server._OPTIONAL_TOOLS)) - set(
+            mcp_server._HIDDEN_TOOLS
+        )
         assert tools == expected
         assert "find_similar_by_examples" not in tools
 
@@ -100,7 +111,7 @@ class TestRetiredToolDispatch:
 
         # Use _dispatch_consolidated directly — _dispatch_tool runs the
         # alias layer, but find_similar_by_examples is NOT in
-        # _DEPRECATED_ALIASES (it was hard-removed, not renamed).
+        # _ALIAS_TRANSFORMS (it was hard-removed, not renamed).
         out = _dispatch_consolidated(
             None,  # conn unused for the retired-tool branch
             "find_similar_by_examples",
@@ -112,6 +123,7 @@ class TestRetiredToolDispatch:
         assert "find_similar_by_examples" in payload["message"]
 
 
+@_needs_mcp
 class TestMCPSelfTest:
     """The server self-test must pass at exactly the active (visible) tool
     count regardless of QDRANT_URL. Count is derived from
@@ -128,9 +140,9 @@ class TestMCPSelfTest:
     def test_self_test_passes_with_qdrant(self, fake_qdrant):
         status = mcp_server.startup_self_test()
         assert status["ok"] is True
-        expected = (
-            set(mcp_server.EXPECTED_TOOLS) | set(mcp_server._OPTIONAL_TOOLS)
-        ) - set(mcp_server._HIDDEN_TOOLS)
+        expected = (set(mcp_server.EXPECTED_TOOLS) | set(mcp_server._OPTIONAL_TOOLS)) - set(
+            mcp_server._HIDDEN_TOOLS
+        )
         assert status["tool_count"] == len(expected)
         assert "find_similar_by_examples" not in status["tool_names"]
 
@@ -288,15 +300,11 @@ class TestChunkSearchByText:
     def test_returns_chunk_hits_with_snippet_none(self, monkeypatch):
         points = [
             _scored_point(
-                _stub_payload(
-                    bibcode="2023ApJ...111A", chunk_id=10, section_idx=2
-                ),
+                _stub_payload(bibcode="2023ApJ...111A", chunk_id=10, section_idx=2),
                 score=0.91,
             ),
             _scored_point(
-                _stub_payload(
-                    bibcode="2023ApJ...222B", chunk_id=20, section_idx=0
-                ),
+                _stub_payload(bibcode="2023ApJ...222B", chunk_id=20, section_idx=0),
                 score=0.83,
             ),
         ]

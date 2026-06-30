@@ -86,7 +86,12 @@ VARIANTS: dict[str, dict[str, Any]] = {
             "WHERE model_name='indus'"
         ),
         "index_name": "paper_embeddings_diskann_v2",
-        "params": {"storage_layout": "plain", "sbq": True, "num_bits_per_dimension": 2, "type": "halfvec(768)"},
+        "params": {
+            "storage_layout": "plain",
+            "sbq": True,
+            "num_bits_per_dimension": 2,
+            "type": "halfvec(768)",
+        },
     },
     "v3": {
         "kind": "diskann",
@@ -98,7 +103,13 @@ VARIANTS: dict[str, dict[str, Any]] = {
             "WHERE model_name='indus'"
         ),
         "index_name": "paper_embeddings_diskann_v3",
-        "params": {"storage_layout": "memory_optimized", "num_neighbors": 64, "sbq": True, "num_bits_per_dimension": 2, "type": "halfvec(768)"},
+        "params": {
+            "storage_layout": "memory_optimized",
+            "num_neighbors": 64,
+            "sbq": True,
+            "num_bits_per_dimension": 2,
+            "type": "halfvec(768)",
+        },
     },
 }
 
@@ -106,11 +117,13 @@ VARIANTS: dict[str, dict[str, Any]] = {
 def _drop_all_dense_indexes(conn: psycopg.Connection) -> None:
     """Drop all variant indexes — leave only the primary key in place."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT indexname FROM pg_indexes
             WHERE schemaname='public' AND tablename='paper_embeddings'
               AND indexname != 'paper_embeddings_pkey'
-        """)
+        """
+        )
         existing = [r[0] for r in cur.fetchall()]
         for idx in existing:
             logger.info("Dropping existing index: %s", idx)
@@ -152,9 +165,7 @@ def build_one_variant(dsn: str, name: str) -> dict[str, Any]:
         wall = time.perf_counter() - t0
         rec["build_wall_seconds"] = round(wall, 3)
         rec["index_size_bytes"] = _index_size_bytes(conn, spec["index_name"])
-        rec["index_total_size_bytes"] = _index_total_size_bytes(
-            conn, spec["index_name"]
-        )
+        rec["index_total_size_bytes"] = _index_total_size_bytes(conn, spec["index_name"])
     rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     rec["peak_rss_kb_self"] = int(max(rss_before, rss_after))
     rec["finished_at"] = datetime.now(timezone.utc).isoformat()
@@ -175,11 +186,16 @@ def run_bench_for_variant(dsn: str, name: str, sample_size: int) -> dict[str, An
     cmd = [
         sys.executable,
         "scripts/bench_pgvectorscale.py",
-        "--dsn", dsn,
-        "--indexes", name,
-        "--index-map", f"{name}={spec['index_name']}",
-        "--sample-size", str(sample_size),
-        "--out", str(out_dir),
+        "--dsn",
+        dsn,
+        "--indexes",
+        name,
+        "--index-map",
+        f"{name}={spec['index_name']}",
+        "--sample-size",
+        str(sample_size),
+        "--out",
+        str(out_dir),
     ]
     logger.info("Running bench: %s", " ".join(cmd))
     res = subprocess.run(cmd, check=True, capture_output=True, text=True)
@@ -198,11 +214,16 @@ def run_filtered_bench_for_variant(dsn: str, name: str) -> dict[str, Any]:
     cmd = [
         sys.executable,
         "scripts/bench_pgvectorscale_filtered.py",
-        "--dsn", dsn,
-        "--indexes", name,
-        "--index-map", f"{name}={spec['index_name']}",
-        "--filter", "both",
-        "--out", str(out_dir),
+        "--dsn",
+        dsn,
+        "--indexes",
+        name,
+        "--index-map",
+        f"{name}={spec['index_name']}",
+        "--filter",
+        "both",
+        "--out",
+        str(out_dir),
     ]
     logger.info("Running filtered bench: %s", " ".join(cmd))
     res = subprocess.run(cmd, check=True, capture_output=True, text=True)
@@ -218,10 +239,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dsn", default="dbname=scix_pilot")
     parser.add_argument("--variants", default="hnsw,v1,v2,v3")
-    parser.add_argument("--sample-size", type=int, default=500_000,
-                        help="Exact-baseline sample size (default 500K — keep < pilot row count)")
-    parser.add_argument("--skip-filtered", action="store_true",
-                        help="Skip filtered (year, arxiv_class) benches; unfiltered only.")
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=500_000,
+        help="Exact-baseline sample size (default 500K — keep < pilot row count)",
+    )
+    parser.add_argument(
+        "--skip-filtered",
+        action="store_true",
+        help="Skip filtered (year, arxiv_class) benches; unfiltered only.",
+    )
     args = parser.parse_args(argv)
 
     if "scix" in args.dsn and "scix_pilot" not in args.dsn:
@@ -245,9 +273,17 @@ def main(argv: list[str] | None = None) -> int:
         b = build_one_variant(args.dsn, v)
         builds.append(b)
         # Persist incrementally so a later crash doesn't lose earlier work.
-        BUILDS_PATH.write_text(json.dumps(
-            {"timestamp": datetime.now(timezone.utc).isoformat(), "tier": 1,
-             "sample_size": args.sample_size, "builds": builds}, indent=2))
+        BUILDS_PATH.write_text(
+            json.dumps(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "tier": 1,
+                    "sample_size": args.sample_size,
+                    "builds": builds,
+                },
+                indent=2,
+            )
+        )
         bench = run_bench_for_variant(args.dsn, v, args.sample_size)
         bench_runs[v] = bench
         if run_filtered:
@@ -271,22 +307,26 @@ def main(argv: list[str] | None = None) -> int:
         if not per_index:
             continue
         ix = per_index[0]
-        merged["variants"].append({
-            "name": v,
-            "kind": VARIANTS[v]["kind"],
-            "index_name": VARIANTS[v]["index_name"],
-            "metrics": ix["metrics"],
-            "n_per_query": len(ix.get("per_query") or []),
-            "true_recall_at_10": _mean_true_recall(ix.get("per_query") or []),
-        })
+        merged["variants"].append(
+            {
+                "name": v,
+                "kind": VARIANTS[v]["kind"],
+                "index_name": VARIANTS[v]["index_name"],
+                "metrics": ix["metrics"],
+                "n_per_query": len(ix.get("per_query") or []),
+                "true_recall_at_10": _mean_true_recall(ix.get("per_query") or []),
+            }
+        )
         if v in filtered_runs:
             for cell in filtered_runs[v].get("results", []):
-                merged["filtered"].append({
-                    "variant": v,
-                    "filter_key": cell.get("filter_key"),
-                    "metrics": cell.get("metrics"),
-                    "p95_unfiltered_ms": ix["metrics"].get("p95_ms"),
-                })
+                merged["filtered"].append(
+                    {
+                        "variant": v,
+                        "filter_key": cell.get("filter_key"),
+                        "metrics": cell.get("metrics"),
+                        "p95_unfiltered_ms": ix["metrics"].get("p95_ms"),
+                    }
+                )
     RETRIEVAL_PATH.write_text(json.dumps(merged, indent=2))
     RETRIEVAL_MD_PATH.write_text(_render_md(merged, builds))
     logger.info("Wrote %s and %s", RETRIEVAL_PATH, RETRIEVAL_MD_PATH)
@@ -369,7 +409,9 @@ def _render_md(merged: dict[str, Any], builds: list[dict[str, Any]]) -> str:
         lines.append("")
 
     if merged.get("filtered"):
-        lines.append("## Filtered queries (F1 year=2024 ~10%, F2 arxiv_class astro-ph.{GA,SR} ~20%)")
+        lines.append(
+            "## Filtered queries (F1 year=2024 ~10%, F2 arxiv_class astro-ph.{GA,SR} ~20%)"
+        )
         lines.append("")
         lines.append(
             "| Variant | Filter | nDCG@10 | Recall@10 | p50 (ms) | p95 (ms) | "

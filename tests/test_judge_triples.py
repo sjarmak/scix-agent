@@ -134,9 +134,7 @@ class TestEndToEnd:
         out_path = tmp_path / "out.jsonl"
         _write_triples_jsonl(
             triples_path,
-            [
-                {"query": "q", "bibcode": f"B{i}", "paper_snippet": "s"} for i in range(5)
-            ],
+            [{"query": "q", "bibcode": f"B{i}", "paper_snippet": "s"} for i in range(5)],
         )
 
         dispatcher = StubDispatcher(fixed_score=1, reason="stub")

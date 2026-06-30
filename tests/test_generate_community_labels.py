@@ -94,9 +94,9 @@ def applied_migrations(dsn: str) -> None:
 # common_kw appears in all 3 communities -> IDF = log(3/(1+3)) < 0 vs
 # terms unique to one community with IDF = log(3/(1+1)) = log(1.5) > 0.
 _FIXTURE_SPEC: list[tuple[int, int, tuple[str, ...], tuple[str, ...]]] = [
-    (1, 7, ("cs.LG",),          ("neural", "transformer", "common_kw")),
-    (2, 7, ("astro-ph.GA",),    ("galaxy", "quasar", "common_kw")),
-    (3, 7, ("physics.flu-dyn",),("vortex", "common_kw")),
+    (1, 7, ("cs.LG",), ("neural", "transformer", "common_kw")),
+    (2, 7, ("astro-ph.GA",), ("galaxy", "quasar", "common_kw")),
+    (3, 7, ("physics.flu-dyn",), ("vortex", "common_kw")),
 ]
 
 
@@ -180,12 +180,18 @@ def fixture_data(dsn: str, applied_migrations: None):
 def _run_script(dsn: str, tmp_path: pathlib.Path, extra_args: list[str] | None = None) -> int:
     mod = _load_script_module()
     args = [
-        "--dsn", dsn,
-        "--signal", "citation",
-        "--seed", str(SEED),
-        "--spotcheck-n", "3",
-        "--spotcheck-path", str(tmp_path / "spotcheck.md"),
-        "--spotcheck-sample-path", str(tmp_path / "spotcheck_sample.md"),
+        "--dsn",
+        dsn,
+        "--signal",
+        "citation",
+        "--seed",
+        str(SEED),
+        "--spotcheck-n",
+        "3",
+        "--spotcheck-path",
+        str(tmp_path / "spotcheck.md"),
+        "--spotcheck-sample-path",
+        str(tmp_path / "spotcheck_sample.md"),
     ]
     if extra_args:
         args.extend(extra_args)
@@ -203,10 +209,7 @@ def _fetch_community_labels(
             "WHERE signal = 'citation' AND community_id IN (1,2,3) "
             "ORDER BY signal, resolution, community_id"
         )
-        return {
-            (row[0], row[1], row[2]): (row[3], list(row[4] or []))
-            for row in cur.fetchall()
-        }
+        return {(row[0], row[1], row[2]): (row[3], list(row[4] or [])) for row in cur.fetchall()}
 
 
 # ---------------------------------------------------------------------------
@@ -227,9 +230,11 @@ def test_tfidf_ordering_on_fixture(
     # Each (signal='citation', resolution, community) must have a label.
     for cid in (1, 2, 3):
         for resolution in ("coarse", "medium", "fine"):
-            assert ("citation", resolution, cid) in labels, (
-                f"missing label for citation/{resolution}/{cid}"
-            )
+            assert (
+                "citation",
+                resolution,
+                cid,
+            ) in labels, f"missing label for citation/{resolution}/{cid}"
 
     # TF-IDF check: terms unique to one community rank higher than the
     # shared 'common_kw' term.
@@ -240,27 +245,27 @@ def test_tfidf_ordering_on_fixture(
     # rank below the unique terms (and may even be dropped from the top-10
     # if we had more terms — here we only have 3 so it appears last).
     _, c1_top = labels[("citation", "coarse", 1)]
-    assert c1_top[0] in ("neural", "transformer"), (
-        f"community 1 top term should be neural/transformer, got {c1_top!r}"
-    )
+    assert c1_top[0] in (
+        "neural",
+        "transformer",
+    ), f"community 1 top term should be neural/transformer, got {c1_top!r}"
     # common_kw must NOT be at position 0 (since it's present in every
     # community its IDF is smaller). It may appear later in the list.
     if "common_kw" in c1_top:
-        assert c1_top.index("common_kw") > 0, (
-            f"common_kw should not be the top-1 term, got {c1_top!r}"
-        )
+        assert (
+            c1_top.index("common_kw") > 0
+        ), f"common_kw should not be the top-1 term, got {c1_top!r}"
 
     # Community 2: top term is galaxy or quasar, not common_kw.
     _, c2_top = labels[("citation", "coarse", 2)]
-    assert c2_top[0] in ("galaxy", "quasar"), (
-        f"community 2 top term should be galaxy/quasar, got {c2_top!r}"
-    )
+    assert c2_top[0] in (
+        "galaxy",
+        "quasar",
+    ), f"community 2 top term should be galaxy/quasar, got {c2_top!r}"
 
     # Community 3: top term is vortex, not common_kw.
     _, c3_top = labels[("citation", "coarse", 3)]
-    assert c3_top[0] == "vortex", (
-        f"community 3 top term should be vortex, got {c3_top!r}"
-    )
+    assert c3_top[0] == "vortex", f"community 3 top term should be vortex, got {c3_top!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -283,25 +288,24 @@ def test_label_format_is_stable(
     assert rc2 == 0
     labels2 = _fetch_community_labels(dsn)
 
-    assert labels1 == labels2, (
-        "labels changed between identical runs — not deterministic"
-    )
+    assert labels1 == labels2, "labels changed between identical runs — not deterministic"
 
     # Also check the pure-function label formatter directly.
     mod = _load_script_module()
     assert mod.make_label(["cs.LG"], ["neural", "transformer", "common_kw"]) == (
         "cs.LG · neural / transformer / common_kw"
     )
-    assert mod.make_label([], ["vortex", "common_kw"]) == (
-        "vortex / common_kw"
-    )
+    assert mod.make_label([], ["vortex", "common_kw"]) == ("vortex / common_kw")
     assert mod.make_label(["astro-ph.GA"], []) == "astro-ph.GA"
     assert mod.make_label([], []) == "unlabeled"
     # Truncation: only 2 arxiv + 3 keywords are used.
-    assert mod.make_label(
-        ["a", "b", "c", "d"],
-        ["k1", "k2", "k3", "k4", "k5"],
-    ) == "a + b · k1 / k2 / k3"
+    assert (
+        mod.make_label(
+            ["a", "b", "c", "d"],
+            ["k1", "k2", "k3", "k4", "k5"],
+        )
+        == "a + b · k1 / k2 / k3"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -314,9 +318,7 @@ def test_tokenize_title_drops_stopwords_and_dedups() -> None:
     # Pure stopword soup → nothing comes through
     assert mod._tokenize_title("A study of the results") == []
     # Real tokens survive; duplicates collapse; case folded
-    tokens = mod._tokenize_title(
-        "Transformer Transformer attention for code completion"
-    )
+    tokens = mod._tokenize_title("Transformer Transformer attention for code completion")
     assert "transformer" in tokens
     assert "attention" in tokens
     assert "code" in tokens
@@ -401,9 +403,7 @@ def test_compute_tfidf_vocab_boost_promotes_known_terms() -> None:
         vocab_boost=2.0,
     )
     boosted_scores = dict(boosted[1])
-    assert boosted_scores["apoptosis"] == pytest.approx(
-        raw[1][0][1] * 2.0
-    )
+    assert boosted_scores["apoptosis"] == pytest.approx(raw[1][0][1] * 2.0)
     assert boosted_scores["vmsd1212"] == pytest.approx(raw[1][1][1])
 
 
@@ -601,14 +601,22 @@ def test_vocab_boost_promotes_concept_phrase(
     tmp_path: pathlib.Path,
 ) -> None:
     mod = _load_script_module()
-    rc = mod.main([
-        "--dsn", dsn,
-        "--signal", "citation",
-        "--seed", str(SEED),
-        "--spotcheck-n", "3",
-        "--spotcheck-path", str(tmp_path / "spotcheck.md"),
-        "--spotcheck-sample-path", str(tmp_path / "spotcheck_sample.md"),
-    ])
+    rc = mod.main(
+        [
+            "--dsn",
+            dsn,
+            "--signal",
+            "citation",
+            "--seed",
+            str(SEED),
+            "--spotcheck-n",
+            "3",
+            "--spotcheck-path",
+            str(tmp_path / "spotcheck.md"),
+            "--spotcheck-sample-path",
+            str(tmp_path / "spotcheck_sample.md"),
+        ]
+    )
     assert rc == 0, f"script returned non-zero exit code {rc}"
 
     with psycopg.connect(dsn) as c, c.cursor() as cur:
@@ -626,15 +634,15 @@ def test_vocab_boost_promotes_concept_phrase(
     # raw TF-IDF basis ties on score and would otherwise win the alpha
     # tiebreaker (a < c).
     c101 = rows[101]
-    assert "cell cycle" in c101, (
-        f"vocab phrase 'cell cycle' missing from community 101 top_keywords: {c101!r}"
-    )
-    assert "alphajargon" in c101, (
-        f"baseline 'alphajargon' missing from community 101 top_keywords: {c101!r}"
-    )
-    assert c101.index("cell cycle") < c101.index("alphajargon"), (
-        f"'cell cycle' should outrank 'alphajargon' under vocab boost; got {c101!r}"
-    )
+    assert (
+        "cell cycle" in c101
+    ), f"vocab phrase 'cell cycle' missing from community 101 top_keywords: {c101!r}"
+    assert (
+        "alphajargon" in c101
+    ), f"baseline 'alphajargon' missing from community 101 top_keywords: {c101!r}"
+    assert c101.index("cell cycle") < c101.index(
+        "alphajargon"
+    ), f"'cell cycle' should outrank 'alphajargon' under vocab boost; got {c101!r}"
 
     # Communities 102 and 103 have no vocab-matching phrases — the script
     # should still produce labels without crashing on them.
@@ -650,14 +658,22 @@ def test_vocab_boost_promotes_concept_phrase(
 def test_unknown_signal_raises(tmp_path: pathlib.Path) -> None:
     mod = _load_script_module()
     with pytest.raises(SystemExit) as excinfo:
-        mod.main([
-            "--dsn", "dbname=scix_test",
-            "--signal", "bogus",
-            "--seed", "1",
-            "--spotcheck-n", "1",
-            "--spotcheck-path", str(tmp_path / "s.md"),
-            "--spotcheck-sample-path", str(tmp_path / "ss.md"),
-        ])
+        mod.main(
+            [
+                "--dsn",
+                "dbname=scix_test",
+                "--signal",
+                "bogus",
+                "--seed",
+                "1",
+                "--spotcheck-n",
+                "1",
+                "--spotcheck-path",
+                str(tmp_path / "s.md"),
+                "--spotcheck-sample-path",
+                str(tmp_path / "ss.md"),
+            ]
+        )
     # argparse uses exit code 2 for usage errors.
     assert excinfo.value.code == 2
 
@@ -669,12 +685,20 @@ def test_unknown_signal_raises(tmp_path: pathlib.Path) -> None:
 
 def test_refuses_production_dsn_without_allow_prod(tmp_path: pathlib.Path) -> None:
     mod = _load_script_module()
-    rc = mod.main([
-        "--dsn", "dbname=scix",  # synthetic prod DSN; guard fires first
-        "--signal", "all",
-        "--seed", "1",
-        "--spotcheck-n", "1",
-        "--spotcheck-path", str(tmp_path / "s.md"),
-        "--spotcheck-sample-path", str(tmp_path / "ss.md"),
-    ])
+    rc = mod.main(
+        [
+            "--dsn",
+            "dbname=scix",  # synthetic prod DSN; guard fires first
+            "--signal",
+            "all",
+            "--seed",
+            "1",
+            "--spotcheck-n",
+            "1",
+            "--spotcheck-path",
+            str(tmp_path / "s.md"),
+            "--spotcheck-sample-path",
+            str(tmp_path / "ss.md"),
+        ]
+    )
     assert rc == 2, "production DSN without --allow-prod must exit with code 2"

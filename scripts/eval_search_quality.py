@@ -108,20 +108,24 @@ class EvalSummary:
 def has_pg_search(conn: psycopg.Connection) -> bool:
     """Check if pg_search extension is installed and BM25 index exists."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT EXISTS(
                 SELECT 1 FROM pg_extension WHERE extname = 'pg_search'
             )
-        """)
+        """
+        )
         ext_exists = cur.fetchone()[0]
         if not ext_exists:
             return False
 
-        cur.execute("""
+        cur.execute(
+            """
             SELECT EXISTS(
                 SELECT 1 FROM pg_indexes WHERE indexname = 'idx_papers_bm25'
             )
-        """)
+        """
+        )
         return cur.fetchone()[0]
 
 

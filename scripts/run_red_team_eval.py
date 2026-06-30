@@ -111,8 +111,7 @@ INJECTION_MARKERS: tuple[str, ...] = (
 
 # Significance regex — matches sigma, p-values, CL%.
 _SIGMA_RE: re.Pattern[str] = re.compile(
-    r"(\d+(\.\d+)?\s*(σ|sigma)|p\s*[=<]\s*\d|95%\s*CL|99%\s*CL|"
-    r"\d+\s*sigma|null hypothesis)",
+    r"(\d+(\.\d+)?\s*(σ|sigma)|p\s*[=<]\s*\d|95%\s*CL|99%\s*CL|" r"\d+\s*sigma|null hypothesis)",
     flags=re.IGNORECASE,
 )
 
@@ -146,9 +145,7 @@ def _mock_answer_for_case(case: dict[str, Any]) -> str:
     is to validate the runner shape and pass-criteria matching.
     """
     fragments: list[str] = []
-    fragments.append(
-        f"[mock answer for {case['id']}, category={case['category']}]"
-    )
+    fragments.append(f"[mock answer for {case['id']}, category={case['category']}]")
     behaviors = case.get("expected_behaviors", [])
 
     if "retraction_annotation_present" in behaviors:
@@ -168,8 +165,7 @@ def _mock_answer_for_case(case: dict[str, Any]) -> str:
         )
     if "significance_surfaced" in behaviors:
         fragments.append(
-            "The reported significance is 2.4σ at 95% CL "
-            "(p < 0.05 against the null hypothesis)."
+            "The reported significance is 2.4σ at 95% CL " "(p < 0.05 against the null hypothesis)."
         )
     if "walk_out_annotation" in behaviors:
         fragments.append(
@@ -186,8 +182,7 @@ def _mock_answer_for_case(case: dict[str, Any]) -> str:
         fragments.append("The seed paper bibcode 2024MNRAS.527.1234X is cited.")
     if "prior_art_cited" in behaviors:
         fragments.append(
-            "Prior art: 2021MNRAS.500.2345Y, 2022ApJ...934..456Z, "
-            "2023A&A...675A..78W."
+            "Prior art: 2021MNRAS.500.2345Y, 2022ApJ...934..456Z, " "2023A&A...675A..78W."
         )
 
     return " ".join(fragments)
@@ -199,9 +194,7 @@ class MockDispatcher:
 
     answer_text: str
 
-    async def __call__(
-        self, prompt: str, max_turns: int
-    ) -> AsyncIterator[dict[str, Any]]:
+    async def __call__(self, prompt: str, max_turns: int) -> AsyncIterator[dict[str, Any]]:
         yield {"type": "text", "text": self.answer_text}
 
 
@@ -221,14 +214,10 @@ def load_cases(path: Path) -> list[dict[str, Any]]:
             try:
                 case = json.loads(line)
             except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"{path}:{line_no} invalid JSON: {exc}"
-                ) from exc
+                raise ValueError(f"{path}:{line_no} invalid JSON: {exc}") from exc
             for required in ("id", "category", "question", "expected_behaviors"):
                 if required not in case:
-                    raise ValueError(
-                        f"{path}:{line_no} missing required field {required!r}"
-                    )
+                    raise ValueError(f"{path}:{line_no} missing required field {required!r}")
             cases.append(case)
     return cases
 
@@ -390,11 +379,7 @@ def _summarize(
     by_category: dict[str, list[bool]] = defaultdict(list)
     for r in results:
         by_category[r["category"]].append(r["passed"])
-    overall = (
-        sum(1 for r in results if r["passed"]) / len(results)
-        if results
-        else 0.0
-    )
+    overall = sum(1 for r in results if r["passed"]) / len(results) if results else 0.0
     per_cat = {
         cat: (sum(1 for p in passes if p) / len(passes)) if passes else 0.0
         for cat, passes in by_category.items()
@@ -453,10 +438,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--no-mock",
         dest="mock",
         action="store_false",
-        help=(
-            "Run against the live RealDispatcher (operator-only; "
-            "wrap with scix-batch)."
-        ),
+        help=("Run against the live RealDispatcher (operator-only; " "wrap with scix-batch)."),
     )
     parser.add_argument(
         "--max-cases",
@@ -482,8 +464,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=None,
         help=(
-            f"Output JSON path "
-            f"(default: {DEFAULT_OUTPUT_DIR}/red_team_v1_<timestamp>.json)."
+            f"Output JSON path " f"(default: {DEFAULT_OUTPUT_DIR}/red_team_v1_<timestamp>.json)."
         ),
     )
     parser.add_argument(
@@ -496,10 +477,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--runs-dir",
         type=Path,
         default=None,
-        help=(
-            "Per-case transcript directory "
-            "(default: a tmp dir under the output)."
-        ),
+        help=("Per-case transcript directory " "(default: a tmp dir under the output)."),
     )
     return parser.parse_args(argv)
 

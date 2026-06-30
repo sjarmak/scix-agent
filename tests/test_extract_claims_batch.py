@@ -43,9 +43,7 @@ def _load_script_module() -> Any:
 
     Mirrors tests/test_backfill_citation_intent.py's pattern.
     """
-    spec = importlib.util.spec_from_file_location(
-        "extract_claims_batch_script", SCRIPT_PATH
-    )
+    spec = importlib.util.spec_from_file_location("extract_claims_batch_script", SCRIPT_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -234,9 +232,9 @@ def applied_migration(dsn: str) -> str:
         text=True,
         check=False,
     )
-    assert result.returncode == 0, (
-        f"migration 062 failed to apply: stderr=\n{result.stderr}\nstdout=\n{result.stdout}"
-    )
+    assert (
+        result.returncode == 0
+    ), f"migration 062 failed to apply: stderr=\n{result.stderr}\nstdout=\n{result.stdout}"
     return dsn
 
 
@@ -378,9 +376,7 @@ def _parse_trailing_json(stdout: str) -> dict[str, int]:
 class TestSubprocessHappyPath:
     """Seed 3 papers, run the script, assert stats; re-run, assert idempotency."""
 
-    def test_three_papers_processed_then_idempotent(
-        self, applied_migration: str
-    ) -> None:
+    def test_three_papers_processed_then_idempotent(self, applied_migration: str) -> None:
         import psycopg
 
         bibcodes = _seed_papers(applied_migration, 3)
@@ -451,9 +447,9 @@ class TestSubprocessHappyPath:
                     (bibcodes,),
                 )
                 row_count_after_second = cur.fetchone()[0]
-            assert row_count_after_second == row_count_after_first, (
-                "duplicate rows detected after re-run"
-            )
+            assert (
+                row_count_after_second == row_count_after_first
+            ), "duplicate rows detected after re-run"
         finally:
             _cleanup_papers(applied_migration, bibcodes)
 

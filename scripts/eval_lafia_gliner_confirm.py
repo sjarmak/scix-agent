@@ -100,8 +100,11 @@ def run_extract(args) -> int:
     dsn = args.dsn or DEFAULT_DSN
     logger.info(
         "extract: dsn=%s target_mentions=%d fraction=%.3f seed=%d min_conf=%.2f",
-        redact_dsn(dsn), args.target_mentions, args.sample_fraction,
-        args.repeatable_seed, args.min_confidence,
+        redact_dsn(dsn),
+        args.target_mentions,
+        args.sample_fraction,
+        args.repeatable_seed,
+        args.min_confidence,
     )
 
     extractor = GlinerExtractor(
@@ -119,9 +122,7 @@ def run_extract(args) -> int:
         ):
             n_papers += 1
             mentions = [
-                m
-                for m in detect_informal_references(body)
-                if m.confidence >= args.min_confidence
+                m for m in detect_informal_references(body) if m.confidence >= args.min_confidence
             ]
             if not mentions:
                 continue
@@ -156,8 +157,12 @@ def run_extract(args) -> int:
     logger.info(
         "extract DONE: papers=%d papers_with_mentions=%d candidates=%d "
         "gliner_confirmed=%d (%.1f%% kept) -> %s",
-        n_papers, n_papers_with, n_mentions, n_confirmed,
-        100.0 * n_confirmed / max(n_mentions, 1), out,
+        n_papers,
+        n_papers_with,
+        n_mentions,
+        n_confirmed,
+        100.0 * n_confirmed / max(n_mentions, 1),
+        out,
     )
     return 0
 
@@ -176,7 +181,9 @@ def _variant_metrics(rows: list[dict], keep, tp_all: int) -> dict:
     n = len(sel)
     tp = sum(_is_true(r) for r in sel)
     return {
-        "n": n, "tp": tp, "fp": n - tp,
+        "n": n,
+        "tp": tp,
+        "fp": n - tp,
         "precision": tp / n if n else 0.0,
         "recall": tp / tp_all if tp_all else 0.0,
     }
@@ -184,9 +191,7 @@ def _variant_metrics(rows: list[dict], keep, tp_all: int) -> dict:
 
 def run_score(args) -> int:
     rows = [
-        json.loads(line)
-        for line in Path(args.labeled).read_text().splitlines()
-        if line.strip()
+        json.loads(line) for line in Path(args.labeled).read_text().splitlines() if line.strip()
     ]
     labeled = [r for r in rows if r.get("label") is not None]
     unlabeled = len(rows) - len(labeled)
@@ -205,10 +210,14 @@ def run_score(args) -> int:
     variants = [
         ("Lafia heuristic (baseline)", lambda r: True),
         ("+ GLiNER confirm — default (subset overlap, conf>=0.7)", _confirmed),
-        ("+ GLiNER confirm — conf>=0.95",
-         lambda r: _confirmed(r) and (r.get("gliner_confidence") or 0.0) >= 0.95),
-        ("+ GLiNER confirm — exact surface match",
-         lambda r: _confirmed(r) and _canon(r.get("gliner_surface")) == _canon(r.get("surface"))),
+        (
+            "+ GLiNER confirm — conf>=0.95",
+            lambda r: _confirmed(r) and (r.get("gliner_confidence") or 0.0) >= 0.95,
+        ),
+        (
+            "+ GLiNER confirm — exact surface match",
+            lambda r: _confirmed(r) and _canon(r.get("gliner_surface")) == _canon(r.get("surface")),
+        ),
     ]
     measured = [(name, _variant_metrics(labeled, keep, tp_all)) for name, keep in variants]
 
@@ -277,7 +286,7 @@ def _render_report(*, source: str, tp_all: int, measured: list) -> str:
             "gate on this sample, so the production pass stays blocked. The residual false "
             "positives are dominated by Lafia "
             "*span-boundary* errors (the cue captures an adjective adjacent to a head noun, e.g. "
-            "\"high-quality dataset\"); GLiNER legitimately confirms the full noun phrase, so the "
+            '"high-quality dataset"); GLiNER legitimately confirms the full noun phrase, so the '
             "confirmation pass structurally cannot reject them. Two non-exclusive next steps, both "
             "separate beads: (a) fix Lafia name-span extraction so the candidate excludes leading "
             "generic adjectives, then re-measure; (b) escalate to the heavier ML detector the "
@@ -291,22 +300,49 @@ def _build_argparser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     ex = sub.add_parser("extract", help="Sample arXiv bodies, run Lafia + GLiNER confirm.")
-    ex.add_argument("--target-mentions", type=int, default=80,
-                    help="Stop after collecting at least this many candidates (>=50 for the bead).")
-    ex.add_argument("--sample-fraction", type=float, default=0.2,
-                    help="TABLESAMPLE SYSTEM percent (default 0.2).")
-    ex.add_argument("--repeatable-seed", type=int, default=42,
-                    help="TABLESAMPLE REPEATABLE seed for a reproducible sample.")
-    ex.add_argument("--max-papers", type=int, default=2000,
-                    help="Safety cap on papers scanned.")
-    ex.add_argument("--max-mentions-per-paper", type=int, default=6,
-                    help="Cap candidates taken per paper for sample diversity (default 6).")
-    ex.add_argument("--min-confidence", type=float, default=DEFAULT_MIN_CONFIDENCE,
-                    help=f"Lafia cue confidence floor (default {DEFAULT_MIN_CONFIDENCE}).")
-    ex.add_argument("--gliner-confidence", type=float, default=0.7,
-                    help="GLiNER score floor for a confirmation (default 0.7).")
-    ex.add_argument("--context-chars", type=int, default=DEFAULT_CONTEXT_CHARS,
-                    help=f"Body context each side of a span (default {DEFAULT_CONTEXT_CHARS}).")
+    ex.add_argument(
+        "--target-mentions",
+        type=int,
+        default=80,
+        help="Stop after collecting at least this many candidates (>=50 for the bead).",
+    )
+    ex.add_argument(
+        "--sample-fraction",
+        type=float,
+        default=0.2,
+        help="TABLESAMPLE SYSTEM percent (default 0.2).",
+    )
+    ex.add_argument(
+        "--repeatable-seed",
+        type=int,
+        default=42,
+        help="TABLESAMPLE REPEATABLE seed for a reproducible sample.",
+    )
+    ex.add_argument("--max-papers", type=int, default=2000, help="Safety cap on papers scanned.")
+    ex.add_argument(
+        "--max-mentions-per-paper",
+        type=int,
+        default=6,
+        help="Cap candidates taken per paper for sample diversity (default 6).",
+    )
+    ex.add_argument(
+        "--min-confidence",
+        type=float,
+        default=DEFAULT_MIN_CONFIDENCE,
+        help=f"Lafia cue confidence floor (default {DEFAULT_MIN_CONFIDENCE}).",
+    )
+    ex.add_argument(
+        "--gliner-confidence",
+        type=float,
+        default=0.7,
+        help="GLiNER score floor for a confirmation (default 0.7).",
+    )
+    ex.add_argument(
+        "--context-chars",
+        type=int,
+        default=DEFAULT_CONTEXT_CHARS,
+        help=f"Body context each side of a span (default {DEFAULT_CONTEXT_CHARS}).",
+    )
     ex.add_argument("--device", default="cuda", help="Torch device for GLiNER.")
     ex.add_argument("--out", required=True, help="Output candidates JSONL.")
     ex.add_argument("--dsn", default=None, help="DB DSN; defaults to SCIX_DSN.")

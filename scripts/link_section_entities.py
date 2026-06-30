@@ -109,9 +109,7 @@ def iter_paper_batches(
     that have no sections to link.
     """
     sql = (
-        "SELECT bibcode, sections "
-        "FROM papers_fulltext "
-        "WHERE jsonb_array_length(sections) > 0"
+        "SELECT bibcode, sections " "FROM papers_fulltext " "WHERE jsonb_array_length(sections) > 0"
     )
     params: list[str] = []
     if bibcode_prefix:
@@ -285,8 +283,7 @@ def run_section_link(
                 batches_since_commit += 1
                 if papers_scanned % log_interval < len(batch):
                     logger.info(
-                        "  progress: %d papers scanned, %d sections, "
-                        "%d rows pending",
+                        "  progress: %d papers scanned, %d sections, " "%d rows pending",
                         papers_scanned,
                         sections_scanned,
                         rows_inserted,

@@ -86,20 +86,24 @@ def phase_b_leiden(conn: psycopg.Connection, results: dict[str, Any]) -> None:
     logger.info("Creating giant node mapping from paper_metrics state...")
     t_map = time.perf_counter()
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             CREATE TEMP TABLE giant_node_map (
                 bibcode TEXT PRIMARY KEY,
                 new_nid INT NOT NULL
             ) ON COMMIT PRESERVE ROWS
-        """)
+        """
+        )
         # Papers in giant component: community_id_coarse IS NULL
         # (Phase A set non-giant to -1; giant papers were never touched)
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO giant_node_map (bibcode, new_nid)
             SELECT bibcode, ROW_NUMBER() OVER (ORDER BY bibcode)::INT - 1
             FROM paper_metrics
             WHERE community_id_coarse IS NULL
-        """)
+        """
+        )
         cur.execute("CREATE INDEX ON giant_node_map (new_nid)")
         cur.execute("ANALYZE giant_node_map")
     conn.commit()
@@ -128,12 +132,14 @@ def phase_b_leiden(conn: psycopg.Connection, results: dict[str, Any]) -> None:
 
     with conn.cursor(name="giant_edge_cursor") as cur:
         cur.itersize = 1_000_000
-        cur.execute("""
+        cur.execute(
+            """
             SELECT g1.new_nid, g2.new_nid
             FROM citation_edges ce
             JOIN giant_node_map g1 ON ce.source_bibcode = g1.bibcode
             JOIN giant_node_map g2 ON ce.target_bibcode = g2.bibcode
-        """)
+        """
+        )
         for src_id, tgt_id in cur:
             src_arr[valid] = src_id
             tgt_arr[valid] = tgt_id
@@ -239,13 +245,15 @@ def _store_community_assignments(
         conn.commit()
 
         with conn.cursor() as cur:
-            cur.execute(f"""
+            cur.execute(
+                f"""
                 UPDATE paper_metrics pm
                 SET {col} = ca.comm_id
                 FROM _comm_assign ca
                 JOIN giant_node_map gnm ON ca.new_nid = gnm.new_nid
                 WHERE pm.bibcode = gnm.bibcode
-            """)
+            """
+            )
         conn.commit()
 
         with conn.cursor() as cur:
@@ -270,14 +278,16 @@ def phase_c_quality(conn: psycopg.Connection, results: dict[str, Any]) -> None:
     logger.info("=== Phase C: NMI vs arXiv taxonomy ===")
 
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT community_id_coarse, community_id_medium, community_id_fine,
                    community_taxonomic
             FROM paper_metrics
             WHERE community_taxonomic IS NOT NULL
               AND community_id_coarse IS NOT NULL
               AND community_id_coarse != -1
-        """)
+        """
+        )
         tax_rows = cur.fetchall()
 
     logger.info("Papers with both Leiden and arXiv labels: %d", len(tax_rows))
@@ -488,13 +498,15 @@ def main() -> None:
 
     # Verify Phase A state in DB
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT
                 COUNT(*) AS total,
                 COUNT(CASE WHEN community_id_coarse = -1 THEN 1 END) AS non_giant,
                 COUNT(CASE WHEN community_id_coarse IS NULL THEN 1 END) AS giant_candidates
             FROM paper_metrics
-        """)
+        """
+        )
         row = cur.fetchone()
         total, non_giant, giant_candidates = row
 

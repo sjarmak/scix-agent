@@ -12,17 +12,27 @@ dependencies = [
     "pyahocorasick>=2.0",
     "scikit-learn>=1.3",
     "beautifulsoup4>=4.12",
+    "defusedxml>=0.7",
     "rdflib>=7.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
-    "black>=24.0",
-    "ruff>=0.3",
+    # Pin formatters/linters so CI, local, and pre-commit agree byte-for-byte.
+    # Unpinned, CI installs the latest black/ruff and fmt-check fails on
+    # version-drift restyling of the whole tree (not real debt). Match .pre-commit-config.yaml.
+    "black==25.1.0",
+    "ruff==0.15.8",
     "libcst>=1.1",
     "hypothesis>=6.100",
     "pre-commit>=3.7",
+    # pandas + a parquet engine are the runtime deps of the PWC methods
+    # harvester (scripts/harvest_pwc_methods.py reads the pwc-archive parquet);
+    # listed here so CI's `.[dev]` install can run its parser unit tests rather
+    # than masking the parser-drift bugs they guard (scix_experiments-o835).
+    "pandas>=2.0",
+    "pyarrow>=14.0",
 ]
 embed = [
     "transformers>=4.36",
@@ -42,6 +52,8 @@ qdrant = [
     "qdrant-client==1.17.1",
     # Local sparse BM25 (FastEmbed Qdrant/bm25 + Modifier.IDF) — ADR-014 pilot.
     "fastembed>=0.4",
+    # Reading pgvector columns from Postgres in the PG->Qdrant outbox sync.
+    "pgvector>=0.3",
 ]
 analysis = [
     "matplotlib>=3.7",
@@ -83,10 +95,22 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
+# E501 (line-too-long) is owned by black (line-length=100); enforcing it in ruff
+# too is redundant and flags long strings/URLs/comments black intentionally leaves.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Scripts and tests legitimately place imports after sys.path setup,
+# logging.disable(), or pytest.importorskip() guards that MUST precede them;
+# E402 there is intentional, not a defect. src/ keeps E402 enforced.
+"scripts/*" = ["E402"]
+"tests/*" = ["E402"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tests", "scripts"]
 markers = [
     "integration: tests requiring a running scix database",
+    "network: tests requiring outbound network access (deselected in CI)",
+    "unit: fast, dependency-free unit tests",
 ]

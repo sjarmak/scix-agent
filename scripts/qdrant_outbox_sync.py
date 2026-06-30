@@ -162,7 +162,10 @@ def _with_retry(fn, *, what: str):
             if attempt < QDRANT_RETRIES:
                 logger.warning(
                     "Qdrant %s failed (attempt %d/%d): %s — retrying",
-                    what, attempt, QDRANT_RETRIES, exc,
+                    what,
+                    attempt,
+                    QDRANT_RETRIES,
+                    exc,
                 )
                 time.sleep(QDRANT_RETRY_BACKOFF_S * attempt)
     raise RuntimeError(f"Qdrant {what} failed after {QDRANT_RETRIES} attempts") from last
@@ -321,7 +324,9 @@ def drain_model(
                 logger.warning(
                     "%s: %d claimed upsert(s) had no current vector — outbox "
                     "rows dropped (source likely deleted): %s",
-                    model_name, len(missing), ", ".join(sorted(missing)[:20]),
+                    model_name,
+                    len(missing),
+                    ", ".join(sorted(missing)[:20]),
                 )
         except Exception:
             conn.rollback()
@@ -417,12 +422,20 @@ def run(
             continue
         if backfill_since:
             n = enqueue_backfill(conn, m, backfill_since)
-            logger.info("backfill: enqueued %d %s row(s) since entry_date>=%s", n, m, backfill_since)
-        stats = drain_model(conn, client, model_name=m, collection=collection, batch_size=batch_size)
+            logger.info(
+                "backfill: enqueued %d %s row(s) since entry_date>=%s", n, m, backfill_since
+            )
+        stats = drain_model(
+            conn, client, model_name=m, collection=collection, batch_size=batch_size
+        )
         logger.info(
             "drained %s → %s: upserted=%d deleted=%d missing_vector=%d batches=%d",
-            stats.model_name, stats.collection, stats.upserted,
-            stats.deleted, stats.missing_vector, stats.batches,
+            stats.model_name,
+            stats.collection,
+            stats.upserted,
+            stats.deleted,
+            stats.missing_vector,
+            stats.batches,
         )
         all_stats.append(stats)
     report_lag(conn)

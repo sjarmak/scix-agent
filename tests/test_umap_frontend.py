@@ -58,15 +58,14 @@ def test_umap_html_has_required_containers() -> None:
 
     script_srcs = [s.get("src") or "" for s in soup.find_all("script") if s.get("src")]
     assert any(
-        src.endswith("umap_browser.js") or src == "./umap_browser.js"
-        for src in script_srcs
+        src.endswith("umap_browser.js") or src == "./umap_browser.js" for src in script_srcs
     ), f"Expected a <script src='./umap_browser.js'>; found: {script_srcs!r}"
 
     # Shared stylesheet must be referenced so visual style stays consistent.
     link_hrefs = [link.get("href") or "" for link in soup.find_all("link")]
-    assert any(href.endswith("shared.css") for href in link_hrefs), (
-        f"Expected shared.css link; found: {link_hrefs!r}"
-    )
+    assert any(
+        href.endswith("shared.css") for href in link_hrefs
+    ), f"Expected shared.css link; found: {link_hrefs!r}"
 
 
 def test_umap_js_has_render_symbol() -> None:
@@ -92,9 +91,9 @@ def test_palette_uses_shared_helper_not_local_constant() -> None:
     ego_js = _EGO_JS.read_text(encoding="utf-8")
     shared_js = _SHARED_JS.read_text(encoding="utf-8")
 
-    assert "scixViz.colorForCommunity" in shared_js, (
-        "shared.js must export window.scixViz.colorForCommunity"
-    )
+    assert (
+        "scixViz.colorForCommunity" in shared_js
+    ), "shared.js must export window.scixViz.colorForCommunity"
     # Each viz script should call through the shared helper, not redeclare a
     # 20-element PALETTE of its own.
     assert "scx.colorForCommunity" in umap_js
@@ -103,12 +102,10 @@ def test_palette_uses_shared_helper_not_local_constant() -> None:
     # should now appear only in shared.js.
     sentinel_color = "[31, 119, 180]"
     assert sentinel_color in shared_js
-    assert sentinel_color not in umap_js, (
-        "umap_browser.js still has a local PALETTE — extract to shared.js"
-    )
-    assert sentinel_color not in ego_js, (
-        "ego.js still has a local PALETTE — extract to shared.js"
-    )
+    assert (
+        sentinel_color not in umap_js
+    ), "umap_browser.js still has a local PALETTE — extract to shared.js"
+    assert sentinel_color not in ego_js, "ego.js still has a local PALETTE — extract to shared.js"
 
 
 def test_legend_collapses_long_tail_into_other_row() -> None:
@@ -124,17 +121,17 @@ def test_legend_collapses_long_tail_into_other_row() -> None:
         "umap_browser.js should declare a LEGEND_TOP_N constant for the "
         "top-N legend cap (currently 20)."
     )
-    assert "legend-other-toggle" in js_text, (
-        "expected a 'legend-other-toggle' row to expose the long tail"
-    )
-    assert "legend-other-grid" in js_text, (
-        "expected a 'legend-other-grid' container for the expanded tail"
-    )
+    assert (
+        "legend-other-toggle" in js_text
+    ), "expected a 'legend-other-toggle' row to expose the long tail"
+    assert (
+        "legend-other-grid" in js_text
+    ), "expected a 'legend-other-grid' container for the expanded tail"
     # The hardcoded "20 communities" stats string is replaced with a
     # dynamic count derived from the data.
-    assert "20 communities'" not in js_text, (
-        "stats line should derive the community count from communityCounts.size"
-    )
+    assert (
+        "20 communities'" not in js_text
+    ), "stats line should derive the community count from communityCounts.size"
 
 
 def test_shared_palette_handles_negative_and_large_ids() -> None:
@@ -145,15 +142,15 @@ def test_shared_palette_handles_negative_and_large_ids() -> None:
     hundreds. We assert the helper has explicit branches for both cases.
     """
     shared_js = _SHARED_JS.read_text(encoding="utf-8")
-    assert "SENTINEL_COLOR_RGB" in shared_js, (
-        "shared.js should define a sentinel color for negative community ids"
-    )
-    assert "GOLDEN_RATIO" in shared_js, (
-        "shared.js should declare the golden-ratio hue stepping constant"
-    )
-    assert "_hslToRgb" in shared_js, (
-        "shared.js should define an HSL->RGB converter for medium/fine palettes"
-    )
+    assert (
+        "SENTINEL_COLOR_RGB" in shared_js
+    ), "shared.js should define a sentinel color for negative community ids"
+    assert (
+        "GOLDEN_RATIO" in shared_js
+    ), "shared.js should declare the golden-ratio hue stepping constant"
+    assert (
+        "_hslToRgb" in shared_js
+    ), "shared.js should define an HSL->RGB converter for medium/fine palettes"
 
 
 # ---------------------------------------------------------------------------
@@ -167,12 +164,10 @@ def test_umap_html_served_by_viz_app() -> None:
     response = client.get("/viz/umap_browser.html")
     assert response.status_code == 200, response.text
     content_type = response.headers.get("content-type", "")
-    assert content_type.startswith("text/html"), (
-        f"Expected text/html content-type, got: {content_type!r}"
-    )
-    assert b"umap-root" in response.content, (
-        "Response body should include the umap-root container"
-    )
+    assert content_type.startswith(
+        "text/html"
+    ), f"Expected text/html content-type, got: {content_type!r}"
+    assert b"umap-root" in response.content, "Response body should include the umap-root container"
 
 
 # ---------------------------------------------------------------------------
@@ -240,32 +235,30 @@ def test_umap_js_exposes_ego_overlay_methods() -> None:
         "umap_browser.js must expose setEgoOverlay on the deck instance "
         "so the side-panel button can drive recoloring."
     )
-    assert "instance.clearEgoOverlay" in js_text, (
-        "umap_browser.js must expose clearEgoOverlay on the deck instance."
-    )
+    assert (
+        "instance.clearEgoOverlay" in js_text
+    ), "umap_browser.js must expose clearEgoOverlay on the deck instance."
 
 
 def test_umap_js_has_ego_palette_constants() -> None:
     """The four-tier ego palette (CENTER/DIRECT/SECOND/OUTSIDE) must exist."""
     js_text = _UMAP_JS.read_text(encoding="utf-8")
     for key in ("CENTER", "DIRECT", "SECOND", "OUTSIDE"):
-        assert f"EGO_COLORS.{key}" in js_text or f"{key}:" in js_text, (
-            f"umap_browser.js missing ego palette tier {key}"
-        )
+        assert (
+            f"EGO_COLORS.{key}" in js_text or f"{key}:" in js_text
+        ), f"umap_browser.js missing ego palette tier {key}"
 
 
 def test_panel_template_has_neighborhood_buttons() -> None:
     """The Selected-paper panel must render Show neighborhood + Reset colors."""
     js_text = _UMAP_JS.read_text(encoding="utf-8")
-    assert "Show neighborhood" in js_text, (
-        "Selected-paper panel must render a 'Show neighborhood' button."
-    )
-    assert "Reset colors" in js_text, (
-        "Selected-paper panel must render a 'Reset colors' button."
-    )
-    assert "id=\"ego-overlay-btn\"" in js_text and "id=\"ego-reset-btn\"" in js_text, (
-        "panel buttons must carry stable ids for the click handlers"
-    )
+    assert (
+        "Show neighborhood" in js_text
+    ), "Selected-paper panel must render a 'Show neighborhood' button."
+    assert "Reset colors" in js_text, "Selected-paper panel must render a 'Reset colors' button."
+    assert (
+        'id="ego-overlay-btn"' in js_text and 'id="ego-reset-btn"' in js_text
+    ), "panel buttons must carry stable ids for the click handlers"
 
 
 def test_distances_helper_handles_payload_shape() -> None:

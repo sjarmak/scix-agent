@@ -25,9 +25,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 def _load_module():
     """Import scripts/eval_claim_extraction.py as a module under a stable name."""
-    spec = importlib.util.spec_from_file_location(
-        "eval_claim_extraction_mod", SCRIPT_PATH
-    )
+    spec = importlib.util.spec_from_file_location("eval_claim_extraction_mod", SCRIPT_PATH)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod

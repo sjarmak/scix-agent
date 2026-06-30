@@ -37,9 +37,9 @@ _FOCUSED_HARD_CAP = 500
 
 # WHY enforced at import: if HARD_CAP <= SOFT_WARN, eviction would trim the set
 # below the warn threshold and the once-per-session warning would never fire.
-assert _FOCUSED_SOFT_WARN < _FOCUSED_HARD_CAP, (
-    "_FOCUSED_SOFT_WARN must be strictly less than _FOCUSED_HARD_CAP"
-)
+assert (
+    _FOCUSED_SOFT_WARN < _FOCUSED_HARD_CAP
+), "_FOCUSED_SOFT_WARN must be strictly less than _FOCUSED_HARD_CAP"
 
 
 @dataclass(frozen=True)
@@ -226,10 +226,7 @@ class SessionState:
         data.seen_papers.add(bibcode)
 
         # Soft warning — fire once per session at the threshold.
-        if (
-            not data._focused_warned
-            and len(data.focused_papers) >= _FOCUSED_SOFT_WARN
-        ):
+        if not data._focused_warned and len(data.focused_papers) >= _FOCUSED_SOFT_WARN:
             logger.warning(
                 "Focused papers for session '%s' reached %d entries (soft "
                 "warn: %d, hard cap: %d). Long multi-turn sessions will "

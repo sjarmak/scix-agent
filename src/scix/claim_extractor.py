@@ -203,19 +203,14 @@ def _full_assignment_pattern_for(quantity: str) -> re.Pattern[str]:
         rf"{ws}{_PM_ALT}{ws}(?P<u_sym>{_NUMBER_RE})"
         rf"(?:{ws}(?P<unit_b>{_UNIT_RE}))?"
     )
-    value_only = (
-        rf"{surf}{ws}={ws}(?P<value3>{_NUMBER_RE})"
-        rf"(?:{ws}(?P<unit_c>{_UNIT_RE}))?"
-    )
+    value_only = rf"{surf}{ws}={ws}(?P<value3>{_NUMBER_RE})" rf"(?:{ws}(?P<unit_c>{_UNIT_RE}))?"
 
     full = rf"(?:{asymmetric})|(?:{symmetric})|(?:{value_only})"
     return re.compile(full)
 
 
 # Cache compiled patterns at import time — the dict is small and static.
-_PATTERNS: dict[str, re.Pattern[str]] = {
-    q: _full_assignment_pattern_for(q) for q in QUANTITY_DICT
-}
+_PATTERNS: dict[str, re.Pattern[str]] = {q: _full_assignment_pattern_for(q) for q in QUANTITY_DICT}
 
 
 # ---------------------------------------------------------------------------
@@ -411,9 +406,7 @@ def llm_disambiguate(span: ClaimSpan) -> ClaimSpan:
         NotImplementedError: always.
     """
     del span  # explicit "we read this, did nothing with it" marker
-    raise NotImplementedError(
-        "Requires paid API; see CLAUDE.md feedback_no_paid_apis"
-    )
+    raise NotImplementedError("Requires paid API; see CLAUDE.md feedback_no_paid_apis")
 
 
 # ---------------------------------------------------------------------------

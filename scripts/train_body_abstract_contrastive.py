@@ -128,27 +128,17 @@ def build_cohort_plan(
     if cohort_size <= 0:
         raise ValueError(f"cohort_size must be positive, got {cohort_size}")
     if strategy not in COHORT_STRATEGIES:
-        raise ValueError(
-            f"Unknown strategy {strategy!r}; expected one of {COHORT_STRATEGIES}"
-        )
+        raise ValueError(f"Unknown strategy {strategy!r}; expected one of {COHORT_STRATEGIES}")
 
     if strategy == "random":
         return [CohortAllocation(label="random", n=cohort_size, weight=1.0)]
 
     # stratified-by-arxiv-class
     if coverage is None:
-        raise ValueError(
-            "stratified-by-arxiv-class strategy requires a coverage payload"
-        )
-    rows = (
-        coverage.get("facets", {})
-        .get("arxiv_class", {})
-        .get("rows", [])
-    )
+        raise ValueError("stratified-by-arxiv-class strategy requires a coverage payload")
+    rows = coverage.get("facets", {}).get("arxiv_class", {}).get("rows", [])
     if not rows:
-        raise ValueError(
-            "Coverage payload missing facets.arxiv_class.rows; cannot stratify"
-        )
+        raise ValueError("Coverage payload missing facets.arxiv_class.rows; cannot stratify")
 
     weights = [float(r.get("q_corpus", 0.0)) for r in rows]
     total_weight = sum(weights)

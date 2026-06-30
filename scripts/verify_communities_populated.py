@@ -169,9 +169,7 @@ _CHECKED_TABLES: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 
-def _columns_present(
-    conn: psycopg.Connection, table: str, columns: Sequence[str]
-) -> set[str]:
+def _columns_present(conn: psycopg.Connection, table: str, columns: Sequence[str]) -> set[str]:
     """Return the subset of ``columns`` that exist on ``public.<table>``."""
     with conn.cursor() as cur:
         cur.execute(
@@ -187,9 +185,7 @@ def _columns_present(
         return {row[0] for row in cur.fetchall()}
 
 
-def _tables_present(
-    conn: psycopg.Connection, tables: Sequence[str]
-) -> set[str]:
+def _tables_present(conn: psycopg.Connection, tables: Sequence[str]) -> set[str]:
     """Return the subset of ``tables`` that exist in the ``public`` schema."""
     with conn.cursor() as cur:
         cur.execute(
@@ -209,7 +205,7 @@ def _count_non_null(conn: psycopg.Connection, table: str, column: str) -> int:
     # expected-artifact tuples above, never user input.
     with conn.cursor() as cur:
         cur.execute(
-            psycopg.sql.SQL('SELECT count(*) FROM {tbl} WHERE {col} IS NOT NULL').format(
+            psycopg.sql.SQL("SELECT count(*) FROM {tbl} WHERE {col} IS NOT NULL").format(
                 tbl=psycopg.sql.Identifier(table),
                 col=psycopg.sql.Identifier(column),
             )
@@ -221,9 +217,7 @@ def _count_non_null(conn: psycopg.Connection, table: str, column: str) -> int:
 def _count_total(conn: psycopg.Connection, table: str) -> int:
     with conn.cursor() as cur:
         cur.execute(
-            psycopg.sql.SQL("SELECT count(*) FROM {tbl}").format(
-                tbl=psycopg.sql.Identifier(table)
-            )
+            psycopg.sql.SQL("SELECT count(*) FROM {tbl}").format(tbl=psycopg.sql.Identifier(table))
         )
         row = cur.fetchone()
         return int(row[0]) if row else 0
@@ -261,9 +255,7 @@ def verify(conn: psycopg.Connection, *, dsn_redacted: str) -> VerificationReport
 
     # 1. Table presence — single batched lookup.
     present_tables = _tables_present(conn, _CHECKED_TABLES)
-    table_flags: dict[str, bool] = {
-        table: table in present_tables for table in _CHECKED_TABLES
-    }
+    table_flags: dict[str, bool] = {table: table in present_tables for table in _CHECKED_TABLES}
     for table in _CHECKED_TABLES:
         report.tables.append(TableCheck(table=table, present=table_flags[table]))
 
@@ -279,9 +271,7 @@ def verify(conn: psycopg.Connection, *, dsn_redacted: str) -> VerificationReport
         for col in expected_cols:
             flag = col in present_cols
             col_flags[(table, col)] = flag
-            report.columns.append(
-                ColumnCheck(table=table, column=col, present=flag)
-            )
+            report.columns.append(ColumnCheck(table=table, column=col, present=flag))
 
     # 3. Row counts on paper_metrics.
     if table_flags.get("paper_metrics"):
@@ -328,20 +318,14 @@ def _detect_problems(
         "community_semantic_fine",
     ):
         if not col_flags.get(("paper_metrics", col)):
-            problems.append(
-                f"migration 051 not applied: paper_metrics.{col} missing"
-            )
+            problems.append(f"migration 051 not applied: paper_metrics.{col} missing")
 
     # Migration 052 — signal column on communities.
-    if table_flags.get("communities") and not col_flags.get(
-        ("communities", "signal")
-    ):
+    if table_flags.get("communities") and not col_flags.get(("communities", "signal")):
         problems.append("migration 052 not applied: communities.signal missing")
 
     # Citation Leiden assignment coverage.
-    citation_cols = {
-        c.column: c.non_null_count for c in report.paper_metrics_columns
-    }
+    citation_cols = {c.column: c.non_null_count for c in report.paper_metrics_columns}
     for col in (
         "community_id_coarse",
         "community_id_medium",
@@ -349,9 +333,7 @@ def _detect_problems(
     ):
         count = citation_cols.get(col)
         if count is None or count == 0:
-            problems.append(
-                f"citation community empty: paper_metrics.{col} has 0 non-null rows"
-            )
+            problems.append(f"citation community empty: paper_metrics.{col} has 0 non-null rows")
 
     # Semantic Leiden assignment coverage (only meaningful if column exists).
     for col in (

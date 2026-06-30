@@ -508,9 +508,7 @@ def test_populate_vizier_creates_catalogs_and_edges(
     assert t3 is not None
 
 
-def test_populate_vizier_is_idempotent(
-    conn: psycopg.Connection, harvest_run_id: int
-) -> None:
+def test_populate_vizier_is_idempotent(conn: psycopg.Connection, harvest_run_id: int) -> None:
     cat = f"V/TEST{_RUN_TAG}/cat"
     _seed_vizier_table(conn, table_path=f"{cat}/t1")
     conn.commit()

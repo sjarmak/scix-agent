@@ -47,12 +47,14 @@ def _lowest_hit_entity(conn: psycopg.Connection) -> Optional[int]:
     """Return the entity_id with the lowest query_hits_14d (ties broken by
     oldest promoted_at)."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT entity_id
               FROM curated_entity_core
           ORDER BY query_hits_14d ASC, promoted_at ASC
              LIMIT 1
-            """)
+            """
+        )
         row = cur.fetchone()
     return int(row[0]) if row else None
 

@@ -110,9 +110,7 @@ def select_rows(rows: list[dict], *, n_random: int, seed: int) -> list[dict]:
     return unique
 
 
-def write_output(
-    path: Path, rows: list[dict], snippets: dict[str, str]
-) -> None:
+def write_output(path: Path, rows: list[dict], snippets: dict[str, str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     cols = [
         "query_id",
@@ -149,7 +147,9 @@ def write_output(
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--source", type=Path, default=DEFAULT_SOURCE_CSV)
     p.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_CSV)
     p.add_argument("--n-random", type=int, default=15)

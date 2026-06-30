@@ -40,7 +40,7 @@ def test_html_has_required_containers_and_bundles() -> None:
     assert soup.find(id="sc-stats") is not None
     assert soup.find(id="sc-caveat") is not None
     assert soup.find(id="sc-status") is not None
-    links = [l.get("href") or "" for l in soup.find_all("link")]
+    links = [tag.get("href") or "" for tag in soup.find_all("link")]
     assert any(h.endswith("shared.css") for h in links), f"missing shared.css; {links!r}"
     srcs = [s.get("src") or "" for s in soup.find_all("script") if s.get("src")]
     assert any(s.endswith("shared.js") for s in srcs), f"missing shared.js; {srcs!r}"

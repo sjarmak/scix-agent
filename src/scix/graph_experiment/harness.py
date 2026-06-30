@@ -65,9 +65,7 @@ class HarnessConfig:
                 "url": self.production_mcp_url,
             }
             if self.production_mcp_token:
-                entry["headers"] = {
-                    "Authorization": f"Bearer {self.production_mcp_token}"
-                }
+                entry["headers"] = {"Authorization": f"Bearer {self.production_mcp_token}"}
             servers["scix"] = entry
         elif self.production_mcp_stdio:
             servers["scix"] = {
@@ -229,9 +227,7 @@ def _parse_stream_json(stdout: str) -> dict[str, Any]:
         elif etype == "result":
             cost_usd = event.get("total_cost_usd") or event.get("cost_usd")
             usage = event.get("usage", {}) or {}
-            total_tokens = (
-                usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
-            ) or None
+            total_tokens = (usage.get("input_tokens", 0) + usage.get("output_tokens", 0)) or None
             if event.get("subtype") == "error":
                 error = event.get("result") or "unknown_error"
 

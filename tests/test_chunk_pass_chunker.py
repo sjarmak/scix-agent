@@ -181,9 +181,7 @@ def test_trailing_window_just_above_stride_is_kept():
     # window=4, stride=2, step=2. n=7: [0,4], [2,6]=full (t_end=6!=7),
     # [4,7]=3 tokens (>=2 -> kept). 3 chunks.
     sections = [{"heading": "S0", "level": 1, "text": _make_text(7), "offset": 0}]
-    chunks = list(iter_chunks(
-        "paper-D2", sections, StubTokenizer(), window=4, stride=2
-    ))
+    chunks = list(iter_chunks("paper-D2", sections, StubTokenizer(), window=4, stride=2))
     assert len(chunks) == 3
     assert chunks[-1].n_tokens == 3
 
@@ -231,9 +229,7 @@ def test_char_offsets_are_section_relative_and_monotonic_within_section():
     from scix.extract.chunk_pass import iter_chunks
 
     section_offset = 12345
-    sections = [
-        {"heading": "S0", "level": 1, "text": _make_text(600), "offset": section_offset}
-    ]
+    sections = [{"heading": "S0", "level": 1, "text": _make_text(600), "offset": section_offset}]
     chunks = list(iter_chunks("paper-F", sections, StubTokenizer()))
     assert len(chunks) == 2
     # First chunk starts at section offset (token 0 -> char 0 within section).
@@ -281,9 +277,7 @@ def test_module_import_does_not_pull_in_torch_or_transformers():
     src_dir = pathlib.Path(__file__).resolve().parent.parent / "src"
     env = os.environ.copy()
     existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        f"{src_dir}{os.pathsep}{existing}" if existing else str(src_dir)
-    )
+    env["PYTHONPATH"] = f"{src_dir}{os.pathsep}{existing}" if existing else str(src_dir)
 
     code = textwrap.dedent(
         """

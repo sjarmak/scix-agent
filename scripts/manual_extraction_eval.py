@@ -149,9 +149,7 @@ def fetch_samples(
         if isinstance(ext, str):
             ext = json.loads(ext)
         grouped = {t: tuple(ext.get(t, []) or []) for t in EXTRACTION_TYPES}
-        samples.append(
-            PaperSample(bibcode=bibcode, abstract=abstract or "", extracted=grouped)
-        )
+        samples.append(PaperSample(bibcode=bibcode, abstract=abstract or "", extracted=grouped))
 
     logger.info("Fetched %d sampled papers from the database", len(samples))
     return samples

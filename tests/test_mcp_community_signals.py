@@ -101,9 +101,12 @@ def _cleanup(dsn: str) -> None:
                 "WHERE (signal, community_id) IN "
                 "((%s,%s),(%s,%s),(%s,%s))",
                 (
-                    "citation", CITATION_CID,
-                    "semantic", SEMANTIC_CID,
-                    "taxonomic", TAXONOMIC_CID,
+                    "citation",
+                    CITATION_CID,
+                    "semantic",
+                    SEMANTIC_CID,
+                    "taxonomic",
+                    TAXONOMIC_CID,
                 ),
             )
 
@@ -150,19 +153,20 @@ def _seed(dsn: str) -> list[str]:
                     (
                         bib,
                         0.001 * (5 - i),
-                        CITATION_CID, CITATION_CID, CITATION_CID,
-                        SEMANTIC_CID, SEMANTIC_CID, SEMANTIC_CID,
+                        CITATION_CID,
+                        CITATION_CID,
+                        CITATION_CID,
+                        SEMANTIC_CID,
+                        SEMANTIC_CID,
+                        SEMANTIC_CID,
                         TAX_TEXT,
                     ),
                 )
             # Seed labels in communities for each signal at coarse resolution.
             for signal, cid, label, kws in (
-                ("citation", CITATION_CID, "cite_label_A",
-                 ["cite_kw_alpha", "cite_kw_beta"]),
-                ("semantic", SEMANTIC_CID, "sem_label_B",
-                 ["sem_kw_alpha", "sem_kw_beta"]),
-                ("taxonomic", TAXONOMIC_CID, "astro-ph.GA — galactic",
-                 ["galaxy", "formation"]),
+                ("citation", CITATION_CID, "cite_label_A", ["cite_kw_alpha", "cite_kw_beta"]),
+                ("semantic", SEMANTIC_CID, "sem_label_B", ["sem_kw_alpha", "sem_kw_beta"]),
+                ("taxonomic", TAXONOMIC_CID, "astro-ph.GA — galactic", ["galaxy", "formation"]),
             ):
                 cur.execute(
                     "INSERT INTO communities "
@@ -191,7 +195,9 @@ def _seed(dsn: str) -> list[str]:
                         "  label = EXCLUDED.label, "
                         "  top_keywords = EXCLUDED.top_keywords",
                         (
-                            signal, res, cid,
+                            signal,
+                            res,
+                            cid,
                             f"{signal}_label_{res}",
                             5,
                             [f"{signal}_{res}_kw1", f"{signal}_{res}_kw2"],
@@ -221,9 +227,7 @@ def test_explore_community_citation_signal(dsn: str, fixture_data: list[str]) ->
 
     bibcode = fixture_data[0]
     with psycopg.connect(dsn) as conn:
-        result = search.explore_community(
-            conn, bibcode, resolution="coarse", signal="citation"
-        )
+        result = search.explore_community(conn, bibcode, resolution="coarse", signal="citation")
     assert result.metadata["signal"] == "citation"
     assert result.metadata["community_id"] == CITATION_CID
     assert result.metadata["label"] == "cite_label_A"
@@ -239,9 +243,7 @@ def test_explore_community_semantic_signal(dsn: str, fixture_data: list[str]) ->
 
     bibcode = fixture_data[0]
     with psycopg.connect(dsn) as conn:
-        result = search.explore_community(
-            conn, bibcode, resolution="coarse", signal="semantic"
-        )
+        result = search.explore_community(conn, bibcode, resolution="coarse", signal="semantic")
     assert result.metadata["signal"] == "semantic"
     assert result.metadata["community_id"] == SEMANTIC_CID
     assert result.metadata["label"] == "sem_label_B"
@@ -254,9 +256,7 @@ def test_explore_community_taxonomic_signal(dsn: str, fixture_data: list[str]) -
 
     bibcode = fixture_data[0]
     with psycopg.connect(dsn) as conn:
-        result = search.explore_community(
-            conn, bibcode, resolution="coarse", signal="taxonomic"
-        )
+        result = search.explore_community(conn, bibcode, resolution="coarse", signal="taxonomic")
     assert result.metadata["signal"] == "taxonomic"
     assert result.metadata["community_id"] == TAXONOMIC_CID
     assert result.metadata["community_taxonomic"] == TAX_TEXT
@@ -271,9 +271,7 @@ def test_explore_community_taxonomic_signal(dsn: str, fixture_data: list[str]) -
 # ---------------------------------------------------------------------------
 
 
-def test_explore_community_invalid_signal_raises(
-    dsn: str, fixture_data: list[str]
-) -> None:
+def test_explore_community_invalid_signal_raises(dsn: str, fixture_data: list[str]) -> None:
     from scix import search
 
     bibcode = fixture_data[0]
@@ -351,9 +349,7 @@ def test_graph_context_with_include_community_uses_signal(
     assert community["total"] == 5
 
 
-def test_graph_context_invalid_signal_returns_error(
-    dsn: str, fixture_data: list[str]
-) -> None:
+def test_graph_context_invalid_signal_returns_error(dsn: str, fixture_data: list[str]) -> None:
     from scix import mcp_server
 
     bibcode = fixture_data[0]

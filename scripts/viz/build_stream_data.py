@@ -113,9 +113,7 @@ def _build_sql(resolution: str) -> str:
     in the seconds-not-minutes range on 32M rows.
     """
     if resolution not in COMMUNITY_COLUMNS:
-        raise ValueError(
-            f"unknown resolution {resolution!r}; must be one of {RESOLUTIONS}"
-        )
+        raise ValueError(f"unknown resolution {resolution!r}; must be one of {RESOLUTIONS}")
     column = COMMUNITY_COLUMNS[resolution]
     return (
         f"SELECT pm.{column} AS community_id, p.year AS year, COUNT(*) AS n\n"
@@ -128,14 +126,10 @@ def _build_sql(resolution: str) -> str:
     )
 
 
-def load_cells_from_db(
-    dsn: str, resolution: str, year_min: int, year_max: int
-) -> list[Cell]:
+def load_cells_from_db(dsn: str, resolution: str, year_min: int, year_max: int) -> list[Cell]:
     """Stream the (community, year, count) rows from the database."""
     if year_min > year_max:
-        raise ValueError(
-            f"year_min {year_min} > year_max {year_max}; check the CLI args"
-        )
+        raise ValueError(f"year_min {year_min} > year_max {year_max}; check the CLI args")
 
     import psycopg  # lazy so synthetic / tests don't need a live DB
 
@@ -376,9 +370,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             config.year_min,
             config.year_max,
         )
-        cells = load_cells_from_db(
-            config.dsn, config.resolution, config.year_min, config.year_max
-        )
+        cells = load_cells_from_db(config.dsn, config.resolution, config.year_min, config.year_max)
 
     labels = load_labels(config.labels_path)
     if labels:

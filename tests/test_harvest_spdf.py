@@ -287,6 +287,17 @@ def _make_mock_conn() -> MagicMock:
     return conn
 
 
+def _sql_text(query: object) -> str:
+    """Render an execute() arg to plain SQL text.
+
+    store_harvest composes statements with psycopg.sql, so cursor.execute is
+    called with ``Composed``/``SQL`` objects, not plain strings. ``as_string``
+    renders them; plain strings pass through unchanged.
+    """
+    as_string = getattr(query, "as_string", None)
+    return (as_string(None) if as_string else str(query)).strip()
+
+
 class TestStoreHarvest:
     """Verify database writes for entities, datasets, and relationships."""
 
@@ -305,7 +316,7 @@ class TestStoreHarvest:
         harvest_spdf.store_harvest(conn, observatories=obs, instruments=inst, datasets=ds)
 
         # Check that INSERT INTO harvest_runs was called
-        all_sql = [call.args[0].strip() for call in cursor.execute.call_args_list]
+        all_sql = [_sql_text(call.args[0]) for call in cursor.execute.call_args_list]
         harvest_run_inserts = [s for s in all_sql if "INSERT INTO harvest_runs" in s]
         assert len(harvest_run_inserts) >= 1
 
@@ -319,7 +330,7 @@ class TestStoreHarvest:
 
         harvest_spdf.store_harvest(conn, observatories=obs, instruments=[], datasets=[])
 
-        all_sql = [call.args[0].strip() for call in cursor.execute.call_args_list]
+        all_sql = [_sql_text(call.args[0]) for call in cursor.execute.call_args_list]
         entity_inserts = [s for s in all_sql if "INSERT INTO entities" in s]
         # 4 observatories
         assert len(entity_inserts) >= 4
@@ -334,7 +345,7 @@ class TestStoreHarvest:
 
         harvest_spdf.store_harvest(conn, observatories=[], instruments=inst, datasets=[])
 
-        all_sql = [call.args[0].strip() for call in cursor.execute.call_args_list]
+        all_sql = [_sql_text(call.args[0]) for call in cursor.execute.call_args_list]
         entity_inserts = [s for s in all_sql if "INSERT INTO entities" in s]
         # 3 instruments
         assert len(entity_inserts) >= 3

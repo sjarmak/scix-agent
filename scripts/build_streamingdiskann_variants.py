@@ -232,7 +232,10 @@ def build_variant(
 
     logger.info(
         "Variant %s complete: build=%.2fs, index_size=%d bytes, total=%d bytes",
-        variant, build_wall_seconds, index_size, total_size,
+        variant,
+        build_wall_seconds,
+        index_size,
+        total_size,
     )
     return result
 
@@ -327,7 +330,10 @@ def main(argv: list[str] | None = None) -> int:
     run_id = uuid.uuid4().hex[:12]
     logger.info(
         "Building variants %s against %s (run_id=%s, dry_run=%s)",
-        targets, redact_dsn(args.dsn), run_id, args.dry_run,
+        targets,
+        redact_dsn(args.dsn),
+        run_id,
+        args.dry_run,
     )
 
     entries: list[dict[str, Any]] = []
@@ -347,7 +353,9 @@ def main(argv: list[str] | None = None) -> int:
     doc = merge_and_write(results_path, entries)
     logger.info(
         "Wrote %d variant entries to %s (total variants on disk: %d)",
-        len(entries), results_path, len(doc["variants"]),
+        len(entries),
+        results_path,
+        len(doc["variants"]),
     )
 
     # Emit a compact JSON summary on stdout for callers that want to pipe it.

@@ -101,6 +101,7 @@ def _union_positive(prev: bool | None, cur: bool | None) -> bool | None:
 
 # --- DB loaders ---------------------------------------------------------------
 
+
 def load_entity_counts(dsn: str) -> tuple[list[dict], list[dict]]:
     """Exact (source, entity_type) and ambiguity_class counts over ``entities``."""
     import psycopg
@@ -110,16 +111,15 @@ def load_entity_counts(dsn: str) -> tuple[list[dict], list[dict]]:
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute("SET statement_timeout = '20min'")
         cur.execute(
-            "SELECT source, entity_type, COUNT(*) "
-            "FROM entities GROUP BY source, entity_type"
+            "SELECT source, entity_type, COUNT(*) " "FROM entities GROUP BY source, entity_type"
         )
         for source, etype, n in cur.fetchall():
-            rec = by_source.setdefault(source, {"source": source, "n_entities": 0, "entity_types": []})
+            rec = by_source.setdefault(
+                source, {"source": source, "n_entities": 0, "entity_types": []}
+            )
             rec["n_entities"] += n
             rec["entity_types"].append({"entity_type": etype, "n": n})
-        cur.execute(
-            "SELECT ambiguity_class::text, COUNT(*) FROM entities GROUP BY ambiguity_class"
-        )
+        cur.execute("SELECT ambiguity_class::text, COUNT(*) FROM entities GROUP BY ambiguity_class")
         for cls, n in cur.fetchall():
             ambiguity[cls] = n
 
@@ -178,6 +178,7 @@ def load_gliner_precision_sample(dsn: str, sample_pct: float, sample_size: int) 
 
 
 # --- precision aggregation (shared by DB + synthetic paths) -------------------
+
 
 def gliner_profile_from_sample(rows: list[dict]) -> tuple[dict[str, float], list[dict], int]:
     """Aggregate sampled GLiNER links into a band-fraction profile + spot checks.
@@ -271,20 +272,38 @@ def attach_precision_profiles(
 
 # --- synthetic mode -----------------------------------------------------------
 
+
 def synthesize() -> tuple[list[dict], list[dict], int, list[dict]]:
     """Deterministic offline data shaped like the real aggregates (no DB)."""
     import random
 
     rng = random.Random(42)
     type_pool = {
-        "gliner": ["method", "chemical", "instrument", "dataset", "software", "organism", "location", "gene", "mission"],
+        "gliner": [
+            "method",
+            "chemical",
+            "instrument",
+            "dataset",
+            "software",
+            "organism",
+            "location",
+            "gene",
+            "mission",
+        ],
         "ssodnet": ["target", "taxon"],
         "vizier": ["dataset"],
         "ascl": ["software"],
         "bio.tools": ["software"],
         "gcmd": ["instrument"],
     }
-    base_n = {"gliner": 17_795_149, "ssodnet": 1_487_350, "vizier": 62_388, "ascl": 3_958, "bio.tools": 1_204, "gcmd": 980}
+    base_n = {
+        "gliner": 17_795_149,
+        "ssodnet": 1_487_350,
+        "vizier": 62_388,
+        "ascl": 3_958,
+        "bio.tools": 1_204,
+        "gcmd": 980,
+    }
     sources: list[dict] = []
     for src, types in type_pool.items():
         weights = [rng.random() + 0.2 for _ in types]
@@ -325,6 +344,7 @@ def synthesize() -> tuple[list[dict], list[dict], int, list[dict]]:
 
 
 # --- payload + io -------------------------------------------------------------
+
 
 def build_payload(
     sources: list[dict], ambiguity: list[dict], link_estimate: int, spot_checks: list[dict]
@@ -385,7 +405,10 @@ def main(argv=None) -> int:
     serialize(payload, config.output)
     logger.info(
         "wrote %s (%d sources, %d entities, %d ambiguity classes)",
-        config.output, len(sources), payload["totals"]["n_entities"], len(ambiguity),
+        config.output,
+        len(sources),
+        payload["totals"]["n_entities"],
+        len(ambiguity),
     )
     return 0
 

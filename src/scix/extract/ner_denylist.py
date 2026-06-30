@@ -42,6 +42,7 @@ Design notes:
   ``gene`` (the noisy interpretation) but a hypothetical
   ``'protein dynamics'`` ``method`` entry would still surface.
 """
+
 from __future__ import annotations
 
 #: ``(canonical_name_lower, entity_type)`` pairs that should never
@@ -96,8 +97,4 @@ def filter_denylisted_rows(
     Convenience wrapper for in-memory filtering of result lists. Returns
     a new list; does not mutate the input.
     """
-    return [
-        r
-        for r in rows
-        if not is_denylisted(r.get(name_key), r.get(type_key))
-    ]
+    return [r for r in rows if not is_denylisted(r.get(name_key), r.get(type_key))]

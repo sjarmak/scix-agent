@@ -12,6 +12,7 @@ Run:
     QDRANT_URL=http://127.0.0.1:6333 \\
         python scripts/demo_qdrant_find_similar.py
 """
+
 from __future__ import annotations
 
 import os
@@ -26,6 +27,7 @@ from scix import qdrant_tools as qt  # noqa: E402
 def pick_seeds(n_per_community: int = 2, communities: int = 3) -> list[str]:
     """Return bibcodes from a few different communities, as seed examples."""
     from qdrant_client import QdrantClient
+
     client = QdrantClient(os.environ["QDRANT_URL"], timeout=10)
     scrolled, _ = client.scroll(
         collection_name=qt.COLLECTION,
@@ -55,8 +57,10 @@ def print_results(hits, header: str):
     for i, h in enumerate(hits, 1):
         ax = ",".join(h.arxiv_class[:2]) if h.arxiv_class else "-"
         title = (h.title or "?")[:90]
-        print(f"  {i:>2}. {h.bibcode:<19}  {h.year!s:<4}  c={h.community_semantic!s:<5}  "
-              f"ax={ax:<18}  s={h.score:.3f}")
+        print(
+            f"  {i:>2}. {h.bibcode:<19}  {h.year!s:<4}  c={h.community_semantic!s:<5}  "
+            f"ax={ax:<18}  s={h.score:.3f}"
+        )
         print(f"      {textwrap.fill(title, 92, subsequent_indent='      ')}")
 
 
@@ -91,6 +95,7 @@ def main() -> int:
 
     # Query 3: positive + filter (restrict to most common community in seeds)
     from qdrant_client import QdrantClient
+
     client = QdrantClient(os.environ["QDRANT_URL"], timeout=5)
     ids = [qt.bibcode_to_point_id(b) for b in seeds[:2]]
     pts = client.retrieve(qt.COLLECTION, ids=ids, with_payload=True)

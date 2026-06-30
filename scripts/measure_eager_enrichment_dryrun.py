@@ -313,7 +313,9 @@ def main() -> None:
             )
 
             print("sample top-1 enrichment payload:")
-            print(json.dumps({m.name: m.sample for m in measurements}, indent=2, default=str)[:1500])
+            print(
+                json.dumps({m.name: m.sample for m in measurements}, indent=2, default=str)[:1500]
+            )
             print("\n" + "=" * 65 + "\n")
 
 

@@ -59,9 +59,7 @@ class SliceConfig:
             seed_filter_params=(),
             hop_depth=1,
             include_document_entities=True,
-            snapshot_path=Path(
-                "data/graph_experiment/astronomy_recent_1hop.pkl.gz"
-            ),
+            snapshot_path=Path("data/graph_experiment/astronomy_recent_1hop.pkl.gz"),
         )
 
     @classmethod
@@ -72,7 +70,5 @@ class SliceConfig:
             seed_filter_params=(),
             hop_depth=0,
             include_document_entities=True,
-            snapshot_path=Path(
-                "data/graph_experiment/astronomy_recent_seedonly.pkl.gz"
-            ),
+            snapshot_path=Path("data/graph_experiment/astronomy_recent_seedonly.pkl.gz"),
         )

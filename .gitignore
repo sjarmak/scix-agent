@@ -109,3 +109,9 @@ CLAUDE.local.md
 .prd-build/
 .qdrant_gpu_storage/
 .qdrant_v2_storage/
+.codegraph/
+scix-sankey-work/
+.venv-ci/
+
+# Agent audit reports (DEEP_AUDIT directive output)
+.gc-reports/

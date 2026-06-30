@@ -261,9 +261,7 @@ def run(
 
         # 3. Extract giant component directly from full graph.
         logger.info("Extracting giant component...")
-        giant, giant_b2i, giant_i2b, small_bibcodes = extract_giant_component(
-            graph, b2i, i2b
-        )
+        giant, giant_b2i, giant_i2b, small_bibcodes = extract_giant_component(graph, b2i, i2b)
         # Free the full-graph representation as soon as possible — peak RSS during
         # induced_subgraph() + giant_i2b construction was what OOM'd on prod (32M
         # nodes / 298M edges).
@@ -312,9 +310,7 @@ def run(
         n_medium, largest_medium, _ = _summarize_membership(medium, giant_i2b)
         n_fine, largest_fine, _ = _summarize_membership(fine, giant_i2b)
 
-        largest_coarse_pct = (
-            (largest_coarse / giant_n * 100.0) if giant_n > 0 else 0.0
-        )
+        largest_coarse_pct = (largest_coarse / giant_n * 100.0) if giant_n > 0 else 0.0
         invariant_largest_coarse_ok = largest_coarse_pct <= 10.0 or giant_n == 0
 
         # 5. Stage + UPDATE paper_metrics.
@@ -355,9 +351,7 @@ def run(
             nmi_coarse = nmi_medium = nmi_fine = None
 
         if nmi_coarse is None:
-            logger.warning(
-                "community_semantic_coarse not populated — skipping NMI"
-            )
+            logger.warning("community_semantic_coarse not populated — skipping NMI")
     finally:
         conn.close()
 
@@ -477,8 +471,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not run_meta["invariants"]["largest_coarse_le_10pct"]:
         logger.error(
-            "INVARIANT FAILED: largest coarse community is %.2f%% of giant "
-            "(> 10%% limit)",
+            "INVARIANT FAILED: largest coarse community is %.2f%% of giant " "(> 10%% limit)",
             run_meta["largest_coarse_pct_of_giant"],
         )
         return 1

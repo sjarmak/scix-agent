@@ -121,12 +121,14 @@ def _seed(conn) -> None:
             "ON CONFLICT (bibcode) DO NOTHING",
             [(b, f"audit fixture paper {b}") for b in FIXTURE_BIBCODES],
         )
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO entities (canonical_name, entity_type, source)
             SELECT 'm9_audit_ent_' || g::text, 'concept', 'm9_audit_fixture'
             FROM generate_series(1, 4) AS g
             ON CONFLICT DO NOTHING
-            """)
+            """
+        )
         cur.execute("SELECT id FROM entities WHERE source = 'm9_audit_fixture' ORDER BY id LIMIT 4")
         eids = [int(r[0]) for r in cur.fetchall()]
         assert len(eids) == 4

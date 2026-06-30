@@ -91,9 +91,7 @@ def load_gold(gold_path: Path) -> list[dict[str, Any]]:
             try:
                 entries.append(json.loads(line))
             except json.JSONDecodeError as exc:  # pragma: no cover - guard
-                raise ValueError(
-                    f"{gold_path}:{line_no}: invalid JSON: {exc}"
-                ) from exc
+                raise ValueError(f"{gold_path}:{line_no}: invalid JSON: {exc}") from exc
     return entries
 
 
@@ -144,18 +142,16 @@ def _claim_match(
     p_end = predicted.get("char_span_end")
     g_start = gold.get("char_span_start")
     g_end = gold.get("char_span_end")
-    if (
-        p_start is not None
-        and p_end is not None
-        and p_start == g_start
-        and p_end == g_end
-    ):
+    if p_start is not None and p_end is not None and p_start == g_start and p_end == g_end:
         return True
 
-    return jaccard(
-        str(predicted.get("claim_text", "")),
-        str(gold.get("claim_text", "")),
-    ) >= JACCARD_THRESHOLD
+    return (
+        jaccard(
+            str(predicted.get("claim_text", "")),
+            str(gold.get("claim_text", "")),
+        )
+        >= JACCARD_THRESHOLD
+    )
 
 
 def match_claims(
@@ -280,9 +276,7 @@ def run_eval(
     n_predicted = 0
 
     # discipline -> running tp/fp/fn
-    by_discipline: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"tp": 0, "fp": 0, "fn": 0}
-    )
+    by_discipline: dict[str, dict[str, int]] = defaultdict(lambda: {"tp": 0, "fp": 0, "fn": 0})
 
     for entry in gold_entries:
         bibcode = entry.get("bibcode", "")
@@ -313,9 +307,7 @@ def run_eval(
             )
             predicted_raw = []
 
-        predicted: list[dict[str, Any]] = [
-            dict(p) for p in predicted_raw if isinstance(p, Mapping)
-        ]
+        predicted: list[dict[str, Any]] = [dict(p) for p in predicted_raw if isinstance(p, Mapping)]
 
         tp, fp, fn = match_claims(predicted, gold_claims)
         total_tp += tp

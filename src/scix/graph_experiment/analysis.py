@@ -164,9 +164,7 @@ def summarize_traces(paths: Iterable[Path]) -> TraceSummary:
     )
 
 
-def compare_summaries(
-    control: TraceSummary, treatment: TraceSummary
-) -> dict[str, Any]:
+def compare_summaries(control: TraceSummary, treatment: TraceSummary) -> dict[str, Any]:
     """Diff two summaries — typically (no-experimental-tools, with-tools).
 
     The central metrics for the AGE go/no-go decision:

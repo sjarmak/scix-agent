@@ -259,11 +259,13 @@ class TestFrozenDataclasses:
 def _has_uat_tables(conn: psycopg.Connection) -> bool:
     """Check if UAT tables exist (migration 007 applied)."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT COUNT(*) FROM information_schema.tables
             WHERE table_schema = 'public'
               AND table_name IN ('uat_concepts', 'uat_relationships', 'paper_uat_mappings')
-        """)
+        """
+        )
         return cur.fetchone()[0] == 3
 
 
@@ -374,10 +376,12 @@ class TestMapKeywords:
 
         # Check if any papers have keywords that match our fixture
         with db_conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT COUNT(*) FROM papers p, LATERAL unnest(p.keywords) AS kw
                 WHERE lower(kw) IN ('astronomy', 'galaxies', 'galaxy', 'spiral galaxies')
-            """)
+            """
+            )
             potential_matches = cur.fetchone()[0]
 
         count = map_keywords_exact(db_conn)

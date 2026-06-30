@@ -127,7 +127,8 @@ class _StubCursor:
             # in Python so the rest of search_within_paper sees real numbers.
             scores = []
             tokens = [
-                t for t in __import__("re").findall(r"\w+", self._ts_rank_query.lower())
+                t
+                for t in __import__("re").findall(r"\w+", self._ts_rank_query.lower())
                 if len(t) >= 2
             ]
             for text in self._ts_rank_texts:
@@ -425,6 +426,4 @@ def test_p95_latency_under_500ms(_minilm_env: None) -> None:
     latencies_ms.sort()
     p95_idx = max(0, int(round(0.95 * len(latencies_ms))) - 1)
     p95_latency_ms = latencies_ms[p95_idx]
-    assert p95_latency_ms <= 500.0, (
-        f"p95 latency {p95_latency_ms:.1f} ms exceeds 500 ms budget"
-    )
+    assert p95_latency_ms <= 500.0, f"p95 latency {p95_latency_ms:.1f} ms exceeds 500 ms budget"

@@ -126,9 +126,7 @@ def test_coverage_block_when_target_uncovered() -> None:
     cur = _FakeCursor(rows=[], coverage_bibcodes=set())
     conn = _FakeConnection(cur)
 
-    out = json.loads(
-        _handle_cited_by_intent(conn, {"target_bibcode": "2099UNCOVERED.....A"})
-    )
+    out = json.loads(_handle_cited_by_intent(conn, {"target_bibcode": "2099UNCOVERED.....A"}))
 
     assert "coverage" in out
     assert _coverage_keys() <= set(out["coverage"].keys())
@@ -196,9 +194,7 @@ def test_response_surfaces_n_contexts_field() -> None:
     conn = _FakeConnection(cur)
 
     out = json.loads(
-        _handle_cited_by_intent(
-            conn, {"target_bibcode": "1996RvMP...68.1259J", "intent": "method"}
-        )
+        _handle_cited_by_intent(conn, {"target_bibcode": "1996RvMP...68.1259J", "intent": "method"})
     )
     assert out["total"] == 2
     bibs = {p["source_bibcode"]: p for p in out["papers"]}

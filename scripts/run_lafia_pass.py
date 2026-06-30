@@ -105,9 +105,7 @@ def run_pipeline(
         for paper in batch:
             totals["papers_seen"] += 1
             mentions = [
-                m
-                for m in detect_informal_references(paper.text)
-                if m.confidence >= min_confidence
+                m for m in detect_informal_references(paper.text) if m.confidence >= min_confidence
             ]
             if not mentions:
                 continue
@@ -117,7 +115,11 @@ def run_pipeline(
                 for m in mentions:
                     logger.debug(
                         "%s [%.2f %s/%s] %s",
-                        paper.bibcode, m.confidence, m.entity_type, m.cue_id, m.surface
+                        paper.bibcode,
+                        m.confidence,
+                        m.entity_type,
+                        m.cue_id,
+                        m.surface,
                     )
             else:
                 batch_rows += insert_mentions(conn, paper.bibcode, mentions)
@@ -131,8 +133,10 @@ def run_pipeline(
         if n_batches % log_every == 0:
             logger.info(
                 "batches=%d papers_seen=%d papers_with_mentions=%d rows_written=%d",
-                n_batches, totals["papers_seen"],
-                totals["papers_with_mentions"], totals["rows_written"],
+                n_batches,
+                totals["papers_seen"],
+                totals["papers_with_mentions"],
+                totals["rows_written"],
             )
     return totals
 
@@ -144,21 +148,39 @@ def _record_checkpoint(conn, key: str, records_loaded: int, edges_loaded: int) -
 
 def _build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    p.add_argument("--batch-size", type=int, default=500,
-                   help="Papers per cursor batch (default: 500).")
-    p.add_argument("--since-bibcode", default=None,
-                   help="Resume watermark — process bibcodes strictly greater than this.")
-    p.add_argument("--max-papers", type=int, default=None,
-                   help="Cap total papers processed (for sample / smoke runs).")
-    p.add_argument("--min-confidence", type=float, default=DEFAULT_MIN_CONFIDENCE,
-                   help=f"Cue confidence floor for emitted mentions "
-                        f"(default: {DEFAULT_MIN_CONFIDENCE}).")
-    p.add_argument("--dry-run", action="store_true",
-                   help="Detect and count but skip all DB writes (smoke / yield estimate).")
-    p.add_argument("--allow-prod", action="store_true",
-                   help="Required to write to the production DSN.")
-    p.add_argument("--include-closed", action="store_true",
-                   help="Process closed-access papers too (default: OA/preprint only).")
+    p.add_argument(
+        "--batch-size", type=int, default=500, help="Papers per cursor batch (default: 500)."
+    )
+    p.add_argument(
+        "--since-bibcode",
+        default=None,
+        help="Resume watermark — process bibcodes strictly greater than this.",
+    )
+    p.add_argument(
+        "--max-papers",
+        type=int,
+        default=None,
+        help="Cap total papers processed (for sample / smoke runs).",
+    )
+    p.add_argument(
+        "--min-confidence",
+        type=float,
+        default=DEFAULT_MIN_CONFIDENCE,
+        help=f"Cue confidence floor for emitted mentions " f"(default: {DEFAULT_MIN_CONFIDENCE}).",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Detect and count but skip all DB writes (smoke / yield estimate).",
+    )
+    p.add_argument(
+        "--allow-prod", action="store_true", help="Required to write to the production DSN."
+    )
+    p.add_argument(
+        "--include-closed",
+        action="store_true",
+        help="Process closed-access papers too (default: OA/preprint only).",
+    )
     p.add_argument("--dsn", default=None, help="Database DSN; defaults to SCIX_DSN.")
     p.add_argument("-v", "--verbose", action="store_true")
     return p
@@ -189,8 +211,12 @@ def main(argv: list[str] | None = None) -> int:
     logger.info(
         "Lafia informal-reference pass on %s "
         "(dry_run=%s, since=%s, max=%s, min_conf=%.2f, oa_only=%s)",
-        redact_dsn(dsn), args.dry_run, args.since_bibcode,
-        args.max_papers, args.min_confidence, not args.include_closed,
+        redact_dsn(dsn),
+        args.dry_run,
+        args.since_bibcode,
+        args.max_papers,
+        args.min_confidence,
+        not args.include_closed,
     )
     if args.include_closed:
         logger.warning(
@@ -216,7 +242,9 @@ def main(argv: list[str] | None = None) -> int:
     logger.info(
         "DONE: papers_seen=%d papers_with_mentions=%d rows_written=%d "
         "(%.3f rows/paper, %.1f%% papers hit)",
-        totals["papers_seen"], totals["papers_with_mentions"], totals["rows_written"],
+        totals["papers_seen"],
+        totals["papers_with_mentions"],
+        totals["rows_written"],
         totals["rows_written"] / seen,
         100.0 * totals["papers_with_mentions"] / seen,
     )

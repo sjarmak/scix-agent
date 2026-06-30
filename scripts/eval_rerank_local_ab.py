@@ -747,7 +747,9 @@ def write_outputs(
     md_lines.append(
         "| Config | nDCG@10 | Recall@10 | Recall@20 | MRR | P@10 | p50 rerank ms | p95 rerank ms |"
     )
-    md_lines.append("|--------|---------|-----------|-----------|-----|------|---------------|---------------|")
+    md_lines.append(
+        "|--------|---------|-----------|-----------|-----|------|---------------|---------------|"
+    )
     for name in CONFIGS:
         s = summaries[name]
         md_lines.append(

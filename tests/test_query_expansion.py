@@ -1,4 +1,4 @@
-"""Tests for src/scix/query_expansion.py (PRD §S3)."""
+"""Tests for src/scix/eval/query_expansion.py (PRD §S3)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import time
 import numpy as np
 import pytest
 
-from scix import query_expansion as qx
+from scix.eval import query_expansion as qx
 
 
 def test_expand_deterministic_for_same_input() -> None:

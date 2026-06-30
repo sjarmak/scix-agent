@@ -429,11 +429,14 @@ the shape:
 }
 ```
 
-Agents branch on `error_code`. Humans read `error`. Generic exception
-wrappers (`{"error": "<exc str>"}` returned from `call_tool` and
-lazy-import paths) are deliberately **out of scope** — they are
-last-resort surfaces and agents are expected to retry or escalate, not
-branch on them.
+Agents branch on `error_code`. Humans read `error`. As of bead
+`scix_experiments-ir2h` the catalog is **closed and exhaustive**: every
+error return on the tool surface carries an `error_code`, so a consumer
+can branch on the field without a code-free path slipping through. The
+generic last-resort wrapper in `call_tool` (an unexpected exception that
+escaped a handler) carries `internal_error` — agents are expected to
+retry or escalate on that one rather than branch on a specific failure
+mode.
 
 ### Stable error_code registry
 
@@ -446,14 +449,35 @@ branch on them.
 | `invalid_mode` | `citation_traverse` | `mode` value is not `'graph'` / `'chain'` |
 | `invalid_direction` | `citation_traverse` (graph mode) | `direction` value is not `'forward'` / `'backward'` / `'both'` |
 | `invalid_method` | `citation_similarity` | `method` value is not `'co_citation'` / `'coupling'` |
-| `invalid_filters` | `chunk_search` | `filters` cannot be normalized (typo, wrong type) |
+| `invalid_filters` | `search`, `facet_counts`, `section_retrieval`, `chunk_search` | `filters` cannot be normalized / parsed (typo, wrong type) |
 | `invalid_scope` | `claim_blame`, `find_replications` | `scope` payload fails `scope_from_dict` validation |
-| `invalid_limit` | `claim_search` | `limit` parameter is not coercible to `int` |
+| `invalid_limit` | `claim_search`, `chunk_search` | `limit` parameter is not coercible to `int` |
+| `invalid_param_type` | many (`entity`, `synthesize_findings`, `section_retrieval`, claims tools, …) | a parameter has the wrong JSON type (e.g. `sources` not a list, `k` not an int, a flag not a bool) |
+| `invalid_param_value` | many (`entity`, `find_gaps`, `find_replications`, `facet_counts`, `temporal_evolution`, `graph_context`, claims tools, …) | a parameter is the right type but an out-of-range / non-enumerated value |
+| `entity_legacy_extraction_type` | `entity` | caller passes a retired extraction-row `entity_type` (`negative_result` / `quant_claim`) |
+| `community_expand_no_seed` | `search` (community-expand lane) | community_expand could not derive a single seed entity |
+| `seed_too_broad` | `search` (community-expand lane) | the resolved seed entity is too broad to expand |
+| `unscoped_broad_query` | `search` | unscoped broad query blocked by the upfront guard |
+| `unknown_tool` | dispatch | the tool name is not registered |
+| `tool_removed` | dispatch | the tool was retired (e.g. `find_similar_by_examples`) |
+| `dependency_missing` | `search` (semantic), `section_retrieval` | an optional embedding dependency (transformers/torch, sentence-transformers) is not installed |
+| `vector_index_unavailable` | `search` (semantic) | no ANN index is built yet for the model |
+| `qdrant_disabled` | `chunk_search` | the Qdrant backend is not configured (`QDRANT_URL` unset) |
+| `encode_failed` | `chunk_search`, `section_retrieval` | query embedding failed at the boundary |
+| `qdrant_failed` | `chunk_search` | the Qdrant ANN query raised |
+| `dense_retrieve_failed` | `section_retrieval` | the dense leg raised |
+| `bm25_retrieve_failed` | `section_retrieval` | the BM25 leg raised |
+| `internal_error` | `call_tool` (last-resort wrapper) | an unexpected exception escaped a handler — retry / escalate, don't branch on the specific cause |
 
-The pinning tests in `tests/test_mcp_error_envelopes.py` enforce this
-table — adding a new error_code requires both a row above AND an
-assertion in that test file. The test asserts both presence of the row
-above and the assertion in lockstep.
+The closed catalog is defined in `src/scix/mcp_errors.py`
+(`ErrorCode` constants + the derived `CATALOG` frozenset). The pinning
+tests in `tests/test_mcp_error_envelopes.py` enforce it: the
+per-error assertions pin specific codes, `test_documented_error_codes_in_audit_doc`
+pins the documented subset against this table, and
+`test_every_emitted_error_code_is_in_the_closed_catalog` scans the
+server source so no code-free error return or off-catalog literal can
+land. Adding a new error_code requires a constant in `mcp_errors.py`, a
+row above, and (for documented codes) an assertion in the test file.
 
 ### Why error_code is a separate field from error
 

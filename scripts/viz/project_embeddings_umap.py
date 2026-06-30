@@ -221,9 +221,7 @@ def _stratified_sample_sql(resolution: str) -> str:
     Python never has to materialise the full paper_embeddings join.
     """
     if resolution not in COMMUNITY_COLUMNS:
-        raise ValueError(
-            f"unknown resolution {resolution!r}; must be one of {RESOLUTIONS}"
-        )
+        raise ValueError(f"unknown resolution {resolution!r}; must be one of {RESOLUTIONS}")
     column = COMMUNITY_COLUMNS[resolution]
     # Column name comes from the hard-coded allowlist — safe to interpolate.
     return (
@@ -263,9 +261,7 @@ def _coerce_embedding(raw: object) -> np.ndarray:
     else:
         raise TypeError(f"unsupported embedding payload type: {type(raw).__name__}")
     if arr.shape != (_EMBEDDING_DIM,):
-        raise ValueError(
-            f"expected {_EMBEDDING_DIM}-d embedding, got shape {arr.shape}"
-        )
+        raise ValueError(f"expected {_EMBEDDING_DIM}-d embedding, got shape {arr.shape}")
     return arr
 
 
@@ -282,9 +278,7 @@ def load_embeddings_from_db(
     Raises ValueError if ``resolution`` is not in the allowlist.
     """
     if resolution not in COMMUNITY_COLUMNS:
-        raise ValueError(
-            f"unknown resolution {resolution!r}; must be one of {RESOLUTIONS}"
-        )
+        raise ValueError(f"unknown resolution {resolution!r}; must be one of {RESOLUTIONS}")
     if sample_size <= 0:
         raise ValueError(f"sample_size must be > 0, got {sample_size}")
 
@@ -313,9 +307,7 @@ def load_embeddings_from_db(
                 for bibcode, embedding, community_id in batch:
                     bibcodes.append(str(bibcode))
                     embedding_rows.append(_coerce_embedding(embedding))
-                    community_ids.append(
-                        int(community_id) if community_id is not None else None
-                    )
+                    community_ids.append(int(community_id) if community_id is not None else None)
 
     if not embedding_rows:
         logger.warning("DB sample returned zero rows")
@@ -397,9 +389,7 @@ def project(embeddings: np.ndarray, backend: UMAPBackend) -> np.ndarray:
     Handles cuML's cupy-array return by calling ``.get()`` when present.
     """
     if embeddings.ndim != 2 or embeddings.shape[1] != _EMBEDDING_DIM:
-        raise ValueError(
-            f"embeddings must be (n, {_EMBEDDING_DIM}); got {embeddings.shape}"
-        )
+        raise ValueError(f"embeddings must be (n, {_EMBEDDING_DIM}); got {embeddings.shape}")
     if embeddings.shape[0] == 0:
         return np.empty((0, 2), dtype=np.float32)
 
@@ -426,9 +416,7 @@ def build_points(
 ) -> tuple[ProjectedPoint, ...]:
     """Assemble immutable ProjectedPoint tuples from projection outputs."""
     if resolution not in COMMUNITY_COLUMNS:
-        raise ValueError(
-            f"unknown resolution {resolution!r}; must be one of {RESOLUTIONS}"
-        )
+        raise ValueError(f"unknown resolution {resolution!r}; must be one of {RESOLUTIONS}")
     if not (len(bibcodes) == xy.shape[0] == len(community_ids)):
         raise ValueError(
             "mismatched lengths: "
@@ -538,10 +526,7 @@ def write_to_db(dsn: str, points: Sequence[ProjectedPoint]) -> int:
 
     import psycopg  # lazy
 
-    rows = [
-        (p.bibcode, p.x, p.y, p.community_id, p.resolution)
-        for p in points
-    ]
+    rows = [(p.bibcode, p.x, p.y, p.community_id, p.resolution) for p in points]
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.executemany(_UPSERT_SQL, rows)

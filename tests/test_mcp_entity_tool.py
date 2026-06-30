@@ -179,11 +179,7 @@ def _invoke_search(
 
 def _ours(result: dict[str, Any]) -> list[dict[str, Any]]:
     """Return only rows belonging to this test fixture's bibcode namespace."""
-    return [
-        p
-        for p in result["papers"]
-        if p["bibcode"].startswith(_TEST_BIBCODE_PREFIX)
-    ]
+    return [p for p in result["papers"] if p["bibcode"].startswith(_TEST_BIBCODE_PREFIX)]
 
 
 @pytest.mark.integration
@@ -194,8 +190,7 @@ def test_no_filter_returns_all_seeded_rows(
     result = _invoke_search(entity_conn)
     ours = _ours(result)
     assert len(ours) == len(_SEED_ROWS), (
-        f"expected {len(_SEED_ROWS)} rows, got {len(ours)}: "
-        f"{[p['bibcode'] for p in ours]}"
+        f"expected {len(_SEED_ROWS)} rows, got {len(ours)}: " f"{[p['bibcode'] for p in ours]}"
     )
 
 
@@ -217,9 +212,7 @@ def test_sources_multiple_returns_union(
     """AC5 (part 2): sources=['metadata','ner'] returns the union."""
     result = _invoke_search(entity_conn, sources=["metadata", "ner"])
     ours = _ours(result)
-    expected_count = sum(
-        1 for r in _SEED_ROWS if r["source"] in {"metadata", "ner"}
-    )
+    expected_count = sum(1 for r in _SEED_ROWS if r["source"] in {"metadata", "ner"})
     assert len(ours) == expected_count == 4
 
 
@@ -230,9 +223,7 @@ def test_min_confidence_tier_filters_to_high_only(
     """AC3: min_confidence_tier=3 returns only high-tier rows."""
     result = _invoke_search(entity_conn, min_confidence_tier=3)
     ours = _ours(result)
-    expected_count = sum(
-        1 for r in _SEED_ROWS if r["confidence_tier"] == "high"
-    )
+    expected_count = sum(1 for r in _SEED_ROWS if r["confidence_tier"] == "high")
     assert len(ours) == expected_count == 2
 
 
@@ -243,11 +234,7 @@ def test_min_confidence_tier_2_keeps_medium_and_high(
     """AC3: min_confidence_tier=2 returns medium+high rows."""
     result = _invoke_search(entity_conn, min_confidence_tier=2)
     ours = _ours(result)
-    expected_count = sum(
-        1
-        for r in _SEED_ROWS
-        if r["confidence_tier"] in {"medium", "high"}
-    )
+    expected_count = sum(1 for r in _SEED_ROWS if r["confidence_tier"] in {"medium", "high"})
     assert len(ours) == expected_count == 4
 
 
@@ -266,8 +253,7 @@ def test_combined_filters_narrow_further(
     expected_count = sum(
         1
         for r in _SEED_ROWS
-        if r["source"] in {"metadata", "ner"}
-        and r["confidence_tier"] == "high"
+        if r["source"] in {"metadata", "ner"} and r["confidence_tier"] == "high"
     )
     assert len(ours) == expected_count == 2
 
@@ -289,9 +275,7 @@ def _get_entity_tool_schema() -> dict[str, Any]:
     handler = server.request_handlers[ListToolsRequest]
     loop = asyncio.new_event_loop()
     try:
-        result = loop.run_until_complete(
-            handler(ListToolsRequest(method="tools/list"))
-        )
+        result = loop.run_until_complete(handler(ListToolsRequest(method="tools/list")))
     finally:
         loop.close()
     tools = result.root.tools if hasattr(result, "root") else result.tools

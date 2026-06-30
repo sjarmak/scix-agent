@@ -166,8 +166,7 @@ def test_grounded_true_when_substring_matches() -> None:
     tool_results = [
         {
             "quote": (
-                "Our SH0ES analysis: We measure H0 = 73.0 km/s/Mpc. "
-                "This uses Cepheid distances."
+                "Our SH0ES analysis: We measure H0 = 73.0 km/s/Mpc. " "This uses Cepheid distances."
             )
         },
     ]
@@ -205,8 +204,7 @@ def test_grounded_true_via_paraphrase() -> None:
 def test_grounded_false_when_unsupported() -> None:
     """An assertion absent from the tool results is unmatched."""
     draft = (
-        "The Planck collaboration reports H0 = 67.4 km/s/Mpc. "
-        "Aliens built the pyramids in 2024."
+        "The Planck collaboration reports H0 = 67.4 km/s/Mpc. " "Aliens built the pyramids in 2024."
     )
     tool_results = [
         {"quote": "Planck collaboration reports H0 = 67.4 km/s/Mpc from CMB."},
@@ -247,12 +245,8 @@ def test_revise_with_gate_halts_at_max_revisions() -> None:
 def test_revise_with_gate_succeeds_within_budget() -> None:
     """If a revision substantiates the draft, the loop exits early."""
     initial_draft = "The wombat invented relativity in 1905."
-    fixed_draft = (
-        "Einstein published the special theory of relativity in 1905."
-    )
-    tool_results = [
-        {"text": "Einstein published the special theory of relativity in 1905."}
-    ]
+    fixed_draft = "Einstein published the special theory of relativity in 1905."
+    tool_results = [{"text": "Einstein published the special theory of relativity in 1905."}]
     dispatcher = FakeRevisionDispatcher([fixed_draft])
 
     result = revise_with_gate(

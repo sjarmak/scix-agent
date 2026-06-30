@@ -65,8 +65,8 @@ MOCK_FIXTURE: dict[str, Any] = {
             "tool_name": "concept_search",
             "text": (
                 f"Top hit: {_RIESS_2011} — Riess et al. 2011, "
-                "\"Our value of H0 is 2.4 sigma higher than the value "
-                "derived from WMAP+BAO+SN.\""
+                '"Our value of H0 is 2.4 sigma higher than the value '
+                'derived from WMAP+BAO+SN."'
             ),
         },
         {
@@ -174,18 +174,12 @@ def test_flagship_h0_tension(run_flagship: Any) -> None:
     )
 
     # (b) >=3 SH0ES papers, >=2 Planck/CMB papers
-    sh0es_in_answer = [
-        b for b in MOCK_FIXTURE["expected_sh0es_bibcodes"] if b in bibs_in_answer
-    ]
-    planck_in_answer = [
-        b for b in MOCK_FIXTURE["expected_planck_bibcodes"] if b in bibs_in_answer
-    ]
-    assert len(sh0es_in_answer) >= 3, (
-        f"expected >=3 SH0ES papers in answer, got {sh0es_in_answer}"
-    )
-    assert len(planck_in_answer) >= 2, (
-        f"expected >=2 Planck/CMB papers in answer, got {planck_in_answer}"
-    )
+    sh0es_in_answer = [b for b in MOCK_FIXTURE["expected_sh0es_bibcodes"] if b in bibs_in_answer]
+    planck_in_answer = [b for b in MOCK_FIXTURE["expected_planck_bibcodes"] if b in bibs_in_answer]
+    assert len(sh0es_in_answer) >= 3, f"expected >=3 SH0ES papers in answer, got {sh0es_in_answer}"
+    assert (
+        len(planck_in_answer) >= 2
+    ), f"expected >=2 Planck/CMB papers in answer, got {planck_in_answer}"
 
     # (c) Every claim citation_grounded=True
     assert_all_claims_grounded(
@@ -194,15 +188,13 @@ def test_flagship_h0_tension(run_flagship: Any) -> None:
     )
 
     # (d) <=25 tool turns (A2 amendment)
-    assert result.metadata.n_turns <= 25, (
-        f"n_turns={result.metadata.n_turns} exceeds 25-turn budget"
-    )
-    assert not result.metadata.truncated, (
-        "fixture should fit under 25 turns without truncation"
-    )
+    assert (
+        result.metadata.n_turns <= 25
+    ), f"n_turns={result.metadata.n_turns} exceeds 25-turn budget"
+    assert not result.metadata.truncated, "fixture should fit under 25 turns without truncation"
 
     # (e) No retracted paper cited as clean source
     for retracted in MOCK_FIXTURE["retracted_bibcodes"]:
-        assert retracted not in answer, (
-            f"retracted bibcode {retracted} appears in answer as clean source"
-        )
+        assert (
+            retracted not in answer
+        ), f"retracted bibcode {retracted} appears in answer as clean source"

@@ -144,8 +144,7 @@ class TestCalibrationRun:
         # Stub that picks opposite extreme
         class _WrongDispatcher:
             async def judge(self, triple: JudgeTriple) -> JudgeScore:
-                return JudgeScore(score=3 if triple.bibcode in {"B1", "B3"} else 0,
-                                  reason="wrong")
+                return JudgeScore(score=3 if triple.bibcode in {"B1", "B3"} else 0, reason="wrong")
 
         report = calibrate_judge.run_calibration(
             seed_path=seed,

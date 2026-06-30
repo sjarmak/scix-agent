@@ -473,9 +473,7 @@ def _process_batch(
     vectors = encode_batch(model, texts_for_encode, dimensions=dimensions)
 
     if len(vectors) != len(survivors):
-        raise RuntimeError(
-            f"Encoder returned {len(vectors)} vectors for {len(survivors)} inputs"
-        )
+        raise RuntimeError(f"Encoder returned {len(vectors)} vectors for {len(survivors)} inputs")
 
     write_rows: list[tuple[str, int, str, str, Sequence[float]]] = [
         (bibcode, idx, heading, sha, vec)
@@ -494,8 +492,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logger.info(
-        "section-embed start: model=%s dims=%d batch=%d range=[%s, %s] "
-        "dry_run=%s oa_only=%s",
+        "section-embed start: model=%s dims=%d batch=%d range=[%s, %s] " "dry_run=%s oa_only=%s",
         args.model,
         args.dimensions,
         args.batch_size,

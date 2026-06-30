@@ -38,7 +38,7 @@ def test_streamgraph_html_has_required_containers() -> None:
     assert soup.find(id="stream-panel") is not None
     assert soup.find(id="stream-stats") is not None
     # Shared CSS + JS bundles.
-    links = [l.get("href") or "" for l in soup.find_all("link")]
+    links = [tag.get("href") or "" for tag in soup.find_all("link")]
     assert any(h.endswith("shared.css") for h in links), f"missing shared.css link; {links!r}"
     srcs = [s.get("src") or "" for s in soup.find_all("script") if s.get("src")]
     assert any(s.endswith("shared.js") for s in srcs), f"missing shared.js; {srcs!r}"
@@ -51,9 +51,9 @@ def test_streamgraph_js_has_render_symbol() -> None:
     assert "renderStreamgraph" in js
     # Color must come through the shared resolution-aware palette so the
     # streamgraph stays in sync with the UMAP and ego views.
-    assert "scx.colorForCommunity" in js, (
-        "streamgraph.js should resolve colors via window.scixViz.colorForCommunity"
-    )
+    assert (
+        "scx.colorForCommunity" in js
+    ), "streamgraph.js should resolve colors via window.scixViz.colorForCommunity"
     # Streamgraph offset + insideOut order are the two D3 calls that
     # distinguish a streamgraph from an ordinary stacked area.
     assert "stackOffsetWiggle" in js

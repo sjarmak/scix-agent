@@ -139,6 +139,8 @@ def format_sync_status(statuses: list[SourceStatus]) -> str:
         cadence_str = f"{int(s.cadence.total_seconds() // 3600)}h"
         status_str = "STALE" if s.is_stale else "OK"
         next_str = s.next_sync.strftime("%Y-%m-%d %H:%M UTC") if s.next_sync else "now"
-        lines.append(f"{s.source:<20} {last_str:<22} {cadence_str:<10} {status_str:<8} {next_str:<22}")
+        lines.append(
+            f"{s.source:<20} {last_str:<22} {cadence_str:<10} {status_str:<8} {next_str:<22}"
+        )
 
     return "\n".join(lines)

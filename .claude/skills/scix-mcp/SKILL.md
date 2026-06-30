@@ -17,15 +17,18 @@ A local-intelligence MCP over the full NASA ADS / SciX corpus (32M papers, 299M 
 - User wants to explore a specific paper's body text (methods, equations buried in full-text)
 - User mentions bibcodes (ADS identifiers like `2019ApJ...875L...1E`)
 
-## Tool Overview (13 tools)
+## Tool Overview (15 agent-visible tools)
 
 | Category | Tools | When to use |
 |----------|-------|-------------|
-| **Search** | `search`, `concept_search` | Find papers by query. Default: `search` (hybrid mode). Use `concept_search` for formal taxonomy terms (UAT concepts). |
+| **Search** | `search`, `concept_search`, `lit_review` | Find papers by query. Default: `search` (hybrid mode). Use `concept_search` for formal taxonomy terms (UAT concepts); `lit_review` to open a seeded review session in one call. |
 | **Paper access** | `get_paper`, `read_paper` | Get full metadata / read sections/body text of a known bibcode. |
-| **Citation graph** | `citation_graph`, `citation_chain`, `citation_similarity` | Neighbors, multi-hop chains, co-citation / bibliographic-coupling similarity. |
-| **Entity system** | `entity`, `entity_context` | Resolve and explore named entities (instruments, methods, datasets, objects). |
+| **Citation graph** | `citation_traverse`, `citation_similarity`, `forward_citations` | `citation_traverse` (mode=`graph` neighbors / `chain` shortest path), co-citation / coupling similarity, and `forward_citations` (papers citing a target, annotated by `intent` or replication `relation`). |
+| **Entity system** | `entity` | Resolve / list-papers / profile named entities (instruments, methods, datasets, objects) via the `action` enum (`resolve` / `papers` / `search` / `profile`). |
 | **Structure** | `graph_context`, `find_gaps`, `temporal_evolution`, `facet_counts` | Community/topic exploration, gap analysis, field-over-time trends. |
+| **Provenance / synthesis** | `claim_blame`, `synthesize_findings` | Trace a claim to its earliest origin; bin a working set into a section outline. |
+
+> Legacy names (`citation_graph`, `citation_chain`, `entity_context`, `cited_by_intent`, `find_replications`, `semantic_search`, …) still resolve as deprecated aliases but are not advertised; prefer the consolidated names above.
 
 ## Typical Workflows
 
@@ -33,10 +36,10 @@ A local-intelligence MCP over the full NASA ADS / SciX corpus (32M papers, 299M 
 ```
 search("dark matter halo mass function", limit=20)
   → pick top-cited bibcodes
-citation_chain(bibcode, direction="references", depth=2)
-  → foundational prior work
-citation_chain(bibcode, direction="citations", depth=2)
-  → recent extensions
+citation_traverse(bibcode, mode="graph", direction="backward")
+  → foundational prior work (references)
+citation_traverse(bibcode, mode="graph", direction="forward")
+  → recent extensions (citing papers)
 ```
 
 ### 2. Body-only discovery (new capability)
@@ -50,9 +53,9 @@ temporal_evolution(author="Hogg, David W.")
 
 ### 4. Entity-driven research
 ```
-entity(action="search", query="JWST NIRSpec")
-entity(action="profile", entity_id=<id>)
-entity_context(entity_id=<id>, action="papers")
+entity(action="resolve", query="JWST NIRSpec")
+entity(action="profile", entity_id=<id>)   # full entity profile (formerly entity_context)
+entity(action="papers", entity_id=<id>)     # papers tagged with the entity
 ```
 
 ### 5. Gap finding

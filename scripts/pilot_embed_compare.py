@@ -137,13 +137,15 @@ def create_pilot_sample(conn: psycopg.Connection, sample_size: int) -> int:
 
     # Log distribution
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT (year / 10) * 10 as decade, count(*) as n,
                    round(avg(citation_count)) as avg_cites
             FROM _pilot_sample
             GROUP BY (year / 10) * 10
             ORDER BY decade
-        """)
+        """
+        )
         for row in cur:
             logger.info(
                 "  %ds: %d papers, avg %s citations",

@@ -9,8 +9,17 @@
 RUFF  ?= ruff
 BLACK ?= black
 PYTEST ?= pytest
+# CI injects a marker filter (e.g. -m "not integration and not network") so the
+# DB/data/model-dependent tests are deselected; local `make check` runs all.
+PYTEST_ARGS ?=
+# Base ref for the changed-files gate (check-ci). The tree carries pre-existing
+# black/ruff debt, so the CI gate lints/format-checks only files changed vs BASE
+# (incremental adoption, same philosophy as the pre-commit hooks). Debt is paid
+# down as files are touched; full-tree `check` stays as the eventual target.
+BASE ?= origin/main
 
-.PHONY: help viz-demo viz-demo-build lint fmt fmt-check test check
+.PHONY: help viz-demo viz-demo-build lint fmt fmt-check test check \
+        lint-changed fmt-check-changed check-ci
 
 help:
 	@echo "SciX experiments — available targets:"
@@ -34,9 +43,22 @@ fmt-check:
 	$(BLACK) --check src/ scripts/ tests/
 
 test:
-	$(PYTEST) -q
+	$(PYTEST) -q $(PYTEST_ARGS)
 
 check: lint fmt-check test
+
+# --- CI gate: lint/format only files changed vs BASE, run the full test suite ---
+lint-changed:
+	@files=$$(git diff --name-only --diff-filter=ACMR $(BASE)...HEAD -- '*.py'); \
+	if [ -z "$$files" ]; then echo "lint-changed: no changed .py files"; \
+	else echo "linting changed: $$files"; $(RUFF) check $$files; fi
+
+fmt-check-changed:
+	@files=$$(git diff --name-only --diff-filter=ACMR $(BASE)...HEAD -- '*.py'); \
+	if [ -z "$$files" ]; then echo "fmt-check-changed: no changed .py files"; \
+	else echo "fmt-checking changed: $$files"; $(BLACK) --check $$files; fi
+
+check-ci: lint-changed fmt-check-changed test
 
 viz-demo:
 	./scripts/viz/run.sh

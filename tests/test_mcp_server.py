@@ -16,12 +16,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scix.mcp_server import (
-    _DEPRECATED_ALIASES,
+    _ALIAS_TRANSFORMS,
     _coerce_year,
     _dispatch_tool,
     _hnsw_index_cache,
     _hnsw_index_exists,
-    _hnsw_index_name,
     _parse_filters,
     _result_to_json,
     _session_state,
@@ -462,18 +461,22 @@ class TestEntityToolSchema:
         for et in ("methods", "datasets", "instruments", "materials"):
             assert et in enum_values, f"{et} dropped from entity_type enum"
 
-    def test_action_enum_distinguishes_three_workflows(self) -> None:
-        """The action enum lists the three distinct workflows the tool
-        supports; the description must distinguish them so an agent can
-        pick correctly."""
+    def test_action_enum_distinguishes_four_workflows(self) -> None:
+        """The action enum lists the distinct workflows the tool supports; the
+        description must distinguish them so an agent can pick correctly.
+
+        Bead 9afa folded the former entity_context tool in as a fourth action
+        ('profile'); the prior three (search / resolve / papers) are unchanged.
+        """
         schema = self._entity_tool_schema()
         action_prop = schema["properties"]["action"]
-        assert set(action_prop["enum"]) == {"search", "resolve", "papers"}
-        # The description should call out all three to steer the agent.
+        assert set(action_prop["enum"]) == {"search", "resolve", "papers", "profile"}
+        # The description should call out all four to steer the agent.
         desc = action_prop["description"].lower()
         assert "resolve" in desc
         assert "papers" in desc
         assert "search" in desc
+        assert "profile" in desc
 
 
 # ---------------------------------------------------------------------------
@@ -830,9 +833,7 @@ class TestEntityDenylistOnGetPaper:
         return conn
 
     @patch("scix.search.get_document_context")
-    def test_denylisted_entity_dropped_from_get_paper(
-        self, mock_fn: MagicMock
-    ) -> None:
+    def test_denylisted_entity_dropped_from_get_paper(self, mock_fn: MagicMock) -> None:
         from scix.search import SearchResult
 
         mock_fn.return_value = SearchResult(
@@ -862,9 +863,7 @@ class TestEntityDenylistOnGetPaper:
         )
 
         result = json.loads(
-            _dispatch_tool(
-                conn, "get_paper", {"bibcode": "2024X", "include_entities": True}
-            )
+            _dispatch_tool(conn, "get_paper", {"bibcode": "2024X", "include_entities": True})
         )
         names = {e["name"] for e in result["papers"][0]["linked_entities"]}
         assert names == {"JWST"}
@@ -875,9 +874,7 @@ class TestEntityDenylistOnResolveAndPapers:
     auto-picked when entity_id is omitted on action='papers'."""
 
     @patch("scix.mcp_server.EntityResolver")
-    def test_resolve_drops_denylisted_candidates(
-        self, mock_resolver_cls: MagicMock
-    ) -> None:
+    def test_resolve_drops_denylisted_candidates(self, mock_resolver_cls: MagicMock) -> None:
         from scix.entity_resolver import EntityCandidate
 
         # Two candidates — one real, one denylisted.
@@ -905,11 +902,7 @@ class TestEntityDenylistOnResolveAndPapers:
         mock_resolver_cls.return_value = mock_resolver
 
         conn = MagicMock()
-        result = json.loads(
-            _dispatch_tool(
-                conn, "entity", {"action": "resolve", "query": "JWST"}
-            )
-        )
+        result = json.loads(_dispatch_tool(conn, "entity", {"action": "resolve", "query": "JWST"}))
         names = {c["canonical_name"] for c in result["candidates"]}
         assert names == {"JWST"}
         assert result["total"] == 1
@@ -970,17 +963,39 @@ class TestEntityDenylistOnResolveAndPapers:
             )
         ]
         cur.description = [
-            MagicMock(name=f) for f in [
-                "bibcode", "link_type", "confidence", "match_method",
-                "evidence", "entity_name", "entity_type", "entity_source",
-                "title", "year", "first_author", "citation_count",
+            MagicMock(name=f)
+            for f in [
+                "bibcode",
+                "link_type",
+                "confidence",
+                "match_method",
+                "evidence",
+                "entity_name",
+                "entity_type",
+                "entity_source",
+                "title",
+                "year",
+                "first_author",
+                "citation_count",
             ]
         ]
-        for d, n in zip(cur.description, [
-            "bibcode", "link_type", "confidence", "match_method",
-            "evidence", "entity_name", "entity_type", "entity_source",
-            "title", "year", "first_author", "citation_count",
-        ]):
+        for d, n in zip(
+            cur.description,
+            [
+                "bibcode",
+                "link_type",
+                "confidence",
+                "match_method",
+                "evidence",
+                "entity_name",
+                "entity_type",
+                "entity_source",
+                "title",
+                "year",
+                "first_author",
+                "citation_count",
+            ],
+        ):
             d.name = n
         conn.cursor.return_value = cur
 
@@ -1073,9 +1088,7 @@ class TestFindGaps:
         conn.cursor.return_value = cur
 
         with caplog.at_level("DEBUG", logger="scix.mcp_server"):
-            result = json.loads(
-                _dispatch_tool(conn, "find_gaps", {"query": "dark matter halos"})
-            )
+            result = json.loads(_dispatch_tool(conn, "find_gaps", {"query": "dark matter halos"}))
 
         # Graceful fall-through to the no-papers branch.
         assert result["total"] == 0
@@ -1083,11 +1096,11 @@ class TestFindGaps:
 
         # The swallowed exception was logged at DEBUG with a traceback.
         seed_logs = [
-            r
-            for r in caplog.records
-            if "auto-seed" in r.message and r.levelname == "DEBUG"
+            r for r in caplog.records if "auto-seed" in r.message and r.levelname == "DEBUG"
         ]
-        assert seed_logs, f"expected DEBUG auto-seed log; got: {[r.message for r in caplog.records]}"
+        assert (
+            seed_logs
+        ), f"expected DEBUG auto-seed log; got: {[r.message for r in caplog.records]}"
         assert seed_logs[0].exc_info is not None, "auto-seed log must carry exc_info"
 
 
@@ -1105,7 +1118,7 @@ class TestSessionToolsRemoved:
             "get_session_summary",
             "clear_working_set",
         ]:
-            assert old_name in _DEPRECATED_ALIASES
+            assert old_name in _ALIAS_TRANSFORMS
 
 
 # ---------------------------------------------------------------------------
@@ -1143,19 +1156,19 @@ class TestDeprecatedAliases:
 
     def test_all_deprecated_aliases_log_original(self) -> None:
         """AC19: verify all deprecated aliases exist and map correctly."""
-        assert "semantic_search" in _DEPRECATED_ALIASES
-        assert "keyword_search" in _DEPRECATED_ALIASES
-        assert "get_citations" in _DEPRECATED_ALIASES
-        assert "get_references" in _DEPRECATED_ALIASES
-        assert "co_citation_analysis" in _DEPRECATED_ALIASES
-        assert "bibliographic_coupling" in _DEPRECATED_ALIASES
-        assert "entity_search" in _DEPRECATED_ALIASES
-        assert "resolve_entity" in _DEPRECATED_ALIASES
+        assert "semantic_search" in _ALIAS_TRANSFORMS
+        assert "keyword_search" in _ALIAS_TRANSFORMS
+        assert "get_citations" in _ALIAS_TRANSFORMS
+        assert "get_references" in _ALIAS_TRANSFORMS
+        assert "co_citation_analysis" in _ALIAS_TRANSFORMS
+        assert "bibliographic_coupling" in _ALIAS_TRANSFORMS
+        assert "entity_search" in _ALIAS_TRANSFORMS
+        assert "resolve_entity" in _ALIAS_TRANSFORMS
 
     def test_health_check_not_deprecated(self) -> None:
         """health_check must NOT be tagged deprecated (it is an internal tool,
         not a renamed tool)."""
-        assert "health_check" not in _DEPRECATED_ALIASES
+        assert "health_check" not in _ALIAS_TRANSFORMS
 
 
 class TestEntityProfileLegacy:
@@ -1223,17 +1236,15 @@ class TestHnswIndexGuard:
     def teardown_method(self) -> None:
         _hnsw_index_cache.clear()
 
-    def test_index_name_convention(self) -> None:
-        assert _hnsw_index_name("indus") == "idx_embed_hnsw_indus"
-        assert _hnsw_index_name("specter2") == "idx_embed_hnsw_specter2"
-
     def test_vector_index_names_includes_hnsw_and_diskann(self) -> None:
         # The dense lane is served by either the legacy HNSW index or the
-        # pgvectorscale DiskANN index; the gate must accept both.
+        # pgvectorscale DiskANN index; the gate must accept both. This also
+        # pins the per-model HNSW name convention (idx_embed_hnsw_<model>).
         assert _vector_index_names("indus") == (
             "idx_embed_hnsw_indus",
             "idx_embed_diskann_indus",
         )
+        assert _vector_index_names("specter2")[0] == "idx_embed_hnsw_specter2"
 
     def test_gate_queries_both_index_names(self) -> None:
         # Regression: after the DiskANN cutover the gate must look for the
@@ -1291,9 +1302,7 @@ class TestHnswIndexGuard:
         mock_conn.cursor.assert_not_called()
 
     @patch("scix.search._qdrant_dense_url", return_value="http://localhost:6633")
-    def test_qdrant_short_circuit_only_for_known_collections(
-        self, _mock_url: MagicMock
-    ) -> None:
+    def test_qdrant_short_circuit_only_for_known_collections(self, _mock_url: MagicMock) -> None:
         # Unknown models fall through to the pg path even when QDRANT_URL is set.
         mock_conn = self._mock_conn_with_index(exists=False)
         assert _hnsw_index_exists(mock_conn, "unknown_model") is False

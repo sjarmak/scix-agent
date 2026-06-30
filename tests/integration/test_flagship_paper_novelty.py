@@ -64,10 +64,10 @@ MOCK_FIXTURE: dict[str, Any] = {
             "type": "tool_result",
             "tool_name": "get_paper",
             "text": (
-                f"{SEED_BIBCODE} — title: \"A new ML method for galaxy "
-                "morphological classification.\" Abstract: \"We introduce "
+                f'{SEED_BIBCODE} — title: "A new ML method for galaxy '
+                'morphological classification." Abstract: "We introduce '
                 "a transformer-based architecture that improves over prior "
-                "CNN approaches.\""
+                'CNN approaches."'
             ),
         },
         {
@@ -79,9 +79,9 @@ MOCK_FIXTURE: dict[str, Any] = {
             "type": "tool_result",
             "tool_name": "read_paper",
             "text": (
-                f"{SEED_BIBCODE} body §1: \"Our novelty is the use of "
+                f'{SEED_BIBCODE} body §1: "Our novelty is the use of '
                 "self-attention over patches of the spectroscopic feature "
-                "map, which prior CNN-based work cannot exploit.\""
+                'map, which prior CNN-based work cannot exploit."'
             ),
         },
         {
@@ -177,8 +177,7 @@ def test_flagship_paper_novelty(run_flagship: Any) -> None:
 
     # (2) Seed paper cited
     assert MOCK_FIXTURE["expected_seed_bibcode"] in answer, (
-        f"seed bibcode {MOCK_FIXTURE['expected_seed_bibcode']} "
-        "not present in answer"
+        f"seed bibcode {MOCK_FIXTURE['expected_seed_bibcode']} " "not present in answer"
     )
 
     # (3) ≥3 prior-art bibcodes (distinct from seed)
@@ -199,15 +198,15 @@ def test_flagship_paper_novelty(run_flagship: Any) -> None:
 
     # (1) Novelty + contested-elements language present
     answer_lower = answer.lower()
-    assert any(t in answer_lower for t in ("novel", "novelty")), (
-        "answer must surface the paper's novelty"
-    )
-    assert any(t in answer_lower for t in ("contested", "ablated", "limitation")), (
-        "answer must surface a contested or limiting element"
-    )
+    assert any(
+        t in answer_lower for t in ("novel", "novelty")
+    ), "answer must surface the paper's novelty"
+    assert any(
+        t in answer_lower for t in ("contested", "ablated", "limitation")
+    ), "answer must surface a contested or limiting element"
 
     # (4) ≤25 tool turns
-    assert result.metadata.n_turns <= 25, (
-        f"n_turns={result.metadata.n_turns} exceeds 25-turn budget"
-    )
+    assert (
+        result.metadata.n_turns <= 25
+    ), f"n_turns={result.metadata.n_turns} exceeds 25-turn budget"
     assert not result.metadata.truncated

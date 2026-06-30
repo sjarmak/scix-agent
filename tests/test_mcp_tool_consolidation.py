@@ -9,7 +9,7 @@ This pass:
    as full first-class tools (they were missed by the original audit).
 
 Final active tool count is 15. The deprecated names ``citation_graph``
-and ``citation_chain`` continue to work via the ``_DEPRECATED_ALIASES``
+and ``citation_chain`` continue to work via the ``_ALIAS_TRANSFORMS``
 shim and arrive at the new handler with the appropriate ``mode``
 injected.
 """
@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scix.mcp_server import (
-    _DEPRECATED_ALIASES,
+    _ALIAS_TRANSFORMS,
     EXPECTED_TOOLS,
     _dispatch_consolidated,
     _dispatch_tool,
@@ -354,10 +354,10 @@ class TestCitationTraverseStructuredValidation:
 
 class TestDeprecatedCitationAliases:
     def test_citation_graph_in_deprecated_aliases(self) -> None:
-        assert _DEPRECATED_ALIASES["citation_graph"] == "citation_traverse"
+        assert _ALIAS_TRANSFORMS["citation_graph"].target == "citation_traverse"
 
     def test_citation_chain_in_deprecated_aliases(self) -> None:
-        assert _DEPRECATED_ALIASES["citation_chain"] == "citation_traverse"
+        assert _ALIAS_TRANSFORMS["citation_chain"].target == "citation_traverse"
 
     @patch("scix.mcp_server._log_query")
     @patch("scix.search.get_citations")
@@ -446,7 +446,7 @@ class TestFindSimilarByExamplesRetired:
 
     def test_not_in_deprecated_aliases(self) -> None:
         """find_similar_by_examples is hard-removed, not renamed."""
-        assert "find_similar_by_examples" not in _DEPRECATED_ALIASES
+        assert "find_similar_by_examples" not in _ALIAS_TRANSFORMS
 
     def test_not_in_expected_tool_set(self) -> None:
         assert "find_similar_by_examples" not in _expected_tool_set()
@@ -454,20 +454,30 @@ class TestFindSimilarByExamplesRetired:
 
 
 # ---------------------------------------------------------------------------
-# AC6: list_tools count is exactly 21 and contains the expected names
+# AC6: list_tools count and contents.
+#
+# Bead 9afa (Option A, docs/mcp_tool_audit_2026-06.md §6A): EXPECTED_TOOLS
+# dropped to 19 by folding entity_context -> entity(action='profile') and
+# merging cited_by_intent + find_replications -> forward_citations. The
+# agent-visible surface is back at the ADR-pinned cap of 15 (19 registered
+# minus the 4 default-hidden claims/section tools).
 # ---------------------------------------------------------------------------
 
 
 class TestListToolsCount:
-    def test_expected_tools_has_21_entries(self) -> None:
-        # Subsequent PRDs grew the list past the original 15: section_retrieval
-        # (section-embeddings-mcp-consolidation) + 2 paper_claims retrieval
-        # tools (nanopub-claim-extraction) + cited_by_intent (structural
-        # citation lookup) + synthesize_findings (bead cfh9) + claim_search
-        # (bead c996, default-hidden until extractions table is populated).
-        # Final = 21.
-        assert len(EXPECTED_TOOLS) == 21
-        assert len(set(EXPECTED_TOOLS)) == 21  # no duplicates
+    def test_expected_tools_has_19_entries(self) -> None:
+        assert len(EXPECTED_TOOLS) == 19
+        assert len(set(EXPECTED_TOOLS)) == 19  # no duplicates
+
+    def test_visible_surface_at_or_below_cap(self) -> None:
+        """Agent-visible surface must equal the ADR-pinned cap of 15."""
+        from scix.mcp_server import VISIBLE_TOOL_CAP, _expected_tool_set
+
+        visible = _expected_tool_set()
+        assert len(visible) <= VISIBLE_TOOL_CAP
+        assert VISIBLE_TOOL_CAP == 15
+        # Default config (no SCIX_HIDDEN_TOOLS override) lands exactly at 15.
+        assert len(visible) == 15
 
     def test_expected_tools_contains_citation_traverse(self) -> None:
         assert "citation_traverse" in EXPECTED_TOOLS
@@ -476,23 +486,29 @@ class TestListToolsCount:
         assert "citation_graph" not in EXPECTED_TOOLS
         assert "citation_chain" not in EXPECTED_TOOLS
 
-    def test_expected_tools_contains_audit_missed_keeps(self) -> None:
-        """The 3 tools the original audit missed: 2 keeps + 1 retirement."""
+    def test_merged_and_folded_tools(self) -> None:
+        """Bead 9afa: forward_citations replaces the two forward-citation tools;
+        entity_context is folded into entity. The retired names live only as
+        deprecated aliases, not in EXPECTED_TOOLS."""
+        assert "forward_citations" in EXPECTED_TOOLS
         assert "claim_blame" in EXPECTED_TOOLS
-        assert "find_replications" in EXPECTED_TOOLS
-        # find_similar_by_examples is the retirement.
+        # Retired surface names: gone from EXPECTED_TOOLS, present as aliases.
+        for retired in ("cited_by_intent", "find_replications", "entity_context"):
+            assert retired not in EXPECTED_TOOLS
+            assert retired in _ALIAS_TRANSFORMS
+        assert _ALIAS_TRANSFORMS["cited_by_intent"].guidance == "forward_citations"
+        assert _ALIAS_TRANSFORMS["find_replications"].guidance == "forward_citations"
+        assert _ALIAS_TRANSFORMS["entity_context"].guidance == "entity"
+        # find_similar_by_examples remains retired (no alias, hard-removed).
         assert "find_similar_by_examples" not in EXPECTED_TOOLS
 
-    def test_list_tools_returns_21_via_self_test(self) -> None:
-        """Round-trip through startup_self_test: registers exactly 21 tools.
+    def test_list_tools_visible_via_self_test(self) -> None:
+        """Round-trip through startup_self_test: visible surface == derived set.
 
-        EXPECTED_TOOLS has 21 entries, but list_tools() drops the
-        ``_HIDDEN_TOOLS`` set (default: section_retrieval, read_paper_claims,
-        find_claims, claim_search — backing data not yet populated). The
-        visible tool count equals ``len(_expected_tool_set())``, which
-        collapses to 17 with the defaults above. Test against that derived
-        expectation rather than a hardcoded number so future hide/unhide
-        changes don't churn this test.
+        EXPECTED_TOOLS has 19 entries; list_tools() drops the ``_HIDDEN_TOOLS``
+        set (default: section_retrieval, read_paper_claims, find_claims,
+        claim_search), collapsing to 15. Tested against the derived expectation
+        so future hide/unhide changes don't churn this test.
         """
         try:
             import mcp.types  # noqa: F401
@@ -510,6 +526,11 @@ class TestListToolsCount:
         assert "citation_graph" not in status["tool_names"]
         assert "citation_chain" not in status["tool_names"]
         assert "find_similar_by_examples" not in status["tool_names"]
+        # Merged/folded retired names must NOT be in the visible surface.
+        assert "cited_by_intent" not in status["tool_names"]
+        assert "find_replications" not in status["tool_names"]
+        assert "entity_context" not in status["tool_names"]
+        assert "forward_citations" in status["tool_names"]
         # PRD bead cfh9: synthesize_findings is not env-hidden, so it must
         # appear in the visible self-test surface.
         assert "synthesize_findings" in status["tool_names"]
@@ -518,7 +539,7 @@ class TestListToolsCount:
 # ---------------------------------------------------------------------------
 # Bead scix_experiments-4c5v: no LIVE tool description should reference the
 # retired ``citation_graph`` tool name. The deprecation alias entry in
-# ``_DEPRECATED_ALIASES`` and internal handler names (``_handle_citation_graph``)
+# ``_ALIAS_TRANSFORMS`` and internal handler names (``_handle_citation_graph``)
 # are infrastructure, not agent-visible surface, and are explicitly allowed.
 # ---------------------------------------------------------------------------
 
@@ -627,9 +648,10 @@ class TestResolutionDefaultUnified:
         """
         from scix.search import SearchResult
 
-        with patch("scix.search.get_paper_metrics") as mock_metrics, patch(
-            "scix.search.explore_community"
-        ) as mock_explore:
+        with (
+            patch("scix.search.get_paper_metrics") as mock_metrics,
+            patch("scix.search.explore_community") as mock_explore,
+        ):
             mock_metrics.return_value = SearchResult(
                 papers=[], total=0, timing_ms={"query_ms": 1.0}
             )

@@ -92,8 +92,12 @@ def test_build_payload_role_presence_pct() -> None:
     )
     decades = [bsc.DecadeCoverage(decade=2010, fulltext=5, total=10)]
     payload = bsc.build_payload(
-        samples, decades, corpus_papers=100, fulltext_papers=40,
-        year_min=1990, year_max=2020,
+        samples,
+        decades,
+        corpus_papers=100,
+        fulltext_papers=40,
+        year_min=1990,
+        year_max=2020,
     )
     roles = {r["role"]: r for r in payload["roles"]}
     # background in 3/4 papers, result in 2/4.
@@ -103,7 +107,11 @@ def test_build_payload_role_presence_pct() -> None:
     assert roles["conclusion"]["present_pct"] == 0.0
     # All five canonical roles present in display order.
     assert [r["role"] for r in payload["roles"]] == [
-        "background", "method", "result", "conclusion", "other"
+        "background",
+        "method",
+        "result",
+        "conclusion",
+        "other",
     ]
 
 
@@ -111,8 +119,12 @@ def test_build_payload_corpus_fractions_and_decade_pct() -> None:
     samples = _samples({"method"})
     decades = [bsc.DecadeCoverage(decade=2000, fulltext=3, total=12)]
     payload = bsc.build_payload(
-        samples, decades, corpus_papers=1000, fulltext_papers=460,
-        year_min=1990, year_max=2010,
+        samples,
+        decades,
+        corpus_papers=1000,
+        fulltext_papers=460,
+        year_min=1990,
+        year_max=2010,
     )
     assert payload["fulltext_fraction"] == pytest.approx(0.46)
     assert payload["sample_size"] == 1
@@ -121,7 +133,12 @@ def test_build_payload_corpus_fractions_and_decade_pct() -> None:
 
 def test_build_payload_empty_sample_no_division_by_zero() -> None:
     payload = bsc.build_payload(
-        [], [], corpus_papers=0, fulltext_papers=0, year_min=2000, year_max=2010,
+        [],
+        [],
+        corpus_papers=0,
+        fulltext_papers=0,
+        year_min=2000,
+        year_max=2010,
     )
     assert payload["fulltext_fraction"] == 0.0
     assert payload["mean_sections_per_paper"] == 0.0
@@ -150,8 +167,12 @@ def test_synthesize_is_deterministic_and_shaped() -> None:
 def test_serialize_roundtrip(tmp_path: Path) -> None:
     samples, decades, corpus, fulltext = bsc.synthesize(100, 1990, 2020)
     payload = bsc.build_payload(
-        samples, decades, corpus_papers=corpus, fulltext_papers=fulltext,
-        year_min=1990, year_max=2020,
+        samples,
+        decades,
+        corpus_papers=corpus,
+        fulltext_papers=fulltext,
+        year_min=1990,
+        year_max=2020,
     )
     out = tmp_path / "section_coverage.json"
     bsc.serialize(payload, out)
@@ -171,7 +192,14 @@ def test_main_synthetic_writes_file(tmp_path: Path) -> None:
 
 def test_main_rejects_inverted_year_window(tmp_path: Path) -> None:
     rc = bsc.main(
-        ["--synthetic", "--year-min", "2020", "--year-max", "1990",
-         "--output", str(tmp_path / "x.json")]
+        [
+            "--synthetic",
+            "--year-min",
+            "2020",
+            "--year-max",
+            "1990",
+            "--output",
+            str(tmp_path / "x.json"),
+        ]
     )
     assert rc == 2

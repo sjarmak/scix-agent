@@ -45,7 +45,10 @@ DEMO_CLAIMS = {
 }
 
 QUERY_TOOLS = [
-    ("entity", lambda q, _b: {"action": "search", "query": q, "entity_type": "instruments", "limit": 5}),
+    (
+        "entity",
+        lambda q, _b: {"action": "search", "query": q, "entity_type": "instruments", "limit": 5},
+    ),
     ("concept_search", lambda q, _b: {"query": q, "limit": 5}),
     ("search", lambda q, _b: {"query": q, "limit": 5}),
     ("temporal_evolution", lambda q, _b: {"bibcode_or_query": q}),
@@ -86,10 +89,27 @@ def call_tool(tool: str, args: dict) -> tuple[str, float, str]:
         if isinstance(parsed, dict) and parsed.get("error"):
             return "ERROR", elapsed, str(parsed.get("error"))[:90]
 
-        for key in ("results", "papers", "items", "edges", "entities", "claims",
-                    "blame", "replications", "matches", "sections", "chunks",
-                    "facets", "citations", "references", "neighbors", "gaps",
-                    "trajectory", "buckets", "directions"):
+        for key in (
+            "results",
+            "papers",
+            "items",
+            "edges",
+            "entities",
+            "claims",
+            "blame",
+            "replications",
+            "matches",
+            "sections",
+            "chunks",
+            "facets",
+            "citations",
+            "references",
+            "neighbors",
+            "gaps",
+            "trajectory",
+            "buckets",
+            "directions",
+        ):
             if isinstance(parsed, dict) and key in parsed:
                 v = parsed[key]
                 n = len(v) if isinstance(v, list) else (1 if v else 0)
@@ -182,8 +202,9 @@ def main() -> int:
             status, ms, detail = call_tool(tool, args)
             marker = {"OK": "✓", "EMPTY": "∅", "ERROR": "!", "FAIL": "✗"}.get(status, "?")
             print(f"  {marker} {tool:<22} {ms:>8.0f}ms  [{status}]  {detail}")
-            all_results.append({"query": query, "tool": tool, "status": status,
-                                 "ms": ms, "detail": detail})
+            all_results.append(
+                {"query": query, "tool": tool, "status": status, "ms": ms, "detail": detail}
+            )
             if anchor is None and tool == "concept_search" and status == "OK":
                 anchor = first_bibcode(tool, args)
                 if anchor:
@@ -201,8 +222,16 @@ def main() -> int:
                 status, ms, detail = call_tool(tool, args)
                 marker = {"OK": "✓", "EMPTY": "∅", "ERROR": "!", "FAIL": "✗"}.get(status, "?")
                 print(f"  {marker} {tool:<22} {ms:>8.0f}ms  [{status}]  {detail}")
-                all_results.append({"query": query, "tool": tool, "status": status,
-                                     "ms": ms, "detail": detail, "bibcode": anchor})
+                all_results.append(
+                    {
+                        "query": query,
+                        "tool": tool,
+                        "status": status,
+                        "ms": ms,
+                        "detail": detail,
+                        "bibcode": anchor,
+                    }
+                )
         else:
             print("  ⚠ no anchor bibcode found — skipping bibcode-keyed tools")
 
@@ -213,14 +242,25 @@ def main() -> int:
                 args = build_args(claim)
                 status, ms, detail = call_tool(tool, args)
                 marker = {"OK": "✓", "EMPTY": "∅", "ERROR": "!", "FAIL": "✗"}.get(status, "?")
-                print(f"  {marker} {tool:<22} {ms:>8.0f}ms  [{status}]  {detail}  claim={claim[:40]!r}")
-                all_results.append({"query": query, "tool": tool, "status": status,
-                                     "ms": ms, "detail": detail, "claim": claim})
+                print(
+                    f"  {marker} {tool:<22} {ms:>8.0f}ms  [{status}]  {detail}  claim={claim[:40]!r}"
+                )
+                all_results.append(
+                    {
+                        "query": query,
+                        "tool": tool,
+                        "status": status,
+                        "ms": ms,
+                        "detail": detail,
+                        "claim": claim,
+                    }
+                )
 
     print("\n" + "=" * 100)
     print("SUMMARY")
     print("=" * 100)
     from collections import Counter
+
     by_status: Counter[str] = Counter(r["status"] for r in all_results)
     print(f"  total calls: {len(all_results)}")
     for status in ("OK", "EMPTY", "ERROR", "FAIL"):

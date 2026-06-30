@@ -61,9 +61,7 @@ class Chunk:
 # ---------------------------------------------------------------------------
 
 
-def _tokenize_with_offsets(
-    tokenizer: Any, text: str
-) -> tuple[list[int], list[tuple[int, int]]]:
+def _tokenize_with_offsets(tokenizer: Any, text: str) -> tuple[list[int], list[tuple[int, int]]]:
     """Return ``(token_ids, offsets)`` for ``text``.
 
     Strategy (in order):

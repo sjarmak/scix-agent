@@ -24,15 +24,21 @@ def parse_year_range(s: str) -> range:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sync ADS metadata to JSONL files")
     parser.add_argument(
-        "--data-dir", type=Path, default=Path("ads_metadata_by_year_picard"),
+        "--data-dir",
+        type=Path,
+        default=Path("ads_metadata_by_year_picard"),
         help="Output directory for JSONL files",
     )
     parser.add_argument(
-        "--batch-size", type=int, default=2000,
+        "--batch-size",
+        type=int,
+        default=2000,
         help="Records per API request (default: 2000, ADS max)",
     )
     parser.add_argument(
-        "--throttle", type=float, default=1.0,
+        "--throttle",
+        type=float,
+        default=1.0,
         help="Seconds between API requests (default: 1.0)",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -42,20 +48,25 @@ def main() -> None:
     # harvest subcommand
     p_harvest = sub.add_parser("harvest", help="Fetch all records for year range(s)")
     p_harvest.add_argument(
-        "years", type=parse_year_range, nargs="+",
+        "years",
+        type=parse_year_range,
+        nargs="+",
         help="Year range(s), e.g. '2000-2020' or '2024'",
     )
 
     # incremental subcommand
     p_incr = sub.add_parser("incremental", help="Fetch records entered since a date")
     p_incr.add_argument(
-        "since", help="Start date (YYYY-MM-DD), e.g. '2026-03-01'",
+        "since",
+        help="Start date (YYYY-MM-DD), e.g. '2026-03-01'",
     )
 
     # fill-gaps subcommand
     p_gaps = sub.add_parser("fill-gaps", help="Compare DB vs API counts per year")
     p_gaps.add_argument(
-        "years", type=parse_year_range, nargs="+",
+        "years",
+        type=parse_year_range,
+        nargs="+",
         help="Year range(s) to check",
     )
     p_gaps.add_argument("--dsn", default=None, help="PostgreSQL DSN")

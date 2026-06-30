@@ -73,9 +73,7 @@ def read_conll(data_path: Path, labels_path: Path) -> tuple[list[list[str]], lis
             toks = dline.split()
             labs = lline.split()
             if len(toks) != len(labs):
-                raise ValueError(
-                    f"{data_path}:{lineno}: {len(toks)} tokens vs {len(labs)} labels"
-                )
+                raise ValueError(f"{data_path}:{lineno}: {len(toks)} tokens vs {len(labs)} labels")
             if not toks:
                 continue
             tokens.append(toks)
@@ -139,10 +137,10 @@ def entity_f1(predictions, label_ids, id2label) -> dict[str, float]:
     preds = np.argmax(predictions, axis=-1)
     tp = fp = fn = 0
     for p_row, l_row in zip(preds, label_ids):
-        for p, l in zip(p_row, l_row):
-            if l == IGNORE_INDEX:
+        for p, lbl in zip(p_row, l_row):
+            if lbl == IGNORE_INDEX:
                 continue
-            gold_sw = id2label[l] != "O"
+            gold_sw = id2label[lbl] != "O"
             pred_sw = id2label[p] != "O"
             tp += gold_sw and pred_sw
             fp += pred_sw and not gold_sw

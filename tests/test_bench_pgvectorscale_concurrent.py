@@ -396,9 +396,7 @@ class TestResultShaping:
         assert got == Path("/tmp/results/concurrent_stress.md")
 
     def test_dry_run_entries_cover_all_cells(self) -> None:
-        entries = mod.dry_run_entries(
-            [1, 2], {"a": "idx_a", "b": "idx_b"}
-        )
+        entries = mod.dry_run_entries([1, 2], {"a": "idx_a", "b": "idx_b"})
         assert len(entries) == 4
         labels = {e["index_label"] for e in entries}
         assert labels == {"a", "b"}

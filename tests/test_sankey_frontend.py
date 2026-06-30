@@ -33,17 +33,14 @@ def _load_soup() -> BeautifulSoup:
 def test_sankey_html_references_d3_sankey() -> None:
     """sankey.html must pull d3-sankey from a CDN via a <script src=...> tag."""
     soup = _load_soup()
-    script_srcs = [
-        (s.get("src") or "") for s in soup.find_all("script") if s.get("src")
-    ]
+    script_srcs = [(s.get("src") or "") for s in soup.find_all("script") if s.get("src")]
     assert any("d3-sankey" in src for src in script_srcs), (
-        "Expected a <script src=...> containing 'd3-sankey'; found: "
-        f"{script_srcs!r}"
+        "Expected a <script src=...> containing 'd3-sankey'; found: " f"{script_srcs!r}"
     )
     # Also confirm plain d3 (v7) is imported so d3-sankey has its dependency.
-    assert any("d3@7" in src for src in script_srcs), (
-        f"Expected a <script src=...> containing 'd3@7'; found: {script_srcs!r}"
-    )
+    assert any(
+        "d3@7" in src for src in script_srcs
+    ), f"Expected a <script src=...> containing 'd3@7'; found: {script_srcs!r}"
 
 
 def test_sankey_html_has_required_containers() -> None:
@@ -59,9 +56,9 @@ def test_sankey_html_has_required_containers() -> None:
 
     # Shared stylesheet must be referenced so visual style stays consistent.
     link_hrefs = [link.get("href") or "" for link in soup.find_all("link")]
-    assert any(href.endswith("shared.css") for href in link_hrefs), (
-        f"Expected shared.css link; found: {link_hrefs!r}"
-    )
+    assert any(
+        href.endswith("shared.css") for href in link_hrefs
+    ), f"Expected shared.css link; found: {link_hrefs!r}"
 
 
 def test_sankey_js_contains_render_symbol() -> None:
@@ -80,12 +77,12 @@ def test_sankey_served_by_viz_app() -> None:
     response = client.get("/viz/sankey.html")
     assert response.status_code == 200, response.text
     content_type = response.headers.get("content-type", "")
-    assert content_type.startswith("text/html"), (
-        f"Expected text/html content-type, got: {content_type!r}"
-    )
-    assert b"sankey-root" in response.content, (
-        "Response body should include the sankey-root container"
-    )
+    assert content_type.startswith(
+        "text/html"
+    ), f"Expected text/html content-type, got: {content_type!r}"
+    assert (
+        b"sankey-root" in response.content
+    ), "Response body should include the sankey-root container"
 
 
 def test_sankey_html_has_flow_count_slider() -> None:
@@ -97,16 +94,12 @@ def test_sankey_html_has_flow_count_slider() -> None:
     slider = soup.find(id="sankey-flow-slider")
     assert slider is not None, "Missing <span id='sankey-flow-slider'>"
     caps = sorted(
-        int(btn.get("data-cap"))
-        for btn in slider.find_all("button")
-        if btn.get("data-cap")
+        int(btn.get("data-cap")) for btn in slider.find_all("button") if btn.get("data-cap")
     )
-    assert caps == [20, 50, 100, 200], (
-        f"Slider must offer top-20/50/100/200 presets; got {caps!r}"
-    )
-    assert soup.find(id="sankey-flow-summary") is not None, (
-        "Expected a #sankey-flow-summary element to surface flow count + render time"
-    )
+    assert caps == [20, 50, 100, 200], f"Slider must offer top-20/50/100/200 presets; got {caps!r}"
+    assert (
+        soup.find(id="sankey-flow-summary") is not None
+    ), "Expected a #sankey-flow-summary element to surface flow count + render time"
 
 
 def test_sankey_bootstrap_filters_links_client_side() -> None:
@@ -120,6 +113,6 @@ def test_sankey_bootstrap_filters_links_client_side() -> None:
     assert "applyCap" in html, "Bootstrap missing slider re-render handler"
     # The cache check ensures the JSON is only fetched once.
     assert "sortedLinks" in html, "Bootstrap should cache a sorted-link list"
-    assert "performance.now" in html, (
-        "Render time should be measured so the summary line can show <500ms"
-    )
+    assert (
+        "performance.now" in html
+    ), "Render time should be measured so the summary line can show <500ms"

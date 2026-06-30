@@ -56,14 +56,16 @@ def _drop_expired_partitions(conn: psycopg.Connection, cutoff: datetime) -> list
     """Drop daily partitions whose upper bound is strictly before cutoff."""
     dropped: list[str] = []
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT child.relname
             FROM pg_inherits
             JOIN pg_class child  ON pg_inherits.inhrelid  = child.oid
             JOIN pg_class parent ON pg_inherits.inhparent = parent.oid
             WHERE parent.relname = 'document_entities_jit_cache'
               AND child.relname LIKE 'document_entities_jit_cache_p%'
-            """)
+            """
+        )
         partitions = [row[0] for row in cur.fetchall()]
 
     cutoff_tag = cutoff.strftime("%Y%m%d")

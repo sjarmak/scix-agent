@@ -137,9 +137,7 @@ def assert_pilot_dsn(dsn: str | None) -> None:
     ``"refuse"`` to satisfy tests that grep for either.
     """
     if not dsn or not dsn.strip():
-        raise ValueError(
-            "Empty DSN — refuse to run without an explicit pilot DSN."
-        )
+        raise ValueError("Empty DSN — refuse to run without an explicit pilot DSN.")
     try:
         from scix.db import is_production_dsn  # type: ignore[import-not-found]
 
@@ -635,6 +633,7 @@ def run_benchmark(
     # Environment metadata (best-effort).
     try:
         from pgvs_bench_env import capture_env  # type: ignore[import-not-found]
+
         env = capture_env(dsn=dsn)
     except Exception as exc:  # noqa: BLE001 - env capture must not abort the run
         logger.warning("capture_env failed: %s", exc)
@@ -804,12 +803,8 @@ def render_markdown(payload: dict[str, Any]) -> str:
     # Quality metrics table.
     lines.append("## Quality metrics")
     lines.append("")
-    lines.append(
-        "| Index | Filter | nDCG@10 | Recall@10 | Recall@20 | MRR | p50 (ms) |"
-    )
-    lines.append(
-        "|-------|--------|---------|-----------|-----------|-----|----------|"
-    )
+    lines.append("| Index | Filter | nDCG@10 | Recall@10 | Recall@20 | MRR | p50 (ms) |")
+    lines.append("|-------|--------|---------|-----------|-----------|-----|----------|")
     for cell in payload.get("results", []):
         m = cell.get("metrics", {})
         lines.append(
@@ -1009,8 +1004,7 @@ def main(argv: list[str] | None = None) -> int:
     dsn = args.dsn
     if dsn is None:
         print(
-            "ERROR: --dsn is required (pilot/benchmark DB). "
-            "Refusing to default to production.",
+            "ERROR: --dsn is required (pilot/benchmark DB). " "Refusing to default to production.",
             file=sys.stderr,
         )
         return 2

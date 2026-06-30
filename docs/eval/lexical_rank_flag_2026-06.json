@@ -1,0 +1,562 @@
+{
+  "bead": "scix_experiments-q9k5",
+  "by_flag": {
+    "32": {
+      "article_fraction": 0.2375,
+      "latency_ms_max": 77279.79818824679,
+      "mean_citation": 33.34375,
+      "median_citation": 1.09375,
+      "n_errored": 0,
+      "n_queries": 16,
+      "n_scored": 16,
+      "n_seminal_mean": 0.375,
+      "short_doc_fraction": 0.603125
+    },
+    "33": {
+      "article_fraction": 0.296875,
+      "latency_ms_max": 81809.30860154331,
+      "mean_citation": 9.703125,
+      "median_citation": 1.375,
+      "n_errored": 0,
+      "n_queries": 16,
+      "n_scored": 16,
+      "n_seminal_mean": 0.0,
+      "short_doc_fraction": 0.434375
+    },
+    "48": {
+      "article_fraction": 0.328125,
+      "latency_ms_max": 88905.39368335158,
+      "mean_citation": 10.981250000000001,
+      "median_citation": 1.40625,
+      "n_errored": 0,
+      "n_queries": 16,
+      "n_scored": 16,
+      "n_seminal_mean": 0.0,
+      "short_doc_fraction": 0.421875
+    }
+  },
+  "decision": {
+    "baseline_flag": 32,
+    "deltas_vs_baseline": {
+      "33": {
+        "article_fraction_delta": 0.05937500000000001,
+        "median_citation_delta": 0.28125,
+        "n_seminal_delta": -0.375,
+        "short_doc_fraction_delta": -0.16875
+      },
+      "48": {
+        "article_fraction_delta": 0.09062500000000001,
+        "median_citation_delta": 0.3125,
+        "n_seminal_delta": -0.375,
+        "short_doc_fraction_delta": -0.18125000000000002
+      }
+    },
+    "rationale": "no length-aware flag cleared the bar (article_fraction up AND no median_citation/n_seminal regression) \u2014 keep flag 32; broad-concept recall stays the vector lane's job in RRF.",
+    "recommended_flag": null
+  },
+  "fixed_pool": "INF",
+  "flags_order": [
+    32,
+    33,
+    48
+  ],
+  "n_queries": 16,
+  "per_query": {
+    "32": [
+      {
+        "article_fraction": 0.0,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "galaxy",
+        "short_doc_fraction": 0.95,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.35,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "star formation",
+        "short_doc_fraction": 0.5,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.0,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "dark matter",
+        "short_doc_fraction": 0.95,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.05,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "exoplanet",
+        "short_doc_fraction": 0.5,
+        "top1_citation": 70
+      },
+      {
+        "article_fraction": 0.0,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "black hole",
+        "short_doc_fraction": 1.0,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.0,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "supernova",
+        "short_doc_fraction": 0.95,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.05,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "neutron star",
+        "short_doc_fraction": 0.9,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.55,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 1,
+        "query": "cosmic microwave background",
+        "short_doc_fraction": 0.35,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.0,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "gravitational waves",
+        "short_doc_fraction": 0.75,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.4,
+        "error": null,
+        "median_citation": 4.5,
+        "n_hits": 20,
+        "n_seminal": 1,
+        "query": "accretion disk",
+        "short_doc_fraction": 0.55,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.55,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 2,
+        "query": "stellar evolution",
+        "short_doc_fraction": 0.35,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.5,
+        "error": null,
+        "median_citation": 2.5,
+        "n_hits": 20,
+        "n_seminal": 2,
+        "query": "interstellar medium",
+        "short_doc_fraction": 0.3,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.35,
+        "error": null,
+        "median_citation": 4.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "active galactic nuclei",
+        "short_doc_fraction": 0.15,
+        "top1_citation": 6
+      },
+      {
+        "article_fraction": 0.6,
+        "error": null,
+        "median_citation": 6.5,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "redshift",
+        "short_doc_fraction": 0.3,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.15,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "spectroscopy",
+        "short_doc_fraction": 0.55,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.25,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "white dwarf",
+        "short_doc_fraction": 0.6,
+        "top1_citation": 0
+      }
+    ],
+    "33": [
+      {
+        "article_fraction": 0.0,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "galaxy",
+        "short_doc_fraction": 0.95,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.4,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "star formation",
+        "short_doc_fraction": 0.35,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.05,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "dark matter",
+        "short_doc_fraction": 0.8,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.3,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "exoplanet",
+        "short_doc_fraction": 0.35,
+        "top1_citation": 70
+      },
+      {
+        "article_fraction": 0.05,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "black hole",
+        "short_doc_fraction": 0.85,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.05,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "supernova",
+        "short_doc_fraction": 0.9,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.15,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "neutron star",
+        "short_doc_fraction": 0.8,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.35,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "cosmic microwave background",
+        "short_doc_fraction": 0.05,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.05,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "gravitational waves",
+        "short_doc_fraction": 0.65,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.5,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "accretion disk",
+        "short_doc_fraction": 0.2,
+        "top1_citation": 46
+      },
+      {
+        "article_fraction": 0.5,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "stellar evolution",
+        "short_doc_fraction": 0.1,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.25,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "interstellar medium",
+        "short_doc_fraction": 0.15,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.5,
+        "error": null,
+        "median_citation": 0.5,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "active galactic nuclei",
+        "short_doc_fraction": 0.1,
+        "top1_citation": 48
+      },
+      {
+        "article_fraction": 0.55,
+        "error": null,
+        "median_citation": 21.5,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "redshift",
+        "short_doc_fraction": 0.2,
+        "top1_citation": 80
+      },
+      {
+        "article_fraction": 0.75,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "spectroscopy",
+        "short_doc_fraction": 0.0,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.3,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "white dwarf",
+        "short_doc_fraction": 0.5,
+        "top1_citation": 0
+      }
+    ],
+    "48": [
+      {
+        "article_fraction": 0.0,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "galaxy",
+        "short_doc_fraction": 0.9,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.5,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "star formation",
+        "short_doc_fraction": 0.3,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.1,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "dark matter",
+        "short_doc_fraction": 0.8,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.3,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "exoplanet",
+        "short_doc_fraction": 0.35,
+        "top1_citation": 70
+      },
+      {
+        "article_fraction": 0.05,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "black hole",
+        "short_doc_fraction": 0.8,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.05,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "supernova",
+        "short_doc_fraction": 0.9,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.15,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "neutron star",
+        "short_doc_fraction": 0.8,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.45,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "cosmic microwave background",
+        "short_doc_fraction": 0.15,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.1,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "gravitational waves",
+        "short_doc_fraction": 0.65,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.65,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "accretion disk",
+        "short_doc_fraction": 0.15,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.55,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "stellar evolution",
+        "short_doc_fraction": 0.05,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.3,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "interstellar medium",
+        "short_doc_fraction": 0.15,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.5,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "active galactic nuclei",
+        "short_doc_fraction": 0.05,
+        "top1_citation": 48
+      },
+      {
+        "article_fraction": 0.65,
+        "error": null,
+        "median_citation": 22.5,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "redshift",
+        "short_doc_fraction": 0.2,
+        "top1_citation": 80
+      },
+      {
+        "article_fraction": 0.6,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "spectroscopy",
+        "short_doc_fraction": 0.0,
+        "top1_citation": 0
+      },
+      {
+        "article_fraction": 0.3,
+        "error": null,
+        "median_citation": 0.0,
+        "n_hits": 20,
+        "n_seminal": 0,
+        "query": "white dwarf",
+        "short_doc_fraction": 0.5,
+        "top1_citation": 0
+      }
+    ]
+  },
+  "queries_path": "eval/lexical_stress_16q.jsonl",
+  "retrieve_limit": 20,
+  "seminal_citation_threshold": 500,
+  "short_doctypes": [
+    "mastersthesis",
+    "phdthesis",
+    "pressrelease",
+    "proposal"
+  ],
+  "statement_timeout_ms": 180000
+}

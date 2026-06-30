@@ -126,8 +126,7 @@ def _insert_fixture(dsn: str) -> None:
             )
             # embeddings
             with cur.copy(
-                "COPY paper_embeddings (bibcode, model_name, embedding, input_type) "
-                "FROM STDIN"
+                "COPY paper_embeddings (bibcode, model_name, embedding, input_type) " "FROM STDIN"
             ) as copy:
                 for bib, vec in zip(bibcodes, vectors):
                     copy.write_row((bib, "indus", _pgvector_literal(vec), "title_abstract"))
@@ -191,15 +190,24 @@ def _fetch_assignments(dsn: str) -> dict[str, dict[str, int | None]]:
 def _run_script(dsn: str, seed: int, tmp_path: pathlib.Path) -> None:
     mod = _load_script_module()
     args = [
-        "--dsn", dsn,
-        "--k-coarse", "3",
-        "--k-medium", "5",
-        "--k-fine", "8",
-        "--seed", str(seed),
-        "--batch-size", "500",
-        "--silhouette-sample", "500",
-        "--results-path", str(tmp_path / "results.json"),
-        "--run-meta-path", str(tmp_path / "run_meta.json"),
+        "--dsn",
+        dsn,
+        "--k-coarse",
+        "3",
+        "--k-medium",
+        "5",
+        "--k-fine",
+        "8",
+        "--seed",
+        str(seed),
+        "--batch-size",
+        "500",
+        "--silhouette-sample",
+        "500",
+        "--results-path",
+        str(tmp_path / "results.json"),
+        "--run-meta-path",
+        str(tmp_path / "run_meta.json"),
     ]
     rc = mod.main(args)
     assert rc == 0, f"script returned non-zero exit code {rc}"
@@ -218,9 +226,9 @@ def test_end_to_end_populates_all_bibcodes(
     _run_script(dsn, seed=SEED, tmp_path=tmp_path)
 
     assignments = _fetch_assignments(dsn)
-    assert len(assignments) == N_FIXTURE_POINTS, (
-        f"expected {N_FIXTURE_POINTS} paper_metrics rows, got {len(assignments)}"
-    )
+    assert (
+        len(assignments) == N_FIXTURE_POINTS
+    ), f"expected {N_FIXTURE_POINTS} paper_metrics rows, got {len(assignments)}"
 
     for bib, cols in assignments.items():
         assert cols["coarse"] is not None, f"{bib} has NULL community_semantic_coarse"
@@ -234,6 +242,7 @@ def test_end_to_end_populates_all_bibcodes(
     assert meta_path.exists()
 
     import json
+
     results = json.loads(results_path.read_text())
     assert "resolutions" in results
     assert set(results["resolutions"].keys()) == {"coarse", "medium", "fine"}
@@ -274,9 +283,9 @@ def test_deterministic_with_same_seed(
         labels_a = [first[b][resolution] for b in sorted(first)]
         labels_b = [second[b][resolution] for b in sorted(second)]
         ari = _adjusted_rand_index(labels_a, labels_b)
-        assert ari == pytest.approx(1.0), (
-            f"resolution {resolution!r}: same-seed ARI={ari}, expected 1.0"
-        )
+        assert ari == pytest.approx(
+            1.0
+        ), f"resolution {resolution!r}: same-seed ARI={ari}, expected 1.0"
 
 
 # ---------------------------------------------------------------------------
@@ -338,15 +347,26 @@ def test_migration_idempotent_fresh_db(dsn: str, applied_migration: None) -> Non
 def test_script_refuses_production_dsn_without_allow_prod(tmp_path: pathlib.Path) -> None:
     mod = _load_script_module()
     # A synthetic prod DSN — we never actually connect, the guard fires first.
-    rc = mod.main([
-        "--dsn", "dbname=scix",
-        "--k-coarse", "3",
-        "--k-medium", "5",
-        "--k-fine", "8",
-        "--seed", "1",
-        "--batch-size", "100",
-        "--silhouette-sample", "100",
-        "--results-path", str(tmp_path / "r.json"),
-        "--run-meta-path", str(tmp_path / "m.json"),
-    ])
+    rc = mod.main(
+        [
+            "--dsn",
+            "dbname=scix",
+            "--k-coarse",
+            "3",
+            "--k-medium",
+            "5",
+            "--k-fine",
+            "8",
+            "--seed",
+            "1",
+            "--batch-size",
+            "100",
+            "--silhouette-sample",
+            "100",
+            "--results-path",
+            str(tmp_path / "r.json"),
+            "--run-meta-path",
+            str(tmp_path / "m.json"),
+        ]
+    )
     assert rc == 2, "production DSN without --allow-prod must exit with code 2"

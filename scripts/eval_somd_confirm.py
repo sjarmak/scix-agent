@@ -77,7 +77,9 @@ def _prf(rows: list[dict], kept_key: str) -> tuple[int, int, int, float, float]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--labeled", type=Path, default=Path("results/dbl21_lafia_confirm_postfix.jsonl"))
+    ap.add_argument(
+        "--labeled", type=Path, default=Path("results/dbl21_lafia_confirm_postfix.jsonl")
+    )
     ap.add_argument("--model", type=Path, default=Path("models/somd_scibert"))
     ap.add_argument("--report", type=Path, default=Path("results/dbl22_somd_eval.md"))
     ap.add_argument("--gate", type=float, default=0.85)
@@ -100,7 +102,8 @@ def main() -> int:
             unlocatable += 1
             logger.warning(
                 "unlocatable software surface %r in row %s — keeping GLiNER verdict",
-                r["surface"], r.get("bibcode"),
+                r["surface"],
+                r.get("bibcode"),
             )
         if loc is not None:
             clo, chi = loc
@@ -156,13 +159,23 @@ def main() -> int:
 
     # Per-FP breakdown: which GLiNER-surviving false positives did SOMD reject?
     surviving_fp = [r for r in rows if r["_gliner"] and not r["label"]]
-    lines += ["", "## GLiNER-surviving false positives — SOMD verdict", "",
-              "| entity_type | surface | gliner_surface | SOMD rejected? |",
-              "|---|---|---|---|"]
+    lines += [
+        "",
+        "## GLiNER-surviving false positives — SOMD verdict",
+        "",
+        "| entity_type | surface | gliner_surface | SOMD rejected? |",
+        "|---|---|---|---|",
+    ]
     for r in surviving_fp:
         rejected = r["_gliner"] and not r["_gliner_somd"]
-        verdict = "✅ rejected" if rejected else ("— (dataset, out of domain)" if r["entity_type"] != "software" else "❌ kept")
-        lines.append(f"| {r['entity_type']} | {r['surface']!r} | {r.get('gliner_surface')!r} | {verdict} |")
+        verdict = (
+            "✅ rejected"
+            if rejected
+            else ("— (dataset, out of domain)" if r["entity_type"] != "software" else "❌ kept")
+        )
+        lines.append(
+            f"| {r['entity_type']} | {r['surface']!r} | {r.get('gliner_surface')!r} | {verdict} |"
+        )
 
     args.report.write_text("\n".join(lines) + "\n")
     sys.stderr.write(

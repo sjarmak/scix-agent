@@ -91,7 +91,8 @@ def _build_bench_schema(conn: psycopg.Connection, schema: str) -> None:
     with conn.cursor() as cur:
         cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
         cur.execute(f"CREATE SCHEMA {schema}")
-        cur.execute(f"""
+        cur.execute(
+            f"""
             CREATE TABLE {schema}.entities (
                 id SERIAL PRIMARY KEY,
                 canonical_name TEXT NOT NULL,
@@ -99,8 +100,10 @@ def _build_bench_schema(conn: psycopg.Connection, schema: str) -> None:
                 discipline TEXT,
                 source TEXT NOT NULL
             )
-            """)
-        cur.execute(f"""
+            """
+        )
+        cur.execute(
+            f"""
             CREATE TABLE {schema}.entity_identifiers (
                 entity_id INT REFERENCES {schema}.entities(id),
                 id_scheme TEXT NOT NULL,
@@ -108,16 +111,20 @@ def _build_bench_schema(conn: psycopg.Connection, schema: str) -> None:
                 is_primary BOOLEAN DEFAULT false,
                 PRIMARY KEY (id_scheme, external_id)
             )
-            """)
-        cur.execute(f"""
+            """
+        )
+        cur.execute(
+            f"""
             CREATE TABLE {schema}.entity_aliases (
                 entity_id INT REFERENCES {schema}.entities(id),
                 alias TEXT NOT NULL,
                 alias_source TEXT,
                 PRIMARY KEY (entity_id, alias)
             )
-            """)
-        cur.execute(f"""
+            """
+        )
+        cur.execute(
+            f"""
             CREATE TABLE {schema}.entity_relationships (
                 id SERIAL PRIMARY KEY,
                 subject_entity_id INT REFERENCES {schema}.entities(id),
@@ -125,8 +132,10 @@ def _build_bench_schema(conn: psycopg.Connection, schema: str) -> None:
                 object_entity_id INT REFERENCES {schema}.entities(id),
                 confidence REAL DEFAULT 1.0
             )
-            """)
-        cur.execute(f"""
+            """
+        )
+        cur.execute(
+            f"""
             CREATE TABLE {schema}.document_entities (
                 bibcode TEXT NOT NULL,
                 entity_id INT REFERENCES {schema}.entities(id),
@@ -134,7 +143,8 @@ def _build_bench_schema(conn: psycopg.Connection, schema: str) -> None:
                 confidence REAL,
                 PRIMARY KEY (bibcode, entity_id, link_type)
             )
-            """)
+            """
+        )
 
 
 def _seed_bench_data(conn: psycopg.Connection, schema: str, n_entities: int) -> None:

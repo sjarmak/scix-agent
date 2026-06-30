@@ -72,9 +72,7 @@ def load_suppress_list(path: Union[str, Path, None] = None) -> frozenset[str]:
         return frozenset()
 
     if not isinstance(data, dict):
-        raise ValueError(
-            f"Expected top-level mapping in {config_path}, got {type(data).__name__}"
-        )
+        raise ValueError(f"Expected top-level mapping in {config_path}, got {type(data).__name__}")
 
     raw_list = data.get("suppressed_publishers", [])
     if raw_list is None:

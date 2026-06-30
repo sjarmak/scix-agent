@@ -176,8 +176,7 @@ def fetch_snippets_from_db(bibcodes: list[str], *, dsn: str | None = None) -> di
     out: dict[str, str] = {}
     with get_connection(dsn=dsn) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT bibcode, title, abstract, body "
-            "FROM papers WHERE bibcode = ANY(%s)",
+            "SELECT bibcode, title, abstract, body " "FROM papers WHERE bibcode = ANY(%s)",
             (list(bibcodes),),
         )
         for bibcode, title, abstract, body in cur.fetchall():
@@ -245,7 +244,9 @@ def run_calibration(
     aligned_humans: list[int] = []
     for human, score in zip(humans, scores):
         if score.score < 0:  # error sentinel — drop from calibration
-            logger.warning("dropping failed triple %s from calibration", score.triple and score.triple.bibcode)
+            logger.warning(
+                "dropping failed triple %s from calibration", score.triple and score.triple.bibcode
+            )
             continue
         judge_scores.append(score.score)
         aligned_humans.append(human)
@@ -290,19 +291,23 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Drift-watch log (default results/judge_calibration_log.jsonl).",
     )
     parser.add_argument(
-        "--prompt-version", default=DEFAULT_PROMPT_VERSION,
+        "--prompt-version",
+        default=DEFAULT_PROMPT_VERSION,
         help="Prompt version tag recorded in the drift log.",
     )
     parser.add_argument("--concurrency", type=int, default=DEFAULT_MAX_CONCURRENCY)
     parser.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES)
     parser.add_argument(
-        "--stub", action="store_true",
+        "--stub",
+        action="store_true",
         help="Use StubDispatcher — wiring check, does not call Claude.",
     )
     parser.add_argument("--claude-binary", default=os.environ.get("CLAUDE_BINARY", "claude-auto"))
     parser.add_argument("--dsn", default=None, help="PostgreSQL DSN (defaults to scix.db).")
     parser.add_argument(
-        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
     return parser.parse_args(argv)
 
@@ -342,8 +347,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  n_triples:   {report.n_triples}")
     print(f"  spearman ρ:  {report.spearman:+.3f}")
     print(f"  kappa (qw):  {report.kappa:+.3f}")
-    print(f"  trustworthy: {report.trustworthy} "
-          f"(threshold kappa >= {TRUSTWORTHY_KAPPA_THRESHOLD})")
+    print(
+        f"  trustworthy: {report.trustworthy} "
+        f"(threshold kappa >= {TRUSTWORTHY_KAPPA_THRESHOLD})"
+    )
     if not report.trustworthy:
         print("  WARNING: kappa below threshold — iterate on the prompt before shipping.")
         return 1

@@ -63,21 +63,20 @@ def test_agent_trace_html_structure() -> None:
 
     # deck.gl CDN script — same provider as umap_browser.html.
     script_srcs = [s.get("src") or "" for s in soup.find_all("script") if s.get("src")]
-    assert any("unpkg.com" in src and "deck.gl" in src for src in script_srcs), (
-        f"Expected a deck.gl CDN <script src=...>; found: {script_srcs!r}"
-    )
+    assert any(
+        "unpkg.com" in src and "deck.gl" in src for src in script_srcs
+    ), f"Expected a deck.gl CDN <script src=...>; found: {script_srcs!r}"
 
     # agent_trace.js must be referenced.
     assert any(
-        src.endswith("agent_trace.js") or src == "./agent_trace.js"
-        for src in script_srcs
+        src.endswith("agent_trace.js") or src == "./agent_trace.js" for src in script_srcs
     ), f"Expected a <script src='./agent_trace.js'>; found: {script_srcs!r}"
 
     # Shared stylesheet must be referenced for visual consistency.
     link_hrefs = [link.get("href") or "" for link in soup.find_all("link")]
-    assert any(href.endswith("shared.css") for href in link_hrefs), (
-        f"Expected shared.css link; found: {link_hrefs!r}"
-    )
+    assert any(
+        href.endswith("shared.css") for href in link_hrefs
+    ), f"Expected shared.css link; found: {link_hrefs!r}"
 
 
 def test_agent_trace_js_has_subscribe_symbol() -> None:
@@ -101,15 +100,13 @@ def test_agent_trace_html_served() -> None:
     response = client.get("/viz/agent_trace.html")
     assert response.status_code == 200, response.text
     content_type = response.headers.get("content-type", "")
-    assert content_type.startswith("text/html"), (
-        f"Expected text/html content-type, got: {content_type!r}"
-    )
-    assert b"trace-panel" in response.content, (
-        "Response body should include the trace-panel container"
-    )
-    assert b"umap-root" in response.content, (
-        "Response body should include the umap-root container"
-    )
+    assert content_type.startswith(
+        "text/html"
+    ), f"Expected text/html content-type, got: {content_type!r}"
+    assert (
+        b"trace-panel" in response.content
+    ), "Response body should include the trace-panel container"
+    assert b"umap-root" in response.content, "Response body should include the umap-root container"
 
 
 # ---------------------------------------------------------------------------
@@ -161,9 +158,7 @@ def _assert_sse_route_registered() -> None:
     fails loudly if the ``include_router(trace_stream_router)`` call was
     dropped.
     """
-    matching = [
-        r for r in app.routes if getattr(r, "path", "") == "/viz/api/trace/stream"
-    ]
+    matching = [r for r in app.routes if getattr(r, "path", "") == "/viz/api/trace/stream"]
     assert matching, (
         "GET /viz/api/trace/stream is not registered on the viz app — "
         "check server.py includes trace_stream_router"

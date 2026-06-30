@@ -31,6 +31,15 @@ logger = logging.getLogger(__name__)
 # executed on an autocommit connection.
 _REFRESH_SQL = "REFRESH MATERIALIZED VIEW CONCURRENTLY document_entities_canonical"
 
+# Flip the dirty bit, inserting the singleton state row if it does not yet
+# exist. Shared by both code paths in mark_dirty (caller-supplied conn and
+# owned conn) so the upsert lives in exactly one place.
+_MARK_DIRTY_SQL = """
+    INSERT INTO fusion_mv_state (id, dirty, last_refresh_at)
+    VALUES (1, true, NULL)
+    ON CONFLICT (id) DO UPDATE SET dirty = true
+"""
+
 
 def _resolve_dsn(conn: psycopg.Connection | None) -> str:
     """Return the DSN to open a fresh autocommit connection against.
@@ -62,20 +71,12 @@ def mark_dirty(conn: psycopg.Connection | None = None) -> None:
     """
     if conn is not None:
         with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO fusion_mv_state (id, dirty, last_refresh_at)
-                VALUES (1, true, NULL)
-                ON CONFLICT (id) DO UPDATE SET dirty = true
-                """)
+            cur.execute(_MARK_DIRTY_SQL)
         return
 
     with psycopg.connect(DEFAULT_DSN) as owned:
         with owned.cursor() as cur:
-            cur.execute("""
-                INSERT INTO fusion_mv_state (id, dirty, last_refresh_at)
-                VALUES (1, true, NULL)
-                ON CONFLICT (id) DO UPDATE SET dirty = true
-                """)
+            cur.execute(_MARK_DIRTY_SQL)
         owned.commit()
 
 
@@ -114,11 +115,13 @@ def refresh_if_due(
     with psycopg.connect(dsn, autocommit=True) as owned:
         with owned.cursor() as cur:
             # Ensure a state row exists so the first-ever call can proceed.
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO fusion_mv_state (id, dirty, last_refresh_at)
                 VALUES (1, true, NULL)
                 ON CONFLICT (id) DO NOTHING
-                """)
+                """
+            )
             cur.execute(
                 """
                 SELECT
@@ -152,10 +155,12 @@ def refresh_if_due(
 
             logger.info("Refreshing document_entities_canonical (CONCURRENTLY)")
             cur.execute(_REFRESH_SQL)
-            cur.execute("""
+            cur.execute(
+                """
                 UPDATE fusion_mv_state
                    SET dirty = false,
                        last_refresh_at = now()
                  WHERE id = 1
-                """)
+                """
+            )
             return True

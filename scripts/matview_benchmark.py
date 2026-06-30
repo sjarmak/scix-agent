@@ -69,7 +69,8 @@ def setup_schema(cur):
 
     # Papers — we'll reference real papers table via bibcodes
     # For document_entities we need bibcodes. Generate synthetic ones.
-    cur.execute(f"""
+    cur.execute(
+        f"""
         CREATE TABLE {BENCH_SCHEMA}.papers (
             bibcode TEXT PRIMARY KEY,
             title TEXT,
@@ -78,9 +79,11 @@ def setup_schema(cur):
             citation_count INTEGER,
             reference_count INTEGER
         )
-    """)
+    """
+    )
 
-    cur.execute(f"""
+    cur.execute(
+        f"""
         CREATE TABLE {BENCH_SCHEMA}.entities (
             id SERIAL PRIMARY KEY,
             canonical_name TEXT NOT NULL,
@@ -91,9 +94,11 @@ def setup_schema(cur):
             created_at TIMESTAMPTZ DEFAULT NOW(),
             updated_at TIMESTAMPTZ DEFAULT NOW()
         )
-    """)
+    """
+    )
 
-    cur.execute(f"""
+    cur.execute(
+        f"""
         CREATE TABLE {BENCH_SCHEMA}.entity_identifiers (
             entity_id INT REFERENCES {BENCH_SCHEMA}.entities(id),
             id_scheme TEXT NOT NULL,
@@ -101,18 +106,22 @@ def setup_schema(cur):
             is_primary BOOLEAN DEFAULT false,
             PRIMARY KEY (id_scheme, external_id)
         )
-    """)
+    """
+    )
 
-    cur.execute(f"""
+    cur.execute(
+        f"""
         CREATE TABLE {BENCH_SCHEMA}.entity_aliases (
             entity_id INT REFERENCES {BENCH_SCHEMA}.entities(id),
             alias TEXT NOT NULL,
             alias_source TEXT,
             PRIMARY KEY (entity_id, alias)
         )
-    """)
+    """
+    )
 
-    cur.execute(f"""
+    cur.execute(
+        f"""
         CREATE TABLE {BENCH_SCHEMA}.entity_relationships (
             id SERIAL PRIMARY KEY,
             subject_entity_id INT REFERENCES {BENCH_SCHEMA}.entities(id),
@@ -121,9 +130,11 @@ def setup_schema(cur):
             source TEXT,
             confidence REAL DEFAULT 1.0
         )
-    """)
+    """
+    )
 
-    cur.execute(f"""
+    cur.execute(
+        f"""
         CREATE TABLE {BENCH_SCHEMA}.document_entities (
             bibcode TEXT NOT NULL,
             entity_id INT REFERENCES {BENCH_SCHEMA}.entities(id),
@@ -133,9 +144,11 @@ def setup_schema(cur):
             evidence JSONB,
             PRIMARY KEY (bibcode, entity_id, link_type)
         )
-    """)
+    """
+    )
 
-    cur.execute(f"""
+    cur.execute(
+        f"""
         CREATE TABLE {BENCH_SCHEMA}.datasets (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
@@ -146,18 +159,22 @@ def setup_schema(cur):
             properties JSONB DEFAULT '{{}}'::jsonb,
             created_at TIMESTAMPTZ DEFAULT NOW()
         )
-    """)
+    """
+    )
 
-    cur.execute(f"""
+    cur.execute(
+        f"""
         CREATE TABLE {BENCH_SCHEMA}.dataset_entities (
             dataset_id INT REFERENCES {BENCH_SCHEMA}.datasets(id),
             entity_id INT REFERENCES {BENCH_SCHEMA}.entities(id),
             relationship TEXT NOT NULL,
             PRIMARY KEY (dataset_id, entity_id, relationship)
         )
-    """)
+    """
+    )
 
-    cur.execute(f"""
+    cur.execute(
+        f"""
         CREATE TABLE {BENCH_SCHEMA}.document_datasets (
             bibcode TEXT NOT NULL,
             dataset_id INT REFERENCES {BENCH_SCHEMA}.datasets(id),
@@ -166,7 +183,8 @@ def setup_schema(cur):
             match_method TEXT,
             PRIMARY KEY (bibcode, dataset_id, link_type)
         )
-    """)
+    """
+    )
 
 
 def generate_synthetic_data(cur):
@@ -176,7 +194,8 @@ def generate_synthetic_data(cur):
     # Papers: 2M synthetic bibcodes (enough for 10M document_entities)
     n_papers = 2_000_000
     with timed(f"papers ({n_papers:,})"):
-        cur.execute(f"""
+        cur.execute(
+            f"""
             INSERT INTO {BENCH_SCHEMA}.papers (bibcode, title, abstract, year, citation_count, reference_count)
             SELECT
                 'BENCH' || LPAD(i::text, 12, '0'),
@@ -186,11 +205,13 @@ def generate_synthetic_data(cur):
                 (random() * 1000)::int,
                 (random() * 50)::int
             FROM generate_series(1, {n_papers}) AS i
-        """)
+        """
+        )
 
     # Entities: 1M
     with timed(f"entities ({N_ENTITIES:,})"):
-        cur.execute(f"""
+        cur.execute(
+            f"""
             INSERT INTO {BENCH_SCHEMA}.entities (canonical_name, entity_type, discipline, source)
             SELECT
                 'entity_' || i,
@@ -198,11 +219,13 @@ def generate_synthetic_data(cur):
                 (ARRAY['astronomy','physics','planetary','heliophysics','earth_science'])[1 + (i % 5)],
                 (ARRAY['ads','wikidata','pds','spase','ascl'])[1 + (i % 5)]
             FROM generate_series(1, {N_ENTITIES}) AS i
-        """)
+        """
+        )
 
     # Entity identifiers: 1.2M
     with timed(f"entity_identifiers ({N_IDENTIFIERS:,})"):
-        cur.execute(f"""
+        cur.execute(
+            f"""
             INSERT INTO {BENCH_SCHEMA}.entity_identifiers (entity_id, id_scheme, external_id, is_primary)
             SELECT
                 1 + (i % {N_ENTITIES}),
@@ -210,22 +233,26 @@ def generate_synthetic_data(cur):
                 'EXT_' || i,
                 (i % 5 = 0)
             FROM generate_series(1, {N_IDENTIFIERS}) AS i
-        """)
+        """
+        )
 
     # Entity aliases: 500K
     with timed(f"entity_aliases ({N_ALIASES:,})"):
-        cur.execute(f"""
+        cur.execute(
+            f"""
             INSERT INTO {BENCH_SCHEMA}.entity_aliases (entity_id, alias, alias_source)
             SELECT
                 1 + (i % {N_ENTITIES}),
                 'alias_' || i,
                 (ARRAY['wikidata','manual','harvest'])[1 + (i % 3)]
             FROM generate_series(1, {N_ALIASES}) AS i
-        """)
+        """
+        )
 
     # Entity relationships: 200K
     with timed(f"entity_relationships ({N_RELATIONSHIPS:,})"):
-        cur.execute(f"""
+        cur.execute(
+            f"""
             INSERT INTO {BENCH_SCHEMA}.entity_relationships
                 (subject_entity_id, predicate, object_entity_id, source, confidence)
             SELECT
@@ -236,11 +263,13 @@ def generate_synthetic_data(cur):
                 0.5 + random() * 0.5
             FROM generate_series(1, {N_RELATIONSHIPS}) AS i
             WHERE (i % {N_ENTITIES}) != ((i * 7) % {N_ENTITIES})
-        """)
+        """
+        )
 
     # Document entities: 10M (the big one)
     with timed(f"document_entities ({N_DOC_ENTITIES:,})"):
-        cur.execute(f"""
+        cur.execute(
+            f"""
             INSERT INTO {BENCH_SCHEMA}.document_entities
                 (bibcode, entity_id, link_type, confidence, match_method)
             SELECT
@@ -251,11 +280,13 @@ def generate_synthetic_data(cur):
                 (ARRAY['exact','fuzzy','rule'])[1 + (i % 3)]
             FROM generate_series(1, {N_DOC_ENTITIES}) AS i
             ON CONFLICT DO NOTHING
-        """)
+        """
+        )
 
     # Datasets: 5K
     with timed(f"datasets ({N_DATASETS:,})"):
-        cur.execute(f"""
+        cur.execute(
+            f"""
             INSERT INTO {BENCH_SCHEMA}.datasets (name, discipline, source, canonical_id, description)
             SELECT
                 'Dataset ' || i,
@@ -264,11 +295,13 @@ def generate_synthetic_data(cur):
                 'DS_' || i,
                 'Synthetic dataset number ' || i
             FROM generate_series(1, {N_DATASETS}) AS i
-        """)
+        """
+        )
 
     # Dataset entities: 50K
     with timed(f"dataset_entities ({N_DATASET_ENTITIES:,})"):
-        cur.execute(f"""
+        cur.execute(
+            f"""
             INSERT INTO {BENCH_SCHEMA}.dataset_entities (dataset_id, entity_id, relationship)
             SELECT
                 1 + (i % {N_DATASETS}),
@@ -276,11 +309,13 @@ def generate_synthetic_data(cur):
                 (ARRAY['produced_by','observed_by','calibrated_with'])[1 + (i % 3)]
             FROM generate_series(1, {N_DATASET_ENTITIES}) AS i
             ON CONFLICT DO NOTHING
-        """)
+        """
+        )
 
     # Document datasets: 100K
     with timed(f"document_datasets ({N_DOC_DATASETS:,})"):
-        cur.execute(f"""
+        cur.execute(
+            f"""
             INSERT INTO {BENCH_SCHEMA}.document_datasets
                 (bibcode, dataset_id, link_type, confidence, match_method)
             SELECT
@@ -291,12 +326,21 @@ def generate_synthetic_data(cur):
                 (ARRAY['exact','fuzzy','rule'])[1 + (i % 3)]
             FROM generate_series(1, {N_DOC_DATASETS}) AS i
             ON CONFLICT DO NOTHING
-        """)
+        """
+        )
 
     # Verify counts
-    for tbl in ['papers', 'entities', 'entity_identifiers', 'entity_aliases',
-                 'entity_relationships', 'document_entities', 'datasets',
-                 'dataset_entities', 'document_datasets']:
+    for tbl in [
+        "papers",
+        "entities",
+        "entity_identifiers",
+        "entity_aliases",
+        "entity_relationships",
+        "document_entities",
+        "datasets",
+        "dataset_entities",
+        "document_datasets",
+    ]:
         cur.execute(f"SELECT count(*) FROM {BENCH_SCHEMA}.{tbl}")
         count = cur.fetchone()[0]
         print(f"  {tbl}: {count:,}")
@@ -373,7 +417,7 @@ def benchmark_document_context(cur) -> TimingResult:
         for _ in range(100):
             cur.execute(
                 f"SELECT * FROM {BENCH_SCHEMA}.agent_document_context WHERE bibcode = %s",
-                (test_bibcode,)
+                (test_bibcode,),
             )
             cur.fetchone()
 
@@ -443,8 +487,7 @@ def benchmark_entity_context(cur) -> TimingResult:
     with timed("single-row query") as query_t:
         for _ in range(100):
             cur.execute(
-                f"SELECT * FROM {BENCH_SCHEMA}.agent_entity_context WHERE entity_id = %s",
-                (42,)
+                f"SELECT * FROM {BENCH_SCHEMA}.agent_entity_context WHERE entity_id = %s", (42,)
             )
             cur.fetchone()
 
@@ -509,8 +552,7 @@ def benchmark_dataset_context(cur) -> TimingResult:
     with timed("single-row query") as query_t:
         for _ in range(100):
             cur.execute(
-                f"SELECT * FROM {BENCH_SCHEMA}.agent_dataset_context WHERE dataset_id = %s",
-                (42,)
+                f"SELECT * FROM {BENCH_SCHEMA}.agent_dataset_context WHERE dataset_id = %s", (42,)
             )
             cur.fetchone()
 
@@ -565,11 +607,13 @@ def write_report(results: list[TimingResult], total_elapsed: float):
             f"{r.refresh_seconds:.1f} | {r.query_seconds * 1000:.2f} | {status} |"
         )
 
-    lines.extend([
-        "",
-        "## Verdict",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Verdict",
+            "",
+        ]
+    )
 
     if all_pass:
         lines.append(
@@ -582,52 +626,54 @@ def write_report(results: list[TimingResult], total_elapsed: float):
             "Apply the fallback strategy below."
         )
 
-    lines.extend([
-        "",
-        "## Fallback Strategy (Contingency)",
-        "",
-        "Documented unconditionally so downstream beads can adopt without re-running the benchmark "
-        "if production scale or row distribution changes the picture. Apply if any REFRESH "
-        "CONCURRENTLY at production scale exceeds 30 min, or if production row counts grow "
-        "materially beyond the 10M document_entities tested here.",
-        "",
-        "1. **Incremental summary tables**: trigger-maintained summary tables updated on INSERT/UPDATE/DELETE "
-        "(no full refresh; constant per-row cost). Best when write rate is moderate and read latency must be sub-ms.",
-        "2. **Partitioned refresh**: partition `document_entities` by `entity_type` or by hash of `bibcode`, "
-        "build per-partition matviews, refresh partitions independently in parallel. Cuts wall-clock refresh "
-        "by N-way parallelism and isolates hot partitions.",
-        "3. **Partial materialization**: only materialize frequently-queried slices (e.g., top 100K entities by "
-        "doc_count, or only the last 5 years of papers). Combine with on-demand JOIN for the long tail.",
-        "4. **pgvectorscale StreamingDiskANN for vector columns**: if any agent context view embeds dense vectors "
-        "and memory pressure becomes a bottleneck, switch the vector index to pgvectorscale (SSD-backed, "
-        "~6 GB RAM for 1M vectors at 768d vs. ~100 GB for HNSW in memory).",
-        "5. **Logical replication subscriber**: replicate the source tables to a read-only subscriber and "
-        "build matviews there to remove refresh contention from the primary write path.",
-        "",
-        "### Selection guidance",
-        "",
-        "- Refresh time linear in input rows: prefer #2 (partitioned).",
-        "- Refresh time dominated by JSONB aggregation: prefer #1 (incremental triggers).",
-        "- Long tail of low-traffic entities: prefer #3 (partial).",
-        "- Vector memory pressure: layer #4 on top of any of the above.",
-        "- Refresh blocks live writes: layer #5 on top of any of the above.",
-        "",
-        "## Observations",
-        "",
-        "- `agent_document_context` is the largest view (one row per paper with aggregated entities)",
-        "- `agent_entity_context` uses LATERAL subquery for doc count to avoid cross-join explosion",
-        "- `agent_dataset_context` is smallest due to limited dataset count",
-        "- All views use JSONB aggregation with DISTINCT to avoid duplicates from multi-way JOINs",
-        "- UNIQUE INDEX on primary key enables REFRESH CONCURRENTLY",
-        "",
-        "## Reproducibility",
-        "",
-        "```bash",
-        "python scripts/matview_benchmark.py",
-        "```",
-        "",
-        "Benchmark runs in an isolated `matview_bench` schema and cleans up after itself.",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Fallback Strategy (Contingency)",
+            "",
+            "Documented unconditionally so downstream beads can adopt without re-running the benchmark "
+            "if production scale or row distribution changes the picture. Apply if any REFRESH "
+            "CONCURRENTLY at production scale exceeds 30 min, or if production row counts grow "
+            "materially beyond the 10M document_entities tested here.",
+            "",
+            "1. **Incremental summary tables**: trigger-maintained summary tables updated on INSERT/UPDATE/DELETE "
+            "(no full refresh; constant per-row cost). Best when write rate is moderate and read latency must be sub-ms.",
+            "2. **Partitioned refresh**: partition `document_entities` by `entity_type` or by hash of `bibcode`, "
+            "build per-partition matviews, refresh partitions independently in parallel. Cuts wall-clock refresh "
+            "by N-way parallelism and isolates hot partitions.",
+            "3. **Partial materialization**: only materialize frequently-queried slices (e.g., top 100K entities by "
+            "doc_count, or only the last 5 years of papers). Combine with on-demand JOIN for the long tail.",
+            "4. **pgvectorscale StreamingDiskANN for vector columns**: if any agent context view embeds dense vectors "
+            "and memory pressure becomes a bottleneck, switch the vector index to pgvectorscale (SSD-backed, "
+            "~6 GB RAM for 1M vectors at 768d vs. ~100 GB for HNSW in memory).",
+            "5. **Logical replication subscriber**: replicate the source tables to a read-only subscriber and "
+            "build matviews there to remove refresh contention from the primary write path.",
+            "",
+            "### Selection guidance",
+            "",
+            "- Refresh time linear in input rows: prefer #2 (partitioned).",
+            "- Refresh time dominated by JSONB aggregation: prefer #1 (incremental triggers).",
+            "- Long tail of low-traffic entities: prefer #3 (partial).",
+            "- Vector memory pressure: layer #4 on top of any of the above.",
+            "- Refresh blocks live writes: layer #5 on top of any of the above.",
+            "",
+            "## Observations",
+            "",
+            "- `agent_document_context` is the largest view (one row per paper with aggregated entities)",
+            "- `agent_entity_context` uses LATERAL subquery for doc count to avoid cross-join explosion",
+            "- `agent_dataset_context` is smallest due to limited dataset count",
+            "- All views use JSONB aggregation with DISTINCT to avoid duplicates from multi-way JOINs",
+            "- UNIQUE INDEX on primary key enables REFRESH CONCURRENTLY",
+            "",
+            "## Reproducibility",
+            "",
+            "```bash",
+            "python scripts/matview_benchmark.py",
+            "```",
+            "",
+            "Benchmark runs in an isolated `matview_bench` schema and cleans up after itself.",
+        ]
+    )
 
     report_path.write_text("\n".join(lines) + "\n")
     print(f"\nReport written to {report_path}")

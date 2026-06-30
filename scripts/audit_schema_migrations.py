@@ -186,15 +186,11 @@ def probe_target(conn: psycopg.Connection, probe: Probe) -> bool:
     """
     with conn.cursor() as cur:
         if probe.kind in ("table", "view"):
-            cur.execute(
-                "SELECT to_regclass(%s) IS NOT NULL", (probe.qualified_name,)
-            )
+            cur.execute("SELECT to_regclass(%s) IS NOT NULL", (probe.qualified_name,))
             row = cur.fetchone()
             return row is not None and bool(row[0])
         if probe.kind == "function":
-            cur.execute(
-                "SELECT to_regproc(%s) IS NOT NULL", (probe.qualified_name,)
-            )
+            cur.execute("SELECT to_regproc(%s) IS NOT NULL", (probe.qualified_name,))
             row = cur.fetchone()
             return row is not None and bool(row[0])
         if probe.kind == "column":
@@ -202,8 +198,7 @@ def probe_target(conn: psycopg.Connection, probe: Probe) -> bool:
                 schema, table, column = probe.qualified_name.split(".")
             except ValueError as e:
                 raise ValueError(
-                    f"column probe must be schema.table.column, got "
-                    f"{probe.qualified_name!r}"
+                    f"column probe must be schema.table.column, got " f"{probe.qualified_name!r}"
                 ) from e
             cur.execute(
                 "SELECT 1 FROM information_schema.columns "
@@ -221,8 +216,7 @@ def probe_target(conn: psycopg.Connection, probe: Probe) -> bool:
             # contributors who add markers.
             if not _MARKER_SHAPE_RE.match(probe.qualified_name):
                 raise ValueError(
-                    f"marker probe rejected unexpected shape: "
-                    f"{probe.qualified_name!r}"
+                    f"marker probe rejected unexpected shape: " f"{probe.qualified_name!r}"
                 )
             cur.execute(  # nosec B608 - shape-validated, source-controlled input
                 f"SELECT 1 FROM {probe.qualified_name} LIMIT 1"
@@ -243,9 +237,7 @@ def fetch_recorded_versions(
 ) -> dict[int, str]:
     """Return {version: filename} from schema_migrations."""
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT version, filename FROM schema_migrations ORDER BY version"
-        )
+        cur.execute("SELECT version, filename FROM schema_migrations ORDER BY version")
         return {row[0]: row[1] for row in cur.fetchall()}
 
 
@@ -299,18 +291,9 @@ def format_report(rows: Iterable[AuditRow]) -> str:
         "-" * 100,
     ]
     for r in sorted(rows, key=lambda r: r.version):
-        probe_str = (
-            f"{r.probe.kind}:{r.probe.qualified_name}" if r.probe else "(no probe)"
-        )
-        suffix = (
-            f"  [recorded as {r.in_db_filename}]"
-            if r.status == "FILENAME_MISMATCH"
-            else ""
-        )
-        out.append(
-            f"{r.version:>3}  {r.filename:<48}  {r.status:<18}  "
-            f"{probe_str}{suffix}"
-        )
+        probe_str = f"{r.probe.kind}:{r.probe.qualified_name}" if r.probe else "(no probe)"
+        suffix = f"  [recorded as {r.in_db_filename}]" if r.status == "FILENAME_MISMATCH" else ""
+        out.append(f"{r.version:>3}  {r.filename:<48}  {r.status:<18}  " f"{probe_str}{suffix}")
     return "\n".join(out)
 
 

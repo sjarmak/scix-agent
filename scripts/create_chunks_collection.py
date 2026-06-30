@@ -66,9 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         from qdrant_client import QdrantClient
     except ImportError:
-        logger.error(
-            "qdrant-client is not installed — install via the 'search' extra"
-        )
+        logger.error("qdrant-client is not installed — install via the 'search' extra")
         return 1
 
     client = QdrantClient(url=qdrant_url, timeout=args.timeout)

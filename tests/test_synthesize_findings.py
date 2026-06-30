@@ -1142,9 +1142,7 @@ class TestEmptySectionFallback:
         # sum-of-caps (4); each section receives exactly 1.
         for section in result.sections:
             fallback_rows = [
-                p
-                for p in section.cited_papers
-                if p.get("signal_used") == "citation_count_fallback"
+                p for p in section.cited_papers if p.get("signal_used") == "citation_count_fallback"
             ]
             assert len(fallback_rows) == 1
 
@@ -1435,11 +1433,7 @@ class TestWeightedShareClassifier:
         # diverging from legacy on at least one bibcode (in fact on both).
         assert bib_to_section["2024B0"] == "methods"
         assert bib_to_section["2024B1"] == "methods"
-        diverged = [
-            b
-            for b in legacy_routing
-            if bib_to_section.get(b) != legacy_routing[b]
-        ]
+        diverged = [b for b in legacy_routing if bib_to_section.get(b) != legacy_routing[b]]
         assert diverged, (
             "weighted classifier produced the same routing as the legacy "
             "modal-only rule for every bibcode — AC3 contrast is gone, "
@@ -1589,9 +1583,7 @@ class TestSectionTheme:
         assert len(comms) == 3
         # AC2: sorted desc by paper_count_in_section, with the expected
         # community ids and counts.
-        actual_top_3 = [
-            (c["community_id"], c["paper_count_in_section"]) for c in comms
-        ]
+        actual_top_3 = [(c["community_id"], c["paper_count_in_section"]) for c in comms]
         assert actual_top_3 == expected_top_3
 
     def test_top_papers_by_citation_has_three_highest(self) -> None:
@@ -1864,9 +1856,9 @@ class TestSectionTheme:
             # if present; the assertion below targets only the bead-listed
             # stopwords.
             if noise in {"low", "high", "first", "two"}:
-                assert noise not in top_kw, (
-                    f"noise token {noise!r} leaked into top_keywords {top_kw}"
-                )
+                assert (
+                    noise not in top_kw
+                ), f"noise token {noise!r} leaked into top_keywords {top_kw}"
 
     def test_theme_in_wire_format_via_to_dict(self) -> None:
         """AC1 wire: ``theme`` is serialised via ``to_dict()`` so MCP clients
@@ -2210,9 +2202,7 @@ class TestAdditiveGroundingFields:
         community_rows = [("2024A", 1, "L")]
         # SQL window function returns at most 3 rows per target;
         # mock the post-filter result.
-        excerpt_rows = [
-            ("2024A", f"ctx-{i}", "method", f"2025citer{i}") for i in range(3)
-        ]
+        excerpt_rows = [("2024A", f"ctx-{i}", "method", f"2025citer{i}") for i in range(3)]
         conn = _mock_conn(
             papers_rows=papers_rows,
             intent_rows=intent_rows,

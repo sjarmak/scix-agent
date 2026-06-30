@@ -21,9 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-SCRIPT_PATH = (
-    Path(__file__).resolve().parent.parent / "scripts" / "backfill_citation_intent.py"
-)
+SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "backfill_citation_intent.py"
 
 
 def _load_script_module() -> Any:
@@ -33,9 +31,7 @@ def _load_script_module() -> Any:
     pythonpath, but loading via a fresh spec lets us be explicit and
     import-isolate.
     """
-    spec = importlib.util.spec_from_file_location(
-        "backfill_citation_intent_script", SCRIPT_PATH
-    )
+    spec = importlib.util.spec_from_file_location("backfill_citation_intent_script", SCRIPT_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -93,13 +89,9 @@ class FakeCursor:
         params = params or ()
         if sql_norm.startswith("select id, source_bibcode"):
             limit = params[0] if params else len(self._table_rows)
-            unclassified = [
-                r for r in self._table_rows if r[5] is None  # intent slot
-            ]
+            unclassified = [r for r in self._table_rows if r[5] is None]  # intent slot
             unclassified.sort(key=lambda r: r[0])
-            self._last_fetch = [
-                (r[0], r[1], r[2], r[3], r[4]) for r in unclassified[:limit]
-            ]
+            self._last_fetch = [(r[0], r[1], r[2], r[3], r[4]) for r in unclassified[:limit]]
         elif sql_norm.startswith("update citation_contexts set intent"):
             new_intent, row_id = params
             self._updates_log.append((row_id, new_intent))
@@ -192,9 +184,7 @@ def test_dry_run_prints_plan_and_exits_zero(
     sentinel = MagicMock(side_effect=AssertionError("DB must not be opened in dry-run"))
     monkeypatch.setattr(backfill, "get_connection", sentinel)
 
-    rc = backfill.main(
-        ["--dry-run", "--limit", "100", "--dsn", "dbname=scix_test"]
-    )
+    rc = backfill.main(["--dry-run", "--limit", "100", "--dsn", "dbname=scix_test"])
     assert rc == 0
 
     captured = capsys.readouterr()
@@ -206,9 +196,7 @@ def test_dry_run_prints_plan_and_exits_zero(
 
 
 def test_dry_run_via_function(monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = backfill._parse_args(
-        ["--dry-run", "--smoke-test", "--dsn", "dbname=scix_test"]
-    )
+    cfg = backfill._parse_args(["--dry-run", "--smoke-test", "--dsn", "dbname=scix_test"])
     plan = backfill._format_plan(cfg)
     assert "limit          : 100" in plan
     assert cfg.dry_run is True
@@ -430,7 +418,5 @@ def test_smoke_test_flag_caps_at_100() -> None:
 
 
 def test_smoke_test_does_not_raise_existing_lower_limit() -> None:
-    cfg = backfill._parse_args(
-        ["--smoke-test", "--limit", "50", "--dsn", "dbname=scix_test"]
-    )
+    cfg = backfill._parse_args(["--smoke-test", "--limit", "50", "--dsn", "dbname=scix_test"])
     assert cfg.limit == 50

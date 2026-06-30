@@ -281,7 +281,9 @@ CASES: list[dict[str, Any]] = [
         "id": "U14_invented_paper",
         "assertion": "Smith 2099 demonstrates faster-than-light neutrinos at CERN.",
         "tool_results": [
-            {"snippet": "OPERA reported anomalous neutrino velocity measurements that were later attributed to a loose cable."},
+            {
+                "snippet": "OPERA reported anomalous neutrino velocity measurements that were later attributed to a loose cable."
+            },
         ],
         "expected_grounded": False,
     },
@@ -289,7 +291,9 @@ CASES: list[dict[str, Any]] = [
         "id": "U15_pure_speculation",
         "assertion": "Aliens calibrated the cosmic microwave background dipole.",
         "tool_results": [
-            {"text": "The CMB dipole arises from solar motion relative to the rest frame defined by photons."},
+            {
+                "text": "The CMB dipole arises from solar motion relative to the rest frame defined by photons."
+            },
         ],
         "expected_grounded": False,
     },
@@ -297,7 +301,9 @@ CASES: list[dict[str, Any]] = [
         "id": "U16_wrong_facts",
         "assertion": "Andromeda galaxy will collide with the Milky Way in 2026.",
         "tool_results": [
-            {"snippet": "Andromeda is approaching the Milky Way at 110 km/s and they will merge in roughly 4.5 billion years."},
+            {
+                "snippet": "Andromeda is approaching the Milky Way at 110 km/s and they will merge in roughly 4.5 billion years."
+            },
         ],
         "expected_grounded": False,
     },
@@ -313,7 +319,9 @@ CASES: list[dict[str, Any]] = [
         "id": "U18_fabricated_quote",
         "assertion": "Einstein famously said cosmology is engineering.",
         "tool_results": [
-            {"snippet": "Albert Einstein developed general relativity in 1915 and described gravitation as spacetime curvature."},
+            {
+                "snippet": "Albert Einstein developed general relativity in 1915 and described gravitation as spacetime curvature."
+            },
         ],
         "expected_grounded": False,
     },
@@ -321,7 +329,9 @@ CASES: list[dict[str, Any]] = [
         "id": "U19_unsupported_method",
         "assertion": "We trained a 175-billion-parameter LLM on rotation curves overnight.",
         "tool_results": [
-            {"text": "Rotation curve fitting is performed via NFW profile chi-squared minimization."},
+            {
+                "text": "Rotation curve fitting is performed via NFW profile chi-squared minimization."
+            },
         ],
         "expected_grounded": False,
     },

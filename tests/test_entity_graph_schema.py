@@ -122,7 +122,7 @@ class TestDocumentEntities:
         section = sql_content[start:end]
         # bibcode line should not have REFERENCES
         bibcode_lines = [
-            l for l in section.split("\n") if "bibcode" in l.lower() and "REFERENCES" in l
+            ln for ln in section.split("\n") if "bibcode" in ln.lower() and "REFERENCES" in ln
         ]
         assert len(bibcode_lines) == 0, "bibcode must not have a REFERENCES constraint"
 
@@ -172,7 +172,7 @@ class TestDocumentDatasets:
         end = sql_content.index(");", start) + 2
         section = sql_content[start:end]
         bibcode_lines = [
-            l for l in section.split("\n") if "bibcode" in l.lower() and "REFERENCES" in l
+            ln for ln in section.split("\n") if "bibcode" in ln.lower() and "REFERENCES" in ln
         ]
         assert len(bibcode_lines) == 0, "bibcode must not have a REFERENCES constraint"
 

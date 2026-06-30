@@ -37,12 +37,16 @@ def probe(base: str, out_dir: Path) -> dict:
             page = context.new_page()
             console = []
             requests_failed = []
-            page.on("console", lambda msg, _console=console: _console.append(
-                {"type": msg.type, "text": msg.text, "location": str(msg.location)}
-            ))
-            page.on("requestfailed", lambda req, _f=requests_failed: _f.append(
-                {"url": req.url, "failure": req.failure}
-            ))
+            page.on(
+                "console",
+                lambda msg, _console=console: _console.append(
+                    {"type": msg.type, "text": msg.text, "location": str(msg.location)}
+                ),
+            )
+            page.on(
+                "requestfailed",
+                lambda req, _f=requests_failed: _f.append({"url": req.url, "failure": req.failure}),
+            )
             url = base + path
             # 'networkidle' hangs on pages with long-lived SSE streams
             # (agent_trace.html opens /viz/api/trace/stream indefinitely).
@@ -52,7 +56,8 @@ def probe(base: str, out_dir: Path) -> dict:
             shot = out_dir / f"{name}.png"
             page.screenshot(path=str(shot), full_page=False)
 
-            dom = page.evaluate("""() => {
+            dom = page.evaluate(
+                """() => {
                 const root = document.getElementById('sankey-root')
                           || document.getElementById('umap-root')
                           || document.body;
@@ -81,7 +86,8 @@ def probe(base: str, out_dir: Path) -> dict:
                               || document.getElementById('umap-status')?.textContent
                               || null,
                 };
-            }""")
+            }"""
+            )
 
             results[name] = {
                 "url": url,

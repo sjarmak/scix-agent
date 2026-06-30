@@ -186,13 +186,15 @@ def fetch_instrument_entries(
     from psycopg.rows import dict_row
 
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT id, canonical_name, entity_type, source,
                    external_id, aliases, metadata
             FROM entity_dictionary
             WHERE source = 'aas' AND entity_type = 'instrument'
             ORDER BY canonical_name
-            """)
+            """
+        )
         return [dict(row) for row in cur.fetchall()]
 
 

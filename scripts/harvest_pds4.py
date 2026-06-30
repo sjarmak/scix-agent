@@ -438,11 +438,13 @@ def _write_relationships(
     # Build lookup: URN -> entity_id
     urn_to_entity: dict[str, int] = {}
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT ei.external_id, ei.entity_id
             FROM entity_identifiers ei
             WHERE ei.id_scheme = 'pds_urn'
-            """)
+            """
+        )
         for row in cur.fetchall():
             urn_to_entity[row[0]] = row[1]
 

@@ -52,7 +52,10 @@ WARMUPS = [
     *[("entity", {"action": "resolve", "query": q}) for q in DEMO_QUERIES],
     # Citation graph queries (no vector cost; warm PG plan cache)
     ("citation_traverse", {"bibcode": "1987gady.book.....B", "direction": "both", "limit": 5}),
-    ("citation_similarity", {"bibcode": "1987gady.book.....B", "method": "co_citation", "limit": 5}),
+    (
+        "citation_similarity",
+        {"bibcode": "1987gady.book.....B", "method": "co_citation", "limit": 5},
+    ),
     # Fast SQL aggregations
     ("temporal_evolution", {"bibcode_or_query": "Galaxies"}),
     ("facet_counts", {"field": "arxiv_class", "limit": 10}),
@@ -94,7 +97,9 @@ def main() -> int:
         q_summary = args.get("query") or args.get("bibcode") or args.get("bibcode_or_query") or "-"
         ok, ms, detail = call(tool, args)
         marker = "✓" if ok else "!"
-        print(f"  [{i:>2}/{len(WARMUPS)}] {marker} {tool:<22} {q_summary[:40]:<42} {ms:>7.0f}ms  {detail}")
+        print(
+            f"  [{i:>2}/{len(WARMUPS)}] {marker} {tool:<22} {q_summary[:40]:<42} {ms:>7.0f}ms  {detail}"
+        )
         key = (tool, q_summary)
         history.setdefault(key, []).append(ms)
 
@@ -104,7 +109,11 @@ def main() -> int:
     print("=" * 80)
     for (tool, q), runs in sorted(history.items(), key=lambda kv: -kv[1][-1]):
         last = runs[-1]
-        spread = f"runs={len(runs)} cold={runs[0]:.0f}ms warm={last:.0f}ms" if len(runs) > 1 else f"single={last:.0f}ms"
+        spread = (
+            f"runs={len(runs)} cold={runs[0]:.0f}ms warm={last:.0f}ms"
+            if len(runs) > 1
+            else f"single={last:.0f}ms"
+        )
         marker = "🟢" if last < 2000 else "🟡" if last < 8000 else "🔴"
         print(f"  {marker} {tool:<22} {q[:35]:<37} {spread}")
 

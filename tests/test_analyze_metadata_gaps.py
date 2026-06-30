@@ -427,9 +427,7 @@ class TestWriteReport:
                 "facility": FieldCoverage(
                     field="facility", populated=7, total=10, coverage_pct=70.0
                 ),
-                "data": FieldCoverage(
-                    field="data", populated=7, total=10, coverage_pct=70.0
-                ),
+                "data": FieldCoverage(field="data", populated=7, total=10, coverage_pct=70.0),
                 "keyword_norm": FieldCoverage(
                     field="keyword_norm", populated=7, total=10, coverage_pct=70.0
                 ),
@@ -522,9 +520,9 @@ class TestPsycopgPlaceholderEscape:
             f"WHERE {ASTRONOMY_COHORT_SQL}\n"
             "LIMIT %s"
         )
-        assert _psycopg_placeholder_safe(query), (
-            f"LIMIT query would crash psycopg3 placeholder parser: {query!r}"
-        )
+        assert _psycopg_placeholder_safe(
+            query
+        ), f"LIMIT query would crash psycopg3 placeholder parser: {query!r}"
 
     def test_streaming_query_string_is_placeholder_safe(self) -> None:
         # Mirror the exact query construction used in _fetch_rows_streaming.
@@ -534,8 +532,7 @@ class TestPsycopgPlaceholderEscape:
             f"WHERE {ASTRONOMY_COHORT_SQL}"
         )
         assert _psycopg_placeholder_safe(query), (
-            f"Streaming query would crash psycopg3 placeholder parser: "
-            f"{query!r}"
+            f"Streaming query would crash psycopg3 placeholder parser: " f"{query!r}"
         )
 
 

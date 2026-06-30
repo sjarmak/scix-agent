@@ -66,7 +66,7 @@ class TestMigrationSQL:
         # The ADD COLUMN should NOT contain "not null"
         # Extract just the ALTER TABLE statement
         lines = sql.splitlines()
-        add_col_lines = [l for l in lines if "add column" in l and "discipline" in l]
+        add_col_lines = [ln for ln in lines if "add column" in ln and "discipline" in ln]
         assert len(add_col_lines) == 1, "Expected exactly one ADD COLUMN for discipline"
         assert "not null" not in add_col_lines[0], "discipline column must be nullable"
 
@@ -79,11 +79,13 @@ class TestMigrationSQL:
 def _has_entity_dictionary(conn: psycopg.Connection) -> bool:
     """Check if entity_dictionary table exists."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT COUNT(*) FROM information_schema.tables
             WHERE table_schema = 'public'
               AND table_name = 'entity_dictionary'
-        """)
+        """
+        )
         return cur.fetchone()[0] == 1
 
 
@@ -151,12 +153,14 @@ class TestMigration014Integration:
 
     def test_discipline_column_is_nullable(self, db_conn: psycopg.Connection) -> None:
         with db_conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT is_nullable FROM information_schema.columns
                 WHERE table_schema = 'public'
                   AND table_name = 'entity_dictionary'
                   AND column_name = 'discipline'
-            """)
+            """
+            )
             row = cur.fetchone()
             assert row is not None
             assert row[0] == "YES", "discipline column should be nullable"
@@ -181,11 +185,13 @@ class TestMigration014Integration:
     def test_astro_sources_have_astrophysics(self, db_conn: psycopg.Connection) -> None:
         """All known astro sources should have discipline='astrophysics'."""
         with db_conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT DISTINCT discipline
                 FROM entity_dictionary
                 WHERE source IN ('ascl','aas','physh','pwc','astromlab','vizier','ads_data')
-            """)
+            """
+            )
             rows = cur.fetchall()
             if rows:
                 disciplines = {r[0] for r in rows}

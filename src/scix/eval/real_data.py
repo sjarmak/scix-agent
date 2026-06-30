@@ -58,12 +58,53 @@ _TITLE_ENTITY_RE = re.compile(r"&[a-zA-Z]+;")
 _ALPHA_TOKEN_RE = re.compile(r"[a-z]{4,}")
 _LEXICAL_STOP_WORDS: frozenset[str] = frozenset(
     {
-        "the", "and", "for", "are", "but", "not", "you", "all", "can",
-        "was", "one", "our", "out", "has", "have", "from", "with", "this",
-        "that", "they", "been", "were", "which", "their", "will", "each",
-        "many", "some", "than", "them", "then", "what", "when", "over",
-        "such", "into", "most", "between", "these", "using", "based",
-        "also", "about", "more", "new", "first", "two",
+        "the",
+        "and",
+        "for",
+        "are",
+        "but",
+        "not",
+        "you",
+        "all",
+        "can",
+        "was",
+        "one",
+        "our",
+        "out",
+        "has",
+        "have",
+        "from",
+        "with",
+        "this",
+        "that",
+        "they",
+        "been",
+        "were",
+        "which",
+        "their",
+        "will",
+        "each",
+        "many",
+        "some",
+        "than",
+        "them",
+        "then",
+        "what",
+        "when",
+        "over",
+        "such",
+        "into",
+        "most",
+        "between",
+        "these",
+        "using",
+        "based",
+        "also",
+        "about",
+        "more",
+        "new",
+        "first",
+        "two",
     }
 )
 
@@ -150,8 +191,7 @@ class RealEvalContext:
             return self.embedding_cache[key]
         with self.conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                "SELECT embedding FROM paper_embeddings "
-                "WHERE bibcode = %s AND model_name = %s",
+                "SELECT embedding FROM paper_embeddings " "WHERE bibcode = %s AND model_name = %s",
                 [bibcode, model_name],
             )
             row = cur.fetchone()

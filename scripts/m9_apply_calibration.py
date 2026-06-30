@@ -116,10 +116,7 @@ def _load_empirical(conn: psycopg.Connection, annotator: str) -> list[TierEmpiri
 def _load_previous_weights(conn: psycopg.Connection) -> dict[int, float]:
     """Load the most recent calibration row's weights as fallback."""
     with conn.cursor() as cur:
-        cur.execute(
-            "SELECT weights FROM tier_weight_calibration_log "
-            "ORDER BY id DESC LIMIT 1"
-        )
+        cur.execute("SELECT weights FROM tier_weight_calibration_log " "ORDER BY id DESC LIMIT 1")
         row = cur.fetchone()
     if row is None:
         return {}
@@ -147,9 +144,7 @@ def _resolve_new_weights(
         if e is not None and e.n_decisive >= MIN_DECISIVE_FOR_CALIBRATION:
             w = max(0.0, min(0.9999, e.wilson_lower()))
             weights[tier] = round(w, 4)
-            sources[tier] = (
-                f"wilson_lower(correct={e.n_correct}, decisive={e.n_decisive})"
-            )
+            sources[tier] = f"wilson_lower(correct={e.n_correct}, decisive={e.n_decisive})"
         elif tier in fallback:
             weights[tier] = round(float(fallback[tier]), 4)
             sources[tier] = (
@@ -164,8 +159,7 @@ def _resolve_new_weights(
 def _format_function_sql(weights: dict[int, float]) -> str:
     """Render CREATE OR REPLACE FUNCTION tier_weight(...) SQL."""
     cases = "\n".join(
-        f"        WHEN {t}::SMALLINT THEN {weights[t]:.4f}::float8"
-        for t in CANONICAL_TIERS
+        f"        WHEN {t}::SMALLINT THEN {weights[t]:.4f}::float8" for t in CANONICAL_TIERS
     )
     return f"""CREATE OR REPLACE FUNCTION tier_weight(tier SMALLINT)
 RETURNS DOUBLE PRECISION
@@ -218,8 +212,7 @@ def _refresh_mv(conn: psycopg.Connection) -> None:
         with conn.cursor() as cur:
             cur.execute("REFRESH MATERIALIZED VIEW CONCURRENTLY document_entities_canonical")
             cur.execute(
-                "UPDATE fusion_mv_state SET dirty = false, last_refresh_at = now() "
-                "WHERE id = 1"
+                "UPDATE fusion_mv_state SET dirty = false, last_refresh_at = now() " "WHERE id = 1"
             )
     finally:
         conn.autocommit = False
@@ -240,20 +233,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db-url", default=None)
     parser.add_argument("--annotator", default="claude_oauth_judge_v1")
     parser.add_argument(
-        "--version", required=True,
+        "--version",
+        required=True,
         help="Unique calibration row version, e.g. m9_llm_judge_only_2026-04-29",
     )
     parser.add_argument(
-        "--apply", action="store_true",
+        "--apply",
+        action="store_true",
         help="Apply: CREATE OR REPLACE tier_weight() and INSERT calibration row.",
     )
     parser.add_argument(
-        "--refresh-mv", action="store_true",
-        help="REFRESH MATERIALIZED VIEW CONCURRENTLY (long-running). "
-             "Implies --apply.",
+        "--refresh-mv",
+        action="store_true",
+        help="REFRESH MATERIALIZED VIEW CONCURRENTLY (long-running). " "Implies --apply.",
     )
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Print SQL only; no DB writes.")
+    parser.add_argument("--dry-run", action="store_true", help="Print SQL only; no DB writes.")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args(argv)
 
@@ -284,8 +278,14 @@ def main(argv: list[str] | None = None) -> int:
             logger.info(
                 "  tier %d: total=%d correct=%d incorrect=%d ambiguous=%d "
                 "decisive=%d point_p=%.3f wilson_lo=%.3f",
-                e.tier, e.n_total, e.n_correct, e.n_incorrect, e.n_ambiguous,
-                e.n_decisive, e.point_precision, e.wilson_lower(),
+                e.tier,
+                e.n_total,
+                e.n_correct,
+                e.n_incorrect,
+                e.n_ambiguous,
+                e.n_decisive,
+                e.point_precision,
+                e.wilson_lower(),
             )
 
         prev = _load_previous_weights(conn)
@@ -295,7 +295,9 @@ def main(argv: list[str] | None = None) -> int:
         for t in sorted(new_weights):
             logger.info(
                 "  tier %d -> w=%.4f  (%s; previous=%s)",
-                t, new_weights[t], sources[t],
+                t,
+                new_weights[t],
+                sources[t],
                 f"{prev.get(t):.4f}" if t in prev else "<none>",
             )
 
@@ -327,8 +329,7 @@ def main(argv: list[str] | None = None) -> int:
         new_id = _insert_calibration_row(
             conn, version=args.version, weights=new_weights, notes=notes
         )
-        logger.info("wrote tier_weight_calibration_log id=%d version=%s",
-                    new_id, args.version)
+        logger.info("wrote tier_weight_calibration_log id=%d version=%s", new_id, args.version)
 
         # Mark MV dirty regardless of refresh flag.
         with conn.cursor() as cur:

@@ -131,9 +131,7 @@ class TestFocusedPapersCap:
         assert _FOCUSED_SOFT_WARN == 200
         assert _FOCUSED_HARD_CAP == 500
 
-    def test_below_soft_warn_no_warning(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_below_soft_warn_no_warning(self, caplog: pytest.LogCaptureFixture) -> None:
         state = SessionState()
         with caplog.at_level(logging.WARNING):
             for i in range(_FOCUSED_SOFT_WARN - 1):  # 199
@@ -141,9 +139,7 @@ class TestFocusedPapersCap:
         assert not any("focused" in r.message.lower() for r in caplog.records)
         assert len(state.get_focused_papers()) == _FOCUSED_SOFT_WARN - 1
 
-    def test_soft_warn_emitted_once_at_threshold(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_soft_warn_emitted_once_at_threshold(self, caplog: pytest.LogCaptureFixture) -> None:
         state = SessionState()
         # Add 199 — no warning yet.
         for i in range(_FOCUSED_SOFT_WARN - 1):
@@ -157,9 +153,7 @@ class TestFocusedPapersCap:
             for i in range(50):
                 state.track_focused(f"AFTER{i:05d}")
 
-        focused_warnings = [
-            r for r in caplog.records if "focused" in r.message.lower()
-        ]
+        focused_warnings = [r for r in caplog.records if "focused" in r.message.lower()]
         assert len(focused_warnings) == 1
         assert "soft" in focused_warnings[0].message.lower()
 
@@ -184,7 +178,7 @@ class TestFocusedPapersCap:
         assert len(focused) == _FOCUSED_HARD_CAP
         assert "OVERFLOW" in focused
         assert "FOC00000" not in focused  # oldest evicted
-        assert "FOC00001" in focused      # second-oldest survives
+        assert "FOC00001" in focused  # second-oldest survives
 
     def test_eviction_order_strict_fifo(self) -> None:
         """Adding N papers above the cap evicts exactly the N oldest."""

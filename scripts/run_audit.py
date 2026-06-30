@@ -73,18 +73,22 @@ def _seed_fixture(conn: psycopg.Connection) -> None:
         )
 
         # Entities — canonical_name is usually required; we use a deterministic id range.
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO entities (canonical_name, entity_type, source)
             SELECT 'm9_fixture_entity_' || g::text, 'concept', 'm9_fixture'
             FROM generate_series(1, 8) AS g
             ON CONFLICT DO NOTHING
-            """)
-        cur.execute("""
+            """
+        )
+        cur.execute(
+            """
             SELECT id FROM entities
             WHERE source = 'm9_fixture'
             ORDER BY id
             LIMIT 8
-            """)
+            """
+        )
         entity_ids = [int(r[0]) for r in cur.fetchall()]
         if not entity_ids:
             raise RuntimeError("fixture: failed to seed m9_fixture entities")

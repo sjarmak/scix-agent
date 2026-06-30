@@ -4,11 +4,13 @@ Given a free-text query, return the top-``k`` entity ids most similar to it
 so that downstream retrieval (hybrid_search, vector_search) can enrich its
 filter set or annotate results with expanded entity context.
 
-This module ships a deterministic in-memory numpy implementation for tests
-and early integration. The production path — pgvector HNSW over the
-``entities`` table backed by INDUS-SDE-ST embeddings — is documented as a
-TODO at the bottom of the file and must replace this before §S3 is promoted
-to stable.
+This module lives under :mod:`scix.eval` because it ships a deterministic
+in-memory numpy implementation for tests and pilot evaluation only — it is
+deliberately fenced out of the main retrieval package until the production
+path lands. That path — pgvector HNSW over the ``entities`` table backed by
+INDUS-SDE-ST embeddings — is documented as a TODO at the bottom of the file
+(tracked by bead scix_experiments-eecm) and must replace this before §S3 is
+promoted to stable.
 
 Determinism: for identical (query, index) inputs the same entity ordering
 is always returned. Query vectors are generated from a stable content hash
@@ -168,7 +170,7 @@ def expand(query: str, k: int = 5, *, index: Optional[EntityIndex] = None) -> li
 
 
 # -----------------------------------------------------------------------------
-# Production-grade path (TODO — replace in-memory numpy impl)
+# Production-grade path (TODO — bead scix_experiments-eecm — replace numpy impl)
 # -----------------------------------------------------------------------------
 #
 # The numpy implementation above is adequate for unit tests and pilot

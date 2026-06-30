@@ -80,9 +80,7 @@ def kl_divergence(p: Sequence[float], q: Sequence[float], eps: float = 1e-12) ->
     smoothed inputs.
     """
     if len(p) != len(q):
-        raise ValueError(
-            f"kl_divergence: length mismatch — len(P)={len(p)}, len(Q)={len(q)}"
-        )
+        raise ValueError(f"kl_divergence: length mismatch — len(P)={len(p)}, len(Q)={len(q)}")
     if len(p) == 0:
         return 0.0
 
@@ -176,9 +174,7 @@ def _semantic_medium_column_exists(conn: Any) -> bool:
         return cur.fetchone() is not None
 
 
-def get_community_semantic_distribution(
-    conn: Any, limit: int = 20
-) -> list[DistributionRow] | None:
+def get_community_semantic_distribution(conn: Any, limit: int = 20) -> list[DistributionRow] | None:
     """Top-``limit`` semantic-medium communities by paper count.
 
     Returns ``None`` when ``paper_metrics.community_semantic_medium`` is
@@ -187,8 +183,7 @@ def get_community_semantic_distribution(
     """
     if not _semantic_medium_column_exists(conn):
         logger.info(
-            "paper_metrics.community_semantic_medium not present — "
-            "skipping semantic facet"
+            "paper_metrics.community_semantic_medium not present — " "skipping semantic facet"
         )
         return None
 
@@ -318,9 +313,7 @@ def build_payload(
             continue
         facets[name] = build_facet_payload(rows)
 
-    fulltext_pct = (
-        round(100.0 * fulltext_total / corpus_total, 4) if corpus_total > 0 else 0.0
-    )
+    fulltext_pct = round(100.0 * fulltext_total / corpus_total, 4) if corpus_total > 0 else 0.0
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -496,9 +489,7 @@ def render_agent_guidance(payload: dict[str, Any], json_out: Path | None) -> str
     lines.append("")
     lines.extend(_format_unsafe_examples(payload))
     lines.append("")
-    lines.append(
-        "### Operational rule of thumb"
-    )
+    lines.append("### Operational rule of thumb")
     lines.append("")
     lines.append(
         "Any MCP tool path that consumes body-text (NER, negative-results, "
@@ -539,7 +530,9 @@ def upsert_agent_guidance_section(docs_path: Path, section: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def collect_from_db(dsn: str | None) -> tuple[dict[str, Any], dict[str, Sequence[DistributionRow] | None]]:
+def collect_from_db(
+    dsn: str | None,
+) -> tuple[dict[str, Any], dict[str, Sequence[DistributionRow] | None]]:
     """Connect, query, and return (corpus_meta, facet_rows_by_name).
 
     corpus_meta carries ``corpus_total``, ``fulltext_total``, ``dsn_redacted``.

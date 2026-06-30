@@ -16,9 +16,7 @@ from scix.research_scope import (
 
 def test_empty_scope_produces_empty_clause_and_params() -> None:
     scope = ResearchScope()
-    clause, params = scope_to_sql_clauses(
-        scope, {"papers": "p", "paper_metrics": "pm"}
-    )
+    clause, params = scope_to_sql_clauses(scope, {"papers": "p", "paper_metrics": "pm"})
     assert clause == ""
     assert params == []
 
@@ -165,13 +163,8 @@ def test_combined_clauses_joined_with_and_in_declaration_order() -> None:
         community_ids=[1, 2],
         leiden_resolution="fine",
     )
-    clause, params = scope_to_sql_clauses(
-        scope, {"papers": "p", "paper_metrics": "pm"}
-    )
-    assert (
-        clause
-        == "p.year >= %s AND p.year <= %s AND pm.community_id_fine = ANY(%s)"
-    )
+    clause, params = scope_to_sql_clauses(scope, {"papers": "p", "paper_metrics": "pm"})
+    assert clause == "p.year >= %s AND p.year <= %s AND pm.community_id_fine = ANY(%s)"
     assert params == [2018, 2024, [1, 2]]
 
 

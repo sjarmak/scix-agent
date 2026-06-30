@@ -73,23 +73,27 @@ class TestBuildEntries:
 def _has_required_tables(conn: psycopg.Connection) -> bool:
     """Check if papers and entity_dictionary tables exist."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT COUNT(*) FROM information_schema.tables
             WHERE table_schema = 'public'
               AND table_name IN ('papers', 'entity_dictionary')
-        """)
+        """
+        )
         return cur.fetchone()[0] == 2
 
 
 def _has_data_column(conn: psycopg.Connection) -> bool:
     """Check if papers.data column exists (migration 012)."""
     with conn.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT EXISTS(
                 SELECT 1 FROM information_schema.columns
                 WHERE table_name = 'papers' AND column_name = 'data'
             )
-        """)
+        """
+        )
         return cur.fetchone()[0]
 
 

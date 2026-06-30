@@ -55,6 +55,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from scix import db as _db  # noqa: E402
+from scix.coldtext import HOT_WINDOW_START_YEAR  # noqa: E402
 from scix.db import DEFAULT_DSN, is_production_dsn, redact_dsn  # noqa: E402
 from scix.sources import ads_body_parser  # noqa: E402
 from scix.sources.route import (  # noqa: E402
@@ -267,8 +268,7 @@ def resolve_prod_guard(
     """
     if is_production_dsn(dsn) and not allow_prod:
         msg = (
-            f"refusing to write to production DSN {redact_dsn(dsn)} — "
-            "pass --allow-prod to override"
+            f"refusing to write to production DSN {redact_dsn(dsn)} — pass --allow-prod to override"
         )
         logger.error(msg)
         raise ProdGuardError(2)
@@ -386,6 +386,10 @@ def iter_candidate_papers(
             "  FROM papers p",
             "  LEFT JOIN papers_external_ids x ON x.bibcode = p.bibcode",
             " WHERE p.bibcode > %s",
+            # ADR-016: sealed years (< hot window) live on NAS, not in
+            # papers_fulltext. Without this floor they'd look like fulltext
+            # gaps post-seal and get needlessly re-fetched/re-parsed.
+            f"   AND p.year >= {int(HOT_WINDOW_START_YEAR)}",
             "   AND (",
             "       p.body IS NOT NULL",
             "       OR EXISTS (",
@@ -770,9 +774,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--chunk-size",
         type=int,
         default=DEFAULT_CHUNK_SIZE,
-        help=(
-            f"Rows per COPY batch (default {DEFAULT_CHUNK_SIZE}, capped at " f"{MAX_CHUNK_SIZE})."
-        ),
+        help=(f"Rows per COPY batch (default {DEFAULT_CHUNK_SIZE}, capped at {MAX_CHUNK_SIZE})."),
     )
     parser.add_argument(
         "--limit",
@@ -830,7 +832,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return int(exc.code) if exc.code is not None else 2
 
     logger.info(
-        "starting driver: dsn=%s chunk_size=%d resume_from=%r limit=%r" " reparse_from_version=%r",
+        "starting driver: dsn=%s chunk_size=%d resume_from=%r limit=%r reparse_from_version=%r",
         redact_dsn(config.dsn),
         config.chunk_size,
         config.resume_from,

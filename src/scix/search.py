@@ -3797,8 +3797,15 @@ def _read_section_from_papers_fulltext(
         )
         row = cur.fetchone()
     if row is None:
-        return None
-    sections_json = row.get("sections") or []
+        # Cold tier (ADR-016): a sealed year is no longer in Postgres — fetch the
+        # structured sections from the year's NAS shard. A true PG miss only;
+        # a present-but-empty sections row is left to the body-parse fallback.
+        # No-op until the sealed rows are dropped (Phase 1b).
+        from scix.coldtext.route import fetch_sections_cold
+
+        sections_json = fetch_sections_cold(conn, bibcode) or []
+    else:
+        sections_json = row.get("sections") or []
     if not sections_json:
         return None
 

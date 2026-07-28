@@ -46,7 +46,6 @@ _OPTIONAL_DEP_MODULES: dict[str, list[str]] = {
         "test_backfill_qdrant_filter_fields.py",
         "test_qdrant_contract.py",
     ],
-    "pgvector": ["test_qdrant_outbox_sync.py"],
     "igraph": ["test_graph_experiment.py"],
     "torch": ["test_somd_detect.py", "test_chunk_pass_embedder.py"],
     "leidenalg": ["test_recompute_citation_communities.py"],

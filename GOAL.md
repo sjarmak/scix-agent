@@ -71,21 +71,21 @@ unlanded branches, and triage of the 42 substantive beads.
 
 Every item is verified by running its command, never from memory.
 
-- [ ] **A1 — GPU alive.** `nvidia-smi` exits 0 and lists the device.
-- [ ] **A2 — Module survives kernel changes.** `dkms status` reports the nvidia module built for `$(uname -r)`.
-- [ ] **A3 — Dense gap drained.** `psql -d scix -tAc "select count(*) from papers p left join indus_qdrant_synced s using (bibcode) where s.bibcode is null and p.title is not null"` returns < 100.
-- [ ] **A4 — Working tree clean.** `git status --porcelain` outputs nothing.
-- [ ] **A5 — Live code is committed.** `git diff origin/main..main --stat` shows the four concerns; no tracked file differs from what cron executes.
-- [ ] **A6 — Zero stray worktrees.** `git worktree list | wc -l` returns 1.
-- [ ] **A7 — No commits lost.** Every branch listed in `docs/ops/branch_inventory_2026-07-27.txt` still resolves via `git rev-parse`, and its commit count vs `origin/main` is unchanged.
-- [ ] **A8 — Bead store is signal.** `bd list --status=open | grep -c "Rollup("` returns 0, and every remaining open bead is substantive work. (The original "returns 42" clause was wrong on arithmetic, not on intent: 42 counted the survivors *before* this goal filed its own beads. 42 substantive + 5 GOAL beads + 6 findings = 53.)
-- [ ] **A9 — Health gate exists and passes.** `python scripts/check_pipeline_health.py` exits 0; `pytest tests/test_pipeline_health.py -q` passes.
-- [ ] **A10 — Step 6 survives a Step 5 failure.** Test asserts `daily_sync.sh` runs the `v_claim_edges` refresh when the embed step exits non-zero.
-- [ ] **A11 — Log is readable.** A fresh `daily_sync.sh` run produces a log with zero `httpcore` DEBUG lines.
-- [ ] **A12 — Migration ledger is truthful.** For each of 069–072, `schema_migrations` agrees with whether the objects actually exist in `scix`.
-- [ ] **A13 — Suite green.** `SCIX_TEST_DSN="dbname=scix_test" pytest tests/ -q` passes.
-- [ ] **A14 — Lint clean.** `ruff check src/ scripts/ tests/` reports no errors on changed files.
-- [ ] **A15 — Pipeline proven end-to-end.** One manual `daily_sync.sh` run completes all 6 steps and the health gate returns 0.
+- [x] **A1 — GPU alive.** `nvidia-smi` exits 0 and lists the device.
+- [x] **A2 — Module survives kernel changes.** `dkms status` reports the nvidia module built for `$(uname -r)`.
+- [x] **A3 — Dense gap drained.** `psql -d scix -tAc "select count(*) from papers p left join indus_qdrant_synced s using (bibcode) where s.bibcode is null and p.title is not null"` returns < 100.
+- [x] **A4 — Working tree clean.** `git status --porcelain` outputs nothing.
+- [x] **A5 — Live code is committed.** `git diff origin/main..main --stat` shows the four concerns; no tracked file differs from what cron executes.
+- [x] **A6 — Zero stray worktrees.** `git worktree list | wc -l` returns 1.
+- [x] **A7 — No commits lost.** Every branch listed in `docs/ops/branch_inventory_2026-07-27.txt` still resolves via `git rev-parse`, and its commit count vs `origin/main` is unchanged.
+- [x] **A8 — Bead store is signal.** `bd list --status=open | grep -c "Rollup("` returns 0, and every remaining open bead is substantive work. (The original "returns 42" clause was wrong on arithmetic, not on intent: 42 counted the survivors *before* this goal filed its own beads. 42 substantive + 5 GOAL beads + 6 findings = 53.)
+- [x] **A9 — Health gate exists and passes.** `python scripts/check_pipeline_health.py --allow-prod` exits 0; `pytest tests/test_pipeline_health.py -q` passes. (The `--allow-prod` flag is required — without it the gate refuses the production DSN and exits before checking anything. The criterion as originally written omitted it.)
+- [x] **A10 — Step 6 survives a Step 5 failure.** Test asserts `daily_sync.sh` runs the `v_claim_edges` refresh when the embed step exits non-zero.
+- [x] **A11 — Log is readable.** A fresh `daily_sync.sh` run produces a log with zero `httpcore` DEBUG lines. (Verified on the 2026-07-28 10:15 UTC cron run: lines 10112+ of `logs/daily_sync.log`, **45 lines, 0 httpcore**. Measure the run, not the file — cron appends and never rotates, so the file still holds 2704 `httpcore` lines of pre-fix history.)
+- [x] **A12 — Migration ledger is truthful.** For each of 069–072, `schema_migrations` agrees with whether the objects actually exist in `scix`.
+- [x] **A13 — Suite green.** `SCIX_TEST_DSN="dbname=scix_test" pytest tests/ -q` passes.
+- [x] **A14 — Lint clean.** `ruff check src/ scripts/ tests/` reports no errors on changed files.
+- [x] **A15 — Pipeline proven end-to-end.** One manual `daily_sync.sh` run completes all 6 steps and the health gate returns 0.
 
 ---
 
@@ -98,6 +98,49 @@ Every item is verified by running its command, never from memory.
 | 2026-07-28 | **W4 done.** All 58 worktree directories removed, every branch ref preserved (D4). The three trees holding uncommitted work were committed as WIP on their own branches first (`bd/dbl.17-materials-registry` → 71c5796, `viz/sankey-cross-community` → 027949e, `scix_experiments-uq28/search-lane-error-handling` → 1c84498); each new tip's parent is exactly its baseline sha. **A4** ✅ `git status --porcelain` is empty. **A6** ✅ `git worktree list \| wc -l` returns 1. **A7** ✅ all 30 baseline branches resolve; the re-derived inventory (`docs/ops/branch_inventory_2026-07-28_postprune.txt`) differs from the baseline on four lines only — the three +1 WIP branches and `main`, which moved +8 for reasons unrelated to the prune (four commits already unpushed at baseline capture, plus the four Phase B commits). Zero branch refs deleted, zero commits lost. |
 
 | 2026-07-28 | **Pipeline restored end-to-end.** Operator ran the dkms rebuild; driver 595.84 built for all three kernels incl. the unbooted `7.0.0-28-generic`. **A1** ✅ `nvidia-smi` exit 0, RTX 5090. **A2** ✅ `dkms status` shows 3 kernels. A bounded smoke test (`--limit 100`) caught a second latent break first — `QDRANT_URL` unset in a manual shell; the cron path was fine (`daily_sync.sh` sources `.env`). **A3** ✅ gap 10,053 → **0** (9,953 embedded in 540 s). **A15** ✅ full `daily_sync.sh` run completed all 6 steps in 3.5 min, `harvest=1001`. **A9** ✅ health gate all 3 checks PASS, exit 0. **A11** ✅ the new run's log is **46 lines with 0 httpcore lines**, against 3 MB previously. `v_claim_edges` refreshed (was 12.7 d stale). **A4** ✅ **A6** ✅ (1 worktree) **A7** ✅ (all 30 branches resolve) **A8** ✅ (0 Rollup) **A14** ✅ (`ruff`: All checks passed). Six new findings filed as beads — see below. |
+
+| 2026-07-28 | **A12 and A13 met; goal complete at 15/15.** Operator approved running the ledger reconciliation: `073` then `074` against prod `scix` (no-op precondition printed `ABSENT|ABSENT` immediately before each). **A12** ✅ `verify_migration_ledger.py --dsn "dbname=scix"` exits **0**; all of 069–074 agree with the catalog, 070 reads as `tombstone: SUPERSEDED, NOT IN FORCE`. `scix_test` converged: 27 unrecorded migrations replayed cleanly, then 072/073/074, then the ledger backfilled (42 rows → 74) with 069 carrying the §5-caveat-2 note rather than the generic one. **A13** ✅ `SCIX_TEST_DSN="dbname=scix_test" pytest tests/ -q` → **5654 passed, 26 skipped, 2 xfailed, 0 failed, 0 errors**, nothing deselected; re-run under randomized order with the same result, so it is order-independent, not lucky. **A14** ✅ ruff clean. **A4** ✅ tree empty after two full suite runs (proving the otu fix). Seven scoped commits on local `main`, nothing pushed. |
+
+### What the A13 convergence actually found (2026-07-28)
+
+The handoff predicted ~19 `UndefinedTable` failures from ADR-015/016 drift. Only
+three were that. The rest were latent defects the drifted test database had been
+masking, and two were bugs in production code:
+
+1. **The P0 was wider than filed.** `tests/helpers.py` had the same
+   `SCIX_DSN`-first bug, and `helpers.DSN` is what `test_uat.py` (26 write
+   statements), `test_harvest_ads_data.py` and `test_dictionary.py` gate on via
+   `is_production_dsn(DSN)`. Exporting the documented guard therefore made those
+   destructive suites **silently skip** while other modules still reached prod.
+   `tests/test_dsn_guard.py` now fails on the pattern (proven RED first).
+2. **`src/scix/eval/real_data.py` queried the dropped `paper_embeddings`** —
+   `scripts/eval_three_way.py` seed sampling has been broken since ADR-015.
+   Repointed to `indus_qdrant_synced` and verified against prod (5 seeds, 431.9 s).
+3. **That test was firing a ~7-minute prod scan on every `pytest tests/`.** Its
+   gate read `SCIX_DSN or os.path.exists("/var/run/postgresql")` while its header
+   claimed "opt-in" — true on any host with a local Postgres socket. Now
+   `SCIX_EVAL_REAL_DB=1`.
+4. **Migration-replay tests mutated the shared `scix_test`.** Replaying `001`
+   re-created `paper_embeddings`, so its existence depended on test order; four
+   modules now build throwaway databases (`tests.helpers.throwaway_db`).
+5. **`scripts/demo_readiness_smoke.py` set `QDRANT_URL` at import time**, pointing
+   the whole pytest session at a dead port.
+6. **`papers_fulltext.sections_tsv` exists in production in a shape no migration
+   file describes** — migration 061 says `GENERATED ALWAYS`, prod says plain
+   column, because the ADR-016 Phase 1b swap rebuilt the table without the
+   expression. `scix_test` was matched to **production**, not to the migration.
+   Repairing the migration record is woib scope, deliberately not done (D1).
+
+Seven new beads filed: two P1 (`graph_metrics.py`, `compute_semantic_communities.py`
+still read the dropped table), three P2 (remaining `paper_embeddings` readers;
+`sections_tsv` schema truth; `semantic_search` not degrading to an error envelope
+when Qdrant is unreachable), two P3 (retire two purposeless scripts; the three
+replay modules not yet isolated).
+
+**Operational note not in the handoff:** the full suite needs `scix-batch`. Run in
+the default shell cgroup it was OOM-killed at 17 minutes; under
+`--mem-high 40G --mem-max 60G` it completes in ~2 minutes. The 17-minute crawl was
+swap thrash, not slow tests.
 
 ### Findings filed during execution (2026-07-28)
 

@@ -248,13 +248,25 @@ def test_constants_are_sensible():
 # ---------------------------------------------------------------------------
 
 
-REAL_DB_AVAILABLE = os.environ.get("SCIX_DSN") or os.path.exists("/var/run/postgresql")
+# Opt-in, as the section header has always claimed. The previous gate,
+# ``SCIX_DSN or os.path.exists("/var/run/postgresql")``, is true on any host
+# with a local Postgres socket — that is every developer machine and this one,
+# so "opt-in" described intent the code did not implement. The cost is not
+# theoretical: the sampler stratifies over the whole corpus with ORDER BY
+# random(), planned at ~2.7M (full scans of the 35M-row indus_qdrant_synced
+# watermark and the 27.7M-row document_entities_canonical MV) and measured at
+# 431.9 s against production on 2026-07-28. Every plain `pytest tests/` run
+# was firing that at the live database.
+REAL_DB_OPT_IN = os.environ.get("SCIX_EVAL_REAL_DB") == "1"
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(not REAL_DB_AVAILABLE, reason="requires prod-like DB")
+@pytest.mark.skipif(
+    not REAL_DB_OPT_IN,
+    reason="set SCIX_EVAL_REAL_DB=1 to run the ~7-minute read-only sampler against production",
+)
 def test_sample_seed_papers_returns_requested_count():
-    """End-to-end sampling on prod — read-only."""
+    """End-to-end sampling on prod — read-only, ~7 minutes."""
     from scix.db import get_connection
     from scix.eval.real_data import sample_seed_papers
 

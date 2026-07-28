@@ -241,9 +241,14 @@ def sample_seed_papers(
                 WHERE p.abstract IS NOT NULL
                   AND length(p.title) > 20
                   AND p.citation_count >= %s
+                  -- "has an INDUS dense vector" is the indus_qdrant_synced
+                  -- watermark now (migration 072). paper_embeddings, the old
+                  -- multi-model store this predicate used to read, was dropped
+                  -- by ADR-015, so this query raised UndefinedTable against
+                  -- production until 2026-07-28.
                   AND EXISTS (
-                      SELECT 1 FROM paper_embeddings pe
-                      WHERE pe.bibcode = p.bibcode AND pe.model_name = 'indus'
+                      SELECT 1 FROM indus_qdrant_synced s
+                      WHERE s.bibcode = p.bibcode
                   )
                   AND EXISTS (
                       SELECT 1 FROM document_entities_canonical dec

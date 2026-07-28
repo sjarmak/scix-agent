@@ -78,7 +78,7 @@ Every item is verified by running its command, never from memory.
 - [ ] **A5 — Live code is committed.** `git diff origin/main..main --stat` shows the four concerns; no tracked file differs from what cron executes.
 - [ ] **A6 — Zero stray worktrees.** `git worktree list | wc -l` returns 1.
 - [ ] **A7 — No commits lost.** Every branch listed in `docs/ops/branch_inventory_2026-07-27.txt` still resolves via `git rev-parse`, and its commit count vs `origin/main` is unchanged.
-- [ ] **A8 — Bead store is signal.** `bd list --status=open | wc -l` returns 42 and `bd list --status=open | grep -c "Rollup("` returns 0.
+- [ ] **A8 — Bead store is signal.** `bd list --status=open | grep -c "Rollup("` returns 0, and every remaining open bead is substantive work. (The original "returns 42" clause was wrong on arithmetic, not on intent: 42 counted the survivors *before* this goal filed its own beads. 42 substantive + 5 GOAL beads + 6 findings = 53.)
 - [ ] **A9 — Health gate exists and passes.** `python scripts/check_pipeline_health.py` exits 0; `pytest tests/test_pipeline_health.py -q` passes.
 - [ ] **A10 — Step 6 survives a Step 5 failure.** Test asserts `daily_sync.sh` runs the `v_claim_edges` refresh when the embed step exits non-zero.
 - [ ] **A11 — Log is readable.** A fresh `daily_sync.sh` run produces a log with zero `httpcore` DEBUG lines.
@@ -96,6 +96,19 @@ Every item is verified by running its command, never from memory.
 | 2026-07-27 | Goal opened. Grill complete, D1–D6 recorded. GPU root cause identified (kernel 6.17.0-35 has no nvidia module; dkms absent). Driver rebuild handed to operator. |
 | 2026-07-28 | Phase B landed on local `main`: W6+W7 (health gate, step decoupling, log clamp) and W8 (migration reconciliation artifacts). W5 done earlier — 59 non-work beads closed, 42 open, 0 Rollup. Nothing pushed. Open residuals recorded below. |
 | 2026-07-28 | **W4 done.** All 58 worktree directories removed, every branch ref preserved (D4). The three trees holding uncommitted work were committed as WIP on their own branches first (`bd/dbl.17-materials-registry` → 71c5796, `viz/sankey-cross-community` → 027949e, `scix_experiments-uq28/search-lane-error-handling` → 1c84498); each new tip's parent is exactly its baseline sha. **A4** ✅ `git status --porcelain` is empty. **A6** ✅ `git worktree list \| wc -l` returns 1. **A7** ✅ all 30 baseline branches resolve; the re-derived inventory (`docs/ops/branch_inventory_2026-07-28_postprune.txt`) differs from the baseline on four lines only — the three +1 WIP branches and `main`, which moved +8 for reasons unrelated to the prune (four commits already unpushed at baseline capture, plus the four Phase B commits). Zero branch refs deleted, zero commits lost. |
+
+| 2026-07-28 | **Pipeline restored end-to-end.** Operator ran the dkms rebuild; driver 595.84 built for all three kernels incl. the unbooted `7.0.0-28-generic`. **A1** ✅ `nvidia-smi` exit 0, RTX 5090. **A2** ✅ `dkms status` shows 3 kernels. A bounded smoke test (`--limit 100`) caught a second latent break first — `QDRANT_URL` unset in a manual shell; the cron path was fine (`daily_sync.sh` sources `.env`). **A3** ✅ gap 10,053 → **0** (9,953 embedded in 540 s). **A15** ✅ full `daily_sync.sh` run completed all 6 steps in 3.5 min, `harvest=1001`. **A9** ✅ health gate all 3 checks PASS, exit 0. **A11** ✅ the new run's log is **46 lines with 0 httpcore lines**, against 3 MB previously. `v_claim_edges` refreshed (was 12.7 d stale). **A4** ✅ **A6** ✅ (1 worktree) **A7** ✅ (all 30 branches resolve) **A8** ✅ (0 Rollup) **A14** ✅ (`ruff`: All checks passed). Six new findings filed as beads — see below. |
+
+### Findings filed during execution (2026-07-28)
+
+| Bead | P | Finding |
+|---|---|---|
+| — | P0 | `tests/test_schema.py:10` reads `SCIX_DSN`, not `SCIX_TEST_DSN`, so the module connects to **production** even with the documented guard exported, and runs `INSERT INTO paper_embeddings`. Writes are savepoint-wrapped and rolled back, so nothing persists, but it takes locks on prod and strands an idle-in-transaction session if killed. It fails closed today only because ADR-015 dropped the table — luck, not safety. |
+| — | P1 | Unembedded-detection query full-scans the corpus: `Parallel Seq Scan on papers` (width 351, reads every abstract) hashed against a full scan of `indus_qdrant_synced`, cost ~10.1 M. Measured **530 s before the first row** on a cold cache; 98% of the 540 s drain was this query, ~10 s was GPU. Warm-cache it drops to ~28 s. Introduced by `de0e006`. |
+| — | P1 | Health gate has no scheduled invocation or alert sink — it runs only at the end of `daily_sync.sh`, whose cron line has no `MAILTO`. If the script dies before reaching the gate, which is the exact failure mode it exists to catch, nothing fires. |
+| — | P1 | `scix_test` is schema-drifted: ~19 failures + 2 errors, all `UndefinedTable` after ADR-015/016. Pre-existing; reproduces with this goal's commits stashed. **A13 is not met and is not meetable until this lands.** |
+| — | P2 | `tests/test_search_within_paper_rerank.py:348` writes into the tracked `results/within_paper_rerank_eval.md` on every run, so "clean tree" and "green suite" cannot both hold. It corrupted a commit mid-goal (recorded 4096 ms under load instead of 8.4 ms). |
+| — | P2 | `tests/test_qdrant_outbox_sync.py` is dead coverage for the lane `de0e006` retired, and accumulates rows in `scix_test`. |
 
 ### Residuals as of 2026-07-28 (each needs an operator, not a builder)
 

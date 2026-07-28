@@ -115,3 +115,13 @@ scix-sankey-work/
 
 # Agent audit reports (DEEP_AUDIT directive output)
 .gc-reports/
+
+# Skill entries that are symlinks to paths outside this repo: the Gas City
+# bootstrap packs `gc` syncs in from ~/.gc/cache/repos/..., and the personal
+# skill library under ~/projects/skills. Machine-local tooling — the link
+# targets do not exist on any other checkout, so committing the links would
+# ship dangling paths. Authored project skills (.claude/skills/scix-*, and
+# search-sessions) are real directories and stay tracked.
+.claude/skills/.gc-skill-ownership.json
+.claude/skills/core.gc-*
+.claude/skills/scientific-software-engineering

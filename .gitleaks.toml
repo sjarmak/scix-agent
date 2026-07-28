@@ -1,0 +1,36 @@
+# gitleaks config for scix_experiments.
+#
+# The pre-push hook (.git/hooks/pre-push -> ~/gas-city/hooks/pre-push) requires
+# this file and refuses to push without it. Its absence blocked every push to
+# this repo (bead scix_experiments-hw3p) — the guard was not misconfigured, the
+# config simply never existed here.
+#
+# Start from the upstream ruleset rather than hand-rolling detectors, then add
+# only allowlist entries we can justify.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "scix_experiments false positives"
+
+paths = [
+  # Real secrets live in .env / ~/.config/scix-mcp/ and are gitignored. These
+  # are the places the default ruleset flags on non-secret content.
+  '''\.gitleaks\.toml$''',
+  # Harvested corpus data and model caches: ADS payloads and HF blobs contain
+  # high-entropy strings (bibcodes, xet hashes, signed CDN URLs) that are not
+  # credentials. All are gitignored; listed so a stray local copy cannot wedge
+  # a push.
+  '''^ads_metadata_by_year_picard/''',
+  '''^\.cache/''',
+  '''^\.hypothesis/''',
+  '''^logs/''',
+]
+
+regexes = [
+  # Cloudflare/HF signed URLs recorded verbatim in captured logs and fixtures.
+  # Time-limited, already expired, and not credentials for anything we own.
+  '''X-Amz-Signature=[0-9a-f]{64}''',
+  '''Key-Pair-Id=[A-Z0-9]{14,}''',
+]

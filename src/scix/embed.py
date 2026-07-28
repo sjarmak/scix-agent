@@ -29,6 +29,36 @@ from scix.qdrant_dense import INDUS_COLLECTION, dense_client, upsert_dense
 
 logger = logging.getLogger(__name__)
 
+# Third-party loggers that dump one record per HTTP frame at DEBUG. The daily
+# pipeline runs `scripts/embed.py -v`, which sets the *root* level to DEBUG so
+# scix's own debug output is captured; that also switched these on, and they
+# produced ~2500 httpcore lines plus HuggingFace CDN header dumps exceeding
+# 2000 characters each — burying the real traceback at line 10017 of a 3 MB
+# logs/daily_sync.log (bead dxa). Clamping the individual loggers keeps scix
+# DEBUG while dropping the HTTP frame-by-frame narration.
+_NOISY_HTTP_LOGGERS = (
+    "httpcore",
+    "httpx",
+    "urllib3",
+    "requests",
+    "huggingface_hub",
+    "filelock",
+    "qdrant_client",
+)
+
+
+def quiet_noisy_http_loggers(level: int = logging.WARNING) -> None:
+    """Clamp chatty third-party HTTP/model-download loggers to ``level``.
+
+    Called at the start of :func:`run_embedding_pipeline` rather than at import
+    time: a library module must not mutate logging as an import side effect,
+    and the CLI's ``logging.basicConfig`` has to have run first for the clamp
+    to be the last word.
+    """
+    for name in _NOISY_HTTP_LOGGERS:
+        logging.getLogger(name).setLevel(level)
+
+
 # Module-level model cache: (model_name, device) -> (model, tokenizer)
 _model_cache: dict[tuple[str, str], tuple[Any, Any]] = {}
 
@@ -370,6 +400,8 @@ def run_embedding_pipeline(
     """
     import queue
     import threading
+
+    quiet_noisy_http_loggers()
 
     # The dense lane and its watermark (indus_qdrant_synced) are INDUS-only;
     # paper_embeddings — the multi-model store — is gone (ADR-015). Fail loudly

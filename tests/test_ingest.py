@@ -60,8 +60,11 @@ def _wipe_tables(conn) -> None:
         )
     with conn.cursor() as cur:
         cur.execute("DELETE FROM citation_edges")
-        cur.execute("DELETE FROM paper_embeddings")
         cur.execute("DELETE FROM extractions")
+        # Must precede the papers wipe: papers_external_ids.bibcode has an FK
+        # to papers. This was previously unreachable — the wipe aborted one
+        # statement earlier on the since-dropped paper_embeddings table.
+        cur.execute("DELETE FROM papers_external_ids")
         cur.execute("DELETE FROM papers")
         cur.execute("DELETE FROM ingest_log")
     conn.commit()

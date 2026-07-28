@@ -14,13 +14,12 @@ These tests require SCIX_TEST_DSN to be set to a non-production database.
 from __future__ import annotations
 
 import pathlib
-import subprocess
 from collections.abc import Iterator
 
 import psycopg
 import pytest
 
-from tests.helpers import get_test_dsn
+from tests.helpers import get_test_dsn, throwaway_db
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 MIGRATION_FILE = REPO_ROOT / "migrations" / "045_citation_diff.sql"
@@ -39,31 +38,20 @@ PREREQUISITE_MIGRATIONS = [
 
 
 @pytest.fixture(scope="module")
-def dsn() -> str:
-    test_dsn = get_test_dsn()
-    if test_dsn is None:
+def dsn() -> Iterator[str]:
+    """DSN of a throwaway database carrying only this migration's chain.
+
+    Replaying into the shared scix_test re-created ``paper_embeddings`` (via
+    001), which ADR-015 dropped — leaving the shared schema dependent on test
+    order. See tests/helpers.throwaway_db.
+    """
+    if get_test_dsn() is None:
         pytest.skip(
             "SCIX_TEST_DSN is not set or points at production — destructive "
             "migration tests require a dedicated test DB"
         )
-    return test_dsn
-
-
-@pytest.fixture(scope="module", autouse=True)
-def ensure_migration_applied(dsn: str) -> None:
-    """Apply prerequisite migrations and 045 before any test in this module."""
-    all_migrations = PREREQUISITE_MIGRATIONS + ["045_citation_diff.sql"]
-    for fname in all_migrations:
-        path = REPO_ROOT / "migrations" / fname
-        assert path.exists(), f"missing migration file: {fname}"
-        result = subprocess.run(
-            ["psql", dsn, "-v", "ON_ERROR_STOP=1", "-f", str(path)],
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, (
-            f"failed to apply {fname}:\nstdout:\n{result.stdout}\n" f"stderr:\n{result.stderr}"
-        )
+    with throwaway_db(PREREQUISITE_MIGRATIONS + ["045_citation_diff.sql"], REPO_ROOT) as target:
+        yield target
 
 
 @pytest.fixture(scope="module")

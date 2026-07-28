@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib.util
 import pathlib
 import sys
+from collections.abc import Iterator
 
 import numpy as np
 import psycopg
@@ -31,7 +32,7 @@ if str(SRC_DIR) not in sys.path:
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tests.helpers import get_test_dsn  # noqa: E402
+from tests.helpers import get_test_dsn, throwaway_db  # noqa: E402
 
 TEST_DSN = get_test_dsn()
 
@@ -77,19 +78,33 @@ def _load_script_module():
 
 
 @pytest.fixture(scope="module")
-def dsn() -> str:
+def dsn() -> Iterator[str]:
+    """DSN of a throwaway database carrying this module's migration chain.
+
+    The script under test streams vectors from ``paper_embeddings``, which
+    ADR-015 dropped from production (migration 074 records the retirement), so
+    these fixtures cannot be seeded into the shared scix_test. The clustering
+    logic is still worth covering, so it is exercised against a database built
+    from the chain. That the script's production data source no longer exists
+    is a separate defect, tracked as its own bead.
+    """
     assert TEST_DSN is not None
-    return TEST_DSN
+    with throwaway_db(
+        [
+            "001_initial_schema.sql",
+            "003_search_infrastructure.sql",  # paper_embeddings.input_type
+            "006_graph_metrics.sql",
+            "051_community_semantic_columns.sql",
+        ],
+        REPO_ROOT,
+    ) as target:
+        yield target
 
 
 @pytest.fixture(scope="module")
 def applied_migration(dsn: str) -> None:
-    """Apply migration 051 to the test DB (idempotent)."""
-    sql = MIGRATION_PATH.read_text()
-    with psycopg.connect(dsn) as c:
-        c.autocommit = True
-        with c.cursor() as cur:
-            cur.execute(sql)
+    """Migration 051 is already applied by the `dsn` fixture's chain."""
+    return None
 
 
 def _pgvector_literal(vec: np.ndarray) -> str:

@@ -24,6 +24,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.helpers import throwaway_db
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -126,20 +128,29 @@ def _test_dsn() -> str | None:
 
 @pytest.mark.integration
 def test_migration_053_054_apply_idempotently() -> None:
-    dsn = _test_dsn()
-    if dsn is None:
+    """Replay 001 + 053 + 054 into a throwaway database.
+
+    These migrations extend ``paper_embeddings``, which ADR-015 dropped from
+    production; migration 074 records the retirement. The files are still part
+    of the history and must stay replayable, so this asserts against a database
+    built from the chain rather than against the shared scix_test — where the
+    table's presence depended on whichever module replayed 001 first.
+    """
+    if _test_dsn() is None:
         pytest.skip("SCIX_TEST_DSN not set")
 
     import psycopg
 
-    for migration in (
-        "migrations/053_paper_embeddings_halfvec.sql",
-        "migrations/054_paper_embeddings_halfvec_index.sql",
-    ):
-        # Apply twice — must succeed both times (IF NOT EXISTS everywhere).
-        for _ in range(2):
+    migrations = [
+        "001_initial_schema.sql",
+        "053_paper_embeddings_halfvec.sql",
+        "054_paper_embeddings_halfvec_index.sql",
+    ]
+    with throwaway_db(migrations, REPO_ROOT) as dsn:
+        # Re-apply 053/054 — must succeed a second time (IF NOT EXISTS everywhere).
+        for migration in migrations[1:]:
             result = subprocess.run(
-                ["psql", dsn, "-v", "ON_ERROR_STOP=1", "-f", migration],
+                ["psql", dsn, "-v", "ON_ERROR_STOP=1", "-f", f"migrations/{migration}"],
                 cwd=REPO_ROOT,
                 capture_output=True,
                 text=True,
@@ -147,6 +158,10 @@ def test_migration_053_054_apply_idempotently() -> None:
             )
             assert result.returncode == 0, f"{migration} failed: {result.stderr}"
 
+        _assert_halfvec_shape(psycopg, dsn)
+
+
+def _assert_halfvec_shape(psycopg, dsn: str) -> None:
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT format_type(atttypid, atttypmod) "

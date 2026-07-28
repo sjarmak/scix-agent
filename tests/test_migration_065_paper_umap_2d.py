@@ -29,7 +29,7 @@ from collections.abc import Iterator
 import psycopg
 import pytest
 
-from tests.helpers import get_test_dsn
+from tests.helpers import get_test_dsn, throwaway_db
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 MIGRATION_FILE = REPO_ROOT / "migrations" / "065_paper_umap_2d.sql"
@@ -75,58 +75,25 @@ class TestMigrationSQLFile:
 
 
 @pytest.fixture(scope="module")
-def dsn() -> str:
-    test_dsn = get_test_dsn()
-    if test_dsn is None:
+def dsn() -> Iterator[str]:
+    """DSN of a throwaway database carrying only this migration's chain.
+
+    Replaying into the shared scix_test re-created ``paper_embeddings`` (via
+    001), which ADR-015 dropped — leaving the shared schema dependent on test
+    order. See tests/helpers.throwaway_db.
+    """
+    if get_test_dsn() is None:
         pytest.skip(
             "SCIX_TEST_DSN is not set or points at production — destructive "
             "migration tests require a dedicated test DB"
         )
-    return test_dsn
-
-
-def _apply_sql_file(dsn: str, path: pathlib.Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["psql", dsn, "-v", "ON_ERROR_STOP=1", "-f", str(path)],
-        capture_output=True,
-        text=True,
-    )
+    with throwaway_db(PREREQUISITE_MIGRATIONS + ["065_paper_umap_2d.sql"], REPO_ROOT) as target:
+        yield target
 
 
 @pytest.fixture(scope="module")
-def ensure_migration_applied(dsn: str) -> Iterator[None]:
-    """Apply prerequisite migrations + 065 before any integration test in this
-    module. Drop paper_umap_2d on teardown so scix_test is left clean.
-
-    Not autouse: pure unit tests in `TestMigrationSQLFile` must run without a
-    DB. Integration tests opt in by depending on the `conn` fixture below,
-    which depends on this one.
-    """
-    # 1. Prerequisites + migration under test
-    for fname in PREREQUISITE_MIGRATIONS + ["065_paper_umap_2d.sql"]:
-        path = REPO_ROOT / "migrations" / fname
-        assert path.exists(), f"missing migration file: {fname}"
-        result = _apply_sql_file(dsn, path)
-        assert result.returncode == 0, (
-            f"failed to apply {fname}:\nstdout:\n{result.stdout}\n" f"stderr:\n{result.stderr}"
-        )
-
-    try:
-        yield
-    finally:
-        # Teardown — leave scix_test clean for subsequent runs.
-        with psycopg.connect(dsn, autocommit=True) as cleanup_conn:
-            with cleanup_conn.cursor() as cur:
-                cur.execute("DROP TABLE IF EXISTS paper_umap_2d CASCADE")
-
-
-@pytest.fixture(scope="module")
-def conn(dsn: str, ensure_migration_applied: None) -> Iterator[psycopg.Connection]:
-    """Autocommit connection for schema inspection.
-
-    Depends on `ensure_migration_applied` so integration tests that request
-    `conn` automatically trigger the migration apply/teardown cycle.
-    """
+def conn(dsn: str) -> Iterator[psycopg.Connection]:
+    """Autocommit connection for schema inspection."""
     c = psycopg.connect(dsn)
     c.autocommit = True
     try:
@@ -266,10 +233,14 @@ class TestPaperUmap2dSchema:
 
 @pytest.mark.integration
 class TestMigrationIdempotency:
-    def test_reapplying_migration_is_a_noop(self, dsn: str, ensure_migration_applied: None) -> None:
-        # ensure_migration_applied already ran the migration once.
-        # Running it a second time must not raise.
-        result = _apply_sql_file(dsn, MIGRATION_FILE)
+    def test_reapplying_migration_is_a_noop(self, dsn: str) -> None:
+        # The `dsn` fixture already applied the migration once to the throwaway
+        # database. Running it a second time must not raise.
+        result = subprocess.run(
+            ["psql", dsn, "-v", "ON_ERROR_STOP=1", "-f", str(MIGRATION_FILE)],
+            capture_output=True,
+            text=True,
+        )
         assert result.returncode == 0, (
             "re-applying migration 065 must succeed (idempotent); got:\n"
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"

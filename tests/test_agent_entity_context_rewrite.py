@@ -10,6 +10,8 @@ from pathlib import Path
 import psycopg
 import pytest
 
+from tests.helpers import is_production_dsn
+
 MIGRATION_PATH = (
     Path(__file__).resolve().parents[1] / "migrations" / "055_agent_entity_context_rewrite.sql"
 )
@@ -88,12 +90,14 @@ N_RELATIONSHIPS = 25
 
 
 def _connect_or_skip() -> psycopg.Connection:
-    """Connect to scix_test or skip the integration test."""
-    dsn = os.environ.get("SCIX_DSN", "dbname=scix_test")
+    """Connect to the test database or skip the integration test."""
+    dsn = os.environ.get("SCIX_TEST_DSN") or os.environ.get("SCIX_DSN", "dbname=scix_test")
+    if is_production_dsn(dsn):
+        pytest.skip("Refusing to build the bench schema on production")
     try:
         return psycopg.connect(dsn, autocommit=True)
     except psycopg.OperationalError as exc:
-        pytest.skip(f"scix_test unreachable: {exc}")
+        pytest.skip(f"test database unreachable: {exc}")
 
 
 def _build_bench_schema(conn: psycopg.Connection, schema: str) -> None:
@@ -397,22 +401,31 @@ class TestRowDiff:
 @pytest.mark.integration
 class TestMigrationApplies:
     def test_migration_applies_cleanly(self) -> None:
-        """psql -d scix_test -f migrations/055_*.sql exits 0 and preserves row count."""
-        dsn = os.environ.get("SCIX_DSN", "dbname=scix_test")
+        """Applying migrations/055_*.sql exits 0 and preserves the MV's row count."""
+        dsn = os.environ.get("SCIX_TEST_DSN") or os.environ.get("SCIX_DSN", "dbname=scix_test")
+        if is_production_dsn(dsn):
+            pytest.skip("Refusing to replay a migration against production")
         try:
             conn = psycopg.connect(dsn, autocommit=True)
         except psycopg.OperationalError as exc:
-            pytest.skip(f"scix_test unreachable: {exc}")
+            pytest.skip(f"test database unreachable: {exc}")
 
         try:
             with conn.cursor() as cur:
+                # Refresh first, then count. Reading a stale MV made this
+                # assertion depend on test order: any earlier module that
+                # committed entity or document rows moved the post-refresh
+                # count away from the pre-refresh one, and the migration got
+                # blamed (observed: before=13 after=34).
+                cur.execute("REFRESH MATERIALIZED VIEW agent_entity_context")
                 cur.execute("SELECT count(*) FROM agent_entity_context")
                 count_before = cur.fetchone()[0]
 
-            # Apply via psql (matches the acceptance criterion exactly).
-            db_name = "scix_test"
+            # Apply via psql (matches the acceptance criterion exactly), against
+            # the same database the counts were taken from — this previously
+            # hardcoded scix_test while counting from whatever SCIX_DSN named.
             result = subprocess.run(
-                ["psql", "-d", db_name, "-v", "ON_ERROR_STOP=1", "-f", str(MIGRATION_PATH)],
+                ["psql", dsn, "-v", "ON_ERROR_STOP=1", "-f", str(MIGRATION_PATH)],
                 capture_output=True,
                 text=True,
                 check=False,

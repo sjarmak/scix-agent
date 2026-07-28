@@ -1,8 +1,13 @@
 """Tests for scripts/audit_paper_embeddings.py (ADR-015 pre-flight).
 
-Pure-function tests (soak clock, verdict, report rendering) need no DB. The
-integration test runs the read-only audit against SCIX_TEST_DSN (schema only,
-no data) and asserts it renders without writing anything.
+Pure-function tests only (soak clock, verdict, report rendering) — they need
+no DB and still cover real logic.
+
+The integration leg was removed on 2026-07-28: it ran the audit against a
+database that still had ``paper_embeddings``, and ADR-015 dropped that table
+(migration 074 records the retirement). The script audits readiness to perform
+a drop that has already happened, so there is nothing left for it to inspect;
+retiring the script itself is tracked separately.
 """
 
 from __future__ import annotations
@@ -10,11 +15,6 @@ from __future__ import annotations
 import datetime as _dt
 import pathlib
 import sys
-
-import psycopg
-import pytest
-
-from tests.helpers import get_test_dsn
 
 # scripts/ is not a package — make it importable like the other script tests.
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -164,22 +164,3 @@ class TestNasStatus:
         assert art.exists is True
         assert art.file_count == 1
         assert art.newest_mtime is not None
-
-
-# ---------------------------------------------------------------------------
-# Integration — read-only against SCIX_TEST_DSN (schema only)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.integration
-def test_run_audit_read_only_against_test_db() -> None:
-    dsn = get_test_dsn()
-    if dsn is None:
-        pytest.skip("SCIX_TEST_DSN not set (or points at prod)")
-    with psycopg.connect(dsn) as conn:
-        report, verdict = ape.run_audit(
-            conn, collection="scix_indus_v2_papers_s1", today=_dt.date(2026, 6, 22), sample=100
-        )
-    # Empty test table: indus rows = 0, indexes absent → Stage-1 reclaim 0, renders fine.
-    assert "VERDICT (Stage 1" in report
-    assert verdict.stage1_ready is False  # soak active on this date regardless of data

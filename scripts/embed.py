@@ -16,7 +16,7 @@ from scix.embed import run_embedding_pipeline
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate embeddings for ADS papers and store in PostgreSQL"
+        description="Generate INDUS embeddings for ADS papers and upsert to the Qdrant dense lane"
     )
     parser.add_argument(
         "--model",
@@ -46,11 +46,6 @@ def main() -> None:
         help="Max papers to embed (useful for testing; default: all)",
     )
     parser.add_argument(
-        "--no-copy",
-        action="store_true",
-        help="Use individual INSERTs instead of COPY (slower, useful for debugging)",
-    )
-    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -71,7 +66,6 @@ def main() -> None:
         batch_size=args.batch_size,
         device=args.device,
         limit=args.limit,
-        use_copy=not args.no_copy,
     )
     logger = logging.getLogger(__name__)
     logger.info("Done. Embedded %d papers.", total)

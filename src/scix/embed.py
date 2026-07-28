@@ -1,12 +1,15 @@
-"""Embedding pipeline: SPECTER2, INDUS, and OpenAI embeddings, stored in paper_embeddings.
+"""INDUS embedding pipeline: embed unembedded papers straight into the Qdrant
+dense lane (``scix_indus_v2_papers_s1``, ADR-013).
 
-Uses HuggingFace transformers + torch directly (no sentence-transformers wrapper)
-for SPECTER2 and INDUS, and the OpenAI SDK for text-embedding-3-large.
-Writes embeddings via psycopg COPY for bulk throughput.
+Uses HuggingFace transformers + torch directly (no sentence-transformers wrapper).
+The retired ``paper_embeddings`` PostgreSQL table (ADR-015 / bead s7cy) no longer
+exists, so vectors are upserted to Qdrant and each synced bibcode is recorded in
+``indus_qdrant_synced`` (the unembedded-detection watermark, migration 072).
 
-Pooling strategies:
-  - SPECTER2 (allenai/specter2_base): CLS token (first token of last_hidden_state)
-  - INDUS (nasa-impact/nasa-smd-ibm-st-v2): Mean pooling over non-padding tokens
+Pooling: INDUS (nasa-impact/nasa-smd-ibm-st-v2) uses mean pooling over
+non-padding tokens. SPECTER2 (CLS pooling) remains available for ad-hoc
+query/eval embedding via ``embed_batch``/``load_model`` but is no longer a
+storage target — the production dense lane is INDUS-only.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from typing import Any
 import psycopg
 
 from scix.db import get_connection
+from scix.qdrant_dense import INDUS_COLLECTION, dense_client, upsert_dense
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +37,11 @@ MODEL_POOLING: dict[str, str] = {
     "specter2": "cls",
     "indus": "mean",
 }
+
+# Pipeline queue/thread bounds. Timed puts + a join liveness check keep a failed
+# thread from hanging the (unattended) daily job forever.
+_QUEUE_PUT_TIMEOUT_S = 1.0
+_THREAD_JOIN_TIMEOUT_S = 300
 
 
 def clear_model_cache() -> None:
@@ -172,6 +181,12 @@ def _vec_to_pgvector(vec: list[float]) -> str:
     return "[" + ",".join(str(v) for v in vec) + "]"
 
 
+# NOTE: store_embeddings_copy / store_embeddings write to the retired
+# `paper_embeddings` table (ADR-015). They are no longer used by the production
+# pipeline (which upserts to Qdrant via store_embeddings_qdrant) but are kept
+# because the auxiliary scripts embed_fast.py / embed_optimized.py still import
+# them; those scripts are separately broken by the table drop (tracked out of
+# band). Do not add new callers.
 def store_embeddings_copy(
     conn: psycopg.Connection,
     inputs: list[EmbeddingInput],
@@ -186,11 +201,6 @@ def store_embeddings_copy(
     if not inputs:
         return 0
 
-    # INDUS writes land in the halfvec(768) shadow column populated by
-    # the storage/halfvec-migration cutover (bead scix_experiments-0vy).
-    # Pilot models keep using the legacy vector column. The staging table
-    # carries both columns so we only need one COPY path; the INSERT
-    # picks the right target.
     use_halfvec = model_name == "indus"
 
     with conn.cursor() as cur:
@@ -284,11 +294,50 @@ def store_embeddings(
     return len(inputs)
 
 
+def store_embeddings_qdrant(
+    conn: psycopg.Connection,
+    client: Any,
+    inputs: list[EmbeddingInput],
+    vectors: list[list[float]],
+) -> int:
+    """Upsert INDUS vectors to the Qdrant dense lane, then record them synced.
+
+    Ordering is load-bearing (at-least-once): the Qdrant upsert waits for
+    durability *before* the watermark rows are inserted and committed, so a
+    crash between the two leaves the papers unsynced and they are re-embedded
+    next run. The watermark insert is idempotent (``ON CONFLICT DO NOTHING``),
+    so a re-embed (e.g. after a body backfill) does not error.
+    """
+    if not inputs:
+        return 0
+
+    vecs = {inp.bibcode: vec for inp, vec in zip(inputs, vectors)}
+    if len(vecs) != len(inputs):
+        # The driving SELECT anti-joins a unique bibcode set, so this should not
+        # happen; if it ever does (a fan-out regression) surface it, don't hide it.
+        logger.warning(
+            "store_embeddings_qdrant: %d inputs collapsed to %d unique bibcodes",
+            len(inputs),
+            len(vecs),
+        )
+    upsert_dense(client, INDUS_COLLECTION, vecs)  # wait=True; raises on failure
+
+    with conn.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO indus_qdrant_synced (bibcode) VALUES (%s) ON CONFLICT DO NOTHING",
+            [(bibcode,) for bibcode in vecs],
+        )
+    conn.commit()
+    return len(vecs)
+
+
+# Unembedded = has a title but no row in the Qdrant-synced watermark
+# (migration 072). Model-agnostic: the watermark is INDUS-specific because the
+# dense lane is INDUS-only now (paper_embeddings is gone, ADR-015).
 _UNEMBEDDED_WHERE = """
     FROM papers p
-    LEFT JOIN paper_embeddings pe
-        ON p.bibcode = pe.bibcode AND pe.model_name = %s
-    WHERE pe.bibcode IS NULL AND p.title IS NOT NULL
+    LEFT JOIN indus_qdrant_synced s ON p.bibcode = s.bibcode
+    WHERE s.bibcode IS NULL AND p.title IS NOT NULL
 """
 
 
@@ -298,10 +347,9 @@ def run_embedding_pipeline(
     batch_size: int = 32,
     device: str = "cpu",
     limit: int | None = None,
-    use_copy: bool = True,
     write_buffer: int = 2000,
 ) -> int:
-    """Full embedding pipeline: stream unembedded papers, embed, store.
+    """Full embedding pipeline: stream unembedded papers, embed, upsert to Qdrant.
 
     Uses a 3-stage producer/consumer pipeline with threading so that
     DB reads, GPU inference, and DB writes overlap:
@@ -312,26 +360,39 @@ def run_embedding_pipeline(
 
     Args:
         dsn: Database connection string.
-        model_name: Model name ('indus' or 'specter2').
+        model_name: Must be 'indus' — the only supported production dense-lane model.
         batch_size: GPU inference batch size.
         device: Torch device ('cpu', 'cuda', 'auto').
         limit: Max papers to embed (None = all).
-        use_copy: Use COPY-based bulk writes (faster) vs individual INSERTs.
-        write_buffer: Number of embeddings to accumulate before DB flush.
+        write_buffer: Number of embeddings to accumulate before each Qdrant flush.
 
     Returns total number of papers embedded.
     """
     import queue
     import threading
 
+    # The dense lane and its watermark (indus_qdrant_synced) are INDUS-only;
+    # paper_embeddings — the multi-model store — is gone (ADR-015). Fail loudly
+    # rather than silently write nothing for another model.
+    if model_name != "indus":
+        raise ValueError(
+            f"run_embedding_pipeline supports only model_name='indus' "
+            f"(the production dense lane); got {model_name!r}."
+        )
+
     _SENTINEL = None  # signals end-of-stream
 
-    read_conn = get_connection(dsn)
-    write_conn = get_connection(dsn)
+    client = None
+    read_conn = None
+    write_conn = None
     try:
+        client = dense_client()
+        read_conn = get_connection(dsn)
+        write_conn = get_connection(dsn)
+
         # Count papers needing embeddings
         with read_conn.cursor() as cur:
-            cur.execute("SELECT count(*) " + _UNEMBEDDED_WHERE, [model_name])
+            cur.execute("SELECT count(*) " + _UNEMBEDDED_WHERE)
             total_to_embed = cur.fetchone()[0]
 
         if total_to_embed == 0:
@@ -343,9 +404,6 @@ def run_embedding_pipeline(
 
         # Load model
         model, tokenizer = load_model(model_name, device=device)
-
-        # Pick storage function
-        store_fn = store_embeddings_copy if use_copy else store_embeddings
 
         # Queues for the pipeline stages
         # read_queue: batches of (texts, inputs) ready for GPU
@@ -359,7 +417,21 @@ def run_embedding_pipeline(
         stats = {"embedded": 0, "title_abstract": 0, "title_only": 0}
         reader_error: list[Exception] = []
         writer_error: list[Exception] = []
+        # Set by whichever thread fails so the others stop promptly instead of
+        # blocking forever on a full queue nobody drains (Qdrant HTTP writes can
+        # fail transiently — a hung producer here would hang the whole cron).
+        abort = threading.Event()
         t_start = time.monotonic()
+
+        def put_or_abort(q: queue.Queue, item: Any) -> bool:
+            """Put ``item`` on ``q``, giving up if ``abort`` is set. False = aborted."""
+            while not abort.is_set():
+                try:
+                    q.put(item, timeout=_QUEUE_PUT_TIMEOUT_S)
+                    return True
+                except queue.Full:
+                    continue
+            return False
 
         # --- Reader thread: stream from DB cursor into read_queue ---
         def reader() -> None:
@@ -369,7 +441,7 @@ def run_embedding_pipeline(
                     + _UNEMBEDDED_WHERE
                     + " ORDER BY p.bibcode"
                 )
-                fetch_params: list[Any] = [model_name]
+                fetch_params: list[Any] = []
                 if limit is not None:
                     fetch_sql += " LIMIT %s"
                     fetch_params.append(limit)
@@ -385,17 +457,23 @@ def run_embedding_pipeline(
                             continue
                         batch.append(inp)
                         if len(batch) >= batch_size:
-                            read_queue.put(batch)
+                            if not put_or_abort(read_queue, batch):
+                                return
                             batch = []
 
                     # Send remaining partial batch
-                    if batch:
-                        read_queue.put(batch)
+                    if batch and not put_or_abort(read_queue, batch):
+                        return
             except Exception as e:
                 reader_error.append(e)
+                abort.set()
                 logger.error("Reader thread error: %s", e)
             finally:
-                read_queue.put(_SENTINEL)
+                # Best-effort end-of-stream signal; the main loop also polls abort.
+                try:
+                    read_queue.put(_SENTINEL, timeout=_QUEUE_PUT_TIMEOUT_S)
+                except queue.Full:
+                    pass
 
         # --- Writer thread: drain write_queue into DB ---
         def writer() -> None:
@@ -408,7 +486,9 @@ def run_embedding_pipeline(
                     if item is _SENTINEL:
                         # Flush remaining
                         if buf_inputs:
-                            stored = store_fn(write_conn, buf_inputs, buf_vectors, model_name)
+                            stored = store_embeddings_qdrant(
+                                write_conn, client, buf_inputs, buf_vectors
+                            )
                             stats["embedded"] += stored
                         break
 
@@ -417,7 +497,9 @@ def run_embedding_pipeline(
                     buf_vectors.extend(vectors_chunk)
 
                     if len(buf_inputs) >= write_buffer:
-                        stored = store_fn(write_conn, buf_inputs, buf_vectors, model_name)
+                        stored = store_embeddings_qdrant(
+                            write_conn, client, buf_inputs, buf_vectors
+                        )
                         stats["embedded"] += stored
                         buf_inputs = []
                         buf_vectors = []
@@ -432,6 +514,7 @@ def run_embedding_pipeline(
                         )
             except Exception as e:
                 writer_error.append(e)
+                abort.set()  # unblock the producers, which are polling abort
                 logger.error("Writer thread error: %s", e)
 
         # Start reader and writer threads
@@ -441,11 +524,14 @@ def run_embedding_pipeline(
         writer_thread.start()
 
         # --- Main thread: GPU inference ---
-        while True:
-            batch_inputs = read_queue.get()
+        while not abort.is_set():
+            try:
+                batch_inputs = read_queue.get(timeout=_QUEUE_PUT_TIMEOUT_S)
+            except queue.Empty:
+                continue  # re-check abort (a dead writer sets it)
             if batch_inputs is _SENTINEL:
                 # Signal writer to flush and exit
-                write_queue.put(_SENTINEL)
+                put_or_abort(write_queue, _SENTINEL)
                 break
 
             texts = [inp.text for inp in batch_inputs]
@@ -457,17 +543,23 @@ def run_embedding_pipeline(
 
             pooling = MODEL_POOLING.get(model_name, "cls")
             vectors = embed_batch(model, tokenizer, texts, batch_size=batch_size, pooling=pooling)
-            write_queue.put((batch_inputs, vectors))
+            if not put_or_abort(write_queue, (batch_inputs, vectors)):
+                break  # writer died; stop feeding it
 
         # Wait for threads to complete
-        reader_thread.join(timeout=300)
-        writer_thread.join(timeout=300)
+        reader_thread.join(timeout=_THREAD_JOIN_TIMEOUT_S)
+        writer_thread.join(timeout=_THREAD_JOIN_TIMEOUT_S)
 
-        # Check for errors
+        # Surface any thread failure — and a stuck thread, rather than silently
+        # returning an under-count.
         if reader_error:
             raise reader_error[0]
         if writer_error:
             raise writer_error[0]
+        if reader_thread.is_alive() or writer_thread.is_alive():
+            raise RuntimeError(
+                f"embed pipeline thread did not terminate within {_THREAD_JOIN_TIMEOUT_S}s"
+            )
 
         elapsed = time.monotonic() - t_start
         logger.info(
@@ -481,8 +573,12 @@ def run_embedding_pipeline(
         )
         return stats["embedded"]
     finally:
-        read_conn.close()
-        write_conn.close()
+        if read_conn is not None:
+            read_conn.close()
+        if write_conn is not None:
+            write_conn.close()
+        if client is not None:
+            client.close()
 
 
 # ---------------------------------------------------------------------------

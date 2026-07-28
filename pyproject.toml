@@ -84,6 +84,9 @@ viz = [
     "orjson>=3.9",
 ]
 
+[project.scripts]
+scix = "scix.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

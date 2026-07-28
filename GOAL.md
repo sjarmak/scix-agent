@@ -95,6 +95,7 @@ Every item is verified by running its command, never from memory.
 |---|---|
 | 2026-07-27 | Goal opened. Grill complete, D1–D6 recorded. GPU root cause identified (kernel 6.17.0-35 has no nvidia module; dkms absent). Driver rebuild handed to operator. |
 | 2026-07-28 | Phase B landed on local `main`: W6+W7 (health gate, step decoupling, log clamp) and W8 (migration reconciliation artifacts). W5 done earlier — 59 non-work beads closed, 42 open, 0 Rollup. Nothing pushed. Open residuals recorded below. |
+| 2026-07-28 | **W4 done.** All 58 worktree directories removed, every branch ref preserved (D4). The three trees holding uncommitted work were committed as WIP on their own branches first (`bd/dbl.17-materials-registry` → 71c5796, `viz/sankey-cross-community` → 027949e, `scix_experiments-uq28/search-lane-error-handling` → 1c84498); each new tip's parent is exactly its baseline sha. **A4** ✅ `git status --porcelain` is empty. **A6** ✅ `git worktree list \| wc -l` returns 1. **A7** ✅ all 30 baseline branches resolve; the re-derived inventory (`docs/ops/branch_inventory_2026-07-28_postprune.txt`) differs from the baseline on four lines only — the three +1 WIP branches and `main`, which moved +8 for reasons unrelated to the prune (four commits already unpushed at baseline capture, plus the four Phase B commits). Zero branch refs deleted, zero commits lost. |
 
 ### Residuals as of 2026-07-28 (each needs an operator, not a builder)
 

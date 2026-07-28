@@ -18,9 +18,6 @@ import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-os.environ.setdefault("QDRANT_URL", "http://127.0.0.1:6333")
-
 from scix.db import get_connection
 from scix.mcp_server import _dispatch_tool
 
@@ -186,6 +183,14 @@ def first_bibcode(tool: str, args: dict) -> str | None:
 
 
 def main() -> int:
+    # Set here, not at import time. As module-level statements these leaked
+    # into every process that imported this file — tests/test_demo_readiness_smoke.py
+    # imports it for its pure-function checks, which pointed the whole pytest
+    # session at http://127.0.0.1:6333. Nothing listens there, so a later
+    # semantic_search raised ConnectError instead of returning its result.
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    os.environ.setdefault("QDRANT_URL", "http://127.0.0.1:6333")
+
     print("=" * 100)
     print("DEMO-READINESS SMOKE v2 (fresh-conn, corrected args)")
     print("=" * 100)

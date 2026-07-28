@@ -20,14 +20,26 @@ log was the alternative and was rejected: the log is append-only across runs,
 rotated by size (not by run), and its format is prose meant for humans, so a
 parser would silently drift the first time a step's echo line is reworded.
 
+Running it only from daily_sync.sh leaves the gate blind to its own headline
+failure: if the script dies before the last line, or cron never fires it, the
+check never runs — and "never ran" is indistinguishable from "passed". The
+out-of-band invocation plus ``--notify`` is what closes that:
+
+    45 7 * * * cd /home/ds/projects/scix_experiments && \
+        .venv/bin/python scripts/check_pipeline_health.py --allow-prod --notify
+
 Usage:
     python scripts/check_pipeline_health.py --allow-prod
+    python scripts/check_pipeline_health.py --allow-prod --notify
     python scripts/check_pipeline_health.py --max-dense-gap 100 --dsn "dbname=scix_test"
 
 Exit codes:
     0  all checks passed
     1  at least one check breached
     2  refused to run (production DSN without --allow-prod, or missing scope)
+    3  checks ran but --notify could not reach the bead store (the alerting
+       channel itself is broken — distinct from 1 so it cannot be mistaken for
+       an ordinary breach)
 
 Production safety: read-only (three SELECTs), but gated behind ``--allow-prod``
 like every other production script here. ``--require-batch-scope`` is available
@@ -43,6 +55,7 @@ import json
 import logging
 import os
 import pathlib
+import subprocess
 import sys
 from dataclasses import dataclass
 
@@ -273,6 +286,153 @@ def check_view_freshness(
 
 
 # ---------------------------------------------------------------------------
+# Notification — file the breach where it will actually be seen
+# ---------------------------------------------------------------------------
+#
+# The gate's blind spot is that it runs from the last line of daily_sync.sh, so
+# the failure it exists to catch (the script dying early, or cron not firing) is
+# exactly the one that stops it running. Fixing that needs the gate invoked
+# out-of-band AND a way to reach a human that does not depend on the pipeline.
+#
+# That channel is the bead store, not email: this host has no MTA at all (no
+# sendmail/mail/mailx, postfix and exim4 inactive), so a MAILTO line in the
+# crontab would deliver nothing while looking like monitoring — the same silent
+# failure this whole gate exists to remove. `bd ready` is read every session.
+#
+# Exactly one open bead is maintained, keyed by label: a breach opens or updates
+# it, a healthy run closes it. Filing a fresh bead per run would produce thirty
+# for one outage and train the reader to ignore them.
+
+NOTIFY_LABEL = "pipeline-health"
+NOTIFY_TITLE = "daily_sync pipeline health breach"
+NOTIFY_PRIORITY = "1"
+NOTIFY_TYPE = "bug"
+NOTIFY_TIMEOUT_S = 30
+
+
+class NotifyError(RuntimeError):
+    """The notification channel itself failed."""
+
+
+def _run_bd(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    """Default runner: invoke the `bd` CLI. Injected in tests."""
+    return subprocess.run(
+        ["bd", *argv],
+        capture_output=True,
+        text=True,
+        timeout=NOTIFY_TIMEOUT_S,
+        cwd=str(REPO_ROOT),
+    )
+
+
+def _checked(runner, argv: list[str]) -> str:
+    result = runner(argv)
+    if result.returncode != 0:
+        raise NotifyError(f"bd {' '.join(argv)} failed ({result.returncode}): {result.stderr.strip()}")
+    return result.stdout
+
+
+def find_open_notification(runner) -> dict | None:
+    """Return the open pipeline-health bead, or None.
+
+    More than one open bead means a previous run raced or a human filed one by
+    hand; the oldest is kept as the canonical record so `first seen` stays true.
+    """
+    raw = _checked(runner, ["list", "--status=open", "--label", NOTIFY_LABEL, "--json", "-n", "0"])
+    try:
+        issues = json.loads(raw) if raw.strip() else []
+    except json.JSONDecodeError as exc:
+        raise NotifyError(f"bd list returned unparseable JSON: {exc}") from exc
+    if not issues:
+        return None
+    return sorted(issues, key=lambda i: i.get("created_at") or "")[0]
+
+
+def breach_body(results: list[CheckResult], *, now: _dt.datetime, first_seen: str | None) -> str:
+    """Render the bead description. Pure — the current state, not an append log.
+
+    Deliberately overwritten each run rather than appended: the reader needs
+    'what is broken now', and an append log of 30 identical breaches buries it.
+    """
+    breaches = [r for r in results if not r.ok]
+    lines = [
+        f"The daily ADS pipeline health gate is failing {len(breaches)} of {len(results)} checks.",
+        "",
+        f"Last checked: {now.isoformat()}",
+    ]
+    if first_seen:
+        lines.append(f"First seen:   {first_seen}")
+    # No markdown emphasis on check names: they contain underscores, and the
+    # bead renderer reads those as emphasis markers — "**last_run_complete**"
+    # displays as "**last_****run_****complete**". Plain FAIL/pass markers stay
+    # readable and greppable.
+    lines += ["", "## Failing", ""]
+    lines += [f"- FAIL {r.name} — {r.detail}" for r in breaches]
+    passing = [r for r in results if r.ok]
+    if passing:
+        lines += ["", "## Passing", ""]
+        lines += [f"- pass {r.name} — {r.detail}" for r in passing]
+    lines += [
+        "",
+        "## What to do",
+        "",
+        "Reproduce with:",
+        "",
+        "    .venv/bin/python scripts/check_pipeline_health.py --allow-prod",
+        "",
+        "This bead is maintained by that gate: it is updated while the breach",
+        "persists and closed automatically on the first healthy run. Closing it",
+        "by hand while the pipeline is still broken will simply re-open it.",
+    ]
+    return "\n".join(lines)
+
+
+def notify(results: list[CheckResult], *, now: _dt.datetime, runner=_run_bd) -> str:
+    """Sync the pipeline-health bead to ``results``. Returns the action taken."""
+    existing = find_open_notification(runner)
+    breached = [r for r in results if not r.ok]
+
+    if not breached:
+        if existing is None:
+            return "noop"
+        _checked(
+            runner,
+            [
+                "close",
+                existing["id"],
+                "--reason",
+                f"Pipeline healthy again as of {now.isoformat()}: "
+                f"all {len(results)} checks pass. Closed automatically by "
+                "scripts/check_pipeline_health.py --notify.",
+            ],
+        )
+        return "closed"
+
+    if existing is None:
+        body = breach_body(results, now=now, first_seen=now.isoformat())
+        _checked(
+            runner,
+            [
+                "create",
+                NOTIFY_TITLE,
+                "-t",
+                NOTIFY_TYPE,
+                "-p",
+                NOTIFY_PRIORITY,
+                "-l",
+                NOTIFY_LABEL,
+                "-d",
+                body,
+            ],
+        )
+        return "created"
+
+    body = breach_body(results, now=now, first_seen=existing.get("created_at"))
+    _checked(runner, ["update", existing["id"], "-d", body])
+    return "updated"
+
+
+# ---------------------------------------------------------------------------
 # Reporting
 # ---------------------------------------------------------------------------
 
@@ -322,7 +482,7 @@ def run_checks(
     ]
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Post-run health gate for daily_sync.sh")
     parser.add_argument("--dsn", default=DEFAULT_DSN, help="PostgreSQL DSN (read-only)")
     parser.add_argument(
@@ -361,7 +521,18 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_MAX_VIEW_AGE_DAYS,
         help=f"Fail if v_claim_edges is staler (default: {DEFAULT_MAX_VIEW_AGE_DAYS:g})",
     )
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--notify",
+        action="store_true",
+        help="Maintain a single 'pipeline-health' bead: open/update it on breach, "
+        "close it on recovery. Intended for the out-of-band cron invocation, "
+        "which is the only one that can catch daily_sync.sh never running.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -391,7 +562,20 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     print(render(results))
-    return 1 if any(not r.ok for r in results) else 0
+    breached = any(not r.ok for r in results)
+
+    if args.notify:
+        try:
+            action = notify(results, now=now)
+        except (NotifyError, OSError, subprocess.SubprocessError) as exc:
+            # The alerting channel is down. Say so loudly and distinctly: a
+            # breach nobody can be told about is the failure mode this gate
+            # exists to remove, so it must not hide behind the health result.
+            logger.error("notification failed: %s", exc)
+            return 3
+        logger.info("notification: %s", action)
+
+    return 1 if breached else 0
 
 
 if __name__ == "__main__":

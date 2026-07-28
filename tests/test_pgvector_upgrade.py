@@ -138,7 +138,7 @@ class TestConfigureIterativeScan:
 
 import os
 
-DSN = os.environ.get("SCIX_DSN", "dbname=scix")
+DSN = os.environ.get("SCIX_TEST_DSN") or os.environ.get("SCIX_DSN", "dbname=scix")
 
 
 @pytest.mark.integration

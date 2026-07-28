@@ -1,18 +1,36 @@
-"""Verify the PostgreSQL schema works: inserts, queries, vector search, GIN indexes."""
+"""Verify the PostgreSQL schema works: inserts, queries, GIN indexes.
+
+The vector-search coverage that used to live here targeted ``paper_embeddings``,
+which ADR-015 dropped; the dense lane serves from Qdrant now (ADR-013). Dense
+retrieval is covered by tests/test_qdrant_dense.py and
+tests/test_embed_qdrant_store.py.
+"""
 
 import os
 
 import psycopg
 import pytest
+from helpers import is_production_dsn
 
 pytestmark = pytest.mark.integration
 
-DSN = os.environ.get("SCIX_DSN", "dbname=scix")
+DSN = os.environ.get("SCIX_TEST_DSN") or os.environ.get("SCIX_DSN", "dbname=scix")
 
 
 @pytest.fixture(scope="module")
 def conn():
-    """Provide a connection to the scix database, rolled back after all tests."""
+    """Provide a connection to the test database, rolled back after all tests.
+
+    This module INSERTs into papers, citation_edges and extractions. Every
+    write is savepoint-wrapped, but a connection to
+    production still takes locks on live tables and strands an
+    idle-in-transaction session if pytest is killed mid-run, so refuse one.
+    """
+    if is_production_dsn(DSN):
+        pytest.skip(
+            "Refusing to run schema write tests against production. "
+            "Set SCIX_TEST_DSN to a non-production database."
+        )
     with psycopg.connect(DSN) as c:
         c.autocommit = False
         yield c
@@ -45,11 +63,6 @@ SAMPLE_PAPER = {
     "read_count": 150,
     "reference_count": 35,
 }
-
-
-def _vec_to_str(vec: list[float]) -> str:
-    """Format a float list as a pgvector literal."""
-    return "[" + ",".join(str(v) for v in vec) + "]"
 
 
 def _insert_paper(cur: psycopg.Cursor, paper: dict) -> None:
@@ -133,69 +146,6 @@ class TestCitationEdges:
             )
             sources = [r[0] for r in cur.fetchall()]
             assert SAMPLE_PAPER["bibcode"] in sources
-
-
-class TestVectorEmbeddings:
-    def test_insert_and_cosine_search(self, conn):
-        with conn.cursor() as cur:
-            _insert_paper(cur, SAMPLE_PAPER)
-            # Insert a 768-dim embedding (mostly zeros with a few values for testing)
-            embedding = [0.0] * 768
-            embedding[0] = 1.0
-            embedding[1] = 0.5
-            vec_str = _vec_to_str(embedding)
-            cur.execute(
-                "INSERT INTO paper_embeddings (bibcode, model_name, embedding) VALUES (%s, %s, %s::vector)",
-                (SAMPLE_PAPER["bibcode"], "specter2", vec_str),
-            )
-
-            # Query: find nearest neighbors by cosine distance
-            cur.execute(
-                """
-                SELECT bibcode, 1 - (embedding <=> %s::vector) AS similarity
-                FROM paper_embeddings
-                ORDER BY embedding <=> %s::vector
-                LIMIT 5
-                """,
-                (vec_str, vec_str),
-            )
-            rows = cur.fetchall()
-            assert len(rows) >= 1
-            assert rows[0][0] == SAMPLE_PAPER["bibcode"]
-            # Cosine similarity of a vector with itself should be ~1.0
-            assert rows[0][1] == pytest.approx(1.0, abs=1e-5)
-
-    def test_different_vectors_ranked_by_similarity(self, conn):
-        with conn.cursor() as cur:
-            # Insert two papers with different embeddings
-            _insert_paper(cur, SAMPLE_PAPER)
-            paper2 = {**SAMPLE_PAPER, "bibcode": "2024ApJ...test.003C", "title": "Another Paper"}
-            _insert_paper(cur, paper2)
-
-            vec_a = [0.0] * 768
-            vec_a[0] = 1.0
-            vec_b = [0.0] * 768
-            vec_b[0] = 0.5
-            vec_b[1] = 0.866  # ~orthogonal-ish
-
-            for bib, vec in [(SAMPLE_PAPER["bibcode"], vec_a), (paper2["bibcode"], vec_b)]:
-                cur.execute(
-                    "INSERT INTO paper_embeddings (bibcode, model_name, embedding) VALUES (%s, %s, %s::vector)",
-                    (bib, "specter2", _vec_to_str(vec)),
-                )
-
-            # Query with vec_a — should find SAMPLE_PAPER first
-            query_str = _vec_to_str(vec_a)
-            cur.execute(
-                """
-                SELECT bibcode FROM paper_embeddings
-                ORDER BY embedding <=> %s::vector
-                LIMIT 5
-                """,
-                (query_str,),
-            )
-            rows = cur.fetchall()
-            assert rows[0][0] == SAMPLE_PAPER["bibcode"]
 
 
 class TestExtractions:

@@ -3,7 +3,8 @@
 Two test modes:
 - Static: always runs, verifies SQL content and structure
 - Integration (pytest.mark.integration): runs against a real PostgreSQL database
-  when SCIX_DSN is available
+  when SCIX_TEST_DSN is available. These tests INSERT into staging.* and
+  public.entities, so they must never reach production.
 """
 
 import os
@@ -11,11 +12,12 @@ import pathlib
 
 import psycopg
 import pytest
+from helpers import is_production_dsn
 
 MIGRATION_PATH = (
     pathlib.Path(__file__).resolve().parent.parent / "migrations" / "022_staging_entities.sql"
 )
-DSN = os.environ.get("SCIX_DSN", "dbname=scix")
+DSN = os.environ.get("SCIX_TEST_DSN") or os.environ.get("SCIX_DSN", "dbname=scix")
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +113,8 @@ class TestStagingEntitiesSQL:
 
 
 def _db_available() -> bool:
+    if is_production_dsn(DSN):
+        return False
     try:
         with psycopg.connect(DSN, connect_timeout=3) as conn:
             conn.execute("SELECT 1")
@@ -119,7 +123,10 @@ def _db_available() -> bool:
         return False
 
 
-skip_no_db = pytest.mark.skipif(not _db_available(), reason="No database available")
+skip_no_db = pytest.mark.skipif(
+    not _db_available(),
+    reason="No non-production database available (set SCIX_TEST_DSN)",
+)
 
 
 @skip_no_db

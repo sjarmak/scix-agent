@@ -1,0 +1,30 @@
+# Branch inventory captured 2026-07-27 before worktree removal (GOAL.md A7)
+# format: <sha> <ahead-of-origin/main> <branch>
+452ab86e3a78d42162dda2a3acd31c1069c5ba5b 0 bd/0yp5-external-copy-accuracy-audit
+369148653550a894f9027e4c1c5b3245ad30e120 2 bd/50ww-qdrant-full-load-payload
+3786b656aa34ba78968f2a6ead5ecdf2396b2d2d 1 bd/9afa-mcp-contract-consolidation
+7b88b0d5da1f173bef0b2e5ad7df352363568c40 3 bd/cfc8-ml-dataset-registry
+de39414f76b27e89cfd3c756c81c6fdd55f10da7 1 bd/chg-refresh-calibration-snippets
+fe7d2c822c81352afcb4771524513b6cf811b874 1 bd/dbl.10-discipline-facet
+78552b534fce1b085121761b9ae04069b068297f 1 bd/dbl.16-registry-ingest
+92c143b75a5a50c7de36f18b33d0c835458db79e 1 bd/dbl.17-materials-registry
+b8993cbb0c4c37009306dac22b2220332a7d2e5f 3 bd/dbl.24-residual-fp-gazetteer
+134215ba511628f7493fe123b79dc067aac20278 1 bd/e4xv-outbox-payload-fix
+ca8e41542d8bc3116709418552aee66946a92cff 2 bd/h2sj-recall-gold-v1
+ce6004980e48d1cc9e5793f8ab65d95c3b44c18d 6 bd/o835-ci-green-up
+ab85bc4926974ae7d318cc676a717f2c527b86c5 2 bd/o9ib-qdrant-recall-canary
+a7cd41a4463932d6b26d17de0a65bed0ae9f1288 0 bd/oahz-decompose-mcp-server
+2f58c8b5c90eb7b8d5ee2f968777b7365096a404 0 bd/pebe-decompose-mcp-server
+82f4cbf018bff25f1c172c26cbd58d40e4468399 1 bd/ppw5-dataset-mention
+0ae776184bd9cebf313b7ef00d4ce99d7aee1a79 1 bd/rglt-generic-phrase-policy
+29056597df0844d38cd24f8508cf5741197e1562 2 bd/v427-doc-sync-main
+a87d56b95d8a3ef473d7fa8194d4d08b5de7d343 1 bd/v427-papers-raw-drop
+874b722d558593de41e3c6df4a512c03fc0fd116 1 bd/xz4.7-physh-hierarchy
+63c2803ceb96f76592d4b0742af0c7f8e839baab 8 bd/xz4.9-designation-anchored
+dd618037f61035bd62f1e7a620029c6b4867ab6a 0 main
+56cdab93a295741ab274b5b528a8d7baf72217ab 2 rescue/detached-20260721/56cdab93a295
+8f1f6867597658c8ace2cdb8c7ac3598b1cc58a5 1 scix_experiments-isve/fusion-calibration-sweep
+20f94636faf93e1dc522dace5ac23d64688c899d 0 scix_experiments-lq32/qdrant-missing-bibcode-keyfix
+1ba83b1656a5005f621255d85cc0fb3bddf15815 0 scix_experiments-uq28/search-lane-error-handling
+27e1183cc6f1c594beef241c8b1507041ce0759c 0 scix_experiments-x2dp/mcp-contract-conformance
+1bdb27ff005e2eb6e25b0013e39a8a852319f403 0 viz/sankey-cross-community

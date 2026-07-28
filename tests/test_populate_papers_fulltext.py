@@ -41,6 +41,7 @@ sys.modules["scripts.populate_papers_fulltext"] = driver
 sys.modules["populate_papers_fulltext"] = driver
 _spec.loader.exec_module(driver)  # type: ignore[union-attr]
 
+from scix.coldtext import HOT_WINDOW_START_YEAR  # noqa: E402
 from scix.db import is_production_dsn  # noqa: E402
 from scix.sources import ads_body_parser  # noqa: E402
 from scix.sources.ar5iv import Section  # noqa: E402
@@ -469,17 +470,24 @@ def _seed_papers(
     bibstem: str = "ApJ",
     doctype: str = "article",
 ) -> list[str]:
-    """Insert ``n`` papers with bodies; return the bibcodes."""
+    """Insert ``n`` papers with bodies; return the bibcodes.
+
+    ``year`` is mandatory: the driver's candidate query floors on
+    ``p.year >= HOT_WINDOW_START_YEAR`` (ADR-016 — sealed years live on NAS and
+    would otherwise look like fulltext gaps). Seeding without a year yields
+    ``year IS NULL``, which fails that predicate, so the driver saw zero
+    candidates and every assertion here read ``stats.wrote == 0``.
+    """
     bibcodes = [_mk_bibcode(i) for i in range(n)]
     with conn.cursor() as cur:
         for bib in bibcodes:
             cur.execute(
                 """
-                INSERT INTO papers (bibcode, title, doctype, bibstem, body)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO papers (bibcode, title, doctype, bibstem, body, year)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (bibcode) DO NOTHING
                 """,
-                (bib, f"test {bib}", doctype, [bibstem], body),
+                (bib, f"test {bib}", doctype, [bibstem], body, HOT_WINDOW_START_YEAR),
             )
     return bibcodes
 

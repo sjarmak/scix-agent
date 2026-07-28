@@ -16,9 +16,10 @@ import psycopg
 import psycopg.errors
 import pytest
 
+from scix.mcp_runtime import _session_state
 from scix.mcp_server import _dispatch_tool
 
-DSN = os.environ.get("SCIX_DSN", "dbname=scix")
+DSN = os.environ.get("SCIX_TEST_DSN") or os.environ.get("SCIX_DSN", "dbname=scix")
 
 # Per-query timeout in seconds (configurable for slow environments)
 _STMT_TIMEOUT_S = int(os.environ.get("SCIX_TEST_TIMEOUT", "60"))
@@ -46,6 +47,25 @@ def conn():
         c.close()
     except psycopg.OperationalError:
         pytest.skip("scix database not available")
+
+
+@pytest.fixture(autouse=True)
+def _clear_session_state():
+    """Reset the in-process working set before each test.
+
+    ``_session_state`` outlives a single dispatch: ``get_paper`` tracks the
+    paper it returned as a focused paper, and tools that scope to a working set
+    (``temporal_evolution``, ``find_gaps``, ``synthesize_findings``,
+    ``facet_counts``) prefer it over their own query argument. Without this
+    reset the module's results depend on test order — ``test_query_mode``
+    asserted ``mode == 'publications'`` but got ``'citations'`` purely because
+    an earlier test had left a focused paper behind.
+    """
+    _session_state.clear_focused()
+    _session_state.clear_working_set()
+    yield
+    _session_state.clear_focused()
+    _session_state.clear_working_set()
 
 
 @pytest.fixture(autouse=True)
@@ -117,15 +137,22 @@ def _rollback_and_reset(conn: psycopg.Connection) -> None:
 
 
 def _get_any_bibcode(conn: psycopg.Connection) -> str:
-    """Get a bibcode by scanning a known year (uses idx_papers_year for speed)."""
+    """Return a real bibcode, or skip the test if the database has none.
+
+    Skipping beats the old empty-string sentinel: callers dispatched ``""`` as
+    a bibcode, got a structured error envelope back, and failed on
+    ``KeyError: 'total'`` — reporting a missing fixture as a tool defect.
+    """
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT bibcode FROM papers WHERE year = 2024 LIMIT 1")
             row = cur.fetchone()
-            return row[0] if row else ""
     except psycopg.errors.QueryCanceled:
         _rollback_and_reset(conn)
-        return ""
+        pytest.skip("Query timed out selecting a sample bibcode")
+    if row is None:
+        pytest.skip("No 2024 papers in database")
+    return row[0]
 
 
 def _get_citing_bibcode(conn: psycopg.Connection) -> str | None:

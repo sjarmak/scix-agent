@@ -40,7 +40,13 @@ from scix.section_parser import parse_sections
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURE_PATH = REPO_ROOT / "tests" / "fixtures" / "within_paper_rerank_gold_20.jsonl"
-EVAL_REPORT_PATH = REPO_ROOT / "results" / "within_paper_rerank_eval.md"
+
+# The report is rendered to a tmp_path, never to the tracked
+# results/within_paper_rerank_eval.md. Writing there made "clean working tree"
+# and "green suite" mutually exclusive, and a concurrent run once rewrote the
+# file between `git add` and `git commit`, committing a 4096 ms p95 measured on
+# a loaded CPU. The tracked copy is banner-marked SUPERSEDED/INVALID (bead
+# scix_experiments-4skc) and is a historical record, not a suite output.
 
 
 def _load_fixture() -> list[dict[str, Any]]:
@@ -265,6 +271,7 @@ def _minilm_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _write_eval_report(
     *,
+    path: Path,
     baseline_ndcg: float,
     rerank_ndcg: float,
     delta: float,
@@ -272,8 +279,8 @@ def _write_eval_report(
     threshold: float,
     minilm_available: bool,
 ) -> None:
-    """Write the eval summary; force-create results/ if needed."""
-    EVAL_REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    """Render the eval summary to ``path``."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     if delta >= threshold:
         recommendation = (
             f"GO — section-level cross-encoder rerank improves nDCG@3 by "
@@ -345,14 +352,15 @@ def _write_eval_report(
         f"{recommendation}\n"
         f"{note}"
     )
-    EVAL_REPORT_PATH.write_text(body)
+    path.write_text(body)
 
 
-def test_rerank_improves_ndcg_at_3() -> None:
+def test_rerank_improves_ndcg_at_3(tmp_path: Path) -> None:
     """nDCG@3 baseline vs rerank on the 20-entry fixture.
 
-    Always writes the eval report. Asserts an improvement of >= 0.05 only when
-    actually observed (negative-result-friendly per the unit acceptance).
+    Renders the eval report into tmp_path. Asserts an improvement of >= 0.05
+    only when actually observed (negative-result-friendly per the unit
+    acceptance).
     """
     fixture = _load_fixture()
 
@@ -393,7 +401,9 @@ def test_rerank_improves_ndcg_at_3() -> None:
     delta = rerank_ndcg - baseline_ndcg
     threshold = 0.05
 
+    report_path = tmp_path / "within_paper_rerank_eval.md"
     _write_eval_report(
+        path=report_path,
         baseline_ndcg=baseline_ndcg,
         rerank_ndcg=rerank_ndcg,
         delta=delta,
@@ -401,13 +411,13 @@ def test_rerank_improves_ndcg_at_3() -> None:
         threshold=threshold,
         minilm_available=minilm_available,
     )
+    assert report_path.exists()
 
     if delta >= threshold:
         # Strong positive result — assert it explicitly.
         assert rerank_ndcg > baseline_ndcg
         assert delta >= threshold
-    # Negative result is also a passing outcome per the unit description; the
-    # report has been written so the operator can see the numbers.
+    # Negative result is also a passing outcome per the unit description.
 
 
 @pytest.mark.skipif(

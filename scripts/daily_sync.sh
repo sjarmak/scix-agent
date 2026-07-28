@@ -212,6 +212,12 @@ fi
 # unembedded papers internally, so it's a cheap no-op when there's nothing new.
 # -v is kept here: scix.embed does emit DEBUG worth having, and the third-party
 # HTTP/model loggers are clamped to WARNING inside the pipeline (bead dxa).
+#
+# The scan is bounded to `year >= current_year - 1` by default (bead ws5), which
+# rides idx_papers_year. Unbounded it was a seq scan over every paper: 530 s
+# before the first row on a cold cache, 98% of a 540 s drain whose GPU work was
+# ~10 s. The bound is on PUBLICATION year, not ingest date, so a backfill of
+# older papers is invisible here and must be run by hand with --full.
 
 if [ "$RECORD_COUNT" -gt 0 ] || [ "$BACKFILL_COUNT" -gt 0 ]; then
     echo "[$(ts)] Step 5/6: Embedding new papers (INDUS)..."

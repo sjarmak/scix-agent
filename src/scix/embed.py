@@ -20,6 +20,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 import psycopg
@@ -370,6 +371,39 @@ _UNEMBEDDED_WHERE = """
     WHERE s.bibcode IS NULL AND p.title IS NOT NULL
 """
 
+# How many years back from the current year the nightly run scans. The harvest
+# brings in current-year records plus late-arriving previous-year ones, so 1 is
+# enough to cover a nightly delta; anything older is a backfill and belongs to
+# an explicit --full run.
+NIGHTLY_YEAR_LOOKBACK = 1
+
+
+def unembedded_predicate(year_floor: int | None) -> tuple[str, list[Any]]:
+    """Return ``(sql_fragment, params)`` selecting papers with no dense vector.
+
+    ``year_floor`` bounds the scan to ``papers.year >= year_floor``, which the
+    existing ``idx_papers_year`` serves. Pass ``None`` for the unbounded form.
+
+    The bound matters: unbounded, this anti-join is a parallel seq scan over
+    every paper (width 351, so it reads every abstract out of TOAST) hashed
+    against a full scan of the 35M-row watermark — planned at ~10.1M and
+    measured at 530 s before the first row on a cold cache, which was 98% of a
+    540 s nightly drain whose actual GPU work was ~10 s. Bounded to year >= 2025
+    the plan drops to ~2.06M on a bitmap index scan.
+
+    The trade-off is why --full exists: ``year`` is publication year, not ingest
+    date, so a newly ingested 1995 paper is invisible to a bounded run.
+    Backfills must pass ``year_floor=None``.
+    """
+    if year_floor is None:
+        return _UNEMBEDDED_WHERE, []
+    return _UNEMBEDDED_WHERE + "      AND p.year >= %s\n", [year_floor]
+
+
+def default_year_floor(today: date | None = None) -> int:
+    """Year floor for a nightly run: the current year minus the lookback."""
+    return (today or date.today()).year - NIGHTLY_YEAR_LOOKBACK
+
 
 def run_embedding_pipeline(
     dsn: str | None = None,
@@ -378,6 +412,7 @@ def run_embedding_pipeline(
     device: str = "cpu",
     limit: int | None = None,
     write_buffer: int = 2000,
+    year_floor: int | None = None,
 ) -> int:
     """Full embedding pipeline: stream unembedded papers, embed, upsert to Qdrant.
 
@@ -395,6 +430,9 @@ def run_embedding_pipeline(
         device: Torch device ('cpu', 'cuda', 'auto').
         limit: Max papers to embed (None = all).
         write_buffer: Number of embeddings to accumulate before each Qdrant flush.
+        year_floor: Only consider papers with ``year >= year_floor``. ``None``
+            scans the whole corpus — correct for a backfill, but see
+            :func:`unembedded_predicate` for what it costs nightly.
 
     Returns total number of papers embedded.
     """
@@ -422,9 +460,18 @@ def run_embedding_pipeline(
         read_conn = get_connection(dsn)
         write_conn = get_connection(dsn)
 
+        where_sql, where_params = unembedded_predicate(year_floor)
+        # Say which scope ran. A bounded run that finds nothing and a full run
+        # that finds nothing are different facts, and the log is the only place
+        # an operator can tell them apart after the fact.
+        if year_floor is None:
+            logger.info("Scanning the full corpus for unembedded papers (no year bound)")
+        else:
+            logger.info("Scanning papers with year >= %d for unembedded papers", year_floor)
+
         # Count papers needing embeddings
         with read_conn.cursor() as cur:
-            cur.execute("SELECT count(*) " + _UNEMBEDDED_WHERE)
+            cur.execute("SELECT count(*) " + where_sql, where_params)
             total_to_embed = cur.fetchone()[0]
 
         if total_to_embed == 0:
@@ -469,11 +516,9 @@ def run_embedding_pipeline(
         def reader() -> None:
             try:
                 fetch_sql = (
-                    "SELECT p.bibcode, p.title, p.abstract "
-                    + _UNEMBEDDED_WHERE
-                    + " ORDER BY p.bibcode"
+                    "SELECT p.bibcode, p.title, p.abstract " + where_sql + " ORDER BY p.bibcode"
                 )
-                fetch_params: list[Any] = []
+                fetch_params: list[Any] = list(where_params)
                 if limit is not None:
                     fetch_sql += " LIMIT %s"
                     fetch_params.append(limit)

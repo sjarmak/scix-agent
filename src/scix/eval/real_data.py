@@ -39,6 +39,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from scix import qdrant_dense
 from scix.search import hybrid_search
 
 logger = logging.getLogger(__name__)
@@ -163,11 +164,16 @@ class RealEvalContext:
         lazily via :meth:`entities_for`.
     embedding_cache
         Bibcode -> list[float] of the ``indus`` embedding for a bibcode.
+    qdrant_client
+        Client for the INDUS dense lane, built lazily from ``QDRANT_URL`` on
+        first use. Supplying one (or priming ``embedding_cache``) keeps
+        :meth:`embedding_for` off the network entirely.
     """
 
     conn: psycopg.Connection
     entity_cache: dict[str, frozenset[int]] = field(default_factory=dict)
     embedding_cache: dict[str, list[float]] = field(default_factory=dict)
+    qdrant_client: Any | None = None
 
     def entities_for(self, bibcode: str) -> frozenset[int]:
         """Return entity IDs for ``bibcode`` from the canonical MV."""
@@ -185,23 +191,29 @@ class RealEvalContext:
         return ids
 
     def embedding_for(self, bibcode: str, model_name: str = "indus") -> list[float] | None:
-        """Return the stored embedding for ``bibcode`` as a list of floats."""
+        """Return ``bibcode``'s dense vector, or ``None`` if it has none.
+
+        Reads the Qdrant dense lane (ADR-013): ADR-015 dropped
+        ``paper_embeddings``, which this used to query (bead w7m). Only the
+        INDUS lane is served, so a non-``indus`` ``model_name`` has no source.
+        """
+        if model_name != "indus":
+            raise ValueError(
+                f"model_name={model_name!r} is not available: the dense lane serves "
+                "INDUS only since ADR-015 retired the multi-model paper_embeddings table."
+            )
         key = f"{bibcode}::{model_name}"
         if key in self.embedding_cache:
             return self.embedding_cache[key]
-        with self.conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
-                "SELECT embedding FROM paper_embeddings " "WHERE bibcode = %s AND model_name = %s",
-                [bibcode, model_name],
-            )
-            row = cur.fetchone()
-        if row is None:
+
+        if self.qdrant_client is None:
+            self.qdrant_client = qdrant_dense.dense_client()
+        vectors = qdrant_dense.fetch_dense(
+            self.qdrant_client, qdrant_dense.INDUS_COLLECTION, [bibcode]
+        )
+        embedding = vectors.get(bibcode)
+        if embedding is None:
             return None
-        emb_raw = row["embedding"]
-        if isinstance(emb_raw, str):
-            embedding = [float(x) for x in emb_raw.strip("[]").split(",")]
-        else:
-            embedding = list(emb_raw)
         self.embedding_cache[key] = embedding
         return embedding
 

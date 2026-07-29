@@ -31,6 +31,7 @@ from psycopg.rows import dict_row
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from scix.db import get_connection
+from scix.embed import refuse_retired_pg_write
 
 logging.basicConfig(
     level=logging.INFO,
@@ -373,6 +374,7 @@ def evaluate_retrieval(
 
 
 def main() -> None:
+    refuse_retired_pg_write("pilot_embed_compare.py")
     parser = argparse.ArgumentParser(description="Pilot embedding comparison")
     parser.add_argument("--sample-size", type=int, default=10_000)
     parser.add_argument(

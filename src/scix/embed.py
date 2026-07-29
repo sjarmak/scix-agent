@@ -212,12 +212,30 @@ def _vec_to_pgvector(vec: list[float]) -> str:
     return "[" + ",".join(str(v) for v in vec) + "]"
 
 
+RETIRED_PG_WRITE_PATH = (
+    "writes embeddings to `paper_embeddings`, which ADR-015 dropped. Nothing it "
+    "does can succeed. The production embedding path is `scripts/embed.py`, "
+    "which upserts directly to the Qdrant dense lane (ADR-013). Retiring this "
+    "script is tracked as bead 1zf."
+)
+
+
+def refuse_retired_pg_write(script_name: str) -> None:
+    """Abort a script whose only write target is the retired pg table.
+
+    Called at entry so the failure costs nothing. Without it these scripts load
+    a GPU model and embed a full batch before a worker thread hits the COPY,
+    turning a known-dead path into wasted GPU time and a threaded traceback.
+    """
+    raise SystemExit(f"{script_name} {RETIRED_PG_WRITE_PATH}")
+
+
 # NOTE: store_embeddings_copy / store_embeddings write to the retired
 # `paper_embeddings` table (ADR-015). They are no longer used by the production
 # pipeline (which upserts to Qdrant via store_embeddings_qdrant) but are kept
 # because the auxiliary scripts embed_fast.py / embed_optimized.py still import
-# them; those scripts are separately broken by the table drop (tracked out of
-# band). Do not add new callers.
+# them; those scripts refuse at entry via refuse_retired_pg_write(). Do not add
+# new callers.
 def store_embeddings_copy(
     conn: psycopg.Connection,
     inputs: list[EmbeddingInput],

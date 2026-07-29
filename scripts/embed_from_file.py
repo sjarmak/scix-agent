@@ -30,7 +30,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import numpy as np
 import torch
 
-from scix.embed import MODEL_POOLING, EmbeddingInput, load_model, prepare_input
+from scix.embed import (
+    MODEL_POOLING,
+    EmbeddingInput,
+    load_model,
+    prepare_input,
+    refuse_retired_pg_write,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -118,6 +124,7 @@ def writer_process(write_queue: mp.Queue, total: int, dsn: str | None) -> None:
 
 
 def main() -> None:
+    refuse_retired_pg_write("embed_from_file.py")
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path, default=Path("/tmp/to_embed.tsv"))
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)

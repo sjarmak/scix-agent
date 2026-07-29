@@ -26,7 +26,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import torch
 
 from scix.db import get_connection
-from scix.embed import EmbeddingInput, _vec_to_pgvector, load_model, prepare_input
+from scix.embed import (
+    EmbeddingInput,
+    _vec_to_pgvector,
+    load_model,
+    prepare_input,
+    refuse_retired_pg_write,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,6 +49,7 @@ WRITE_QUEUE_DEPTH = 4
 
 
 def main() -> None:
+    refuse_retired_pg_write("embed_optimized.py")
     _SENTINEL = None
 
     read_conn = get_connection()

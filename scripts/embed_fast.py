@@ -30,6 +30,7 @@ from scix.embed import (
     embed_batch,
     load_model,
     prepare_input,
+    refuse_retired_pg_write,
     store_embeddings_copy,
 )
 
@@ -46,6 +47,7 @@ DEVICE = "cuda"
 
 
 def main() -> None:
+    refuse_retired_pg_write("embed_fast.py")
     _SENTINEL = None
 
     read_conn = get_connection()

@@ -68,3 +68,23 @@ def test_store_empty_is_noop():
     log: list = []
     assert embed.store_embeddings_qdrant(_FakeConn(log), _FakeClient(log), [], []) == 0
     assert log == []
+
+
+# ---------------------------------------------------------------------------
+# Retired pg write path (bead w7m)
+# ---------------------------------------------------------------------------
+
+
+def test_refuse_retired_pg_write_aborts_with_the_supported_path():
+    """The auxiliary embed scripts must die at entry, not after GPU work."""
+    import pytest
+
+    with pytest.raises(SystemExit) as exc:
+        embed.refuse_retired_pg_write("embed_fast.py")
+
+    msg = str(exc.value)
+    assert "embed_fast.py" in msg
+    assert "paper_embeddings" in msg
+    # Naming the working path is the point — a bare failure sends the reader
+    # looking for a broken table instead of scripts/embed.py.
+    assert "scripts/embed.py" in msg

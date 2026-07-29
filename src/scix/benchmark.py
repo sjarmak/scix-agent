@@ -22,6 +22,7 @@ from typing import Any
 
 import psycopg
 
+from scix import qdrant_dense
 from scix.db import get_connection
 from scix.search import (
     SearchFilters,
@@ -53,16 +54,19 @@ class BenchmarkResult:
 
 @dataclass(frozen=True)
 class IngestionMetrics:
-    """Corpus statistics from benchmark #5."""
+    """Corpus statistics from benchmark #5.
+
+    Carries no pgvector index/table sizes: ADR-013 moved dense serving to
+    Qdrant and ADR-015 dropped ``paper_embeddings``, so an HNSW-bytes and
+    percent-of-RAM reading would report 0 for storage that simply is not in
+    PostgreSQL any more (bead w7m).
+    """
 
     total_papers: int
     total_embeddings: int
     total_citation_edges: int
     papers_without_abstracts: int
-    hnsw_index_bytes: int
-    table_total_bytes: int
     system_ram_bytes: int
-    hnsw_pct_of_ram: float
 
 
 @dataclass(frozen=True)
@@ -441,14 +445,17 @@ def bench_combined_query(
 # ---------------------------------------------------------------------------
 
 
-def collect_ingestion_metrics(conn: psycopg.Connection) -> IngestionMetrics:
-    """Collect corpus statistics and HNSW memory consumption."""
+def collect_ingestion_metrics(
+    conn: psycopg.Connection,
+    client: Any | None = None,
+) -> IngestionMetrics:
+    """Collect corpus statistics; the embedding count comes from Qdrant.
+
+    ``client`` defaults to one built from ``QDRANT_URL``.
+    """
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM papers")
         total_papers = cur.fetchone()[0]
-
-        cur.execute("SELECT count(*) FROM paper_embeddings WHERE model_name = 'specter2'")
-        total_embeddings = cur.fetchone()[0]
 
         cur.execute("SELECT count(*) FROM citation_edges")
         total_edges = cur.fetchone()[0]
@@ -456,22 +463,11 @@ def collect_ingestion_metrics(conn: psycopg.Connection) -> IngestionMetrics:
         cur.execute("SELECT count(*) FROM papers WHERE abstract IS NULL OR abstract = ''")
         no_abstract = cur.fetchone()[0]
 
-        # HNSW index size — find dynamically
-        cur.execute(
-            """
-            SELECT indexname, pg_relation_size(quote_ident(indexname))
-            FROM pg_indexes
-            WHERE tablename = 'paper_embeddings'
-              AND indexdef LIKE '%%hnsw%%'
-            ORDER BY pg_relation_size(quote_ident(indexname)) DESC
-            LIMIT 1
-            """
-        )
-        row = cur.fetchone()
-        hnsw_bytes = row[1] if row else 0
-
-        cur.execute("SELECT pg_total_relation_size('paper_embeddings')")
-        table_bytes = cur.fetchone()[0]
+    # The dense lane serves from Qdrant (ADR-013), so its size is a point
+    # count there rather than a row count in the retired pg table.
+    if client is None:
+        client = qdrant_dense.dense_client()
+    total_embeddings = qdrant_dense.count_dense(client, qdrant_dense.INDUS_COLLECTION)
 
     # System RAM from /proc/meminfo
     system_ram = 0
@@ -484,17 +480,12 @@ def collect_ingestion_metrics(conn: psycopg.Connection) -> IngestionMetrics:
     except OSError:
         pass
 
-    hnsw_pct = round((hnsw_bytes / max(system_ram, 1)) * 100, 1) if system_ram else 0
-
     return IngestionMetrics(
         total_papers=total_papers,
         total_embeddings=total_embeddings,
         total_citation_edges=total_edges,
         papers_without_abstracts=no_abstract,
-        hnsw_index_bytes=hnsw_bytes,
-        table_total_bytes=table_bytes,
         system_ram_bytes=system_ram,
-        hnsw_pct_of_ram=hnsw_pct,
     )
 
 
@@ -553,13 +544,10 @@ def generate_markdown_report(report: PRDBenchmarkReport) -> str:
             "| Metric | Value |",
             "|--------|-------|",
             f"| Total papers | {m.total_papers:,} |",
-            f"| Total embeddings (SPECTER2) | {m.total_embeddings:,} |",
+            f"| Dense-lane points (INDUS, Qdrant) | {m.total_embeddings:,} |",
             f"| Total citation edges | {m.total_citation_edges:,} |",
             f"| Papers without abstracts | {m.papers_without_abstracts:,} |",
-            f"| HNSW index size | {_fmt_bytes(m.hnsw_index_bytes)} |",
-            f"| paper_embeddings total size | {_fmt_bytes(m.table_total_bytes)} |",
             f"| System RAM | {_fmt_bytes(m.system_ram_bytes)} |",
-            f"| HNSW as % of RAM | {m.hnsw_pct_of_ram}% |",
         ]
     )
 
@@ -636,11 +624,10 @@ def run_prd_benchmarks(
         logger.info("Benchmark 5: Collecting ingestion metrics...")
         ingestion = collect_ingestion_metrics(conn)
         logger.info(
-            "  papers=%s, edges=%s, HNSW=%s (%.1f%% of RAM)",
+            "  papers=%s, edges=%s, dense points=%s",
             f"{ingestion.total_papers:,}",
             f"{ingestion.total_citation_edges:,}",
-            _fmt_bytes(ingestion.hnsw_index_bytes),
-            ingestion.hnsw_pct_of_ram,
+            f"{ingestion.total_embeddings:,}",
         )
     finally:
         conn.close()

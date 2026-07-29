@@ -940,3 +940,51 @@ class TestComparePartitions:
         """Empty partitions dict should raise ValueError."""
         with pytest.raises(ValueError, match="partitions"):
             compare_partitions({})
+
+
+class TestLoadEmbeddings:
+    """_load_embeddings reads the Qdrant dense lane, not the dropped table.
+
+    ADR-015 dropped ``paper_embeddings``; this loader was left pointing at it
+    (bead 6ou), so every small-component assignment raised UndefinedTable.
+    """
+
+    def test_returns_float32_arrays_keyed_by_bibcode(self) -> None:
+        import numpy as np
+
+        from scix.graph_metrics import _load_embeddings
+
+        class _Client:
+            def retrieve(self, *, collection_name, ids, with_payload, with_vectors):
+                recs = []
+                for bib, vec in (("BIB0001", [1.0, 2.0]), ("BIB0002", [3.0, 4.0])):
+                    r = type("R", (), {})()
+                    r.id, r.payload, r.vector = bib, {"bibcode": bib}, vec
+                    recs.append(r)
+                return recs
+
+        got = _load_embeddings({"BIB0001", "BIB0002"}, client=_Client())
+
+        assert set(got) == {"BIB0001", "BIB0002"}
+        # assign_small_component_communities does numpy dot products on these.
+        assert isinstance(got["BIB0001"], np.ndarray)
+        assert got["BIB0001"].dtype == np.float32
+        np.testing.assert_allclose(got["BIB0002"], [3.0, 4.0])
+
+    def test_empty_input_needs_no_client(self) -> None:
+        from scix.graph_metrics import _load_embeddings
+
+        assert _load_embeddings(set()) == {}
+
+    def test_omits_bibcodes_with_no_vector(self) -> None:
+        """Partial coverage is normal: callers filter on membership."""
+        from scix.graph_metrics import _load_embeddings
+
+        class _Client:
+            def retrieve(self, *, collection_name, ids, with_payload, with_vectors):
+                r = type("R", (), {})()
+                r.id, r.payload, r.vector = "BIB0001", {"bibcode": "BIB0001"}, [1.0]
+                return [r]
+
+        got = _load_embeddings({"BIB0001", "BIB0404"}, client=_Client())
+        assert set(got) == {"BIB0001"}

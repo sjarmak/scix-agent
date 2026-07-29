@@ -20,6 +20,7 @@ import numpy as np
 import psycopg
 from psycopg.rows import dict_row
 
+from scix import qdrant_dense
 from scix.db import get_connection
 
 _LIBC: ctypes.CDLL | None = None
@@ -1401,12 +1402,18 @@ def populate_taxonomic_communities(conn: psycopg.Connection) -> int:
 
 
 def _load_embeddings(
-    conn: psycopg.Connection,
     bibcodes: set[str],
+    client: Any | None = None,
 ) -> dict[str, Any]:
-    """Load embedding vectors from paper_embeddings for the given bibcodes.
+    """Load INDUS vectors for ``bibcodes`` from the Qdrant dense lane.
 
-    Returns {bibcode: numpy array} for all bibcodes that have embeddings.
+    Returns ``{bibcode: numpy float32 array}`` for those bibcodes that have a
+    vector; bibcodes with none are omitted, so callers must filter on
+    membership (they already do).
+
+    Reads Qdrant rather than PostgreSQL: ADR-015 dropped ``paper_embeddings``
+    and the INDUS lane serves from ``scix_indus_v2_papers_s1`` (ADR-013).
+    ``client`` defaults to one built from ``QDRANT_URL``.
     """
     import numpy as np
 
@@ -1414,38 +1421,18 @@ def _load_embeddings(
         return {}
 
     t0 = time.perf_counter()
-    result: dict[str, Any] = {}
+    if client is None:
+        client = qdrant_dense.dense_client()
 
-    # Use batched IN queries to avoid overly long parameter lists
-    bibcode_list = list(bibcodes)
-    batch_size = 10_000
-    for i in range(0, len(bibcode_list), batch_size):
-        batch = bibcode_list[i : i + batch_size]
-        placeholders = ",".join(["%s"] * len(batch))
-        sql = (
-            f"SELECT bibcode, embedding::text FROM paper_embeddings "
-            f"WHERE bibcode IN ({placeholders}) "
-            f"AND embedding IS NOT NULL "
-            f"ORDER BY bibcode "
-            f"LIMIT 1"  # one embedding per bibcode (latest model)
-        )
-        # Actually we want one per bibcode, use DISTINCT ON
-        sql = (
-            f"SELECT DISTINCT ON (bibcode) bibcode, embedding::text "
-            f"FROM paper_embeddings "
-            f"WHERE bibcode IN ({placeholders}) "
-            f"AND embedding IS NOT NULL "
-            f"ORDER BY bibcode"
-        )
-        with conn.cursor() as cur:
-            cur.execute(sql, batch)
-            for bibcode, emb_text in cur.fetchall():
-                # pgvector text format: "[0.1,0.2,...]"
-                vec = np.fromstring(emb_text.strip("[]"), sep=",", dtype=np.float32)
-                result[bibcode] = vec
+    vectors = qdrant_dense.fetch_dense(client, qdrant_dense.INDUS_COLLECTION, bibcodes)
+    # float32 because the consumers do numpy dot products; the collection
+    # stores float16 and Qdrant up-converts to float on the wire.
+    result: dict[str, Any] = {
+        bibcode: np.asarray(vec, dtype=np.float32) for bibcode, vec in vectors.items()
+    }
 
     logger.info(
-        "Loaded %d/%d embeddings in %.1fms",
+        "Loaded %d/%d embeddings from Qdrant in %.1fms",
         len(result),
         len(bibcodes),
         _elapsed_ms(t0),
@@ -1598,7 +1585,7 @@ def run_pipeline(
 
         # Load embeddings for giant-component and small-component papers
         all_bibcodes_needing_embeddings = set(giant_b2i.keys()) | small_component_bibcodes
-        embeddings = _load_embeddings(conn, all_bibcodes_needing_embeddings)
+        embeddings = _load_embeddings(all_bibcodes_needing_embeddings)
 
         giant_embeddings = {b: embeddings[b] for b in giant_b2i if b in embeddings}
         small_embeddings = {b: embeddings[b] for b in small_component_bibcodes if b in embeddings}

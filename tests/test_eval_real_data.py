@@ -277,3 +277,65 @@ def test_sample_seed_papers_returns_requested_count():
         assert seed.bibcode
         assert seed.n_neighbors >= 10
         assert seed.n_entities >= 1
+
+
+# ---------------------------------------------------------------------------
+# RealEvalContext.embedding_for — Qdrant dense lane (bead w7m)
+# ---------------------------------------------------------------------------
+
+
+class _FakeQdrantClient:
+    """Records retrieve calls; mirrors the live shape (misses simply absent)."""
+
+    def __init__(self, vectors: dict[str, list[float]]):
+        from scix import qdrant_dense
+
+        self._by_id = {qdrant_dense.point_id(b): (b, v) for b, v in vectors.items()}
+        self.calls = 0
+
+    def retrieve(self, *, collection_name, ids, with_payload, with_vectors):
+        self.calls += 1
+        out = []
+        for i in ids:
+            if i not in self._by_id:
+                continue
+            bib, vec = self._by_id[i]
+            r = type("R", (), {})()
+            r.id, r.payload, r.vector = i, {"bibcode": bib}, vec
+            out.append(r)
+        return out
+
+
+@pytest.mark.unit
+def test_embedding_for_reads_the_qdrant_dense_lane():
+    """ADR-015 dropped paper_embeddings; this must not touch PostgreSQL."""
+    conn = MagicMock()
+    client = _FakeQdrantClient({"2024SEED": [0.1, 0.2, 0.3]})
+    ctx = RealEvalContext(conn=conn, qdrant_client=client)
+
+    assert ctx.embedding_for("2024SEED") == [0.1, 0.2, 0.3]
+    conn.cursor.assert_not_called()
+
+
+@pytest.mark.unit
+def test_embedding_for_returns_none_when_bibcode_has_no_vector():
+    ctx = RealEvalContext(conn=MagicMock(), qdrant_client=_FakeQdrantClient({}))
+    assert ctx.embedding_for("2024MISSING") is None
+
+
+@pytest.mark.unit
+def test_embedding_for_caches_and_does_not_refetch():
+    client = _FakeQdrantClient({"2024SEED": [0.5]})
+    ctx = RealEvalContext(conn=MagicMock(), qdrant_client=client)
+
+    assert ctx.embedding_for("2024SEED") == [0.5]
+    assert ctx.embedding_for("2024SEED") == [0.5]
+    assert client.calls == 1
+
+
+@pytest.mark.unit
+def test_embedding_for_honours_a_primed_cache_without_a_client():
+    """Callers that prime the cache must not need a Qdrant lane at all."""
+    ctx = RealEvalContext(conn=MagicMock())
+    ctx.embedding_cache["2024SEED::indus"] = [0.1, 0.2, 0.3]
+    assert ctx.embedding_for("2024SEED") == [0.1, 0.2, 0.3]

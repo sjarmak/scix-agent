@@ -1,9 +1,13 @@
 """Integration tests for migration 051 + scripts/compute_semantic_communities.py.
 
-These tests write to and delete from ``paper_embeddings`` / ``paper_metrics``
-and therefore require ``SCIX_TEST_DSN`` to be set to a non-production DB.
-They SKIP cleanly otherwise so ``pytest`` in a plain checkout never touches
-the production ``scix`` database.
+These tests write to and delete from ``papers`` / ``paper_metrics`` and
+therefore require ``SCIX_TEST_DSN`` to be set to a non-production DB. They SKIP
+cleanly otherwise so ``pytest`` in a plain checkout never touches the
+production ``scix`` database.
+
+Vectors are served from an in-process Qdrant collection (see ``fixture_data``),
+which is the source the script reads in production since ADR-015 — so a pass
+here covers the real streaming path, not just the clustering arithmetic.
 
 Covers:
     (a) end-to-end run on a 1K-vector fixture → paper_metrics populated
@@ -81,18 +85,15 @@ def _load_script_module():
 def dsn() -> Iterator[str]:
     """DSN of a throwaway database carrying this module's migration chain.
 
-    The script under test streams vectors from ``paper_embeddings``, which
-    ADR-015 dropped from production (migration 074 records the retirement), so
-    these fixtures cannot be seeded into the shared scix_test. The clustering
-    logic is still worth covering, so it is exercised against a database built
-    from the chain. That the script's production data source no longer exists
-    is a separate defect, tracked as its own bead.
+    The script writes cluster assignments into ``paper_metrics``; a throwaway
+    database keeps those writes off the shared scix_test. Vectors no longer
+    come from PostgreSQL at all — see the ``dense_lane`` fixture.
     """
     assert TEST_DSN is not None
     with throwaway_db(
         [
             "001_initial_schema.sql",
-            "003_search_infrastructure.sql",  # paper_embeddings.input_type
+            "003_search_infrastructure.sql",
             "006_graph_metrics.sql",
             "051_community_semantic_columns.sql",
         ],
@@ -107,12 +108,8 @@ def applied_migration(dsn: str) -> None:
     return None
 
 
-def _pgvector_literal(vec: np.ndarray) -> str:
-    return "[" + ",".join(f"{float(v):.6f}" for v in vec) + "]"
-
-
-def _insert_fixture(dsn: str) -> None:
-    """Insert 1K synthetic papers + INDUS embeddings in 3 Gaussian clusters."""
+def _fixture_vectors() -> tuple[list[str], list[np.ndarray]]:
+    """1K synthetic bibcodes + vectors in 3 well-separated Gaussian clusters."""
     rng = np.random.default_rng(SEED)
     dim = 768
 
@@ -129,22 +126,18 @@ def _insert_fixture(dsn: str) -> None:
         noise = rng.normal(0, 0.1, size=dim).astype(np.float32)
         vectors.append(centroids[cluster_idx] + noise)
         bibcodes.append(TEST_BIBCODE_TEMPLATE.format(i=i))
+    return bibcodes, vectors
 
+
+def _insert_papers(dsn: str, bibcodes: list[str]) -> None:
     with psycopg.connect(dsn) as c:
         c.autocommit = False
         with c.cursor() as cur:
-            # papers rows (INDUS FK requires papers.bibcode)
             cur.executemany(
                 "INSERT INTO papers (bibcode, title) VALUES (%s, %s) "
                 "ON CONFLICT (bibcode) DO NOTHING",
                 [(b, f"fixture {b}") for b in bibcodes],
             )
-            # embeddings
-            with cur.copy(
-                "COPY paper_embeddings (bibcode, model_name, embedding, input_type) " "FROM STDIN"
-            ) as copy:
-                for bib, vec in zip(bibcodes, vectors):
-                    copy.write_row((bib, "indus", _pgvector_literal(vec), "title_abstract"))
         c.commit()
 
 
@@ -157,24 +150,47 @@ def _delete_fixture(dsn: str) -> None:
                 (TEST_BIBCODE_PREFIX + "%",),
             )
             cur.execute(
-                "DELETE FROM paper_embeddings WHERE bibcode LIKE %s",
-                (TEST_BIBCODE_PREFIX + "%",),
-            )
-            cur.execute(
                 "DELETE FROM papers WHERE bibcode LIKE %s",
                 (TEST_BIBCODE_PREFIX + "%",),
             )
 
 
 @pytest.fixture
-def fixture_data(dsn: str, applied_migration: None):
-    """Insert 1K synthetic fixture rows, delete after test."""
+def fixture_data(dsn: str, applied_migration: None, monkeypatch: pytest.MonkeyPatch):
+    """Seed papers in PostgreSQL and vectors in an in-process Qdrant lane.
+
+    ADR-015 dropped ``paper_embeddings``; the script now scrolls the Qdrant
+    dense lane (bead 5z5). The vectors are loaded into a real ``:memory:``
+    ``QdrantClient`` — the same local mode ``test_qdrant_contract.py`` pins
+    behaviour against — so the scroll/count path the script actually runs in
+    production is exercised here, not stubbed.
+    """
+    from qdrant_client import QdrantClient
+    from qdrant_client import models as qm
+
+    from scix import qdrant_dense
+
+    bibcodes, vectors = _fixture_vectors()
+
+    client = QdrantClient(":memory:")
+    client.create_collection(
+        collection_name=qdrant_dense.INDUS_COLLECTION,
+        vectors_config=qm.VectorParams(size=768, distance=qm.Distance.COSINE),
+    )
+    qdrant_dense.upsert_dense(
+        client,
+        qdrant_dense.INDUS_COLLECTION,
+        {b: v.tolist() for b, v in zip(bibcodes, vectors)},
+    )
+    monkeypatch.setattr(qdrant_dense, "dense_client", lambda *a, **k: client)
+
     _delete_fixture(dsn)
-    _insert_fixture(dsn)
+    _insert_papers(dsn, bibcodes)
     try:
         yield
     finally:
         _delete_fixture(dsn)
+        client.close()
 
 
 # ---------------------------------------------------------------------------

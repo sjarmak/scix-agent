@@ -44,17 +44,17 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, Optional, Sequence
+from typing import Any, Iterator, Optional, Sequence
 
 import numpy as np
 import psycopg
-from pgvector.psycopg import register_vector
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from scix import qdrant_dense  # noqa: E402
 from scix.db import is_production_dsn, redact_dsn  # noqa: E402
 
 logging.basicConfig(
@@ -97,90 +97,41 @@ class ResolutionResult:
 
 
 # ---------------------------------------------------------------------------
-# Vector parsing helpers
+# Dense-lane streaming
 # ---------------------------------------------------------------------------
 
 
-def _parse_pgvector_text(text: str) -> np.ndarray:
-    """Parse pgvector text form ``'[f1,f2,...]'`` into a 1-D float32 ndarray."""
-    inner = text.strip()
-    if inner.startswith("[") and inner.endswith("]"):
-        inner = inner[1:-1]
-    return np.fromstring(inner, sep=",", dtype=np.float32)
-
-
-# ---------------------------------------------------------------------------
-# Server-side cursor streaming
-# ---------------------------------------------------------------------------
-
-
-_STREAM_SQL_BASE = "SELECT bibcode, embedding FROM paper_embeddings " "WHERE model_name = 'indus'"
-
-
-def _build_stream_sql(row_limit: Optional[int]) -> str:
-    """Return the stream SQL optionally capped by ``row_limit``.
-
-    ``row_limit`` is intended for validation / small-scale test runs. In
-    production leave it as ``None`` to process the full corpus.
-    """
-    if row_limit is not None and row_limit > 0:
-        return f"{_STREAM_SQL_BASE} LIMIT {int(row_limit)}"
-    return _STREAM_SQL_BASE
-
-
-# Intentionally no ORDER BY: on 32M rows x 768 dims the sort
-# materializes the full result in backend memory (~tens of GB) before
-# streaming. The staging TEMP table uses bibcode as primary key so row
-# order does not affect correctness of the bulk UPDATE.
+# Scroll order is Qdrant's internal point order, not bibcode order. That is
+# fine for the same reason the old query had no ORDER BY: the staging TEMP
+# table keys on bibcode, so row order does not affect the bulk UPDATE.
 
 
 def _iter_indus_batches(
-    conn: psycopg.Connection,
+    client: Any,
     batch_size: int,
-    cursor_name: str,
     row_limit: Optional[int] = None,
 ) -> Iterator[tuple[list[str], np.ndarray]]:
-    """Yield ``(bibcodes, vectors)`` batches from ``paper_embeddings``.
+    """Yield ``(bibcodes, vectors)`` batches from the Qdrant dense lane.
 
-    Uses a server-side cursor so the driver never buffers more than
-    ``batch_size`` rows at once. ``vectors`` is a ``(len(bibcodes), 768)``
-    ``float32`` matrix.
+    ``vectors`` is a ``(len(bibcodes), 768)`` ``float32`` matrix. Streams via
+    Qdrant's paged scroll so no more than ``batch_size`` points are held at
+    once. ``row_limit`` caps the total points read (validation runs); leave it
+    ``None`` in production to process the full corpus.
 
-    Requires ``pgvector.psycopg.register_vector`` to have been called on
-    the connection so embeddings arrive as numpy arrays via the binary
-    pgvector wire format. Text-form parsing was ~100x slower at 32M-row
-    scale.
-
-    The connection must be in ``autocommit=False`` mode — psycopg3 named
-    cursors refuse to execute in autocommit.
+    Reads Qdrant rather than PostgreSQL: ADR-015 dropped ``paper_embeddings``,
+    which was this script's only vector source (bead 5z5).
     """
-    if conn.autocommit:
-        raise RuntimeError(
-            "Server-side cursor requires autocommit=False; caller must wrap "
-            "this iterator in a read-only transaction"
-        )
-
-    with conn.cursor(name=cursor_name) as cur:
-        cur.itersize = batch_size
-        cur.execute(_build_stream_sql(row_limit))
-
-        batch_bibs: list[str] = []
-        batch_vecs: list[np.ndarray] = []
-        for bibcode, emb in cur:
-            if emb is None:
-                continue
-            batch_bibs.append(bibcode)
-            # np.array (not np.asarray) forces a copy — detaches the
-            # ndarray from the libpq result buffer so the buffer can be
-            # freed on the next FETCH instead of being retained for the
-            # lifetime of the iteration.
-            batch_vecs.append(np.array(emb, dtype=np.float32, copy=True))
-            if len(batch_bibs) >= batch_size:
-                yield batch_bibs, np.vstack(batch_vecs)
-                batch_bibs = []
-                batch_vecs = []
-        if batch_bibs:
-            yield batch_bibs, np.vstack(batch_vecs)
+    for batch in qdrant_dense.scroll_dense(
+        client,
+        qdrant_dense.INDUS_COLLECTION,
+        batch_size=batch_size,
+        limit=row_limit if (row_limit is not None and row_limit > 0) else None,
+    ):
+        bibs = [bibcode for bibcode, _ in batch]
+        # The collection stores float16; cast once here so every downstream
+        # consumer (partial_fit, predict, silhouette) sees float32.
+        vecs = np.asarray([vec for _, vec in batch], dtype=np.float32)
+        yield bibs, vecs
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +261,7 @@ def _merge_resolution(conn: psycopg.Connection, resolution_name: str) -> int:
 
 def _run_resolution(
     conn: psycopg.Connection,
+    client: Any,
     spec: ResolutionSpec,
     seed: int,
     batch_size: int,
@@ -342,41 +294,38 @@ def _run_resolution(
     )
 
     # --- Pass 1: training via partial_fit over streamed batches ---
-    # Caller must have set autocommit=False before calling this function.
+    # Reads Qdrant only — no database work, so no transaction here.
     # MiniBatchKMeans converges long before 32M samples; cap the training
     # pass at ``train_max_rows`` and use the fitted model to predict
     # labels over the full corpus in pass 2.
     carry_vecs: Optional[np.ndarray] = None
     n_rows_train = 0
-    with conn.transaction():
-        for _bibs, vecs in _iter_indus_batches(
-            conn, batch_size, f"sc_{spec.name}_train", row_limit=row_limit
-        ):
-            n_rows_train += len(_bibs)
-            if carry_vecs is not None:
-                vecs = np.vstack([carry_vecs, vecs])
-                carry_vecs = None
-            if len(vecs) < spec.k:
-                # Too few samples to run partial_fit — carry into next batch.
-                carry_vecs = vecs
-                continue
-            kmeans.partial_fit(vecs)
-            if n_rows_train >= train_max_rows:
-                logger.info(
-                    "Resolution %s: training cap reached at %d rows (>= %d) — "
-                    "proceeding to predict pass",
-                    spec.name,
-                    n_rows_train,
-                    train_max_rows,
-                )
-                break
-        if carry_vecs is not None and len(carry_vecs) > 0:
-            # Final tail: pad by re-fitting alongside already-seen centroids.
-            # partial_fit refuses n_samples < n_clusters, so we only proceed
-            # when the tail is large enough; otherwise the tail is lost to
-            # training (the already-fitted model still predicts them).
-            if len(carry_vecs) >= spec.k:
-                kmeans.partial_fit(carry_vecs)
+    for _bibs, vecs in _iter_indus_batches(client, batch_size, row_limit=row_limit):
+        n_rows_train += len(_bibs)
+        if carry_vecs is not None:
+            vecs = np.vstack([carry_vecs, vecs])
+            carry_vecs = None
+        if len(vecs) < spec.k:
+            # Too few samples to run partial_fit — carry into next batch.
+            carry_vecs = vecs
+            continue
+        kmeans.partial_fit(vecs)
+        if n_rows_train >= train_max_rows:
+            logger.info(
+                "Resolution %s: training cap reached at %d rows (>= %d) — "
+                "proceeding to predict pass",
+                spec.name,
+                n_rows_train,
+                train_max_rows,
+            )
+            break
+    if carry_vecs is not None and len(carry_vecs) > 0:
+        # Final tail: pad by re-fitting alongside already-seen centroids.
+        # partial_fit refuses n_samples < n_clusters, so we only proceed
+        # when the tail is large enough; otherwise the tail is lost to
+        # training (the already-fitted model still predicts them).
+        if len(carry_vecs) >= spec.k:
+            kmeans.partial_fit(carry_vecs)
     if n_rows_train == 0:
         logger.warning("Resolution %s: no INDUS embeddings found — skipping", spec.name)
         return ResolutionResult(
@@ -394,9 +343,7 @@ def _run_resolution(
     with conn.transaction():
         _create_staging(conn)
         batch_counter = 0
-        for bibs, vecs in _iter_indus_batches(
-            conn, batch_size, f"sc_{spec.name}_predict", row_limit=row_limit
-        ):
+        for bibs, vecs in _iter_indus_batches(client, batch_size, row_limit=row_limit):
             labels = kmeans.predict(vecs)
             _copy_assignments(conn, bibs, labels)
             reservoir.extend(vecs, labels)
@@ -485,11 +432,8 @@ def _peak_rss_mb() -> float:
     return ru / 1024.0
 
 
-def _count_indus_rows(conn: psycopg.Connection) -> int:
-    with conn.cursor() as cur:
-        cur.execute("SELECT COUNT(*) FROM paper_embeddings WHERE model_name = 'indus'")
-        row = cur.fetchone()
-        return int(row[0]) if row else 0
+def _count_indus_points(client: Any) -> int:
+    return qdrant_dense.count_dense(client, qdrant_dense.INDUS_COLLECTION)
 
 
 # ---------------------------------------------------------------------------
@@ -634,12 +578,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     results: list[ResolutionResult] = []
 
-    # Count once up front using a short-lived connection.
-    with psycopg.connect(dsn) as conn:
-        conn.autocommit = False
-        register_vector(conn)
-        n_indus = _count_indus_rows(conn)
-        logger.info("paper_embeddings(model_name='indus'): %d rows", n_indus)
+    # Vectors come from the Qdrant dense lane (ADR-013/015); one client for
+    # the whole run, reused across resolutions.
+    client = qdrant_dense.dense_client()
+    n_indus = _count_indus_points(client)
+    logger.info("%s: %d points", qdrant_dense.INDUS_COLLECTION, n_indus)
 
     # One connection per resolution. Under autocommit=False the outer
     # psycopg.connect wraps everything in a SINGLE implicit transaction,
@@ -653,9 +596,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for spec in specs:
         with psycopg.connect(dsn) as conn:
             conn.autocommit = False
-            register_vector(conn)
             result = _run_resolution(
                 conn,
+                client,
                 spec,
                 seed=args.seed,
                 batch_size=args.batch_size,

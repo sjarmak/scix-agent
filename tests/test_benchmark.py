@@ -93,10 +93,7 @@ class TestIngestionMetrics:
             total_embeddings=5_000_000,
             total_citation_edges=82_000_000,
             papers_without_abstracts=700_000,
-            hnsw_index_bytes=20_000_000_000,
-            table_total_bytes=40_000_000_000,
             system_ram_bytes=64_000_000_000,
-            hnsw_pct_of_ram=31.3,
         )
         with pytest.raises(AttributeError):
             m.total_papers = 0  # type: ignore[misc]
@@ -149,10 +146,7 @@ class TestGenerateReport:
                 total_embeddings=5_000_000,
                 total_citation_edges=82_000_000,
                 papers_without_abstracts=700_000,
-                hnsw_index_bytes=20_000_000_000,
-                table_total_bytes=40_000_000_000,
                 system_ram_bytes=64_000_000_000,
-                hnsw_pct_of_ram=31.3,
             ),
         )
 
@@ -173,7 +167,10 @@ class TestGenerateReport:
         md = generate_markdown_report(sample_report)
         assert "5,000,000" in md
         assert "82,000,000" in md
-        assert "31.3%" in md
+        assert "Dense-lane points (INDUS, Qdrant)" in md
+        # The pgvector HNSW/table sizings are gone with the table (ADR-013/015).
+        assert "HNSW" not in md
+        assert "paper_embeddings" not in md
 
     def test_contains_details(self, sample_report: PRDBenchmarkReport) -> None:
         md = generate_markdown_report(sample_report)
@@ -209,13 +206,52 @@ class TestGenerateReport:
                 total_embeddings=100,
                 total_citation_edges=500,
                 papers_without_abstracts=10,
-                hnsw_index_bytes=1024,
-                table_total_bytes=2048,
                 system_ram_bytes=64_000_000_000,
-                hnsw_pct_of_ram=0.0,
             ),
         )
         md = generate_markdown_report(report)
         assert "typical" in md
         assert "highly_cited" in md
         assert "N/A" in md  # passed=None
+
+
+class TestIngestionMetricsSource:
+    """total_embeddings counts the Qdrant dense lane, not the dropped table.
+
+    ADR-013 moved dense serving to Qdrant and ADR-015 dropped
+    ``paper_embeddings``; benchmark #5 was still counting ``specter2`` rows in
+    it and sizing a pgvector HNSW index that no longer exists (bead w7m).
+    """
+
+    def test_counts_qdrant_points_and_never_queries_the_dropped_table(self) -> None:
+        from scix.benchmark import collect_ingestion_metrics
+
+        executed: list[str] = []
+
+        class _Cur:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def execute(self, sql, *args):
+                executed.append(sql)
+
+            def fetchone(self):
+                return [7]
+
+        class _Conn:
+            def cursor(self):
+                return _Cur()
+
+        class _Client:
+            def count(self, *, collection_name, exact):
+                r = type("R", (), {})()
+                r.count = 35_473_784
+                return r
+
+        m = collect_ingestion_metrics(_Conn(), client=_Client())
+
+        assert m.total_embeddings == 35_473_784
+        assert not any("paper_embeddings" in sql for sql in executed), executed

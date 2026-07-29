@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from typing import Any
 
 # ADR-013 serving collection for the INDUS dense lane.
@@ -71,3 +71,116 @@ def upsert_dense(client: Any, collection: str, vectors: Mapping[str, list[float]
     points = build_points(vectors)
     client.upsert(collection_name=collection, points=points, wait=True)
     return len(points)
+
+
+# ---------------------------------------------------------------------------
+# Read path
+#
+# ``paper_embeddings`` was the only fetch-a-vector-by-bibcode source until
+# ADR-015 dropped it, leaving every non-embed reader broken (beads 6ou, 5z5,
+# w7m). These helpers are the replacement.
+#
+# ``point_id`` is uuid5, which is one-way: a returned point cannot be mapped
+# back to its bibcode by inverting the id. The bibcode therefore always comes
+# from the payload, and a point missing it is a contract violation rather than
+# something to skip — silently dropping points would under-report coverage
+# while looking like a clean run.
+# ---------------------------------------------------------------------------
+
+DEFAULT_FETCH_BATCH = 1_000
+
+
+def _bibcode_and_vector(record: Any) -> tuple[str, list[float]]:
+    """Extract ``(bibcode, vector)`` from a Qdrant record, or raise."""
+    payload = record.payload or {}
+    bibcode = payload.get("bibcode")
+    if not bibcode:
+        raise ValueError(
+            f"Qdrant point {record.id!r} in the dense lane has no 'bibcode' payload; "
+            "the point-id scheme (uuid5) is one-way, so it cannot be attributed. "
+            "This breaks the collection contract documented in scix.qdrant_dense."
+        )
+    vector = record.vector
+    if vector is None:
+        raise ValueError(
+            f"Qdrant point {record.id!r} (bibcode {bibcode}) returned no vector "
+            "despite with_vectors=True."
+        )
+    return bibcode, list(vector)
+
+
+def fetch_dense(
+    client: Any,
+    collection: str,
+    bibcodes: Iterable[str],
+    batch_size: int = DEFAULT_FETCH_BATCH,
+) -> dict[str, list[float]]:
+    """Return ``{bibcode: vector}`` for those ``bibcodes`` present in ``collection``.
+
+    Bibcodes with no point are omitted rather than raising — this preserves the
+    contract the dropped SQL had ("vectors for all bibcodes that have them"), so
+    callers keep their existing partial-result handling. Input order is not
+    preserved; duplicates collapse.
+    """
+    wanted = list(dict.fromkeys(bibcodes))
+    if not wanted:
+        return {}
+
+    out: dict[str, list[float]] = {}
+    for i in range(0, len(wanted), batch_size):
+        batch = wanted[i : i + batch_size]
+        records = client.retrieve(
+            collection_name=collection,
+            ids=[point_id(b) for b in batch],
+            with_payload=True,
+            with_vectors=True,
+        )
+        for record in records:
+            bibcode, vector = _bibcode_and_vector(record)
+            out[bibcode] = vector
+    return out
+
+
+def scroll_dense(
+    client: Any,
+    collection: str,
+    batch_size: int = DEFAULT_FETCH_BATCH,
+    limit: int | None = None,
+) -> Iterator[list[tuple[str, list[float]]]]:
+    """Yield ``[(bibcode, vector), ...]`` batches over the whole collection.
+
+    Streams via Qdrant's offset-paged scroll so the client never holds more
+    than ``batch_size`` points. ``limit`` caps the total number of points
+    yielded (for validation runs); ``None`` scrolls the full collection.
+
+    Vectors are returned in the collection's storage precision (float16
+    down-converted to float on the wire), not the float32 the retired
+    ``paper_embeddings`` column held.
+    """
+    if limit is not None and limit <= 0:
+        return
+
+    offset: Any = None
+    emitted = 0
+    while True:
+        page_size = batch_size
+        if limit is not None:
+            page_size = min(batch_size, limit - emitted)
+        records, offset = client.scroll(
+            collection_name=collection,
+            limit=page_size,
+            offset=offset,
+            with_payload=True,
+            with_vectors=True,
+        )
+        if records:
+            batch = [_bibcode_and_vector(r) for r in records]
+            emitted += len(batch)
+            yield batch
+        if offset is None or (limit is not None and emitted >= limit):
+            return
+
+
+def count_dense(client: Any, collection: str) -> int:
+    """Exact point count for ``collection`` — replaces the retired row count."""
+    return int(client.count(collection_name=collection, exact=True).count)

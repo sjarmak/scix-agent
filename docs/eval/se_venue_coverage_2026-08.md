@@ -1,0 +1,116 @@
+# Software-engineering venue coverage audit — 2026-08-06
+
+## Question
+
+Can a review aimed at the software-engineering community treat SciX plus arXiv
+as adequate coverage for ICSE, FSE, ASE, ISSTA, *Empirical Software
+Engineering* (EMSE), *IEEE Transactions on Software Engineering* (TSE), *ACM
+Transactions on Software Engineering and Methodology* (TOSEM), and relevant
+CSCW work?
+
+No. This diagnostic rejects the assumption of adequate coverage. It is not a
+recall estimate for SciX, OpenAlex, any venue, or software engineering as a
+field.
+
+## Method
+
+The *Engineering Reliable Coding Agents* release audit ran eight preserved
+topic queries over OpenAlex metadata for 2018 through 2026-08-06 and restricted
+candidates to the named venues. The query set covered coding agents,
+repository-scale automation, code search and retrieval, evaluation and
+benchmark validity, automated review and testing, developer trust and human
+factors, incident recovery, and multi-agent software work.
+
+After DOI and title deduplication, the probe contained 148 candidate records. A
+40-record DOI sample was selected by sorting the SHA-256 value of
+`ERCA-SE-COVERAGE:<doi>`. Every sampled DOI was then issued as an exact DOI
+query to SciX. Eight produced an exact DOI match.
+
+The complete 148-record candidate set, preserved queries, provider-access
+status, and machine-readable sample ship in the monograph companion under
+`methodology/software-engineering-coverage/`. This report retains the sample
+below so the SciX conclusion is reviewable without the manuscript workspace.
+
+## Result
+
+| Venue in the sample | Sampled | Exact SciX DOI match |
+| --- | ---: | ---: |
+| IEEE TSE | 8 | 8 |
+| ACM TOSEM | 13 | 0 |
+| EMSE | 15 | 0 |
+| CSCW | 3 | 0 |
+| ASE journal | 1 | 0 |
+| **Total** | **40** | **8** |
+
+The venue pattern is more informative than the aggregate: all eight sampled
+TSE records matched, while none of the 32 sampled records from the other four
+venue families did. The candidate set was produced by topic queries rather
+than by uniform sampling of venue tables, so these proportions must not be
+reported as venue recall. They do show that an empty SciX result cannot be
+treated as absence from the core SE literature.
+
+## Sample
+
+| SciX | DOI | Year | Venue | Title |
+| --- | --- | ---: | --- | --- |
+| no | `10.1145/3487569` | 2022 | TOSEM | In-IDE Code Generation from Natural Language: Promise and Challenges |
+| no | `10.1007/s10664-021-09999-9` | 2021 | EMSE | Industry practices and challenges for the evolvability assurance of microservices |
+| no | `10.1007/s10606-024-09489-8` | 2024 | CSCW | Cultivating Data Practices Across Boundaries: How Organizations Become Data-driven |
+| no | `10.1145/3280987` | 2018 | TOSEM | Oracles for Testing Software Timeliness with Uncertainty |
+| yes | `10.1109/tse.2023.3310874` | 2023 | TSE | DexBERT: Effective, Task-Agnostic and Fine-Grained Representation Learning of Android Bytecode |
+| no | `10.1145/3649594` | 2024 | TOSEM | Non-Autoregressive Line-Level Code Completion |
+| no | `10.1007/s10664-021-09963-7` | 2021 | EMSE | Development of recommendation systems for software engineering: the CROSSMINER experience |
+| no | `10.1007/s10664-023-10362-3` | 2024 | EMSE | What is an app store? The software engineering perspective |
+| no | `10.1007/s10664-022-10244-0` | 2022 | EMSE | Developer discussion topics on the adoption and barriers of low code software development platforms |
+| yes | `10.1109/tse.2022.3187689` | 2022 | TSE | Revisiting Binary Code Similarity Analysis Using Interpretable Feature Engineering and Lessons Learned |
+| no | `10.1007/s10664-026-10816-4` | 2026 | EMSE | VLM-Fuzz: Vision language model assisted recursive depth-first search exploration for effective GUI testing of android apps |
+| no | `10.1145/3611664` | 2023 | TOSEM | Snippet Comment Generation Based on Code Context Expansion |
+| no | `10.1007/s10664-019-09694-w` | 2019 | EMSE | Classifying code comments in Java software systems |
+| no | `10.1007/s10664-019-09706-9` | 2019 | EMSE | Towards understanding and detecting fake reviews in app stores |
+| yes | `10.1109/tse.2024.3403042` | 2024 | TSE | Fusing Code Searchers |
+| no | `10.1007/s10664-026-10901-8` | 2026 | EMSE | CDBench: Benchmarking the mutation testing capabilities of LLMs with code defenders |
+| no | `10.1007/s10664-023-10390-z` | 2024 | EMSE | Investigating the readability of test code |
+| no | `10.1145/3607179` | 2023 | TOSEM | A Systematic Review of Automated Query Reformulations in Source Code Search |
+| no | `10.1007/s10664-023-10425-5` | 2024 | EMSE | Taxonomy of inline code comment smells |
+| no | `10.1007/s10664-026-10869-5` | 2026 | EMSE | PatchTrack: A comprehensive analysis of ChatGPT’s influence on pull request outcomes |
+| no | `10.1007/s10515-026-00648-3` | 2026 | ASE journal | GenAI as an instant, readily available co-developer: redefining software design process for AI native hybrid work |
+| yes | `10.1109/tse.2020.3023177` | 2020 | TSE | Predicting Defective Lines Using a Model-Agnostic Technique |
+| yes | `10.1109/tse.2022.3165938` | 2022 | TSE | How Should Software Engineering Secondary Studies Include Grey Material? |
+| no | `10.1007/s10664-026-10921-4` | 2026 | EMSE | Large language models in model-driven engineering: a systematic mapping study |
+| no | `10.1007/s10606-022-09453-4` | 2023 | CSCW | Values and Value Conflicts in the Context of OSINT Technologies for Cybersecurity Incident Response |
+| no | `10.1007/s10664-020-09803-0` | 2020 | EMSE | Practical relevance of software engineering research: synthesizing the community’s voice |
+| yes | `10.1109/tse.2019.2891715` | 2019 | TSE | App Store Effects on Software Engineering Practices |
+| no | `10.1145/3818607` | 2026 | TOSEM | Exploring Code Analysis: Zero-Shot Insights on Syntax and Semantics with LLMs |
+| no | `10.1145/3779217` | 2025 | TOSEM | CatCoder: Repository-Level Code Generation with Relevant Code and Type Context |
+| yes | `10.1109/tse.2022.3170087` | 2022 | TSE | Applying Human Values Theory to Software Engineering Practice: Lessons and Implications |
+| no | `10.1145/3604611` | 2023 | TOSEM | Asteria-Pro: Enhancing Deep Learning-based Binary Code Similarity Detection by Incorporating Domain Knowledge |
+| no | `10.1145/3631975` | 2023 | TOSEM | Deep Is Better? An Empirical Comparison of Information Retrieval and Deep Learning Approaches to Code Summarization |
+| no | `10.1145/3708522` | 2024 | TOSEM | Large Language Model for Vulnerability Detection and Repair: Literature Review and the Road Ahead |
+| no | `10.1007/s10664-021-10065-7` | 2022 | EMSE | Analysing app reviews for software engineering: a systematic literature review |
+| no | `10.1007/s10606-025-09514-4` | 2025 | CSCW | Dimensions of Human-Machine Combination: Prompting the Development of Deployable Intelligent Decision Systems for Situated Clinical Contexts |
+| no | `10.1145/3593800` | 2023 | TOSEM | XCoS: Explainable Code Search Based on Query Scoping and Knowledge Graph |
+| yes | `10.1109/tse.2022.3184842` | 2022 | TSE | Scalable and Accurate Test Case Prioritization in Continuous Integration Contexts |
+| no | `10.1145/3532183` | 2022 | TOSEM | Microservice Security Metrics for Secure Communication, Identity Management, and Observability |
+| no | `10.1007/s10664-018-9620-y` | 2018 | EMSE | Software engineering in start-up companies: An analysis of 88 experience reports |
+| no | `10.1145/3576039` | 2022 | TOSEM | The Best of Both Worlds: Combining Learned Embeddings with Engineered Features for Accurate Prediction of Correct Patches |
+
+## Provider and licensing constraints
+
+The audit client received HTTP 403 from ACM Digital Library search. IEEE
+Xplore's API returned HTTP 403 without an API key, and Scopus returned HTTP 401
+without credentials. These statuses explain why the monograph's publisher-
+native search remains a human release gate; they do not turn OpenAlex into a
+publisher-native source.
+
+OpenAlex and Crossref metadata can be used for discovery and identity
+resolution. They cannot establish that the corresponding publisher indexes
+were searched, and they do not authorize model processing of closed full text.
+SciX's existing OA/preprint gate remains binding for body processing.
+
+## Decision
+
+ADR-017 selects a provenance-visible federated metadata lane. SciX may use its
+existing OpenAlex snapshot to discover non-ADS records and Crossref to resolve
+identity, but search results must expose the source lane and must not imply
+publisher-native coverage. Direct ACM, IEEE, and Scopus searches remain
+separate review evidence.

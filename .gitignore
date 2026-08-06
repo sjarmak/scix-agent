@@ -31,6 +31,7 @@ data/eval/*
 # Logs
 *.log
 logs/
+/local-research-artifacts/
 
 # Secrets & environment
 .env

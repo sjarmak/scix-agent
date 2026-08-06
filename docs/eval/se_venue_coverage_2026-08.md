@@ -102,6 +102,33 @@ without credentials. These statuses explain why the monograph's publisher-
 native search remains a human release gate; they do not turn OpenAlex into a
 publisher-native source.
 
+On 2026-08-06 an IEEE Xplore Metadata Search application and key were created
+for the monograph supplement. A redacted DOI and query-text smoke test reached
+the publisher endpoint but returned HTTP 403 with `Developer Inactive`; the
+portal showed that application activation was still pending. The checked-in
+plan `docs/eval/erca_ieee_xplore_search_plan_2026-08.json` expands eight review
+topics across eight journal or conference-title filters (64 query cells). The
+review-only client checkpoints DOI and IEEE article identifiers locally and
+publishes aggregate query provenance; it does not retain IEEE-returned titles,
+abstracts, author lists, or full text. No publisher-native IEEE result is
+claimed until the provider activates the application and the plan completes.
+
+After activation, run the bounded plan from the repository root:
+
+```bash
+set -a
+. ./.env
+set +a
+.venv/bin/python scripts/run_ieee_xplore_review.py \
+  --plan docs/eval/erca_ieee_xplore_search_plan_2026-08.json \
+  --private-output local-research-artifacts/erca-ieee-2026-08/private-identifiers.json \
+  --public-output docs/eval/erca_ieee_xplore_search_summary_2026-08.json
+```
+
+The ignored private checkpoint is resumable within the daily allowance. The
+public output contains query strings, filters, fingerprints, aggregate counts,
+and truncation flags but no record identities or descriptive IEEE content.
+
 OpenAlex and Crossref metadata can be used for discovery and identity
 resolution. They cannot establish that the corresponding publisher indexes
 were searched, and they do not authorize model processing of closed full text.

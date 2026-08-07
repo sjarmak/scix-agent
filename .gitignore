@@ -126,3 +126,6 @@ scix-sankey-work/
 .claude/skills/.gc-skill-ownership.json
 .claude/skills/core.gc-*
 .claude/skills/scientific-software-engineering
+
+# Beads / Dolt files (added by bd init)
+.beads/proxieddb/

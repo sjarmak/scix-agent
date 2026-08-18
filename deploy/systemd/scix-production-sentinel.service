@@ -1,0 +1,30 @@
+[Unit]
+# Holds one named idle connection to the scix production database so that
+# `DROP DATABASE scix` is refused by Postgres, and so that any agent running
+# the standard "is anything using this?" preflight sees a self-describing
+# session instead of a zero. See scripts/scix_production_sentinel.py for the
+# incident this came out of (2026-08-10) and the verification behind it.
+Description=SciX production database sentinel (blocks accidental DROP DATABASE)
+Documentation=man:scix-production-sentinel(7)
+# Rationale and verification live in scripts/scix_production_sentinel.py.
+After=network.target
+
+[Service]
+Type=simple
+# %h is systemd's specifier for the user's home directory -- keeps an
+# absolute local path out of the committed unit.
+ExecStart=%h/projects/scix_experiments/.venv/bin/python %h/projects/scix_experiments/scripts/scix_production_sentinel.py
+Restart=always
+RestartSec=10
+
+# The sentinel must survive the memory pressure that kills other things on
+# this box. the per-user systemd slice runs ManagedOOMMemoryPressure=kill at 50% and
+# oomd picks casualties by size, so keep this process small and explicitly
+# deprioritised as a target. A guard that dies under load is not a guard.
+MemoryHigh=64M
+MemoryMax=128M
+ManagedOOMPreference=avoid
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=default.target

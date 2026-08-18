@@ -1,4 +1,4 @@
-# Qdrant runtime for scix vector search.
+# Qdrant runtime for scix vector search — the production v2 instance.
 #
 # Per docs/prd/qdrant_nas_migration.md MH-1: Qdrant runs in Docker with
 # storage on local NVMe, binds to 127.0.0.1 only, and is never exposed
@@ -11,26 +11,52 @@
 # source of truth, and `scripts/preflight_qdrant_security.sh` enforces
 # the binding policy on every start.
 #
+# Rewritten 2026-08-18. The previous version of this file described the
+# retired v1 pilot: container on 6333, storage at `../.qdrant_storage`.
+# Both were wrong. Production had moved to port 6633 and
+# `.qdrant_v2_storage` (the value in `.env` / `.mcp.json` as QDRANT_URL),
+# and `.qdrant_storage` no longer exists on disk — so bringing the stack
+# up from this file would have started an EMPTY Qdrant against a freshly
+# created directory and served zero vectors while looking healthy. The
+# v2 container had only ever been started by hand, so nothing on disk
+# recorded how to restart it. That is what this rewrite fixes.
+#
 # Snapshots path (`/mnt/qdrant_snapshots:/qdrant/snapshots`) is commented
 # out below; uncomment once the NAS mount is provisioned per the
-# qdrant-on-NAS migration plan.
+# qdrant-on-NAS migration plan. See scripts/qdrant_snapshot_to_nas.sh.
+#
+# Bring up:  docker compose -f deploy/qdrant-compose.yml up -d
+#            scripts/preflight_qdrant_security.sh
+# Verify:    curl -sf http://127.0.0.1:6633/collections
 
 services:
   scix-qdrant:
-    image: qdrant/qdrant:latest
+    # Exact pin, matching the qdrant-client==1.17.1 pin in pyproject.toml
+    # and the version benchmarked in ADR-013 / the 2026-06-11 canary.
+    # `latest` is NOT acceptable here: the storage directory is a
+    # forward-only format, the 90 GB of INDUS vectors in it are not
+    # cheaply reproducible (paper_embeddings was dropped per ADR-015),
+    # and a silent multi-minor jump on restart is the premortem MH-16
+    # failure. Bump procedure: re-run tests/test_qdrant_contract.py
+    # against the candidate, then update this tag AND the client pin.
+    image: qdrant/qdrant:v1.18.2
     container_name: scix-qdrant
     restart: unless-stopped
     # Bind ONLY to host loopback. Empty `HostIp` (the docker default
-    # when you write `6333:6333`) maps to 0.0.0.0 and exposes the API to
+    # when you write `6633:6333`) maps to 0.0.0.0 and exposes the API to
     # the LAN. The 127.0.0.1 prefix is load-bearing security policy —
     # do not remove it without updating MH-1 in the PRD.
+    #
+    # Host port is 6633, not 6333: that is what QDRANT_URL resolves to in
+    # .env and .mcp.json, and vector_search() gates on that variable.
     ports:
-      - "127.0.0.1:6333:6333"  # REST API
-      - "127.0.0.1:6334:6334"  # gRPC API
+      - "127.0.0.1:6633:6333"  # REST API
+      - "127.0.0.1:6634:6334"  # gRPC API
     volumes:
       # Storage on local NVMe per MH-1. NFS is unsafe for live writes —
       # see docs/storage_tiering_policy or memory storage_tiering_policy.
-      - ../.qdrant_storage:/qdrant/storage
+      # Holds collections scix_indus_v2_papers_s1 and scix_sparse_pilot_v1.
+      - ../.qdrant_v2_storage:/qdrant/storage
       # Snapshots on NAS (separate from live storage). Enable once the
       # NAS path is provisioned.
       # - /mnt/qdrant_snapshots:/qdrant/snapshots

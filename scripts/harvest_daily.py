@@ -1,11 +1,26 @@
 #!/usr/bin/env python3
-"""Incremental ADS harvest: fetch records added since last watermark.
+"""Incremental ADS harvest: fetch records in a rolling entdate window that the
+papers table does not have yet.
 
-Writes compressed JSONL to data/daily_harvest/ and updates the watermark
-file on success. Designed to run daily via cron (daily_sync.sh).
+ADS stamps arXiv records with a backdated entry_date (the arXiv date) but can
+index them days later, and its numFound flaps between replicas mid-query. A
+watermark on entdate therefore skipped late records for good, and trusting the
+last page's numFound truncated busy days (bead scix_experiments-d4c1). So each
+run instead:
+
+  1. lists every bibcode with entdate in the last --window-days days (sorted,
+     bibcode-only, repeated passes unioned until the listing covers the largest
+     numFound seen);
+  2. diffs that list against the papers table;
+  3. fetches full records for the missing bibcodes only.
+
+Output goes to data/daily_harvest/ads_daily_<today>.jsonl.gz, written to a
+.tmp path and renamed on success so a crash never leaves a partial file at the
+path daily_sync.sh ingests. Nothing missing means no file. To recover from an
+outage longer than the window, rerun once with a larger --window-days.
 
 Usage:
-    python scripts/harvest_daily.py [--lookback-days 2] [--output-dir data/daily_harvest]
+    python scripts/harvest_daily.py [--window-days 14] [--output-dir data/daily_harvest]
 """
 
 from __future__ import annotations
@@ -16,10 +31,12 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable, Iterable, Iterator
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from time import sleep
 
+import psycopg
 import requests
 
 logger = logging.getLogger(__name__)
@@ -75,9 +92,22 @@ FIELDS = ",".join(
     ]
 )
 
-ROWS_PER_PAGE = 100
+LIST_ROWS = 2000  # ADS API max; bibcode-only pages are small
+FETCH_BATCH = 100  # bibcodes per full-record query (keeps the GET URL short)
+MAX_LIST_PASSES = 3
+COUNT_PROBES = 3  # count-only requests that seed the expected total
+MAX_FETCH = 20_000  # per-run cap; a larger backlog drains over later runs
 TIMEOUT = 60
-THROTTLE = 1.0  # seconds between pages
+THROTTLE = 1.0  # seconds between requests
+MAX_RETRIES = 10
+DB_CHUNK = 10_000
+
+Fetch = Callable[[dict], "tuple[list[dict], int]"]
+Existing = Callable[[list[str]], "set[str]"]
+
+
+class HarvestIncomplete(Exception):
+    """The window listing never covered ADS's reported record count."""
 
 
 def _get_headers() -> dict[str, str]:
@@ -91,98 +121,168 @@ def _get_headers() -> dict[str, str]:
     }
 
 
-MAX_RETRIES = 10
+def ads_fetcher(headers: dict[str, str]) -> Fetch:
+    """Return fetch(params) -> (docs, numFound) against the ADS search API."""
+
+    def fetch(params: dict) -> tuple[list[dict], int]:
+        for attempt in range(MAX_RETRIES):
+            try:
+                resp = requests.get(API_URL, headers=headers, params=params, timeout=TIMEOUT)
+                if resp.status_code == 200:
+                    body = resp.json().get("response", {})
+                    sleep(THROTTLE)
+                    return body.get("docs", []), body.get("numFound", 0)
+                if resp.status_code == 400:
+                    logger.error("HTTP 400 (bad request, not retrying): %s", resp.text[:500])
+                    sys.exit(1)
+                logger.warning(
+                    "HTTP %d (attempt %d/%d): %s",
+                    resp.status_code,
+                    attempt + 1,
+                    MAX_RETRIES,
+                    resp.text[:500],
+                )
+            except requests.exceptions.RequestException as e:
+                logger.warning("Request failed (attempt %d/%d): %s", attempt + 1, MAX_RETRIES, e)
+            sleep(min(60, 2 ** min(attempt, 6)))
+        logger.error("Max retries (%d) exceeded for params %s", MAX_RETRIES, params)
+        sys.exit(1)
+
+    return fetch
 
 
-def fetch_page(headers: dict[str, str], query: str, start: int) -> tuple[list[dict], int]:
-    """Fetch one page of results. Returns (docs, total_num_found)."""
-    params = {"q": query, "start": start, "rows": ROWS_PER_PAGE, "fl": FIELDS}
-    for attempt in range(MAX_RETRIES):
-        try:
-            resp = requests.get(API_URL, headers=headers, params=params, timeout=TIMEOUT)
-            if resp.status_code == 200:
-                body = resp.json().get("response", {})
-                return body.get("docs", []), body.get("numFound", 0)
-            if resp.status_code == 400:
-                logger.error("HTTP 400 (bad request, not retrying): %s", resp.text[:500])
-                sys.exit(1)
-            logger.warning(
-                "HTTP %d (attempt %d/%d): %s",
-                resp.status_code,
-                attempt + 1,
-                MAX_RETRIES,
-                resp.text[:500],
+# ─── Listing / diff / fetch ──────────────────────────────────────────────────
+
+
+def window_query(today: date, window_days: int) -> str:
+    return f"entdate:[{today - timedelta(days=window_days)} TO {today}]"
+
+
+def list_window_bibcodes(
+    fetch: Fetch, query: str, rows: int = LIST_ROWS, max_passes: int = MAX_LIST_PASSES
+) -> set[str]:
+    """Every bibcode matching query, robust to flapping numFound and short pages.
+
+    Pages are sorted by bibcode so offsets are stable. A pass ends at an empty
+    page or once the offset passes the largest numFound seen so far (never the
+    latest one, which is what truncated 2026-09-23). Passes are unioned until
+    the union covers that largest numFound. The expected total is seeded from
+    several count-only probes first, so a pass served entirely by one lagging
+    replica cannot agree with itself and look complete.
+    """
+    found: set[str] = set()
+    expected = max(fetch({"q": query, "start": 0, "rows": 0})[1] for _ in range(COUNT_PROBES))
+    for n in range(1, max_passes + 1):
+        start = 0
+        while True:
+            docs, num_found = fetch(
+                {"q": query, "start": start, "rows": rows, "fl": "bibcode", "sort": "bibcode asc"}
             )
-        except requests.exceptions.RequestException as e:
-            logger.warning("Request failed (attempt %d/%d): %s", attempt + 1, MAX_RETRIES, e)
-        sleep(min(60, 2 ** min(attempt, 6)))
-    logger.error("Max retries (%d) exceeded for query start=%d", MAX_RETRIES, start)
-    sys.exit(1)
+            expected = max(expected, num_found)
+            found.update(d["bibcode"] for d in docs)
+            start += rows
+            if not docs or start >= expected:
+                break
+        logger.info("Listing pass %d: %d / %d bibcodes", n, len(found), expected)
+        if len(found) >= expected:
+            return found
+    raise HarvestIncomplete(
+        f"listing covered {len(found)}/{expected} bibcodes after {max_passes} passes"
+    )
 
 
-# ─── Watermark ────────────────────────────────────────────────────────────────
+def fetch_records(
+    fetch: Fetch, bibcodes: Iterable[str], batch: int = FETCH_BATCH
+) -> Iterator[dict]:
+    """Full records for bibcodes. Logs any bibcode ADS no longer returns; it is
+    still missing from the DB, so the next run's diff retries it."""
+    ordered = sorted(bibcodes)
+    for i in range(0, len(ordered), batch):
+        chunk = ordered[i : i + batch]
+        # Quoted: bibcodes carry Solr-significant characters (A&A, dots).
+        # rows is doubled so an extra hit (e.g. an alternate_bibcode match)
+        # cannot push a requested record off the page; docs are matched by
+        # bibcode, not position.
+        terms = " OR ".join(f'"{b}"' for b in chunk)
+        docs, _ = fetch(
+            {"q": f"bibcode:({terms})", "start": 0, "rows": 2 * len(chunk), "fl": FIELDS}
+        )
+        wanted = set(chunk)
+        hits = [d for d in docs if d.get("bibcode") in wanted]
+        missing = wanted - {d["bibcode"] for d in hits}
+        if missing:
+            logger.warning(
+                "ADS returned no record for %d bibcode(s): %s", len(missing), sorted(missing)
+            )
+        yield from hits
 
 
-def read_watermark(watermark_path: Path, lookback_days: int) -> str:
-    """Read ISO date from watermark file, or default to lookback_days ago."""
-    if watermark_path.exists():
-        text = watermark_path.read_text().strip()
-        if text:
-            logger.info("Watermark: %s (from %s)", text, watermark_path)
-            return text
-    default = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-    logger.info("No watermark found, defaulting to %s (%d days ago)", default, lookback_days)
-    return default
+def db_existing(dsn: str) -> Existing:
+    """Return existing(bibcodes) -> the subset already in papers (read-only)."""
 
+    def existing(bibcodes: list[str]) -> set[str]:
+        present: set[str] = set()
+        with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+            for i in range(0, len(bibcodes), DB_CHUNK):
+                cur.execute(
+                    "SELECT bibcode FROM papers WHERE bibcode = ANY(%s)",
+                    (bibcodes[i : i + DB_CHUNK],),
+                )
+                present.update(row[0] for row in cur.fetchall())
+        return present
 
-def write_watermark(watermark_path: Path, date_str: str) -> None:
-    watermark_path.parent.mkdir(parents=True, exist_ok=True)
-    watermark_path.write_text(date_str + "\n")
-    logger.info("Watermark updated to %s", date_str)
+    return existing
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 
-def harvest(output_dir: Path, lookback_days: int) -> Path | None:
-    """Harvest new ADS records since watermark. Returns output file path or None."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    watermark_path = output_dir / "last_run.txt"
-    since = read_watermark(watermark_path, lookback_days)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+def harvest(
+    output_dir: Path,
+    window_days: int,
+    fetch: Fetch,
+    existing: Existing,
+    today: date,
+    fetch_batch: int = FETCH_BATCH,
+    max_fetch: int = MAX_FETCH,
+) -> Path | None:
+    """Harvest window records missing from the DB. Returns the output file or None.
 
-    query = f"entdate:[{since} TO {today}]"
-    logger.info("ADS query: %s", query)
+    At most max_fetch records per run, arXiv eprints first, so a bulk ADS
+    re-stamp (675k dataset records landed in one window in 2026-09) cannot turn
+    a daily run into a multi-hour ingest. The rest stay missing and are picked
+    up by later runs while they remain inside the window."""
+    query = window_query(today, window_days)
+    logger.info("ADS window: %s", query)
 
-    headers = _get_headers()
-    output_file = output_dir / f"ads_daily_{today}.jsonl.gz"
-
-    start = 0
-    total_written = 0
-
-    # Peek at total count first
-    _, num_found = fetch_page(headers, query, 0)
-    logger.info("ADS reports %d records matching query", num_found)
-
-    if num_found == 0:
-        logger.info("No new records — nothing to harvest")
-        write_watermark(watermark_path, today)
+    listed = list_window_bibcodes(fetch, query)
+    missing = listed - existing(sorted(listed))
+    logger.info("%d bibcodes in window, %d missing from papers", len(listed), len(missing))
+    if not missing:
         return None
+    if len(missing) > max_fetch:
+        ordered = sorted(missing, key=lambda b: (b[4:9] != "arXiv", b))
+        missing = set(ordered[:max_fetch])
+        logger.warning(
+            "Backlog of %d exceeds --max-fetch %d; fetching %d (arXiv first), deferring %d",
+            len(ordered),
+            max_fetch,
+            max_fetch,
+            len(ordered) - max_fetch,
+        )
 
-    with gzip.open(output_file, "wt", encoding="utf-8") as f:
-        while start < num_found:
-            docs, num_found = fetch_page(headers, query, start)
-            if not docs:
-                break
-            for doc in docs:
-                f.write(json.dumps(doc) + "\n")
-                total_written += 1
-            start += ROWS_PER_PAGE
-            logger.info("Progress: %d / %d records", min(start, num_found), num_found)
-            sleep(THROTTLE)
-
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_file = output_dir / f"ads_daily_{today}.jsonl.gz"
+    tmp_file = output_file.with_name(output_file.name + ".tmp")
+    total_written = 0
+    with gzip.open(tmp_file, "wt", encoding="utf-8") as f:
+        for doc in fetch_records(fetch, missing, fetch_batch):
+            f.write(json.dumps(doc) + "\n")
+            total_written += 1
+            if total_written % 1000 == 0:
+                logger.info("Progress: %d / %d records", total_written, len(missing))
+    tmp_file.rename(output_file)
     logger.info("Wrote %d records to %s", total_written, output_file)
-    write_watermark(watermark_path, today)
     return output_file
 
 
@@ -195,10 +295,21 @@ def main() -> None:
         help="Output directory (default: data/daily_harvest)",
     )
     parser.add_argument(
-        "--lookback-days",
+        "--window-days",
         type=int,
-        default=2,
-        help="Days to look back if no watermark exists (default: 2)",
+        default=14,
+        help="Rolling entdate window to reconcile against the DB (default: 14)",
+    )
+    parser.add_argument(
+        "--max-fetch",
+        type=int,
+        default=MAX_FETCH,
+        help=f"Most records to fetch per run, arXiv first (default: {MAX_FETCH})",
+    )
+    parser.add_argument(
+        "--dsn",
+        default=os.environ.get("SCIX_DSN", "dbname=scix"),
+        help="PostgreSQL DSN (default: $SCIX_DSN or dbname=scix)",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
@@ -209,7 +320,18 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
 
-    harvest(args.output_dir, args.lookback_days)
+    try:
+        harvest(
+            args.output_dir,
+            args.window_days,
+            fetch=ads_fetcher(_get_headers()),
+            existing=db_existing(args.dsn),
+            today=datetime.now(timezone.utc).date(),
+            max_fetch=args.max_fetch,
+        )
+    except HarvestIncomplete as e:
+        logger.error("Harvest incomplete, nothing written: %s", e)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

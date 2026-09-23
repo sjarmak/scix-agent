@@ -17,7 +17,7 @@ sort=bibcode, 429/backoff handling). Differences from harvest_daily.py:
     (read-only SELECTs). This keeps the file to genuinely-missing records —
     required because ingest's merge overwrites every column, so re-ingesting
     an existing paper from a body-less harvest would null its body.
-  - Never touches the daily-sync watermark (data/daily_harvest/last_run.txt).
+  - Independent of the daily harvest; its output never feeds daily_sync.sh.
   - Resume support via a sidecar progress file: <output>.progress.json.
 
 Usage:

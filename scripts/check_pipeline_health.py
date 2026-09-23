@@ -328,7 +328,9 @@ def _run_bd(argv: list[str]) -> subprocess.CompletedProcess[str]:
 def _checked(runner, argv: list[str]) -> str:
     result = runner(argv)
     if result.returncode != 0:
-        raise NotifyError(f"bd {' '.join(argv)} failed ({result.returncode}): {result.stderr.strip()}")
+        raise NotifyError(
+            f"bd {' '.join(argv)} failed ({result.returncode}): {result.stderr.strip()}"
+        )
     return result.stdout
 
 

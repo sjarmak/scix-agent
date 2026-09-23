@@ -60,6 +60,7 @@ def _community_expand_no_seed_response(
         payload["candidates"] = candidates
     return json.dumps(payload, indent=2, default=str)
 
+
 def _resolve_community_expand_seed(
     conn: psycopg.Connection,
     query: str,
@@ -125,6 +126,7 @@ def _resolve_community_expand_seed(
 
     return int(candidates[0].entity_id), None
 
+
 def _handle_community_expand(
     conn: psycopg.Connection,
     query: str,
@@ -167,6 +169,7 @@ def _handle_community_expand(
         return json.dumps(payload, indent=2, default=str)
 
     return _result_to_json(result)
+
 
 def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Unified search: hybrid/semantic/keyword.
@@ -288,6 +291,7 @@ def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     )
     return _result_to_json(result)
 
+
 def _handle_lit_review(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Composite tool: open a literature-review session in one call.
 
@@ -327,6 +331,7 @@ def _handle_lit_review(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     )
     return _result_to_json(result)
 
+
 def _handle_facet_counts(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Facet counts with optional working-set scoping.
 
@@ -351,6 +356,7 @@ def _handle_facet_counts(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     except ValueError as exc:
         return json.dumps({"error": str(exc), "error_code": ErrorCode.INVALID_PARAM_VALUE})
     return _result_to_json(result)
+
 
 def _handle_temporal_evolution(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Temporal evolution with optional working-set scoping.
@@ -403,6 +409,7 @@ def _handle_temporal_evolution(conn: psycopg.Connection, args: dict[str, Any]) -
         return json.dumps({"error": str(exc), "error_code": ErrorCode.INVALID_PARAM_VALUE})
     return _result_to_json(result)
 
+
 def _get_indus_embedder() -> tuple[Any, Any]:
     """Return a cached (model, tokenizer) pair for the INDUS encoder.
 
@@ -423,6 +430,7 @@ def _get_indus_embedder() -> tuple[Any, Any]:
         _srv._indus_embedder = _embed.load_model("indus", device="cpu")
     return _srv._indus_embedder
 
+
 def _normalize_str_list(value: Any) -> list[str] | None:
     """Coerce a str-or-list filter value into a list[str] (or None)."""
     if value is None:
@@ -434,6 +442,7 @@ def _normalize_str_list(value: Any) -> list[str] | None:
         out = [str(v).strip() for v in value if str(v).strip()]
         return out or None
     raise ValueError(f"expected string or list of strings, got {type(value).__name__}")
+
 
 def _normalize_int_list(value: Any) -> list[int] | None:
     """Coerce an int-or-list filter value into a list[int] (or None)."""
@@ -455,6 +464,7 @@ def _normalize_int_list(value: Any) -> list[int] | None:
                 raise ValueError(f"could not coerce {v!r} to int") from exc
         return out or None
     raise ValueError(f"expected integer or list of integers, got {type(value).__name__}")
+
 
 def _handle_chunk_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Dispatch handler for the ``chunk_search`` MCP tool.
@@ -637,6 +647,7 @@ def _handle_chunk_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         payload["warning"] = snippet_warning
     return json.dumps(payload, indent=2, default=str)
 
+
 def _handle_removed_find_similar(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """find_similar_by_examples was retired 2026-04-25 (Qdrant backend unused)."""
     return json.dumps(
@@ -653,6 +664,7 @@ def _handle_removed_find_similar(conn: psycopg.Connection, args: dict[str, Any])
             ),
         }
     )
+
 
 def _handle_concept_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """concept_search — multi-vocabulary taxonomy router (dbl.7)."""

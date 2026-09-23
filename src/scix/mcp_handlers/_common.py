@@ -27,6 +27,7 @@ def _session_fallthrough_bibcodes() -> list[str]:
         return list(focused)
     return [e.bibcode for e in _session_state.get_working_set()]
 
+
 def _resolve_working_set_bibcodes(args: dict[str, Any]) -> list[str]:
     """Return the bibcodes to scope a tool call to.
 
@@ -51,6 +52,7 @@ def _resolve_working_set_bibcodes(args: dict[str, Any]) -> list[str]:
     if isinstance(explicit, list) and explicit:
         return [str(b) for b in explicit]
     return _session_fallthrough_bibcodes()
+
 
 def _missing_required_params_error(
     *,

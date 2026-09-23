@@ -48,7 +48,6 @@ DEFAULT_RESULT_LIMIT = 20
 _MAX_TRACE_BIBCODES: int = 20
 
 
-
 # ---------------------------------------------------------------------------
 # HNSW index availability guard
 # ---------------------------------------------------------------------------
@@ -104,7 +103,6 @@ def _hnsw_index_exists(conn: psycopg.Connection, model_name: str) -> bool:
 
     _hnsw_index_cache[model_name] = (exists, now)
     return exists
-
 
 
 # Priority-ordered list of argument keys that carry the user query text.
@@ -387,7 +385,6 @@ def _extract_bibcodes_from_result(result_json: str | None) -> tuple[str, ...]:
     return tuple(bibcodes)
 
 
-
 def _result_to_json(result: Any) -> str:
     """Serialize a SearchResult to JSON with timing metadata."""
     if isinstance(result, search.SearchResult):
@@ -473,7 +470,6 @@ def _coerce_year(raw: Any, name: str) -> int | None:
     if not _MIN_YEAR <= year <= _MAX_YEAR:
         raise ValueError(f"{name} must be in [{_MIN_YEAR}, {_MAX_YEAR}], got {year}")
     return year
-
 
 
 # ---------------------------------------------------------------------------
@@ -602,7 +598,6 @@ def _unscoped_broad_response(query: str) -> str:
     return json.dumps(payload, indent=2, default=str)
 
 
-
 # ---------------------------------------------------------------------------
 # Session state (singleton for the server process)
 # ---------------------------------------------------------------------------
@@ -636,7 +631,6 @@ def _auto_track_bibcodes(result_json: str) -> None:
             _session_state.track_seen(bibcodes)
     except (json.JSONDecodeError, TypeError):
         pass
-
 
 
 # ---------------------------------------------------------------------------
@@ -692,7 +686,6 @@ def _resolve_default_reranker_model() -> str | None:
         raw,
     )
     return None
-
 
 
 # section_retrieval tool — filters schema + RRF + snippet helpers

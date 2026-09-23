@@ -311,7 +311,11 @@ def harvest_range(
     progress_path = Path(str(output_file) + ".progress.json")
 
     headers = _get_headers()
-    conn = psycopg.connect(dsn or os.environ.get("SCIX_DSN", "dbname=scix")) if filter_existing else None
+    conn = (
+        psycopg.connect(dsn or os.environ.get("SCIX_DSN", "dbname=scix"))
+        if filter_existing
+        else None
+    )
 
     progress = load_progress(progress_path)
     resume_day: date | None = None
@@ -323,7 +327,12 @@ def harvest_range(
         resume_start = int(progress["start"])
         total_written = int(progress["written"])
         total_fetched = int(progress["fetched"])
-        logger.info("Resuming at day=%s start=%d (written so far: %d)", resume_day, resume_start, total_written)
+        logger.info(
+            "Resuming at day=%s start=%d (written so far: %d)",
+            resume_day,
+            resume_start,
+            total_written,
+        )
         if output_file.exists():
             # The previous run may have been killed mid-write, leaving a
             # trailer-less gzip member; appending after it would corrupt the
@@ -402,7 +411,9 @@ def main() -> None:
     parser.add_argument("--start-date", required=True, type=date.fromisoformat)
     parser.add_argument("--end-date", required=True, type=date.fromisoformat, help="inclusive")
     parser.add_argument("--output-dir", type=Path, default=Path("data/daily_harvest"))
-    parser.add_argument("--dsn", default=None, help="PostgreSQL DSN for the existing-bibcode filter")
+    parser.add_argument(
+        "--dsn", default=None, help="PostgreSQL DSN for the existing-bibcode filter"
+    )
     parser.add_argument(
         "--no-filter-existing",
         action="store_true",

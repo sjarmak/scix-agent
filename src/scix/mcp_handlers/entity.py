@@ -50,6 +50,7 @@ _TIER_MIN_TO_ALLOWED: dict[int, list[str]] = {
 #: type name ({"methods": ["JWST", ...]}).
 _VALID_ENTITY_TYPES: frozenset[str] = frozenset({"methods", "datasets", "instruments", "materials"})
 
+
 def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Unified entity search and resolution."""
     action = args.get("action", "search")
@@ -369,6 +370,7 @@ def _handle_entity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         }
     )
 
+
 def _handle_graph_context(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Graph metrics and optional community exploration.
 
@@ -408,6 +410,7 @@ def _handle_graph_context(conn: psycopg.Connection, args: dict[str, Any]) -> str
         "community": community_data,
     }
     return json.dumps(combined, indent=2, default=str)
+
 
 def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Find gaps using implicit session state (focused papers).
@@ -576,6 +579,7 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         indent=2,
         default=str,
     )
+
 
 def _handle_entity_profile(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Legacy entity_profile handler: returns raw extractions table rows.

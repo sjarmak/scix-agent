@@ -144,6 +144,7 @@ def _attach_precision_to_linked_entities(
 
     paper["linked_entities"] = enriched
 
+
 def _handle_get_paper(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Get paper metadata, optionally with entities."""
     bibcode = args.get("bibcode", "")
@@ -178,6 +179,7 @@ def _handle_get_paper(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     result = search.get_paper(conn, bibcode)
     return _result_to_json(result)
 
+
 def _handle_read_paper(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Read or search within a paper's full text.
 
@@ -202,6 +204,7 @@ def _handle_read_paper(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     )
     return _inject_coverage_note(_result_to_json(result))
 
+
 def _handle_add_to_working_set(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Legacy session tool — add bibcodes to the working set."""
     bibcodes = args.get("bibcodes", [])
@@ -219,6 +222,7 @@ def _handle_add_to_working_set(conn: psycopg.Connection, args: dict[str, Any]) -
     entries = [dataclasses.asdict(e) for e in _session_state.get_working_set() if e.bibcode in seen]
     return json.dumps({"added": added, "entries": entries}, indent=2, default=str)
 
+
 def _handle_get_working_set(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Legacy session tool — read the current working set."""
     entries = _session_state.get_working_set()
@@ -228,15 +232,18 @@ def _handle_get_working_set(conn: psycopg.Connection, args: dict[str, Any]) -> s
         default=str,
     )
 
+
 def _handle_get_session_summary(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Legacy session tool — summarize the working set."""
     summary = _session_state.get_session_summary()
     return json.dumps(summary, indent=2, default=str)
 
+
 def _handle_clear_working_set(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Legacy session tool — clear the working set."""
     removed = _session_state.clear_working_set()
     return json.dumps({"removed": removed}, indent=2)
+
 
 def _handle_get_citation_context(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Legacy get_citation_context direct dispatch (source/target bibcode pair)."""
@@ -246,6 +253,7 @@ def _handle_get_citation_context(conn: psycopg.Connection, args: dict[str, Any])
         args["target_bibcode"],
     )
     return _result_to_json(result)
+
 
 def _handle_get_author_papers(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Legacy get_author_papers direct dispatch."""

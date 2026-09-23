@@ -485,6 +485,7 @@ _STOPWORDS: frozenset[str] = frozenset(
     }
 )
 
+
 def _call_mcp(name: str, arguments: dict) -> tuple[dict, float]:
     """Invoke an MCP tool and return ``(parsed_result, latency_ms)``.
 

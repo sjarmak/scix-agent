@@ -107,6 +107,7 @@ def _handle_citation_traverse(conn: psycopg.Connection, args: dict[str, Any]) ->
         }
     )
 
+
 def _handle_citation_traverse_multi(
     conn: psycopg.Connection,
     bibcodes: list[str],
@@ -199,6 +200,7 @@ def _handle_citation_traverse_multi(
         default=str,
     )
 
+
 def _build_traverse_direction(
     papers: list[dict[str, Any]], intents: dict[str, str] | None
 ) -> dict[str, Any]:
@@ -212,6 +214,7 @@ def _build_traverse_direction(
     if intents:
         _annotate_papers_with_intent(annotated, intents)
     return {"papers": annotated, "total": len(annotated), "timing_ms": {}}
+
 
 def _enrich_citations_with_intent(
     conn: psycopg.Connection,
@@ -248,6 +251,7 @@ def _enrich_citations_with_intent(
     with conn.cursor() as cur:
         cur.execute(sql, params)
         return {row[0]: row[1] for row in cur.fetchall()}
+
 
 def _enrich_citations_with_intent_batch(
     conn: psycopg.Connection,
@@ -286,6 +290,7 @@ def _enrich_citations_with_intent_batch(
             out.setdefault(traversed_bib, {})[neighbor_bib] = intent
     return out
 
+
 def _annotate_papers_with_intent(
     papers: list[dict[str, Any]], intent_by_bibcode: dict[str, str]
 ) -> list[dict[str, Any]]:
@@ -295,6 +300,7 @@ def _annotate_papers_with_intent(
         if bib and bib in intent_by_bibcode:
             p["intent"] = intent_by_bibcode[bib]
     return papers
+
 
 def _handle_citation_graph(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Get citations/references with direction control.
@@ -353,6 +359,7 @@ def _handle_citation_graph(conn: psycopg.Connection, args: dict[str, Any]) -> st
         }
     )
 
+
 def _handle_citation_similarity(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Co-citation or bibliographic coupling."""
     bibcode = args["bibcode"]
@@ -373,6 +380,7 @@ def _handle_citation_similarity(conn: psycopg.Connection, args: dict[str, Any]) 
         )
 
     return _result_to_json(result)
+
 
 def _handle_claim_blame(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Dispatch handler for the claim_blame MCP tool (PRD MH-4)."""
@@ -406,8 +414,10 @@ def _handle_claim_blame(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     )
     return json.dumps(result, indent=2, default=str)
 
+
 #: Annotation axes accepted by the ``forward_citations`` MCP tool (bead 9afa).
 _FORWARD_CITATION_ANNOTATIONS: frozenset[str] = frozenset({"intent", "relation"})
+
 
 def _handle_forward_citations(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Enumerate forward citations to a paper, annotated by intent or relation.
@@ -465,6 +475,7 @@ def _handle_forward_citations(conn: psycopg.Connection, args: dict[str, Any]) ->
         return _handle_find_replications(conn, delegated)
     return _handle_cited_by_intent(conn, delegated)
 
+
 def _handle_find_replications(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Dispatch handler for the find_replications MCP tool (PRD MH-4)."""
     from scix.find_replications import VALID_RELATIONS, find_replications
@@ -513,7 +524,9 @@ def _handle_find_replications(conn: psycopg.Connection, args: dict[str, Any]) ->
     }
     return json.dumps(response, indent=2, default=str)
 
+
 _VALID_CITATION_INTENTS: frozenset[str] = frozenset({"method", "background", "result_comparison"})
+
 
 def _handle_cited_by_intent(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Find papers that cite ``target_bibcode`` for a specific reason.
@@ -612,4 +625,3 @@ def _handle_cited_by_intent(conn: psycopg.Connection, args: dict[str, Any]) -> s
         indent=2,
         default=str,
     )
-

@@ -49,6 +49,7 @@ def _encode_section_query(query: str, dimensions: int = 1024) -> list[float]:
         raise RuntimeError("section query encoder returned no vectors")
     return vectors[0]
 
+
 def _section_filter_clauses(
     filters: dict[str, Any] | None,
 ) -> tuple[str, list[Any]]:
@@ -84,6 +85,7 @@ def _section_filter_clauses(
         clauses.append("AND p.bibcode LIKE %s")
         params.append(f"{bibcode_prefix}%")
     return (" " + " ".join(clauses)) if clauses else "", params
+
 
 def _section_dense_retrieve(
     conn: psycopg.Connection,
@@ -130,6 +132,7 @@ def _section_dense_retrieve(
             raise
     return rows
 
+
 # Candidate-pool cap for the section BM25 leg (scix_experiments-ynt8). Mirrors
 # the lexical_search cap (search._LEXICAL_POOL_DEFAULT, bead 3t37): without it a
 # common single-token query matches a large slice of papers_fulltext (14.4M
@@ -148,6 +151,7 @@ _SECTIONS_POOL_DEFAULT: int = 30000
 # set). Mirrors search._LEXICAL_POOL_UNBOUNDED; for eval harnesses only, not the
 # live server.
 _SECTIONS_POOL_UNBOUNDED: frozenset[str] = frozenset({"inf", "all", "none"})
+
 
 def _resolve_sections_pool() -> int | None:
     """Resolve the section BM25 candidate-pool cap from ``SCIX_SECTIONS_POOL``.
@@ -181,6 +185,7 @@ def _resolve_sections_pool() -> int | None:
         )
         return _SECTIONS_POOL_DEFAULT
     return value
+
 
 def _section_bm25_retrieve(
     conn: psycopg.Connection,
@@ -255,6 +260,7 @@ def _section_bm25_retrieve(
             rows.append((row[0], int(row[1]), float(row[2])))
     return rows
 
+
 def _hydrate_section_payload(
     conn: psycopg.Connection,
     keys: Sequence[tuple[str, int]],
@@ -296,6 +302,7 @@ def _hydrate_section_payload(
         }
     return payloads
 
+
 def _hydrate_canonical_urls(
     conn: psycopg.Connection,
     bibcodes: Sequence[str],
@@ -325,6 +332,7 @@ def _hydrate_canonical_urls(
                     out[bibcode] = _build_canonical_url(ident)
                     break
     return out
+
 
 def _handle_section_retrieval(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Dispatch handler for ``section_retrieval``.

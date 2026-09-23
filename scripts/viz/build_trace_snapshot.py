@@ -94,7 +94,9 @@ def main() -> int:
             for b in ev.get("bibcodes") or []:
                 all_bibs.add(b)
         steps = (result or {}).get("steps") if isinstance(result, dict) else None
-        print(f"{scn['key']}: {len(events)} events, {sum(len(e.get('bibcodes') or []) for e in events)} bibcode refs (steps={steps})")
+        print(
+            f"{scn['key']}: {len(events)} events, {sum(len(e.get('bibcodes') or []) for e in events)} bibcode refs (steps={steps})"
+        )
         captured.append(
             {
                 "key": scn["key"],

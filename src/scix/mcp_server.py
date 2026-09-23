@@ -841,6 +841,7 @@ def _smoke_call_new_tools() -> list[str]:
 # builds Tool(**spec) at call time. chunk_search is Qdrant-gated and kept
 # separate so it is only advertised when _qdrant_enabled().
 
+
 def create_server(_run_self_test: bool = True, _preload_model: bool = True):
     """Create and configure the MCP server with the consolidated tool surface.
 
@@ -1064,7 +1065,9 @@ _ALIAS_TRANSFORMS: dict[str, _AliasTransform] = {
     "get_author_papers": _AliasTransform("get_author_papers", use_instead="search"),
     "read_paper_section": _AliasTransform("read_paper"),
     "search_within_paper": _AliasTransform("read_paper", arg_fn=_query_to_search_query),
-    "get_citation_context": _AliasTransform("get_citation_context", use_instead="citation_traverse"),
+    "get_citation_context": _AliasTransform(
+        "get_citation_context", use_instead="citation_traverse"
+    ),
     "add_to_working_set": _AliasTransform("add_to_working_set", use_instead="get_paper"),
     "get_working_set": _AliasTransform("get_working_set", use_instead="find_gaps"),
     "get_session_summary": _AliasTransform("get_session_summary", use_instead="find_gaps"),
@@ -1073,9 +1076,7 @@ _ALIAS_TRANSFORMS: dict[str, _AliasTransform] = {
 }
 
 
-def _transform_deprecated_args(
-    old_name: str, args: dict[str, Any]
-) -> tuple[str, dict[str, Any]]:
+def _transform_deprecated_args(old_name: str, args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Rewrite a deprecated alias call to ``(target, new_args)``.
 
     Copies ``args`` (callers reuse the original for logging), applies the
@@ -1199,7 +1200,9 @@ def _handle_health_check(conn: psycopg.Connection) -> str:
 # order-independent. ``_handle_health_check`` stays local (it reads the live
 # ``_pool``).
 # ---------------------------------------------------------------------------
-_HANDLER_REGISTRY_CACHE: dict[str, Callable[[psycopg.Connection, dict[str, Any]], str]] | None = None
+_HANDLER_REGISTRY_CACHE: dict[str, Callable[[psycopg.Connection, dict[str, Any]], str]] | None = (
+    None
+)
 
 #: Handler-region names a few callers import via ``from scix.mcp_server import``.
 #: Served through PEP 562 ``__getattr__`` for the same anti-cycle reason.

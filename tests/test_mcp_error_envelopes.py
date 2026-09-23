@@ -68,12 +68,12 @@ def _assert_envelope(payload: dict[str, Any], expected_code: str) -> None:
     """Assert the documented envelope contract for a structured error."""
     assert "error" in payload, f"missing 'error' field: {payload}"
     assert "error_code" in payload, f"missing 'error_code' field: {payload}"
-    assert isinstance(payload["error"], str) and payload["error"].strip(), (
-        f"'error' must be a non-empty string: {payload}"
-    )
-    assert payload["error_code"] == expected_code, (
-        f"expected error_code={expected_code!r}, got {payload.get('error_code')!r}"
-    )
+    assert (
+        isinstance(payload["error"], str) and payload["error"].strip()
+    ), f"'error' must be a non-empty string: {payload}"
+    assert (
+        payload["error_code"] == expected_code
+    ), f"expected error_code={expected_code!r}, got {payload.get('error_code')!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -336,9 +336,9 @@ def test_every_emitted_error_code_is_in_the_closed_catalog() -> None:
 
     referenced = set(re.findall(r"ErrorCode\.([A-Z_][A-Z0-9_]*)", src))
     unknown_refs = {name for name in referenced if not hasattr(ErrorCode, name)}
-    assert not unknown_refs, (
-        f"mcp_server/handlers reference ErrorCode constants that don't exist: {sorted(unknown_refs)}"
-    )
+    assert (
+        not unknown_refs
+    ), f"mcp_server/handlers reference ErrorCode constants that don't exist: {sorted(unknown_refs)}"
     # Every referenced constant must serialize to a catalog member.
     assert {getattr(ErrorCode, name) for name in referenced} <= CATALOG
 

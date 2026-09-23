@@ -112,6 +112,7 @@ def _handle_synthesize_findings(conn: psycopg.Connection, args: dict[str, Any]) 
     )
     return json.dumps(result.to_dict(), indent=2, default=str)
 
+
 def _handle_read_paper_claims(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Dispatch handler for the ``read_paper_claims`` MCP tool.
 
@@ -161,6 +162,7 @@ def _handle_read_paper_claims(conn: psycopg.Connection, args: dict[str, Any]) ->
         indent=2,
         default=str,
     )
+
 
 def _handle_find_claims(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     """Dispatch handler for the ``find_claims`` MCP tool.

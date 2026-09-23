@@ -34,8 +34,7 @@ def _top_hub_candidates() -> list[str]:
     conn = get_connection()
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT bibcode FROM paper_metrics "
-            "ORDER BY pagerank DESC NULLS LAST LIMIT %s",
+            "SELECT bibcode FROM paper_metrics " "ORDER BY pagerank DESC NULLS LAST LIMIT %s",
             (CANDIDATE_POOL,),
         )
         return [r[0] for r in cur.fetchall()]

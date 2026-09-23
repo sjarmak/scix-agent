@@ -6,9 +6,9 @@
 # Tooling targets (lint/fmt/test) assume the dev extras are installed:
 #   pip install -e '.[dev]'   (or run inside the project .venv)
 
-RUFF  ?= ruff
-BLACK ?= black
-PYTEST ?= pytest
+RUFF  ?= $(if $(wildcard .venv/bin/ruff),.venv/bin/ruff,ruff)
+BLACK ?= $(if $(wildcard .venv/bin/black),.venv/bin/black,black)
+PYTEST ?= $(if $(wildcard .venv/bin/pytest),.venv/bin/pytest,pytest)
 # CI injects a marker filter (e.g. -m "not integration and not network") so the
 # DB/data/model-dependent tests are deselected; local `make check` runs all.
 PYTEST_ARGS ?=

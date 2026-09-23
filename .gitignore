@@ -85,6 +85,9 @@ Thumbs.db
 .brainstorm/
 .gc/
 .codex/
+.agents/
+.beads.gate.lock
+graphify-out/
 
 # MCP config (machine-specific paths)
 .mcp.json
@@ -124,7 +127,8 @@ scix-sankey-work/
 # ship dangling paths. Authored project skills (.claude/skills/scix-*, and
 # search-sessions) are real directories and stay tracked.
 .claude/skills/.gc-skill-ownership.json
-.claude/skills/core.gc-*
+.claude/skills/core.*
+.claude/skills/oversight-rig.*
 .claude/skills/scientific-software-engineering
 
 # Beads / Dolt files (added by bd init)

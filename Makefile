@@ -12,6 +12,7 @@ MAIN_VENV := $(abspath $(GIT_COMMON_DIR)/../.venv)
 RUFF  ?= $(or $(firstword $(wildcard .venv/bin/ruff $(MAIN_VENV)/bin/ruff)),ruff)
 BLACK ?= $(or $(firstword $(wildcard .venv/bin/black $(MAIN_VENV)/bin/black)),black)
 PYTEST ?= $(or $(firstword $(wildcard .venv/bin/pytest $(MAIN_VENV)/bin/pytest)),pytest)
+export SCIX_TEST_DSN ?= dbname=scix_test
 # CI injects a marker filter (e.g. -m "not integration and not network") so the
 # DB/data/model-dependent tests are deselected; local `make check` runs all.
 PYTEST_ARGS ?=
@@ -29,7 +30,7 @@ help:
 	@echo "  lint             Ruff lint (E,F,I,W) over src/ scripts/ tests/."
 	@echo "  fmt              Auto-fix: ruff --fix + black over src/ scripts/ tests/."
 	@echo "  fmt-check        Verify formatting without writing (CI/pre-commit parity)."
-	@echo "  test             Run pytest (set SCIX_TEST_DSN to enable write tests)."
+	@echo "  test             Run pytest against SCIX_TEST_DSN (default: dbname=scix_test)."
 	@echo "  check            lint + fmt-check + test — the full local gate."
 	@echo "  viz-demo         Build demo data (if missing) and launch the viz server."
 	@echo "  viz-demo-build   Build synthetic demo data only (no server)."

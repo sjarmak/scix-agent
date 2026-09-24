@@ -123,7 +123,42 @@
         ],
         "type": "object"
       },
-      "name": "search"
+      "name": "search",
+      "resultSchema": {
+        "additionalProperties": true,
+        "anyOf": [
+          {
+            "required": [
+              "papers",
+              "total",
+              "timing_ms"
+            ]
+          },
+          {
+            "required": [
+              "disambiguation"
+            ]
+          }
+        ],
+        "properties": {
+          "disambiguation": {
+            "type": "array"
+          },
+          "metadata": {
+            "type": "object"
+          },
+          "papers": {
+            "type": "array"
+          },
+          "timing_ms": {
+            "type": "object"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
     },
     {
       "inputSchema": {
@@ -170,7 +205,30 @@
         ],
         "type": "object"
       },
-      "name": "lit_review"
+      "name": "lit_review",
+      "resultSchema": {
+        "additionalProperties": true,
+        "properties": {
+          "metadata": {
+            "type": "object"
+          },
+          "papers": {
+            "type": "array"
+          },
+          "timing_ms": {
+            "type": "object"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "papers",
+          "total",
+          "timing_ms"
+        ],
+        "type": "object"
+      }
     },
     {
       "inputSchema": {
@@ -216,7 +274,30 @@
         ],
         "type": "object"
       },
-      "name": "concept_search"
+      "name": "concept_search",
+      "resultSchema": {
+        "additionalProperties": true,
+        "properties": {
+          "metadata": {
+            "type": "object"
+          },
+          "papers": {
+            "type": "array"
+          },
+          "timing_ms": {
+            "type": "object"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "papers",
+          "total",
+          "timing_ms"
+        ],
+        "type": "object"
+      }
     },
     {
       "inputSchema": {
@@ -240,7 +321,30 @@
         ],
         "type": "object"
       },
-      "name": "get_paper"
+      "name": "get_paper",
+      "resultSchema": {
+        "additionalProperties": true,
+        "properties": {
+          "metadata": {
+            "type": "object"
+          },
+          "papers": {
+            "type": "array"
+          },
+          "timing_ms": {
+            "type": "object"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "papers",
+          "total",
+          "timing_ms"
+        ],
+        "type": "object"
+      }
     },
     {
       "inputSchema": {
@@ -285,7 +389,30 @@
         ],
         "type": "object"
       },
-      "name": "read_paper"
+      "name": "read_paper",
+      "resultSchema": {
+        "additionalProperties": true,
+        "properties": {
+          "metadata": {
+            "type": "object"
+          },
+          "papers": {
+            "type": "array"
+          },
+          "timing_ms": {
+            "type": "object"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "papers",
+          "total",
+          "timing_ms"
+        ],
+        "type": "object"
+      }
     },
     {
       "inputSchema": {
@@ -346,7 +473,51 @@
         },
         "type": "object"
       },
-      "name": "citation_traverse"
+      "name": "citation_traverse",
+      "resultSchema": {
+        "additionalProperties": true,
+        "anyOf": [
+          {
+            "required": [
+              "papers",
+              "total",
+              "timing_ms"
+            ]
+          },
+          {
+            "required": [
+              "mode",
+              "scope",
+              "bibcodes",
+              "by_bibcode"
+            ]
+          }
+        ],
+        "properties": {
+          "bibcodes": {
+            "type": "array"
+          },
+          "by_bibcode": {
+            "type": "object"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "papers": {
+            "type": "array"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "timing_ms": {
+            "type": "object"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
     },
     {
       "inputSchema": {
@@ -379,7 +550,30 @@
         ],
         "type": "object"
       },
-      "name": "citation_similarity"
+      "name": "citation_similarity",
+      "resultSchema": {
+        "additionalProperties": true,
+        "properties": {
+          "metadata": {
+            "type": "object"
+          },
+          "papers": {
+            "type": "array"
+          },
+          "timing_ms": {
+            "type": "object"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "papers",
+          "total",
+          "timing_ms"
+        ],
+        "type": "object"
+      }
     },
     {
       "inputSchema": {
@@ -447,7 +641,66 @@
         ],
         "type": "object"
       },
-      "name": "entity"
+      "name": "entity",
+      "resultSchema": {
+        "additionalProperties": true,
+        "anyOf": [
+          {
+            "required": [
+              "query",
+              "candidates",
+              "total"
+            ]
+          },
+          {
+            "required": [
+              "papers",
+              "total"
+            ]
+          },
+          {
+            "required": [
+              "entity_id",
+              "papers",
+              "total"
+            ]
+          },
+          {
+            "required": [
+              "papers",
+              "total",
+              "timing_ms"
+            ]
+          }
+        ],
+        "properties": {
+          "candidates": {
+            "type": "array"
+          },
+          "entity_id": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "metadata": {
+            "type": "object"
+          },
+          "papers": {
+            "type": "array"
+          },
+          "query": {
+            "type": "string"
+          },
+          "timing_ms": {
+            "type": "object"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
     },
     {
       "inputSchema": {
@@ -491,7 +744,47 @@
         ],
         "type": "object"
       },
-      "name": "graph_context"
+      "name": "graph_context",
+      "resultSchema": {
+        "additionalProperties": true,
+        "anyOf": [
+          {
+            "required": [
+              "papers",
+              "total",
+              "timing_ms"
+            ]
+          },
+          {
+            "required": [
+              "bibcode",
+              "metrics",
+              "community"
+            ]
+          }
+        ],
+        "properties": {
+          "bibcode": {
+            "type": "string"
+          },
+          "community": {
+            "type": "object"
+          },
+          "metrics": {
+            "type": "object"
+          },
+          "papers": {
+            "type": "array"
+          },
+          "timing_ms": {
+            "type": "object"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
     },
     {
       "inputSchema": {
@@ -531,7 +824,33 @@
         },
         "type": "object"
       },
-      "name": "find_gaps"
+      "name": "find_gaps",
+      "resultSchema": {
+        "additionalProperties": true,
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "papers": {
+            "type": "array"
+          },
+          "resolution": {
+            "type": "string"
+          },
+          "signal": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "papers",
+          "total",
+          "signal"
+        ],
+        "type": "object"
+      }
     },
     {
       "inputSchema": {
@@ -556,7 +875,30 @@
         },
         "type": "object"
       },
-      "name": "temporal_evolution"
+      "name": "temporal_evolution",
+      "resultSchema": {
+        "additionalProperties": true,
+        "properties": {
+          "metadata": {
+            "type": "object"
+          },
+          "papers": {
+            "type": "array"
+          },
+          "timing_ms": {
+            "type": "object"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "papers",
+          "total",
+          "timing_ms"
+        ],
+        "type": "object"
+      }
     },
     {
       "inputSchema": {
@@ -625,7 +967,30 @@
         ],
         "type": "object"
       },
-      "name": "facet_counts"
+      "name": "facet_counts",
+      "resultSchema": {
+        "additionalProperties": true,
+        "properties": {
+          "metadata": {
+            "type": "object"
+          },
+          "papers": {
+            "type": "array"
+          },
+          "timing_ms": {
+            "type": "object"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "papers",
+          "total",
+          "timing_ms"
+        ],
+        "type": "object"
+      }
     },
     {
       "inputSchema": {
@@ -654,7 +1019,35 @@
         ],
         "type": "object"
       },
-      "name": "claim_blame"
+      "name": "claim_blame",
+      "resultSchema": {
+        "additionalProperties": true,
+        "properties": {
+          "confidence": {
+            "type": "number"
+          },
+          "coverage": {
+            "type": "object"
+          },
+          "lineage": {
+            "type": "array"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "retraction_warnings": {
+            "type": "array"
+          }
+        },
+        "required": [
+          "origin",
+          "lineage",
+          "confidence",
+          "retraction_warnings",
+          "coverage"
+        ],
+        "type": "object"
+      }
     },
     {
       "inputSchema": {
@@ -706,7 +1099,52 @@
         ],
         "type": "object"
       },
-      "name": "forward_citations"
+      "name": "forward_citations",
+      "resultSchema": {
+        "additionalProperties": true,
+        "anyOf": [
+          {
+            "required": [
+              "citations",
+              "total",
+              "coverage"
+            ]
+          },
+          {
+            "required": [
+              "target_bibcode",
+              "intent",
+              "papers",
+              "total",
+              "coverage"
+            ]
+          }
+        ],
+        "properties": {
+          "citations": {
+            "type": "array"
+          },
+          "coverage": {
+            "type": "object"
+          },
+          "intent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "papers": {
+            "type": "array"
+          },
+          "target_bibcode": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      }
     },
     {
       "inputSchema": {
@@ -757,7 +1195,31 @@
         },
         "type": "object"
       },
-      "name": "synthesize_findings"
+      "name": "synthesize_findings",
+      "resultSchema": {
+        "additionalProperties": true,
+        "properties": {
+          "assignment_coverage": {
+            "type": "object"
+          },
+          "metadata": {
+            "type": "object"
+          },
+          "sections": {
+            "type": "array"
+          },
+          "unattributed_bibcodes": {
+            "type": "array"
+          }
+        },
+        "required": [
+          "sections",
+          "unattributed_bibcodes",
+          "assignment_coverage",
+          "metadata"
+        ],
+        "type": "object"
+      }
     }
   ]
 }

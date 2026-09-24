@@ -1,10 +1,10 @@
 # MCP Tool Contracts
 
-**Status:** PRD R3 / R16 — initial cut for `read_paper` at `schema_version=2`.
-**Scope:** Response-shape contracts for SciX MCP tools that needed
-additive changes in the arXiv-LaTeX + sibling-routing work (PRD Build 5,
-ADR-006). Currently concerns `read_paper`; future tool additions append to
-this document.
+**Status:** Published MCP contract plus PRD R3 / R16 details for `read_paper`
+at `schema_version=2`.
+**Scope:** Versioned top-level success shapes for every default-visible MCP
+tool, followed by the detailed `read_paper` contract introduced for the
+arXiv-LaTeX + sibling-routing work (PRD Build 5, ADR-006).
 **Related:**
 - `docs/ADR/006_arxiv_licensing.md` (Addendum: sibling routing +
   licensing semantics — the authority for canonical-URL, snippet budget,
@@ -12,7 +12,34 @@ this document.
 - `docs/mcp_dual_lane_contract.md` (enrichment lane policy)
 - `docs/section_schema_contract.md` (structured section payloads)
 
-## Purpose
+## Versioned successful-result schemas
+
+The externally pinnable artifact at `contract/scix_mcp_v1.json` includes a
+`resultSchema` for every default-visible tool. These schemas describe the
+decoded JSON object carried by the existing MCP text response. They are
+contract metadata only: they do not add a success wrapper or change any
+existing response payload.
+
+Each schema pins the required top-level fields and their JSON types. Tools with
+multiple successful modes or actions use `anyOf` to publish each stable field
+set. Every schema sets `additionalProperties: true`, so adding an optional
+field remains backward-compatible. Errors continue to use the separate,
+uniform `error` / `error_code` envelope documented in the artifact.
+
+The registry in `scix.mcp_result_schemas` must exactly cover the visible tool
+surface. Contract conformance tests compare the generated contract, including
+all result schemas, with the committed artifact. An intentional additive
+change is regenerated in the current artifact with
+`python scripts/gen_mcp_contract.py`.
+
+Removing or renaming a required field, changing its type, or removing a
+successful variant is breaking: bump `CONTRACT_VERSION`, publish a new artifact
+alongside the old one, and document the migration. Deprecate a field by keeping
+it in responses for the current contract version while consumers migrate;
+remove it only in the next version. Adding optional fields or variants does not
+require a version bump.
+
+## Detailed `read_paper` contract
 
 Nail down the exact JSON shape returned by `read_paper` when the server is
 speaking `schema_version=2`, so agents and downstream callers can rely on
@@ -25,7 +52,7 @@ This doc covers:
 3. The backward-compatibility contract (v1 fields remain; v2 is additive
    only).
 4. The `X-MCP-Schema-Version` header negotiation rule (R16).
-5. The tool-surface invariant (13 verbs) that governs any change to this
+5. The default-visible tool-surface invariant (15 tools) that governs any change to this
    contract.
 
 ## Scope

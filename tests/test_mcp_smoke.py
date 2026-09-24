@@ -1,17 +1,10 @@
-"""Smoke tests for all 17 consolidated MCP tools.
+"""Smoke tests for the consolidated MCP tool surface.
 
 These tests catch total breakage of any tool on every deploy. They:
 
 1. Verify ``startup_self_test`` succeeds against a freshly-created server
-   (17 tools, valid schemas) — 12 from the 2026-04-25 consolidation pass
-   (search, concept_search, get_paper, read_paper, citation_traverse,
-   citation_similarity, entity, entity_context, graph_context, find_gaps,
-   temporal_evolution, facet_counts) + 2 PRD MH-4 tools (claim_blame,
-   find_replications) + 1 section_retrieval tool from the
-   section-embeddings-mcp-consolidation PRD + 2 paper_claims retrieval
-   tools (read_paper_claims, find_claims) from the nanopub-claim-extraction
-   PRD.
-2. Call each of the 17 consolidated tools via ``_dispatch_tool`` with a
+   with the 15 default-visible tools and valid input schemas.
+2. Call each of the 19 consolidated tools via ``_dispatch_tool`` with a
    minimal golden-path input and assert the returned JSON is a valid
    non-error response (no exception raised, no top-level ``error`` key).
 
@@ -29,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from scix.mcp_result_schemas import registered_result_schema_names, result_schema_for_tool
 from scix.mcp_server import (
     EXPECTED_TOOLS,
     _dispatch_tool,
@@ -57,7 +51,42 @@ def _assert_non_error(result_json: str, tool: str) -> dict[str, Any]:
         assert (
             "error" not in data
         ), f"{tool}: response contains top-level 'error': {data.get('error')}"
+        if tool in registered_result_schema_names():
+            _assert_matches_result_schema(data, tool)
     return data if isinstance(data, dict) else {"items": data}
+
+
+def _assert_matches_result_schema(data: dict[str, Any], tool: str) -> None:
+    """Check the intentionally-small top-level result-schema vocabulary."""
+    schema = result_schema_for_tool(tool)
+    required_variants = []
+    if "required" in schema:
+        required_variants.append(set(schema["required"]))
+    required_variants.extend(set(variant["required"]) for variant in schema.get("anyOf", []))
+    assert any(required <= data.keys() for required in required_variants), (
+        f"{tool}: result does not match any required-field set {required_variants}; "
+        f"got {sorted(data)}"
+    )
+
+    json_types: dict[str, tuple[type[Any], ...]] = {
+        "array": (list,),
+        "integer": (int,),
+        "null": (type(None),),
+        "number": (int, float),
+        "object": (dict,),
+        "string": (str,),
+    }
+    for field, value in data.items():
+        declared = schema["properties"].get(field)
+        if declared is None:
+            continue
+        type_names = declared["type"]
+        if isinstance(type_names, str):
+            type_names = [type_names]
+        expected = tuple(expected_type for name in type_names for expected_type in json_types[name])
+        assert isinstance(value, expected), (
+            f"{tool}.{field}: expected JSON type {type_names}, " f"got {type(value).__name__}"
+        )
 
 
 @pytest.fixture(autouse=True)

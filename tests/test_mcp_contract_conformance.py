@@ -31,6 +31,7 @@ import pytest
 
 from scix import mcp_contract, mcp_server
 from scix.mcp_errors import CATALOG
+from scix.mcp_result_schemas import registered_result_schema_names
 from scix.mcp_server import VISIBLE_TOOL_CAP
 
 
@@ -91,6 +92,52 @@ def test_every_tool_has_valid_input_schema(contract: dict) -> None:
         assert isinstance(
             schema.get("properties"), dict
         ), f"{name}: inputSchema.properties missing or not a dict"
+
+
+def test_every_tool_has_result_schema(contract: dict) -> None:
+    """Every visible tool pins its successful top-level response shape."""
+    for tool in contract["tools"]:
+        name = tool["name"]
+        schema = tool.get("resultSchema")
+        assert isinstance(schema, dict), f"{name}: resultSchema is not a dict"
+        assert (
+            schema.get("type") == "object"
+        ), f"{name}: resultSchema.type must be 'object', got {schema.get('type')!r}"
+        assert (
+            schema.get("additionalProperties") is True
+        ), f"{name}: resultSchema must permit additive response fields"
+        assert schema.get("required") or schema.get(
+            "anyOf"
+        ), f"{name}: resultSchema must pin at least one required-field set"
+
+    assert registered_result_schema_names() == frozenset(
+        mcp_contract.default_visible_tool_names()
+    ), "successful-result registry must exactly cover the default-visible surface"
+
+
+def test_priority_result_schemas_pin_consumer_fields(contract: dict) -> None:
+    """The first three audited tools protect their consumer-facing keys."""
+    schemas = {tool["name"]: tool["resultSchema"] for tool in contract["tools"]}
+
+    search_required = set(schemas["search"]["anyOf"][0]["required"])
+    assert search_required == {"papers", "total", "timing_ms"}
+
+    claim_required = set(schemas["claim_blame"]["required"])
+    assert claim_required == {
+        "origin",
+        "lineage",
+        "confidence",
+        "retraction_warnings",
+        "coverage",
+    }
+
+    synthesis_required = set(schemas["synthesize_findings"]["required"])
+    assert synthesis_required == {
+        "sections",
+        "unattributed_bibcodes",
+        "assignment_coverage",
+        "metadata",
+    }
 
 
 def test_error_codes_are_the_closed_catalog(contract: dict) -> None:

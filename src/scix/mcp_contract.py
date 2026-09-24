@@ -5,8 +5,9 @@ makes that contract *self-describing and self-enforcing*:
 
 * :func:`build_contract` reads the live server and produces a deterministic,
   environment-independent description of the public surface — the default
-  agent-visible tool names + JSON-schema ``inputSchema`` for each, the closed
-  error-code catalog (:mod:`scix.mcp_errors`), and the response envelope shape.
+  agent-visible tool names + JSON-schema ``inputSchema`` and ``resultSchema``
+  for each, the closed error-code catalog (:mod:`scix.mcp_errors`), and the
+  response envelope shape.
 * :func:`write_published_contract` serializes that to ``contract/scix_mcp_v1.json``
   (via ``scripts/gen_mcp_contract.py``).
 * The conformance suite (``tests/test_mcp_contract_conformance.py``) asserts the
@@ -28,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from scix.mcp_errors import CATALOG
+from scix.mcp_result_schemas import result_schema_for_tool
 
 CONTRACT_VERSION = "1"
 
@@ -115,7 +117,14 @@ def build_contract() -> dict[str, Any]:
             },
         },
         "error_codes": sorted(CATALOG),
-        "tools": [{"name": name, "inputSchema": by_name[name]} for name in visible],
+        "tools": [
+            {
+                "name": name,
+                "inputSchema": by_name[name],
+                "resultSchema": result_schema_for_tool(name),
+            }
+            for name in visible
+        ],
     }
 
 

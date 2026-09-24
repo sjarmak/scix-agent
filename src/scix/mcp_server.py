@@ -106,6 +106,7 @@ from scix.mcp_runtime import (  # noqa: F401  re-export: historical patch/import
     _result_to_json,
     _rrf_fuse,
     _session_state,
+    _structured_error_message,
     _truncate_snippet,
     _unscoped_broad_response,
     _validate_entity_list,
@@ -920,6 +921,8 @@ def call_tool(name: str, arguments: dict[str, Any]) -> str:
         result_json: str = "{}"
         try:
             result_json = _dispatch_tool(conn, name, arguments)
+            error_msg = _structured_error_message(result_json)
+            success = error_msg is None
         except Exception as exc:
             success = False
             error_msg = str(exc)

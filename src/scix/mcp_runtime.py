@@ -186,6 +186,25 @@ def _detect_unscoped_broad_block(result_json: str | None) -> bool:
     return isinstance(data, dict) and data.get("unscoped_broad_blocked") is True
 
 
+def _structured_error_message(result_json: str | None) -> str | None:
+    """Return a loggable message for a root-level structured error envelope."""
+    if not result_json:
+        return None
+    try:
+        data = json.loads(result_json)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    error_code = data.get("error_code")
+    if not isinstance(error_code, str) or not error_code.strip():
+        return None
+    error = data.get("error")
+    if isinstance(error, str) and error.strip():
+        return f"{error_code}: {error}"
+    return error_code
+
+
 # Single source of truth for the query_log INSERT column order.
 # Tests use this tuple to map captured params to named fields, so adding
 # a column here automatically updates every downstream assertion that

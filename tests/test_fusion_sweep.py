@@ -6,6 +6,7 @@ without Postgres, Qdrant, or torch — mirroring ``test_eval_retrieval_50q.py``.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -17,18 +18,26 @@ for sub in ("src", "scripts"):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+import fusion_sweep as sweep  # noqa: E402
 from eval_retrieval_50q import BUCKETS  # noqa: E402
 from fusion_sweep import (  # noqa: E402
+    BenchmarkQuery,
     Lane,
+    QueryLanes,
     build_sweep,
+    enforce_coverage_gate,
+    evaluate_config,
     fuse_bm25_only,
     fuse_dense_only,
     fuse_dense_prior,
     fuse_naive_rrf,
     fuse_rank_cutoff_rrf,
     fuse_weighted_sum,
+    load_benchmark_queries,
     min_max_normalize,
+    paired_bootstrap_delta,
     render_markdown,
+    split_queries,
 )
 
 DENSE: Lane = [("A", 0.90), ("B", 0.50), ("C", 0.10)]
@@ -184,5 +193,286 @@ def test_render_uses_one_consistent_headline_config() -> None:
         "weighted_sum(w_dense=0.5)": _block(0.60),
     }
     md = render_markdown(results, queries_path="g.jsonl", n_queries=50, k=10)
-    header = next(ln for ln in md.splitlines() if ln.startswith("## Per-bucket"))
+    header = next(ln for ln in md.splitlines() if ln.startswith("## Per-decile"))
     assert "weighted_sum(w_dense=0.5)" in header
+
+
+def test_render_keeps_tuning_selected_hybrid_when_confirmation_loses() -> None:
+    results = {
+        "dense_only": _block(0.60),
+        "bm25_only": _block(0.20),
+        "weighted_sum(w_dense=0.5)": _block(0.50),
+    }
+
+    md = render_markdown(results, queries_path="g.jsonl", n_queries=50, k=10)
+
+    header = next(ln for ln in md.splitlines() if ln.startswith("## Per-decile"))
+    assert "weighted_sum(w_dense=0.5)" in header
+    assert "dense_only` at" not in md
+
+
+# --- publication-valid benchmark protocol ---------------------------------
+
+
+def _query(index: int, decile: int) -> BenchmarkQuery:
+    return BenchmarkQuery(
+        query_id=f"q-{index}",
+        query=f"title {index}",
+        bucket="recall_decile",
+        discipline="test",
+        gold_bibcodes=(f"SELF-{index}", f"NEIGHBOR-{index}"),
+        decile=decile,
+    )
+
+
+def test_split_queries_is_deterministic_stratified_and_disjoint() -> None:
+    queries = [_query(decile * 4 + offset, decile) for decile in range(10) for offset in range(4)]
+    tuning, confirmation = split_queries(queries, tuning_fraction=0.5, salt="frozen")
+    tuning_again, confirmation_again = split_queries(
+        list(reversed(queries)), tuning_fraction=0.5, salt="frozen"
+    )
+
+    assert [q.query_id for q in tuning] == [q.query_id for q in tuning_again]
+    assert [q.query_id for q in confirmation] == [q.query_id for q in confirmation_again]
+    assert {q.query_id for q in tuning}.isdisjoint(q.query_id for q in confirmation)
+    assert {q.decile for q in tuning} == set(range(10))
+    assert {q.decile for q in confirmation} == set(range(10))
+
+
+def test_loader_requires_and_preserves_all_source_deciles(tmp_path: Path) -> None:
+    path = tmp_path / "gold.jsonl"
+    source_rows = [
+        {
+            "query": f"exact title {decile}",
+            "bucket": "recall_decile",
+            "discipline": "test",
+            "gold_bibcodes": [f"SELF-{decile}"],
+            "decile": decile,
+        }
+        for decile in range(10)
+    ]
+    path.write_text("\n".join(json.dumps(row) for row in source_rows), encoding="utf-8")
+
+    loaded = load_benchmark_queries(path)
+
+    assert [query.decile for query in loaded] == list(range(10))
+    assert all(query.query_id for query in loaded)
+
+
+def test_loader_rejects_missing_decile_strata(tmp_path: Path) -> None:
+    path = tmp_path / "gold.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "query": "exact title",
+                "bucket": "recall_decile",
+                "discipline": "test",
+                "gold_bibcodes": ["SELF"],
+                "decile": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="all deciles"):
+        load_benchmark_queries(path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("query", 17, "query must be a non-empty string"),
+        ("discipline", "", "discipline must be a non-empty string"),
+        ("gold_bibcodes", ["SELF", ""], "must contain non-empty strings"),
+        ("gold_bibcodes", ["SELF", "SELF"], "must not contain duplicates"),
+    ],
+)
+def test_loader_rejects_malformed_boundary_values(
+    tmp_path: Path, field: str, value: object, message: str
+) -> None:
+    rows = [
+        {
+            "query": f"exact title {decile}",
+            "bucket": "recall_decile",
+            "discipline": "test",
+            "gold_bibcodes": [f"SELF-{decile}"],
+            "decile": decile,
+        }
+        for decile in range(10)
+    ]
+    rows[0][field] = value
+    path = tmp_path / "gold.jsonl"
+    path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        load_benchmark_queries(path)
+
+
+def test_evaluate_config_preserves_per_query_scores_and_all_deciles() -> None:
+    queries = [_query(decile, decile) for decile in range(10)]
+    lanes = [
+        QueryLanes(query=q, dense=[(q.gold_bibcodes[0], 1.0)], bm25=[], error=None) for q in queries
+    ]
+
+    result = evaluate_config(build_sweep()[0], lanes, k=10)
+
+    assert len(result["per_query"]) == 10
+    assert set(result["by_decile"]) == {str(decile) for decile in range(10)}
+    assert all(row["query_id"].startswith("q-") for row in result["per_query"])
+
+
+def test_coverage_gate_rejects_errors_instead_of_scoring_them_as_zero() -> None:
+    good = QueryLanes(query=_query(0, 0), dense=[], bm25=[], error=None)
+    failed = QueryLanes(query=_query(1, 0), dense=[], bm25=[], error="TimeoutError: timed out")
+
+    with pytest.raises(RuntimeError, match="coverage 50.00% is below required 100.00%"):
+        enforce_coverage_gate([good, failed], minimum=1.0)
+
+
+def test_paired_bootstrap_delta_reports_difference_and_interval() -> None:
+    candidate = [
+        {"query_id": "a", "ndcg_at_10": 0.8},
+        {"query_id": "b", "ndcg_at_10": 0.6},
+    ]
+    baseline = [
+        {"query_id": "a", "ndcg_at_10": 0.5},
+        {"query_id": "b", "ndcg_at_10": 0.5},
+    ]
+
+    uncertainty = paired_bootstrap_delta(candidate, baseline, seed=7, samples=200)
+
+    assert uncertainty["n_paired"] == 2
+    assert uncertainty["mean_delta"] == pytest.approx(0.2)
+    assert uncertainty["ci95_low"] <= uncertainty["mean_delta"] <= uncertainty["ci95_high"]
+
+
+def test_paired_bootstrap_delta_rejects_nonpositive_sample_count() -> None:
+    with pytest.raises(ValueError, match="samples must be positive"):
+        paired_bootstrap_delta([], [], samples=0)
+
+
+def test_qdrant_endpoint_requires_http_and_strips_credentials_and_path() -> None:
+    endpoint_with_credentials = "https://user:secret" + "@qdrant.example:6333/private?token=x"
+    assert (
+        sweep._safe_qdrant_endpoint(endpoint_with_credentials)
+        == "https://qdrant.example:6333"
+    )
+    with pytest.raises(ValueError, match=r"HTTP\(S\) URL"):
+        sweep._safe_qdrant_endpoint("qdrant.example:6333")
+
+
+def test_render_labels_known_item_protocol_and_holdout_confirmation() -> None:
+    results = {
+        "dense_only": _block(0.50),
+        "bm25_only": _block(0.20),
+        "weighted_sum(w_dense=0.5)": _block(0.60),
+    }
+    md = render_markdown(results, queries_path="recall.jsonl", n_queries=1200, k=10)
+
+    assert "known-item retrieval diagnostic" in md
+    assert "held-out confirmation" in md
+
+
+def test_main_runs_tuning_confirmation_and_writes_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queries_path = tmp_path / "gold.jsonl"
+    markdown_path = tmp_path / "report.md"
+    json_path = tmp_path / "report.json"
+    source_rows = [
+        {
+            "query": f"exact title {decile}-{offset}",
+            "bucket": "recall_decile",
+            "discipline": "test",
+            "gold_bibcodes": [f"SELF-{decile}-{offset}", f"N-{decile}-{offset}"],
+            "decile": decile,
+        }
+        for decile in range(10)
+        for offset in range(2)
+    ]
+    queries_path.write_text("\n".join(json.dumps(row) for row in source_rows), encoding="utf-8")
+
+    class FakeConnection:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    connection = FakeConnection()
+    monkeypatch.setattr("scix.db.get_connection", lambda: connection)
+
+    def fake_compute_lanes(conn: object, queries: list[BenchmarkQuery], *, pool: int):
+        assert conn is connection
+        assert pool == 100
+        return [
+            QueryLanes(
+                query=query,
+                dense=[(query.gold_bibcodes[0], 1.0)],
+                bm25=[(query.gold_bibcodes[1], 1.0)],
+                error=None,
+            )
+            for query in queries
+        ]
+
+    provenance = {
+        "gold": {"sha256": "gold-hash"},
+        "git_revision": "git-sha",
+        "model": {"huggingface_id": "model-id", "revision": "model-sha"},
+        "qdrant": {"endpoint": "http://qdrant", "collection": "collection"},
+        "corpus": {
+            "database": "scix_test",
+            "schema_migration": 74,
+            "paper_count_estimate": 20,
+        },
+    }
+    monkeypatch.setattr(sweep, "compute_lanes", fake_compute_lanes)
+    monkeypatch.setattr(sweep, "collect_provenance", lambda conn, path: provenance)
+
+    result = sweep.main(
+        [
+            "--queries",
+            str(queries_path),
+            "--output",
+            str(markdown_path),
+            "--json-output",
+            str(json_path),
+        ]
+    )
+
+    assert result == 0
+    assert connection.closed is True
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["protocol"]["n_tuning"] == 10
+    assert payload["protocol"]["n_confirmation"] == 10
+    assert payload["coverage"]["observed"] == 1.0
+    selected = payload["protocol"]["selected_config"]
+    assert len(payload["confirmation_results"][selected]["per_query"]) == 10
+    assert set(payload["confirmation_results"][selected]["by_decile"]) == {
+        str(decile) for decile in range(10)
+    }
+    markdown = markdown_path.read_text(encoding="utf-8")
+    assert "Paired uncertainty on held-out confirmation" in markdown
+    assert "Gold SHA-256: `gold-hash`" in markdown
+
+
+def test_main_dry_run_needs_no_gold_db_or_model(tmp_path: Path) -> None:
+    markdown_path = tmp_path / "dry.md"
+    json_path = tmp_path / "dry.json"
+
+    result = sweep.main(
+        [
+            "--dry-run",
+            "--queries",
+            str(tmp_path / "absent.jsonl"),
+            "--output",
+            str(markdown_path),
+            "--json-output",
+            str(json_path),
+        ]
+    )
+
+    assert result == 0
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["dry_run"] is True
+    assert payload["n_queries"] == 0
+    assert payload["n_configs"] == len(build_sweep())

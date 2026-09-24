@@ -1,0 +1,3 @@
+# Install only after confirming /mnt/postgres/scix_dumps is mounted and writable.
+# Cron does not provide XDG_RUNTIME_DIR; scix-batch needs it to reach the user systemd bus.
+0 3 * * 0 XDG_RUNTIME_DIR=/run/user/1000 "$HOME/.local/bin/scix-batch" "$HOME/projects/scix_experiments/scripts/weekly_pg_backup.sh" >> "$HOME/projects/scix_experiments/logs/weekly_pg_backup.log" 2>&1

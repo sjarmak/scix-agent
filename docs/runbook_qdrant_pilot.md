@@ -28,6 +28,10 @@ print(c.get_collection('scix_papers_v1'))
 "
 ```
 
+The commands above are intended for an interactive shell. If `scix-batch` is
+scheduled from cron, set and export `XDG_RUNTIME_DIR=/run/user/1000` first;
+cron does not provide the variable needed to reach the user systemd bus.
+
 Upsert throughput on this box: ~660 points/s (RTX 5090 host, Postgres on
 loopback). 400K points = ~10 min. Storage footprint: ~2.6 GB on disk.
 

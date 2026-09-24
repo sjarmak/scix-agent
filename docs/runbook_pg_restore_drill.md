@@ -34,6 +34,13 @@ mitigated only by upstream-reproducibility from ADS.
 Retention: 4 most recent dated dirs (default); older dirs are pruned by
 the next backup run.
 
+## Install the weekly backup cron
+
+Use `scripts/cron/weekly_pg_backup.cron.example` as the canonical crontab
+entry. It sets `XDG_RUNTIME_DIR=/run/user/1000`, which cron does not provide
+and `scix-batch` needs to connect to the user systemd bus. Before installing
+it, confirm `/mnt/postgres/scix_dumps` is mounted and writable.
+
 ## Quarterly drill — verify dump integrity
 
 Run this periodically against the latest NAS dump to confirm it parses,

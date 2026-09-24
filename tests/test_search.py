@@ -347,6 +347,58 @@ class TestFacetFieldValidation:
         assert "document_entities_canonical" in sql
         assert [42] in params
 
+    def test_arxiv_class_reports_estimated_missing_metadata(self) -> None:
+        """Facet responses distinguish sparse metadata from no matching papers."""
+        from unittest.mock import MagicMock
+
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.__enter__ = MagicMock(return_value=cursor)
+        cursor.__exit__ = MagicMock(return_value=False)
+        cursor.fetchall.return_value = [{"val": "astro-ph.GA", "cnt": 12}]
+        cursor.fetchone.return_value = {"null_frac": 0.91146666}
+        conn.cursor.return_value = cursor
+
+        result = facet_counts(conn, "arxiv_class")
+
+        coverage = result.metadata["coverage"]
+        assert coverage == {
+            "field": "arxiv_class",
+            "scope": "corpus",
+            "basis": "postgresql_statistics",
+            "estimated": True,
+            "estimated_null_pct": 91.15,
+            "counts_exclude": ["null", "empty_array"],
+            "note": (
+                "Estimated 91.15% of corpus papers have null arxiv_class metadata. "
+                "Facet counts exclude null and empty-array values; sparse facets may "
+                "reflect missing classifications rather than no matching papers."
+            ),
+        }
+        assert cursor.execute.call_count == 2
+        stats_sql, stats_params = cursor.execute.call_args_list[0].args
+        assert "pg_stats" in stats_sql
+        assert stats_params == ["arxiv_class"]
+
+    def test_facet_coverage_says_when_statistics_are_unavailable(self) -> None:
+        """An unanalyzed test database still returns an explicit unknown signal."""
+        from unittest.mock import MagicMock
+
+        conn = MagicMock()
+        cursor = MagicMock()
+        cursor.__enter__ = MagicMock(return_value=cursor)
+        cursor.__exit__ = MagicMock(return_value=False)
+        cursor.fetchall.return_value = []
+        cursor.fetchone.return_value = None
+        conn.cursor.return_value = cursor
+
+        result = facet_counts(conn, "doctype")
+
+        coverage = result.metadata["coverage"]
+        assert coverage["estimated_null_pct"] is None
+        assert coverage["counts_exclude"] == ["null"]
+        assert "unavailable" in coverage["note"]
+
 
 class TestHybridSearchDefaultModel:
     """Verify that hybrid_search and vector_search default to indus."""

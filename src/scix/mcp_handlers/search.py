@@ -339,30 +339,37 @@ def _handle_lit_review(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     return _result_to_json(result)
 
 
-def _handle_facet_counts(conn: psycopg.Connection, args: dict[str, Any]) -> str:
-    """Facet counts with optional working-set scoping.
+def _facet_counts_payload(result: search.SearchResult) -> dict[str, Any]:
+    """Lift coverage metadata to the public response root."""
+    payload = json.loads(_result_to_json(result))
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict) or not isinstance(metadata.get("coverage"), dict):
+        raise TypeError("facet_counts result is missing coverage metadata")
+    return {
+        **payload,
+        "coverage": metadata["coverage"],
+        "metadata": {key: value for key, value in metadata.items() if key != "coverage"},
+    }
 
-    When ``bibcodes`` is omitted, falls through to the session's focused
-    papers (see ``_resolve_working_set_bibcodes``). When neither is set,
-    runs the unscoped corpus-wide facet — preserves the legacy contract.
-    """
+
+def _handle_facet_counts(conn: psycopg.Connection, args: dict[str, Any]) -> str:
+    """Facet counts with optional working-set scoping."""
     try:
         filters = _parse_filters(args.get("filters"))
     except ValueError as exc:
         return json.dumps({"error": str(exc), "error_code": ErrorCode.INVALID_FILTERS})
-    limit = args.get("limit", 50)
-    bibcodes = _resolve_working_set_bibcodes(args) or None
+
     try:
         result = search.facet_counts(
             conn,
             args["field"],
             filters=filters,
-            limit=limit,
-            bibcodes=bibcodes,
+            limit=args.get("limit", 50),
+            bibcodes=_resolve_working_set_bibcodes(args) or None,
         )
     except ValueError as exc:
         return json.dumps({"error": str(exc), "error_code": ErrorCode.INVALID_PARAM_VALUE})
-    return _result_to_json(result)
+    return json.dumps(_facet_counts_payload(result), indent=2, default=str)
 
 
 def _handle_temporal_evolution(conn: psycopg.Connection, args: dict[str, Any]) -> str:

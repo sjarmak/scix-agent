@@ -339,6 +339,25 @@ class TestGetAuthorPapersIntegration:
 
 @pytest.mark.integration
 class TestFacetCountsIntegration:
+    def test_arxiv_class_exposes_data_coverage(self, conn) -> None:
+        result = _dispatch_safe(
+            conn,
+            "facet_counts",
+            {
+                "field": "arxiv_class",
+                "bibcodes": ["NONEXISTENT_COVERAGE_PROBE"],
+                "limit": 1,
+            },
+        )
+        coverage = result["coverage"]
+        assert coverage["field"] == "arxiv_class"
+        assert coverage["scope"] == "corpus"
+        assert coverage["estimated"] is True
+        assert coverage["counts_exclude"] == ["null", "empty_array"]
+        assert coverage["estimated_null_pct"] is None or isinstance(
+            coverage["estimated_null_pct"], float
+        )
+
     def test_year_facets(self, conn) -> None:
         if not _has_papers(conn):
             pytest.skip("No papers in database")

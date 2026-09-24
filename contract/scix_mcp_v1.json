@@ -971,6 +971,9 @@
       "resultSchema": {
         "additionalProperties": true,
         "properties": {
+          "coverage": {
+            "type": "object"
+          },
           "metadata": {
             "type": "object"
           },
@@ -987,7 +990,8 @@
         "required": [
           "papers",
           "total",
-          "timing_ms"
+          "timing_ms",
+          "coverage"
         ],
         "type": "object"
       }

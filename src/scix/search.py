@@ -21,6 +21,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from scix.db import IterativeScanMode, configure_iterative_scan
+from scix.facet_coverage import facet_coverage
 from scix.sources.ar5iv import _ARXIV_ID_RE, LATEX_DERIVED_SOURCES, _build_canonical_url
 from scix.sources.licensing import enforce_snippet_budget
 from scix.stubs import PaperStub
@@ -2513,6 +2514,7 @@ def facet_counts(
             f"Allowed: {sorted(allowed_simple | allowed_array)}"
         )
 
+    coverage = facet_coverage(conn, facet_field, is_array=facet_field in allowed_array)
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
@@ -2525,7 +2527,7 @@ def facet_counts(
         papers=[],
         total=len(facets),
         timing_ms={"query_ms": query_ms},
-        metadata={"facet_field": facet_field, "facets": facets},
+        metadata={"facet_field": facet_field, "facets": facets, "coverage": coverage},
     )
 
 

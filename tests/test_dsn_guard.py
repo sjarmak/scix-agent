@@ -28,6 +28,11 @@ ALLOWED_PROD_READERS = {
     "test_mcp_entity_context_smoke.py": "_PROD_DSN_FOR_READONLY: documented read-only prod smoke test",
 }
 
+MIGRATION_REPLAY_MODULES = (
+    "test_agent_entity_context_rewrite.py",
+    "test_staging_entities.py",
+)
+
 
 def _dsn_expressions(tree: ast.AST) -> list[ast.expr]:
     """Return the value of every assignment whose target names a DSN."""
@@ -75,6 +80,16 @@ def _references(expr: ast.expr, names: set[str]) -> bool:
     return any(isinstance(n, ast.Name) and n.id in names for n in ast.walk(expr))
 
 
+def _calls(tree: ast.AST, function_name: str) -> bool:
+    """Return True if ``tree`` directly calls the named function."""
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == function_name
+        for node in ast.walk(tree)
+    )
+
+
 def _test_modules() -> list[Path]:
     return sorted(p for p in TESTS_DIR.glob("*.py") if p.name != Path(__file__).name)
 
@@ -107,4 +122,17 @@ def test_helpers_dsn_honours_the_exported_guard() -> None:
         f"helpers.DSN resolved to {DSN!r} while SCIX_TEST_DSN={test_dsn!r}. "
         "Destructive test modules skip on is_production_dsn(DSN), so a stale "
         "helpers.DSN makes them silently skip."
+    )
+
+
+@pytest.mark.parametrize("module_name", MIGRATION_REPLAY_MODULES)
+def test_migration_replayers_use_throwaway_database(module_name: str) -> None:
+    """Migration replay must never alter the suite's shared schema database."""
+    path = TESTS_DIR / module_name
+    tree = ast.parse(path.read_text(), filename=str(path))
+
+    assert _calls(tree, "throwaway_db"), (
+        f"{module_name} executes migration SQL without tests.helpers.throwaway_db; "
+        "replaying migrations against SCIX_TEST_DSN makes the shared schema "
+        "depend on test order"
     )

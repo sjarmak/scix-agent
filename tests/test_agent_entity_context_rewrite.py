@@ -5,16 +5,24 @@ from __future__ import annotations
 import os
 import random
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
 import psycopg
 import pytest
 
-from tests.helpers import is_production_dsn
+from tests.helpers import get_test_dsn, is_production_dsn, throwaway_db
 
-MIGRATION_PATH = (
-    Path(__file__).resolve().parents[1] / "migrations" / "055_agent_entity_context_rewrite.sql"
-)
+REPO_ROOT = Path(__file__).resolve().parents[1]
+MIGRATION_PATH = REPO_ROOT / "migrations" / "055_agent_entity_context_rewrite.sql"
+PREREQUISITE_MIGRATIONS = [
+    "001_initial_schema.sql",
+    "013_entity_dictionary.sql",
+    "014_discipline_and_indexes.sql",
+    "020_harvest_runs.sql",
+    "021_entity_graph.sql",
+    "024_agent_context_views.sql",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -398,17 +406,22 @@ class TestRowDiff:
                 conn.close()
 
 
+@pytest.fixture(scope="module")
+def migration_dsn() -> Iterator[str]:
+    if get_test_dsn() is None:
+        pytest.skip(
+            "SCIX_TEST_DSN is not set or points at production — destructive "
+            "migration tests require a dedicated test DB"
+        )
+    with throwaway_db(PREREQUISITE_MIGRATIONS, REPO_ROOT) as target:
+        yield target
+
+
 @pytest.mark.integration
 class TestMigrationApplies:
-    def test_migration_applies_cleanly(self) -> None:
+    def test_migration_applies_cleanly(self, migration_dsn: str) -> None:
         """Applying migrations/055_*.sql exits 0 and preserves the MV's row count."""
-        dsn = os.environ.get("SCIX_TEST_DSN") or os.environ.get("SCIX_DSN", "dbname=scix_test")
-        if is_production_dsn(dsn):
-            pytest.skip("Refusing to replay a migration against production")
-        try:
-            conn = psycopg.connect(dsn, autocommit=True)
-        except psycopg.OperationalError as exc:
-            pytest.skip(f"test database unreachable: {exc}")
+        conn = psycopg.connect(migration_dsn, autocommit=True)
 
         try:
             with conn.cursor() as cur:
@@ -425,7 +438,7 @@ class TestMigrationApplies:
             # the same database the counts were taken from — this previously
             # hardcoded scix_test while counting from whatever SCIX_DSN named.
             result = subprocess.run(
-                ["psql", dsn, "-v", "ON_ERROR_STOP=1", "-f", str(MIGRATION_PATH)],
+                ["psql", migration_dsn, "-v", "ON_ERROR_STOP=1", "-f", str(MIGRATION_PATH)],
                 capture_output=True,
                 text=True,
                 check=False,

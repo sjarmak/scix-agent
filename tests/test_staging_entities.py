@@ -7,17 +7,22 @@ Two test modes:
   public.entities, so they must never reach production.
 """
 
-import os
 import pathlib
+from collections.abc import Iterator
 
 import psycopg
 import pytest
-from helpers import is_production_dsn
 
-MIGRATION_PATH = (
-    pathlib.Path(__file__).resolve().parent.parent / "migrations" / "022_staging_entities.sql"
-)
-DSN = os.environ.get("SCIX_TEST_DSN") or os.environ.get("SCIX_DSN", "dbname=scix")
+from tests.helpers import get_test_dsn, throwaway_db
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+MIGRATION_PATH = REPO_ROOT / "migrations" / "022_staging_entities.sql"
+PREREQUISITE_MIGRATIONS = [
+    "013_entity_dictionary.sql",
+    "014_discipline_and_indexes.sql",
+    "020_harvest_runs.sql",
+    "021_entity_graph.sql",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -30,12 +35,13 @@ class TestMigrationFileExists:
         assert MIGRATION_PATH.exists(), f"Migration file not found: {MIGRATION_PATH}"
 
 
+@pytest.fixture(scope="module")
+def sql() -> str:
+    return MIGRATION_PATH.read_text()
+
+
 class TestStagingEntitiesSQL:
     """Verify the migration SQL contains the expected structural elements."""
-
-    @pytest.fixture(scope="class")
-    def sql(self) -> str:
-        return MIGRATION_PATH.read_text()
 
     # -- Tables ---------------------------------------------------------------
 
@@ -108,40 +114,32 @@ class TestStagingEntitiesSQL:
 
 
 # ---------------------------------------------------------------------------
-# Integration tests -- require a running PostgreSQL with scix database
+# Integration tests -- run against a throwaway PostgreSQL database
 # ---------------------------------------------------------------------------
 
 
-def _db_available() -> bool:
-    if is_production_dsn(DSN):
-        return False
-    try:
-        with psycopg.connect(DSN, connect_timeout=3) as conn:
-            conn.execute("SELECT 1")
-        return True
-    except Exception:
-        return False
+@pytest.fixture(scope="module")
+def dsn() -> Iterator[str]:
+    """DSN for a database carrying only the migration 022 dependency chain."""
+    if get_test_dsn() is None:
+        pytest.skip(
+            "SCIX_TEST_DSN is not set or points at production — destructive "
+            "migration tests require a dedicated test DB"
+        )
+    migrations = [*PREREQUISITE_MIGRATIONS, "022_staging_entities.sql"]
+    with throwaway_db(migrations, REPO_ROOT) as target:
+        yield target
 
 
-skip_no_db = pytest.mark.skipif(
-    not _db_available(),
-    reason="No non-production database available (set SCIX_TEST_DSN)",
-)
+@pytest.fixture(scope="class")
+def conn(dsn: str) -> Iterator[psycopg.Connection]:
+    with psycopg.connect(dsn) as connection:
+        yield connection
 
 
-@skip_no_db
+@pytest.mark.integration
 class TestStagingEntitiesIntegration:
     """Full cycle: insert into staging -> promote -> verify in public -> staging empty."""
-
-    @pytest.fixture(scope="class")
-    def conn(self):
-        with psycopg.connect(DSN) as c:
-            c.autocommit = True
-            migration_sql = MIGRATION_PATH.read_text()
-            c.execute(migration_sql)
-            c.autocommit = False
-            yield c
-            c.rollback()
 
     @pytest.fixture(autouse=True)
     def _savepoint(self, conn):

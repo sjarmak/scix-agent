@@ -37,6 +37,7 @@ DEFAULT_POINT_TOLERANCE = 500
 NOTIFY_LABEL = "retrieval-health"
 NOTIFY_TITLE = "three-lane retrieval health breach"
 NOTIFY_SUBJECT = "The three-lane retrieval health prober"
+REPRODUCE_COMMAND = ".venv/bin/python scripts/check_retrieval_health.py --allow-prod"
 
 EXPECTED_POINTS_SQL = "SELECT count(*) FROM indus_qdrant_synced"
 LANE_TIMINGS = (
@@ -193,24 +194,27 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     if not os.environ.get("QDRANT_URL"):
-        logger.error("QDRANT_URL is unset; the production dense lane cannot be probed")
-        return 2
-
-    try:
-        vector = _embed_query(args.query)
-        with get_connection(args.dsn) as conn:
-            expected_points = query_expected_points(conn)
-            results = probe_retrieval(
-                conn,
-                vector,
-                dense_client(timeout=10.0),
-                query=args.query,
-                expected_points=expected_points,
-                point_tolerance=args.point_tolerance,
-            )
-    except Exception as exc:  # noqa: BLE001 - CLI trust boundary
-        logger.exception("retrieval probe failed before producing complete results: %s", exc)
-        return 1
+        detail = "QDRANT_URL is unset; the production dense lane cannot be probed"
+        logger.error(detail)
+        if not args.notify:
+            return 2
+        results = [ProbeResult("probe_execution", False, detail)]
+    else:
+        try:
+            vector = _embed_query(args.query)
+            with get_connection(args.dsn) as conn:
+                expected_points = query_expected_points(conn)
+                results = probe_retrieval(
+                    conn,
+                    vector,
+                    dense_client(timeout=10.0),
+                    query=args.query,
+                    expected_points=expected_points,
+                    point_tolerance=args.point_tolerance,
+                )
+        except Exception as exc:  # noqa: BLE001 - CLI trust boundary
+            logger.exception("retrieval probe failed before producing complete results: %s", exc)
+            results = [ProbeResult("probe_execution", False, f"{type(exc).__name__}: {exc}")]
 
     print(render(results))
     if args.notify:
@@ -224,9 +228,10 @@ def main(argv: list[str] | None = None) -> int:
                 label=NOTIFY_LABEL,
                 title=NOTIFY_TITLE,
                 subject=NOTIFY_SUBJECT,
+                reproduce_command=REPRODUCE_COMMAND,
             )
         except (pipeline_health.NotifyError, OSError, subprocess.SubprocessError) as exc:
-            logger.error("notification failed: %s", exc)
+            pipeline_health.report_notification_failure(exc)
             return 3
         logger.info("notification: %s", action)
 

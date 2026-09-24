@@ -238,6 +238,7 @@ def test_main_reuses_distinct_notification_channel(monkeypatch: pytest.MonkeyPat
     assert crh.main(["--dsn", "dbname=scix_test", "--notify"]) == 1
     assert notify.call_args.kwargs["label"] == "retrieval-health"
     assert notify.call_args.kwargs["title"] == crh.NOTIFY_TITLE
+    assert "check_retrieval_health.py" in notify.call_args.kwargs["reproduce_command"]
 
 
 def test_main_returns_three_when_notification_channel_fails(
@@ -250,13 +251,35 @@ def test_main_returns_three_when_notification_channel_fails(
         "notify",
         Mock(side_effect=crh.pipeline_health.NotifyError("unreachable")),
     )
+    report_failure = Mock()
+    monkeypatch.setattr(crh.pipeline_health, "report_notification_failure", report_failure)
     assert crh.main(["--dsn", "dbname=scix_test", "--notify"]) == 3
+    report_failure.assert_called_once()
 
 
-def test_main_fails_loudly_on_probe_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_notifies_on_probe_exception(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("QDRANT_URL", "http://qdrant.test:6333")
     monkeypatch.setattr(crh, "_embed_query", Mock(side_effect=RuntimeError("model missing")))
-    assert crh.main(["--dsn", "dbname=scix_test"]) == 1
+    notify = Mock(return_value="created")
+    monkeypatch.setattr(crh.pipeline_health, "notify", notify)
+
+    assert crh.main(["--dsn", "dbname=scix_test", "--notify"]) == 1
+
+    alert_results = notify.call_args.args[0]
+    assert [(result.name, result.ok) for result in alert_results] == [("probe_execution", False)]
+    assert "model missing" in alert_results[0].detail
+
+
+def test_main_notifies_when_qdrant_is_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("QDRANT_URL", raising=False)
+    notify = Mock(return_value="created")
+    monkeypatch.setattr(crh.pipeline_health, "notify", notify)
+
+    assert crh.main(["--dsn", "dbname=scix_test", "--notify"]) == 1
+
+    alert_results = notify.call_args.args[0]
+    assert [(result.name, result.ok) for result in alert_results] == [("probe_execution", False)]
+    assert "QDRANT_URL is unset" in alert_results[0].detail
 
 
 def test_embed_query_uses_indus_mean_pooling(monkeypatch: pytest.MonkeyPatch) -> None:

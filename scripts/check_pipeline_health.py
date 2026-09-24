@@ -311,6 +311,7 @@ NOTIFY_TITLE = "daily_sync pipeline health breach"
 NOTIFY_PRIORITY = "1"
 NOTIFY_TYPE = "bug"
 NOTIFY_TIMEOUT_S = 30
+DEFAULT_REPRODUCE_COMMAND = ".venv/bin/python scripts/check_pipeline_health.py --allow-prod"
 
 
 class NotifyError(RuntimeError):
@@ -369,6 +370,7 @@ def breach_body(
     now: _dt.datetime,
     first_seen: str | None,
     subject: str = "The daily ADS pipeline health gate",
+    reproduce_command: str = DEFAULT_REPRODUCE_COMMAND,
 ) -> str:
     """Render the bead description. Pure — the current state, not an append log.
 
@@ -399,7 +401,7 @@ def breach_body(
         "",
         "Reproduce with:",
         "",
-        "    .venv/bin/python scripts/check_pipeline_health.py --allow-prod",
+        f"    {reproduce_command}",
         "",
         "This bead is maintained by that gate: it is updated while the breach",
         "persists and closed automatically on the first healthy run. Closing it",
@@ -416,6 +418,7 @@ def notify(
     label: str = NOTIFY_LABEL,
     title: str = NOTIFY_TITLE,
     subject: str = "The daily ADS pipeline health gate",
+    reproduce_command: str = DEFAULT_REPRODUCE_COMMAND,
 ) -> str:
     """Sync the pipeline-health bead to ``results``. Returns the action taken."""
     existing = find_open_notification(runner, label=label)
@@ -430,9 +433,9 @@ def notify(
                 "close",
                 existing["id"],
                 "--reason",
-                f"Pipeline healthy again as of {now.isoformat()}: "
+                f"Health checks recovered as of {now.isoformat()}: "
                 f"all {len(results)} checks pass. Closed automatically by "
-                "scripts/check_pipeline_health.py --notify.",
+                f"{reproduce_command} --notify.",
             ],
         )
         return "closed"
@@ -443,6 +446,7 @@ def notify(
             now=now,
             first_seen=now.isoformat(),
             subject=subject,
+            reproduce_command=reproduce_command,
         )
         _checked(
             runner,
@@ -466,6 +470,7 @@ def notify(
         now=now,
         first_seen=existing.get("created_at"),
         subject=subject,
+        reproduce_command=reproduce_command,
     )
     _checked(runner, ["update", existing["id"], "-d", body])
     return "updated"

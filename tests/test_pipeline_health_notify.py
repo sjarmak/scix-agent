@@ -93,6 +93,9 @@ class TestBreachOpensExactlyOneBead:
                 label="retrieval-health",
                 title="three-lane retrieval health breach",
                 subject="The three-lane retrieval health prober",
+                reproduce_command=(
+                    ".venv/bin/python scripts/check_retrieval_health.py --allow-prod"
+                ),
             )
             == "created"
         )
@@ -102,6 +105,7 @@ class TestBreachOpensExactlyOneBead:
         assert create[1] == "three-lane retrieval health breach"
         assert create[create.index("-l") + 1] == "retrieval-health"
         assert "The three-lane retrieval health prober" in create[create.index("-d") + 1]
+        assert "scripts/check_retrieval_health.py" in create[create.index("-d") + 1]
 
     def test_updates_instead_of_creating_when_one_is_already_open(self) -> None:
         bd = FakeBd([_issue()])

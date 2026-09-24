@@ -199,6 +199,17 @@ class TestChannelFailureIsNotSilent:
 
         assert cph.notify(BREACH, now=NOW, runner=Empty([])) == "created"
 
+    def test_failure_is_sent_to_syslog_at_critical_priority(self, monkeypatch) -> None:
+        emitted: list[tuple[int, str]] = []
+        monkeypatch.setattr(
+            cph.syslog, "syslog", lambda priority, message: emitted.append((priority, message))
+        )
+
+        error = cph.NotifyError("bd list failed: Dolt server unreachable at 127.0.0.1:0")
+        cph.report_notification_failure(error)
+
+        assert emitted == [(cph.syslog.LOG_CRIT, f"pipeline health notification failed: {error}")]
+
 
 class TestCLIWiring:
     def test_notify_flag_is_documented(self) -> None:
@@ -210,6 +221,9 @@ class TestCLIWiring:
         )
         assert result.returncode == 0
         assert "--notify" in result.stdout
+
+    def test_cron_example_supplies_the_dolt_server_port(self) -> None:
+        assert "BEADS_DOLT_SERVER_PORT=" in (cph.__doc__ or "")
 
     def test_notify_is_off_by_default(self) -> None:
         """The in-pipeline invocation must not file beads; only the cron one does."""

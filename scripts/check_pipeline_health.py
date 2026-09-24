@@ -26,6 +26,8 @@ check never runs — and "never ran" is indistinguishable from "passed". The
 out-of-band invocation plus ``--notify`` is what closes that:
 
     45 7 * * * cd /home/ds/projects/scix_experiments && \
+        PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin \
+        BEADS_DOLT_SERVER_PORT=29620 \
         .venv/bin/python scripts/check_pipeline_health.py --allow-prod --notify
 
 Usage:
@@ -57,6 +59,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import syslog
 from dataclasses import dataclass
 
 import psycopg
@@ -312,6 +315,16 @@ NOTIFY_TIMEOUT_S = 30
 
 class NotifyError(RuntimeError):
     """The notification channel itself failed."""
+
+
+def report_notification_failure(exc: Exception) -> None:
+    """Put an alert-channel failure in both the cron log and system journal."""
+    message = f"pipeline health notification failed: {exc}"
+    logger.error(message)
+    try:
+        syslog.syslog(syslog.LOG_CRIT, message)
+    except OSError as syslog_exc:
+        logger.error("could not emit critical syslog event: %s", syslog_exc)
 
 
 def _run_bd(argv: list[str]) -> subprocess.CompletedProcess[str]:
@@ -573,7 +586,7 @@ def main(argv: list[str] | None = None) -> int:
             # The alerting channel is down. Say so loudly and distinctly: a
             # breach nobody can be told about is the failure mode this gate
             # exists to remove, so it must not hide behind the health result.
-            logger.error("notification failed: %s", exc)
+            report_notification_failure(exc)
             return 3
         logger.info("notification: %s", action)
 

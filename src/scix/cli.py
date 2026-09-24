@@ -11,7 +11,8 @@ tools (``lit_review``, ``synthesize_findings``) and the session/working-set tool
 stay agent-only — a CLI would just re-spawn an LLM behind a worse interface.
 
 Run:  ``python -m scix.cli <tool> [--arg ...]``  (or the ``scix`` entry point).
-Output is the exact JSON the MCP tool returns; ``--pretty`` indents it.
+Output is the exact JSON the MCP tool returns; ``--pretty`` indents it. MCP
+error envelopes and non-JSON handler output produce exit status 1.
 """
 
 from __future__ import annotations
@@ -184,13 +185,18 @@ def run(
     with conn_factory() as conn:
         result = handler(conn, args)
 
-    if ns.pretty:
-        try:
-            result = json.dumps(json.loads(result), indent=2, ensure_ascii=False)
-        except json.JSONDecodeError:
-            pass  # handler returned non-JSON; print as-is
+    try:
+        payload = json.loads(result)
+    except json.JSONDecodeError:
+        exit_code = 1
+    else:
+        is_error = isinstance(payload, dict) and "error" in payload and "error_code" in payload
+        exit_code = 1 if is_error else 0
+        if ns.pretty:
+            result = json.dumps(payload, indent=2, ensure_ascii=False)
+
     print(result)
-    return 0
+    return exit_code
 
 
 def main(argv: list[str] | None = None) -> int:

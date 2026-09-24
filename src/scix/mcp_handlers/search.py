@@ -246,13 +246,20 @@ def _handle_search(conn: psycopg.Connection, args: dict[str, Any]) -> str:
                     "hint": "pip install transformers torch",
                 }
             )
-        result = search.vector_search(
-            conn,
-            query_embedding,
-            model_name=model_name,
-            filters=filters,
-            limit=limit,
-        )
+        try:
+            result = search.vector_search(
+                conn,
+                query_embedding,
+                model_name=model_name,
+                filters=filters,
+                limit=limit,
+            )
+        except search.QdrantSearchError as exc:
+            logger.exception("semantic search: Qdrant query failed")
+            return json.dumps(
+                {"error": f"qdrant_failed: {exc}", "error_code": ErrorCode.QDRANT_FAILED},
+                indent=2,
+            )
         return _result_to_json(result)
 
     # mode == "hybrid" (default)

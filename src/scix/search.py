@@ -52,6 +52,10 @@ _QDRANT_DENSE_COLLECTIONS = {"indus": "scix_indus_v2_papers_s1"}
 _qdrant_dense_client: Any = None
 
 
+class QdrantSearchError(RuntimeError):
+    """Separates ANN transport failures from later Postgres hydration errors."""
+
+
 def _qdrant_dense_url() -> str | None:
     return os.environ.get("QDRANT_URL") or None
 
@@ -555,14 +559,17 @@ def _vector_search_qdrant(
         search_params = qm.SearchParams(exact=True)
     else:
         search_params = qm.SearchParams(hnsw_ef=max(int(ef_search), limit))
-    client = _get_qdrant_dense_client()
-    points = client.query_points(
-        _QDRANT_DENSE_COLLECTIONS[model_name],
-        query=query_embedding,
-        limit=fetch_n,
-        search_params=search_params,
-        timeout=120,
-    ).points
+    try:
+        client = _get_qdrant_dense_client()
+        points = client.query_points(
+            _QDRANT_DENSE_COLLECTIONS[model_name],
+            query=query_embedding,
+            limit=fetch_n,
+            search_params=search_params,
+            timeout=120,
+        ).points
+    except Exception as exc:  # noqa: BLE001 — Qdrant client boundary
+        raise QdrantSearchError(str(exc)) from exc
     # Cosine similarity, same semantics as the pgvector path's
     # ``1 - (vec <=> query)``. Points missing a ``bibcode`` payload (possible
     # during the payload-backfill window, bead 8m0a) are skipped rather than

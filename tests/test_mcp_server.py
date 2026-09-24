@@ -208,6 +208,28 @@ class TestSearchTool:
     @patch("scix.mcp_server._hnsw_index_exists", return_value=True)
     @patch("scix.mcp_server.embed_batch", return_value=[[0.0] * 768])
     @patch("scix.mcp_server.load_model", return_value=(MagicMock(), MagicMock()))
+    @patch("scix.search.vector_search")
+    def test_semantic_mode_returns_envelope_when_qdrant_fails(
+        self,
+        mock_vs: MagicMock,
+        _mock_load: MagicMock,
+        _mock_embed: MagicMock,
+        _mock_guard: MagicMock,
+    ) -> None:
+        from scix.search import QdrantSearchError
+
+        mock_vs.side_effect = QdrantSearchError("connection refused")
+
+        result = json.loads(
+            _dispatch_tool(MagicMock(), "search", {"query": "test", "mode": "semantic"})
+        )
+
+        assert result["error_code"] == "qdrant_failed"
+        assert result["error"] == "qdrant_failed: connection refused"
+
+    @patch("scix.mcp_server._hnsw_index_exists", return_value=True)
+    @patch("scix.mcp_server.embed_batch", return_value=[[0.0] * 768])
+    @patch("scix.mcp_server.load_model", return_value=(MagicMock(), MagicMock()))
     @patch("scix.search.hybrid_search")
     def test_hybrid_mode(self, mock_hs, mock_load, mock_embed, mock_guard) -> None:
         from scix.search import SearchResult

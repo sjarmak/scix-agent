@@ -1527,6 +1527,23 @@ class TestVectorSearchQdrantLane:
         assert "paper_embeddings" not in sql
         assert "ANY" in sql
 
+    def test_query_failure_is_wrapped(self) -> None:
+        from unittest.mock import patch
+
+        from scix.search import QdrantSearchError, _vector_search_qdrant
+
+        client = self._fake_client([])
+        client.query_points.side_effect = ConnectionError("connection refused")
+        conn, _cursor = self._fake_conn([])
+
+        with (
+            patch("scix.search._get_qdrant_dense_client", return_value=client),
+            pytest.raises(QdrantSearchError, match="connection refused"),
+        ):
+            _vector_search_qdrant(
+                conn, [0.1] * 768, model_name="indus", filters=None, limit=3, ef_search=100
+            )
+
     def test_filters_trigger_capped_overfetch(self) -> None:
         from unittest.mock import patch
 

@@ -60,6 +60,13 @@ def _registry():
     return {"get_paper": handler, "search": handler}, calls
 
 
+def _registry_returning(result: str):
+    def handler(conn, args):
+        return result
+
+    return {"get_paper": handler, "search": handler}
+
+
 @contextmanager
 def _conn_factory():
     yield "FAKECONN"
@@ -151,3 +158,36 @@ def test_explicit_flag_overrides_positional_absence(capsys):
     registry, calls = _registry()
     _run(["get_paper", "--bibcode", "2010X"], registry)
     assert calls[0][1] == {"bibcode": "2010X"}
+
+
+def test_success_preserves_handler_json_and_returns_zero(capsys):
+    result = '{"papers":[], "metadata":{"total":0}}'
+
+    rc = _run(["search", "--query", "halos"], _registry_returning(result))
+
+    assert rc == 0
+    assert capsys.readouterr().out == f"{result}\n"
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        '{"error":"query is required","error_code":"missing_required_params"}',
+        '{"error":"database unavailable","error_code":"internal_error"}',
+    ],
+    ids=["validation-error", "backend-failure"],
+)
+def test_error_envelope_preserves_json_and_returns_nonzero(result, capsys):
+    rc = _run(["search", "--query", "halos"], _registry_returning(result))
+
+    assert rc == 1
+    assert capsys.readouterr().out == f"{result}\n"
+
+
+def test_non_json_handler_output_is_printed_and_returns_nonzero(capsys):
+    result = "database connection failed"
+
+    rc = _run(["search", "--query", "halos"], _registry_returning(result))
+
+    assert rc == 1
+    assert capsys.readouterr().out == f"{result}\n"

@@ -317,3 +317,8 @@ def test_cli_help_e2e() -> None:
     )
     assert completed.returncode == 0
     assert "three retrieval lanes" in completed.stdout
+
+
+def test_cron_example_supplies_the_dolt_server_port() -> None:
+    cron_example = (SCRIPTS_DIR / "cron" / "retrieval_health.cron.example").read_text()
+    assert "BEADS_DOLT_SERVER_PORT=" in cron_example

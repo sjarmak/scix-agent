@@ -1,3 +1,3 @@
-# Install only after the branch lands, with SCIX_PROJECT_ROOT set in the crontab.
+# Install only after the branch lands.
 # The probe exits after one query and holds no resources between runs.
-20 * * * * cd "$SCIX_PROJECT_ROOT" && set -a && . ./.env && set +a && SCIX_BATCH=${SCIX_BATCH:-scix-batch} && "$SCIX_BATCH" .venv/bin/python scripts/check_retrieval_health.py --allow-prod --notify >> logs/retrieval_health.log 2>&1
+20 * * * * cd "$HOME/projects/scix_experiments" && set -a && . ./.env && set +a && SCIX_BATCH=${SCIX_BATCH:-scix-batch} && PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin BEADS_DOLT_SERVER_PORT=29620 "$SCIX_BATCH" .venv/bin/python scripts/check_retrieval_health.py --allow-prod --notify >> logs/retrieval_health.log 2>&1

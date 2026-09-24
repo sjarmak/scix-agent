@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from scix import mcp_server
 from scix.mcp_server import (
     _extract_query_text,
     _extract_result_count,
@@ -252,6 +253,60 @@ class TestCallToolLogging:
         assert mock_log.call_count == 1
         assert mock_log.call_args.args[4] is False  # success
         assert "boom" in mock_log.call_args.args[5]  # error_msg
+
+    @pytest.mark.parametrize(
+        ("payload", "expected_error"),
+        [
+            (
+                {
+                    "error": "query must be a non-empty string",
+                    "error_code": "missing_required_params",
+                },
+                "missing_required_params",
+            ),
+            (
+                {
+                    "error": "Qdrant collection is unavailable",
+                    "error_code": "vector_index_unavailable",
+                },
+                "vector_index_unavailable",
+            ),
+            (
+                {
+                    "error": "Unscoped broad query rejected.",
+                    "error_code": "unscoped_broad_query",
+                    "unscoped_broad_blocked": True,
+                },
+                "unscoped_broad_query",
+            ),
+        ],
+    )
+    @patch("scix.mcp_server._emit_trace_event")
+    @patch("scix.mcp_server._log_query")
+    @patch("scix.mcp_server._dispatch_tool")
+    @patch("scix.mcp_server._get_conn")
+    def test_structured_error_envelopes_are_operation_failures(
+        self,
+        mock_get_conn: MagicMock,
+        mock_dispatch: MagicMock,
+        mock_log: MagicMock,
+        mock_emit_trace: MagicMock,
+        payload: dict[str, Any],
+        expected_error: str,
+    ) -> None:
+        """A normal dispatch can still report an operation-level failure."""
+        mock_conn = MagicMock()
+        mock_get_conn.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_get_conn.return_value.__exit__ = MagicMock(return_value=False)
+        result_json = json.dumps(payload)
+        mock_dispatch.return_value = result_json
+
+        assert mcp_server.call_tool("search", {"query": "test"}) == result_json
+
+        assert mock_log.call_args.args[4] is False
+        assert mock_log.call_args.args[5] == expected_error
+        assert mock_log.call_args.kwargs["result_json"] == result_json
+        assert mock_emit_trace.call_args.args[4] is False
 
 
 # ---------------------------------------------------------------------------

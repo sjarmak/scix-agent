@@ -34,7 +34,7 @@ Standing collaboration rules: `~/.claude/rules/common/agent-collaboration.md`. *
 
 **Telemetry**
 
-- Don't analyse `query_log` with `WHERE success=FALSE AND error_msg IS NOT NULL` → silently drops blocked-by-guard requests. Structured-error responses log `success=TRUE` because `_dispatch_tool` returns the error JSON without raising. Use `WHERE success=FALSE OR error_msg IS NOT NULL`.
+- Don't analyse `query_log` with `WHERE success=FALSE AND error_msg IS NOT NULL` → historical rows logged structured errors with `success=TRUE`. New rows log them with `success=FALSE` and `error_msg=<error_code>`; use `WHERE success=FALSE OR error_msg IS NOT NULL` across both eras.
 
 **Remote target (scixmuse)**
 

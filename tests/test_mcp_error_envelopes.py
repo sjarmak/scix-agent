@@ -86,8 +86,7 @@ def test_unscoped_broad_query_envelope_has_stable_error_code() -> None:
     out = _unscoped_broad_response("astrophysics dark matter survey results 2025")
     data = json.loads(out)
     _assert_envelope(data, "unscoped_broad_query")
-    # Telemetry contract preserved — _detect_unscoped_broad_block keys on
-    # this flag, not on the error / error_code field.
+    # Preserve the response marker for clients that distinguish guard blocks.
     assert data["unscoped_broad_blocked"] is True
     # error must now be a human-readable message, not the bare tag.
     assert data["error"] != "unscoped_broad_query", (

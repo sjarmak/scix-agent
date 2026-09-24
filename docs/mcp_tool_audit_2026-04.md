@@ -363,8 +363,8 @@ to a forward-looking agent: near zero). Keeping the alias map in
 
 ## Telemetry conventions for `query_log`
 
-**Bead:** `scix_experiments-3qun`. Pinned by
-`tests/test_mcp_search_unscoped_guard.py::test_telemetry_convention_*`.
+**Bead:** `scix_experiments-3qun`; operation-level envelope classification
+updated by `scix_experiments-a6ww` and pinned in `tests/test_query_logging.py`.
 
 `call_tool` in `src/scix/mcp_server.py` writes one row to `query_log` per
 tool invocation. The `success` and `error_msg` columns follow this
@@ -373,15 +373,15 @@ convention:
 | Outcome | `success` | `error_msg` | Examples |
 |---|---|---|---|
 | Tool raised an exception | `FALSE` | `str(exc)` | DB error, internal bug, timeout escalated to exception |
-| Structured error + lifted stable tag | `TRUE` | stable tag string | `unscoped_broad_query` (lifted from `unscoped_broad_blocked: true` marker by `_log_query`) |
-| Structured error WITHOUT a lifted tag | `TRUE` | `NULL` | `missing_required_params` (citation_traverse), entity legacy-type rejection (`negative_result` / `quant_claim`), `Invalid mode` / `Invalid action` / `Invalid direction` / `Invalid method`, `query must be a non-empty string`, `Unknown tool`, `entity_id is required`, etc. |
+| Tool returned a root-level structured error envelope | `FALSE` | `<error_code>` | validation failures, unavailable backends, guard blocks, unknown tools |
+| Tool returned a result without a root-level `error_code` | `TRUE` | `NULL` | successful searches and lookups |
 
-The middle case — `success=TRUE` even though the tool returned an error
-payload — is intentional: `_dispatch_tool` returns the error JSON without
-raising, so `call_tool`'s exception handler doesn't fire. `_log_query`
-performs a post-hoc lift of stable telemetry markers (currently only
-`unscoped_broad_blocked`) into `error_msg` so operators can track block
-rate via a single column without scanning result payloads.
+`success` records the MCP operation outcome, not whether dispatch returned a
+JSON string without raising. `call_tool` classifies every root-level
+`error_code` envelope before logging and trace emission. The JSON response is
+still returned normally to the MCP transport; no transport-level exception is
+introduced. The human-readable error remains available in the response JSON;
+`error_msg` stays a stable, exact-matchable tag for grouping and dashboards.
 
 ### Recommended dashboard query
 
@@ -390,31 +390,16 @@ SELECT * FROM query_log
 WHERE success = FALSE OR error_msg IS NOT NULL;
 ```
 
-This catches exceptions (case 1) plus lifted structured errors (case 2).
-The intuitive query `WHERE success = FALSE AND error_msg IS NOT NULL`
-silently drops every blocked-by-guard request and is the trap that
-motivated bead `scix_experiments-3qun`.
+This catches exceptions and current structured-error rows.
+The `OR error_msg IS NOT NULL` arm also includes historical guard rows written
+before all structured envelopes were classified as failures. For a specific
+stable error class, match the code exactly:
 
-### Known blind spot
-
-Case 3 (unlifted structured errors) is not surfaced by the recommended
-query. Operators who need full coverage of blocked requests today must
-inspect `params_json` or pre-filter on `tool_name` and inspect the
-result payload offline. The forward-looking fix is to extend the lift
-list in `_log_query` with additional stable tags (e.g. an
-`error_code`-based detector) so each new structured-error class lands
-with both a payload marker AND a `query_log` tag in the same change.
-
-### Stable lifted tags (current)
-
-| Tag | Source detector | Originating bead |
-|---|---|---|
-| `unscoped_broad_query` | `_detect_unscoped_broad_block` (matches `unscoped_broad_blocked: true` in result JSON) | `scix_experiments-uerc` |
-
-Add new entries here when a future bead extends `_log_query`'s lift
-list. The pinned-convention tests in `test_mcp_search_unscoped_guard.py`
-must be updated in the same change so any flip in semantics breaks
-visibly.
+```sql
+SELECT count(*) FROM query_log
+WHERE success = FALSE
+  AND error_msg = 'missing_required_params';
+```
 
 ## Structured-error envelope convention (bead `scix_experiments-x5jg`)
 
@@ -443,7 +428,7 @@ mode.
 | `error_code` | Returned by | Triggered when |
 |---|---|---|
 | `missing_required_params` | `citation_traverse` | mode-specific required params missing (e.g., `mode=chain` without `source_bibcode`/`target_bibcode`) |
-| `unscoped_broad_query` | `search` | unscoped broad query blocked by the upfront guard (also flagged via `unscoped_broad_blocked: true` for telemetry lift) |
+| `unscoped_broad_query` | `search` | unscoped broad query blocked by the upfront guard (response also carries `unscoped_broad_blocked: true` for clients) |
 | `entity_legacy_extraction_type` | `entity` | caller passes `entity_type='negative_result'` or `'quant_claim'` — these moved to `claim_search` under bead mh14/c996 |
 | `invalid_action` | `entity`, `claim_search` | `action` value is not in the enum |
 | `invalid_mode` | `citation_traverse` | `mode` value is not `'graph'` / `'chain'` |

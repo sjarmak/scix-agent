@@ -162,28 +162,20 @@ def _extract_result_count(result_json: str) -> int:
     return 0
 
 
-def _detect_unscoped_broad_block(result_json: str | None) -> bool:
-    """Return True when ``result_json`` carries the unscoped-broad-block marker.
-
-    The ``search`` tool's unscoped-broad-query guard emits a structured
-    response with ``{"unscoped_broad_blocked": true, "error_code":
-    "unscoped_broad_query", "error": "<human-readable message>", ...}``.
-    ``_log_query`` lifts this marker into ``query_log.error_msg`` so
-    operators can track block rate via a single SELECT — see bead
-    ``scix_experiments-uerc`` (telemetry contract) and
-    ``scix_experiments-x5jg`` (error_code envelope convention).
-
-    Detection keys on the ``unscoped_broad_blocked`` flag, NOT on the
-    ``error`` or ``error_code`` field, so the lift mechanism is stable
-    even if the human/machine error fields change.
-    """
+def _structured_error_code(result_json: str | None) -> str | None:
+    """Return the stable code from a root-level structured error envelope."""
     if not result_json:
-        return False
+        return None
     try:
         data = json.loads(result_json)
     except (json.JSONDecodeError, TypeError):
-        return False
-    return isinstance(data, dict) and data.get("unscoped_broad_blocked") is True
+        return None
+    if not isinstance(data, dict):
+        return None
+    error_code = data.get("error_code")
+    if not isinstance(error_code, str) or not error_code.strip():
+        return None
+    return error_code
 
 
 # Single source of truth for the query_log INSERT column order.
@@ -278,18 +270,11 @@ def _log_query(
     """Write a row to query_log with both legacy and migration-031 columns.
 
     Best-effort: failures are logged, not raised.
-
-    Lifts the ``unscoped_broad_blocked`` marker from ``result_json`` into
-    ``error_msg`` (when no real error_msg is set) so operators can track
-    the unscoped-broad-query block rate without a JSONB scan over result
-    payloads — see bead ``scix_experiments-uerc``.
     """
     try:
         params_json = json.dumps(_cap_params_lists(params), default=str)
         query_text = _extract_query_text(params)
         result_count = _extract_result_count(result_json) if result_json else 0
-        if error_msg is None and _detect_unscoped_broad_block(result_json):
-            error_msg = _UNSCOPED_BROAD_TAG
         # If the tool dispatch left the connection in INERROR (a swallowed
         # statement_timeout, or a propagated QueryCanceled that exited the
         # try block before commit), the INSERT below would itself raise
@@ -491,9 +476,9 @@ def _coerce_year(raw: Any, name: str) -> int | None:
 _UNSCOPED_BROAD_MIN_TOKENS: int = 3
 _UNSCOPED_BROAD_MIN_CHARS: int = 30
 
-# Stable telemetry tag — surfaced in result_json AND lifted into query_log.error_msg
-# by _log_query so operators can track unscoped-broad block rate with a single
-# SELECT count(*) FROM query_log WHERE error_msg = 'unscoped_broad_query'.
+# Stable telemetry tag — surfaced in result_json.error_code and recorded at the
+# MCP call boundary, so operators can track unscoped-broad block rate with a
+# single exact-match query against query_log.error_msg.
 # Sourced from the closed error-code catalog so the telemetry tag and the
 # response ``error_code`` cannot drift (bead scix_experiments-ir2h).
 _UNSCOPED_BROAD_TAG: str = ErrorCode.UNSCOPED_BROAD_QUERY
@@ -566,13 +551,8 @@ def _is_unscoped_broad_query(
 def _unscoped_broad_response(query: str) -> str:
     """Build the structured unscoped-broad-query error payload.
 
-    The response carries the stable ``unscoped_broad_blocked: true`` flag so
-    ``_log_query`` can lift it into ``query_log.error_msg`` for telemetry.
-
     Per bead ``scix_experiments-x5jg`` the stable machine identifier lives
-    in ``error_code``; ``error`` is a human-readable message. Telemetry
-    detection (``_detect_unscoped_broad_block``) keys on the
-    ``unscoped_broad_blocked`` flag, not on either ``error`` field.
+    in ``error_code``; ``error`` is a human-readable message.
     """
     payload = {
         "error": (

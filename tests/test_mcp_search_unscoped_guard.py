@@ -502,11 +502,8 @@ def _expect_logged_named(captured: dict[str, Any]) -> dict[str, Any]:
     return captured["named"]
 
 
-def test_log_query_surfaces_unscoped_broad_tag() -> None:
-    """When result_json carries unscoped_broad_blocked=true, _log_query
-    sets error_msg='unscoped_broad_query' so operators can SELECT count(*)
-    FROM query_log WHERE error_msg='unscoped_broad_query' to track rate.
-    """
+def test_log_query_does_not_infer_error_from_result_json() -> None:
+    """The MCP call boundary, not _log_query, classifies result envelopes."""
     captured: dict[str, Any] = {}
 
     payload = json.dumps(
@@ -530,7 +527,7 @@ def test_log_query_surfaces_unscoped_broad_tag() -> None:
     )
 
     named = _expect_logged_named(captured)
-    assert named["error_msg"] == "unscoped_broad_query"
+    assert named["error_msg"] is None
     # Result count is 0 because the response carried an "error" key.
     assert named["result_count"] == 0
 
@@ -553,106 +550,3 @@ def test_log_query_does_not_surface_tag_for_normal_results() -> None:
 
     # error_msg stays None when no unscoped marker is present.
     assert _expect_logged_named(captured)["error_msg"] is None
-
-
-# ---------------------------------------------------------------------------
-# Telemetry convention pinning — bead scix_experiments-3qun
-#
-# These tests pin the documented query_log convention for structured-error
-# responses so that any future change to _log_query / call_tool semantics
-# breaks visibly (signaling a breaking change for operator dashboards).
-#
-# Convention (see docs/mcp_tool_audit_2026-04.md "Telemetry conventions for
-# query_log"):
-#   1. Exceptions raised in _dispatch_tool       -> success=False, error_msg=str(exc)
-#   2. Structured errors WITH a lifted tag       -> success=True,  error_msg=<stable tag>
-#                                                  (currently only "unscoped_broad_query")
-#   3. Structured errors WITHOUT a lifted tag    -> success=True,  error_msg=NULL
-#                                                  (e.g. missing_required_params,
-#                                                   entity legacy-type rejection,
-#                                                   invalid mode/action/method)
-#
-# Recommended operator dashboard query for blocked + failed requests:
-#   SELECT * FROM query_log WHERE success = FALSE OR error_msg IS NOT NULL;
-# This catches cases (1) + (2). Case (3) remains hidden until a follow-up
-# bead extends the _log_query lift list with additional stable tags.
-# ---------------------------------------------------------------------------
-
-
-def test_telemetry_convention_lifted_structured_error_logs_success_true_and_tag() -> None:
-    """Convention (case 2): lifted structured-error responses log success=True
-    AND error_msg=<stable tag>. Pins the unscoped_broad_query case as the
-    reference example. If this assertion ever flips to success=False, that's
-    a breaking change for any dashboard built against the documented contract
-    in docs/mcp_tool_audit_2026-04.md.
-    """
-    captured: dict[str, Any] = {}
-
-    payload = json.dumps(
-        {
-            "error": "Unscoped broad query rejected.",
-            "error_code": "unscoped_broad_query",
-            "hint": "...",
-            "query": "x",
-            "unscoped_broad_blocked": True,
-        }
-    )
-
-    mcp_server._log_query(
-        _CaptureConn(captured),
-        "search",
-        {"query": "x"},
-        12.3,
-        True,  # call_tool sets success=True because no exception fired
-        None,  # _log_query lifts the tag from result_json
-        result_json=payload,
-    )
-
-    # Pinned convention: structured-error + lifted tag => (True, <tag>).
-    named = _expect_logged_named(captured)
-    assert named["success"] is True
-    assert named["error_msg"] == "unscoped_broad_query"
-
-
-def test_telemetry_convention_unlifted_structured_error_logs_success_true_and_null() -> None:
-    """Convention (case 3): structured-error responses WITHOUT a lifted tag
-    log success=True AND error_msg=NULL. Covers missing_required_params,
-    entity legacy-type rejection, invalid-mode errors, etc.
-
-    Documents a known dashboard blind spot: these blocked requests are NOT
-    surfaced by `WHERE success=False OR error_msg IS NOT NULL`. The fix is
-    a follow-up bead that extends _log_query's lift list with additional
-    stable tags — NOT a silent semantics flip in _log_query.
-    """
-    captured: dict[str, Any] = {}
-
-    # missing_required_params is one of the unlifted structured errors.
-    payload = json.dumps(
-        {
-            "error": "bibcode is required when mode='graph'",
-            "error_code": "missing_required_params",
-            "mode": "graph",
-            "required": ["bibcode"],
-            "got": [],
-        }
-    )
-
-    mcp_server._log_query(
-        _CaptureConn(captured),
-        "citation_traverse",
-        {"mode": "graph"},
-        4.5,
-        True,  # call_tool sets success=True because no exception fired
-        None,
-        # No result_json kwarg: simulates the lift-skipped case for an unlifted
-        # structured-error payload. Even if result_json were passed, the
-        # current lift list (only unscoped_broad_blocked) would not match.
-        result_json=payload,
-    )
-
-    # Pinned convention: structured-error WITHOUT lifted tag => (True, None).
-    # If a future change adds an error_code-based lift, this test breaks
-    # and the convention doc + operator dashboards must be updated together.
-    named = _expect_logged_named(captured)
-    assert named["success"] is True
-    assert named["error_msg"] is None

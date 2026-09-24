@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
@@ -78,6 +79,12 @@ def test_build_only_synthetic_produces_json() -> None:
     place — a subsequent ``make viz-demo`` or repeat test run will reuse
     or overwrite them idempotently.
     """
+    if find_spec("cuml") is None:
+        pytest.importorskip(
+            "umap",
+            reason="viz demo requires either the optional cuml or umap-learn backend",
+        )
+
     for p in (SANKEY_JSON, UMAP_JSON):
         if p.exists():
             p.unlink()

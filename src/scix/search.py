@@ -2545,6 +2545,7 @@ def lit_review(
     expansion_seeds: int = 5,
     sample_abstracts: int = 5,
     discipline: str | None = None,
+    doctype: str | None = None,
     session_state: Any = None,
 ) -> SearchResult:
     """One-call composite for opening a literature-review session.
@@ -2596,7 +2597,7 @@ def lit_review(
     sample_abstracts = max(0, min(sample_abstracts, top_seeds))
 
     # ---- Step 1: seed retrieval --------------------------------------------
-    filters = SearchFilters(year_min=year_min, year_max=year_max)
+    filters = SearchFilters(year_min=year_min, year_max=year_max, doctype=doctype)
     seed_result = hybrid_search(conn, query, filters=filters, top_n=top_seeds)
     seeds = list(seed_result.papers)
     seed_bibs = [p["bibcode"] for p in seeds if p.get("bibcode")]
@@ -2786,6 +2787,7 @@ def lit_review(
             "year_min": year_min,
             "year_max": year_max,
             "discipline": discipline,
+            "doctype": doctype,
             "working_set_size": len(working_set),
             "working_set_bibcodes": working_set,
             "communities": communities,

@@ -802,6 +802,24 @@ class TestLitReviewCitationExpansionErrorHandling:
         assert "2020ApJ...9X" in ws  # from the citations lane that survived
         assert "timed out" in caplog.text
 
+    def test_doctype_filter_applies_to_seed_retrieval(self) -> None:
+        """A caller can keep non-literature records out of the RRF seed set."""
+        from unittest.mock import patch
+
+        conn = self._empty_conn()
+        with patch("scix.search.hybrid_search", return_value=self._seed_result()) as search:
+            result = lit_review(
+                conn,
+                "stochastic programming scheduling",
+                doctype="article",
+                expansion_seeds=0,
+                sample_abstracts=0,
+            )
+
+        filters = search.call_args.kwargs["filters"]
+        assert filters.doctype == "article"
+        assert result.metadata["doctype"] == "article"
+
     def test_tx_abort_in_expansion_propagates(self) -> None:
         from unittest.mock import MagicMock, patch
 

@@ -334,6 +334,7 @@ def _handle_lit_review(conn: psycopg.Connection, args: dict[str, Any]) -> str:
         expansion_seeds=_coerce_int("expansion_seeds", 5) or 5,
         sample_abstracts=_coerce_int("sample_abstracts", 5) or 5,
         discipline=args.get("discipline"),
+        doctype=args.get("doctype"),
         session_state=_session_state,
     )
     return _result_to_json(result)

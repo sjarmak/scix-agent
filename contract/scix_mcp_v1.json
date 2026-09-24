@@ -167,6 +167,10 @@
             "description": "Optional discipline hint (currently informational, surfaced in metadata).",
             "type": "string"
           },
+          "doctype": {
+            "description": "Optional ADS document-type filter for seed retrieval (for example, 'article'). Useful for excluding award abstracts and other non-literature records from the RRF seed set.",
+            "type": "string"
+          },
           "expand_per_seed": {
             "default": 20,
             "description": "Per-seed reference + citation fetch limit (0..50).",

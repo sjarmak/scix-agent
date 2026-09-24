@@ -596,7 +596,12 @@ class TestLitReview:
             _dispatch_tool(
                 conn,
                 "lit_review",
-                {"query": "granular mechanics", "year_max": 2020, "top_seeds": 10},
+                {
+                    "query": "granular mechanics",
+                    "year_max": 2020,
+                    "top_seeds": 10,
+                    "doctype": "article",
+                },
             )
         )
         assert result["total"] == 1
@@ -604,6 +609,7 @@ class TestLitReview:
         assert kwargs.get("session_state") is _session_state
         assert kwargs.get("year_max") == 2020
         assert kwargs.get("top_seeds") == 10
+        assert kwargs.get("doctype") == "article"
 
     def test_rejects_empty_query(self) -> None:
         conn = MagicMock()

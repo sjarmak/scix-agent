@@ -139,6 +139,9 @@ def test_priority_result_schemas_pin_consumer_fields(contract: dict) -> None:
         "metadata",
     }
 
+    facet_required = set(schemas["facet_counts"]["required"])
+    assert facet_required == {"papers", "total", "timing_ms", "coverage"}
+
 
 def test_error_codes_are_the_closed_catalog(contract: dict) -> None:
     """The published error-code list is exactly the closed catalog, non-empty."""

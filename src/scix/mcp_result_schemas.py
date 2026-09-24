@@ -130,6 +130,16 @@ def _forward_citations_schema() -> JsonSchema:
     )
 
 
+def _facet_counts_schema() -> JsonSchema:
+    return _object_schema(
+        properties={
+            **_properties(papers="array", total="integer", timing_ms="object"),
+            **_properties(metadata="object", coverage="object"),
+        },
+        required=("papers", "total", "timing_ms", "coverage"),
+    )
+
+
 def _synthesize_findings_schema() -> JsonSchema:
     return _object_schema(
         properties=_properties(
@@ -154,7 +164,7 @@ _BUILDERS: dict[str, Callable[[], JsonSchema]] = {
     "graph_context": _graph_context_schema,
     "find_gaps": _find_gaps_schema,
     "temporal_evolution": _search_result_schema,
-    "facet_counts": _search_result_schema,
+    "facet_counts": _facet_counts_schema,
     "claim_blame": _claim_blame_schema,
     "forward_citations": _forward_citations_schema,
     "synthesize_findings": _synthesize_findings_schema,

@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scix import mcp_server
+from scix.search import SearchResult
 from scix.session import SessionState
 
 # ---------------------------------------------------------------------------
@@ -46,6 +47,27 @@ def _make_conn(rows: list[tuple] | None = None) -> MagicMock:
     cur.__exit__ = MagicMock(return_value=False)
     conn.cursor.return_value = cur
     return conn
+
+
+def _facet_result(field: str, *, total: int = 1) -> SearchResult:
+    """Build a facet result satisfying the handler's coverage contract."""
+    return SearchResult(
+        papers=[],
+        total=total,
+        timing_ms={},
+        metadata={
+            "facets": [],
+            "coverage": {
+                "field": field,
+                "scope": "corpus",
+                "basis": "postgresql_statistics",
+                "estimated": True,
+                "estimated_null_pct": None,
+                "counts_exclude": ["null"],
+                "note": "Corpus null-rate statistics are unavailable.",
+            },
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -133,11 +155,7 @@ class TestAddBibcodesToWorkingSet:
 class TestFacetCountsWorkingSet:
     @patch("scix.search.facet_counts")
     def test_explicit_bibcodes_scopes_query(self, mock_fc: MagicMock) -> None:
-        from scix.search import SearchResult
-
-        mock_fc.return_value = SearchResult(
-            papers=[], total=1, timing_ms={}, metadata={"facets": []}
-        )
+        mock_fc.return_value = _facet_result("year")
         conn = _make_conn()
         mcp_server._dispatch_tool(
             conn,
@@ -150,11 +168,7 @@ class TestFacetCountsWorkingSet:
 
     @patch("scix.search.facet_counts")
     def test_falls_through_to_focused_papers(self, mock_fc: MagicMock) -> None:
-        from scix.search import SearchResult
-
-        mock_fc.return_value = SearchResult(
-            papers=[], total=1, timing_ms={}, metadata={"facets": []}
-        )
+        mock_fc.return_value = _facet_result("doctype")
         # Seed session via track_focused.
         mcp_server._session_state.track_focused("2024A")
         mcp_server._session_state.track_focused("2024B")
@@ -167,11 +181,7 @@ class TestFacetCountsWorkingSet:
     @patch("scix.search.facet_counts")
     def test_no_bibcodes_no_session_returns_full_corpus(self, mock_fc: MagicMock) -> None:
         """Backward-compat: empty session and no bibcodes -> no scoping."""
-        from scix.search import SearchResult
-
-        mock_fc.return_value = SearchResult(
-            papers=[], total=0, timing_ms={}, metadata={"facets": []}
-        )
+        mock_fc.return_value = _facet_result("doctype", total=0)
         conn = _make_conn()
         mcp_server._dispatch_tool(conn, "facet_counts", {"field": "doctype"})
         kwargs = mock_fc.call_args.kwargs
@@ -180,11 +190,7 @@ class TestFacetCountsWorkingSet:
 
     @patch("scix.search.facet_counts")
     def test_explicit_bibcodes_overrides_session(self, mock_fc: MagicMock) -> None:
-        from scix.search import SearchResult
-
-        mock_fc.return_value = SearchResult(
-            papers=[], total=1, timing_ms={}, metadata={"facets": []}
-        )
+        mock_fc.return_value = _facet_result("year")
         mcp_server._session_state.track_focused("SESSION_A")
         conn = _make_conn()
         mcp_server._dispatch_tool(
@@ -488,9 +494,7 @@ class TestThreeTurnAgentFlow:
         mcp_server._dispatch_tool(conn, "get_paper", {"bibcode": "T1B"})
 
         # Turn 3: facet_counts() with no bibcodes — should scope to focused.
-        mock_fc.return_value = SearchResult(
-            papers=[], total=1, timing_ms={}, metadata={"facets": []}
-        )
+        mock_fc.return_value = _facet_result("doctype")
         mcp_server._dispatch_tool(conn, "facet_counts", {"field": "doctype"})
         kwargs = mock_fc.call_args.kwargs
         assert kwargs.get("bibcodes") is not None

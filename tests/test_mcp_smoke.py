@@ -475,9 +475,25 @@ class TestToolSmoke:
         _mock_log: MagicMock,
         mock_conn: MagicMock,
     ) -> None:
-        mock_fc.return_value = _empty_result()
-        out = _dispatch_tool(mock_conn, "facet_counts", {"field": "year"})
-        _assert_non_error(out, "facet_counts")
+        coverage = {
+            "field": "arxiv_class",
+            "scope": "corpus",
+            "basis": "postgresql_statistics",
+            "estimated": True,
+            "estimated_null_pct": 91.15,
+            "counts_exclude": ["null", "empty_array"],
+            "note": "classification metadata is sparse",
+        }
+        mock_fc.return_value = SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"query_ms": 0.1},
+            metadata={"facet_field": "arxiv_class", "facets": [], "coverage": coverage},
+        )
+        out = _dispatch_tool(mock_conn, "facet_counts", {"field": "arxiv_class"})
+        data = _assert_non_error(out, "facet_counts")
+        assert data["coverage"] == coverage
+        assert "coverage" not in data["metadata"]
 
     @patch("scix.mcp_server._log_query")
     def test_synthesize_findings(
@@ -746,7 +762,12 @@ class TestToolSmoke:
         mock_conn: MagicMock,
     ) -> None:
         """xz4.1.27 HIGH follow-up: facet_counts must propagate entity filters, not drop them."""
-        mock_fc.return_value = _empty_result()
+        mock_fc.return_value = SearchResult(
+            papers=[],
+            total=0,
+            timing_ms={"query_ms": 0.1},
+            metadata={"coverage": {}},
+        )
         out = _dispatch_tool(
             mock_conn,
             "facet_counts",

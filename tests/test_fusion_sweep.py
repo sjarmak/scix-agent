@@ -19,7 +19,6 @@ for sub in ("src", "scripts"):
         sys.path.insert(0, p)
 
 import fusion_sweep as sweep  # noqa: E402
-from eval_retrieval_50q import BUCKETS  # noqa: E402
 from fusion_sweep import (  # noqa: E402
     BenchmarkQuery,
     Lane,
@@ -155,9 +154,24 @@ def test_build_sweep_has_all_strategies_and_is_deterministic() -> None:
 
 
 def _block(ndcg: float) -> dict:
-    """A minimal results block: flat nDCG across overall + every bucket."""
+    """A minimal results block: flat nDCG across overall + every decile."""
     overall = {"ndcg_at_10": ndcg, "mrr_at_10": ndcg, "recall_at_50": ndcg}
-    return {"overall": dict(overall), "by_bucket": {b: dict(overall) for b in BUCKETS}}
+    return {
+        "overall": dict(overall),
+        "by_decile": {str(decile): dict(overall) for decile in range(10)},
+    }
+
+
+def test_render_rejects_multiple_confirmation_hybrids() -> None:
+    results = {
+        "dense_only": _block(0.50),
+        "bm25_only": _block(0.20),
+        "hybrid-a": _block(0.60),
+        "hybrid-b": _block(0.70),
+    }
+
+    with pytest.raises(ValueError, match="exactly one tuning-selected hybrid"):
+        render_markdown(results, queries_path="g.jsonl", n_queries=50, k=10)
 
 
 def test_render_flags_premise_inversion_when_bm25_beats_dense() -> None:
@@ -278,6 +292,27 @@ def test_loader_rejects_missing_decile_strata(tmp_path: Path) -> None:
         load_benchmark_queries(path)
 
 
+def test_loader_rejects_duplicate_query_text(tmp_path: Path) -> None:
+    rows = [
+        {
+            "query": f"exact title {decile}",
+            "bucket": "recall_decile",
+            "discipline": "test",
+            "gold_bibcodes": [f"SELF-{decile}"],
+            "decile": decile,
+        }
+        for decile in range(10)
+    ]
+    duplicate_query = dict(rows[0])
+    duplicate_query["gold_bibcodes"] = ["DIFFERENT-GOLD"]
+    rows.append(duplicate_query)
+    path = tmp_path / "gold.jsonl"
+    path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="duplicate query text"):
+        load_benchmark_queries(path)
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
@@ -353,10 +388,7 @@ def test_paired_bootstrap_delta_rejects_nonpositive_sample_count() -> None:
 
 def test_qdrant_endpoint_requires_http_and_strips_credentials_and_path() -> None:
     endpoint_with_credentials = "https://user:secret" + "@qdrant.example:6333/private?token=x"
-    assert (
-        sweep._safe_qdrant_endpoint(endpoint_with_credentials)
-        == "https://qdrant.example:6333"
-    )
+    assert sweep._safe_qdrant_endpoint(endpoint_with_credentials) == "https://qdrant.example:6333"
     with pytest.raises(ValueError, match=r"HTTP\(S\) URL"):
         sweep._safe_qdrant_endpoint("qdrant.example:6333")
 

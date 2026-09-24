@@ -87,6 +87,7 @@ def _parse_query(row: Any, line_no: int) -> BenchmarkQuery:
 def load_benchmark_queries(path: Path) -> list[BenchmarkQuery]:
     """Load and validate the complete decile-stratified JSONL contract."""
     queries: list[BenchmarkQuery] = []
+    query_texts: set[str] = set()
     for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -95,7 +96,12 @@ def load_benchmark_queries(path: Path) -> list[BenchmarkQuery]:
             row = json.loads(line)
         except json.JSONDecodeError as exc:
             raise ValueError(f"line {line_no}: invalid JSON: {exc}") from exc
-        queries.append(_parse_query(row, line_no))
+        query = _parse_query(row, line_no)
+        normalized_query = query.query.strip().casefold()
+        if normalized_query in query_texts:
+            raise ValueError(f"line {line_no}: duplicate query text")
+        query_texts.add(normalized_query)
+        queries.append(query)
     seen = {query.decile for query in queries}
     if seen != set(range(10)):
         raise ValueError(f"gold set must contain all deciles 0..9; found {sorted(seen)}")
@@ -216,16 +222,9 @@ def _headline(results: dict[str, dict[str, Any]]) -> tuple[str, dict[str, Any], 
     hybrids = [
         (name, block) for name, block in results.items() if name not in {"dense_only", "bm25_only"}
     ]
-    if not hybrids:
-        raise ValueError("confirmation results must include the selected hybrid")
-    winners = [
-        (name, block)
-        for name, block in hybrids
-        if float(block["overall"].get("ndcg_at_10", 0.0)) > dense
-    ]
-    name, block = max(
-        winners or hybrids, key=lambda item: float(item[1]["overall"].get("ndcg_at_10", 0.0))
-    )
+    if len(hybrids) != 1:
+        raise ValueError("confirmation results must include exactly one tuning-selected hybrid")
+    name, block = hybrids[0]
     return name, block, dense, bm25
 
 
@@ -272,8 +271,8 @@ def _decile_table(name: str, block: dict[str, Any], dense_block: dict[str, Any])
         "| Decile | dense nDCG@10 | selected nDCG@10 | dense R@10 | selected R@10 | dense R@20 | selected R@20 | dense R@50 | selected R@50 |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
-    strata = block.get("by_decile", block.get("by_bucket", {}))
-    dense_strata = dense_block.get("by_decile", dense_block.get("by_bucket", {}))
+    strata = block["by_decile"]
+    dense_strata = dense_block["by_decile"]
     keys = ("ndcg_at_10", "recall_at_10", "recall_at_20", "recall_at_50")
     for decile in strata:
         values = [

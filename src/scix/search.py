@@ -1154,25 +1154,38 @@ def hybrid_search(
 
     # Primary vector search (if embeddings available)
     if query_embedding is not None:
-        if use_filter_first:
-            vec_result = _filter_first_vector_search(
-                conn,
-                query_embedding,
-                model_name=model_name,
-                filters=filters,
-                limit=vector_limit,
+        try:
+            if use_filter_first:
+                vec_result = _filter_first_vector_search(
+                    conn,
+                    query_embedding,
+                    model_name=model_name,
+                    filters=filters,
+                    limit=vector_limit,
+                )
+            else:
+                vec_result = vector_search(
+                    conn,
+                    query_embedding,
+                    model_name=model_name,
+                    filters=filters,
+                    limit=vector_limit,
+                    ef_search=ef_search,
+                )
+        except QdrantSearchError:
+            logger.warning(
+                "Qdrant dense lane failed; falling back to lexical-only",
+                exc_info=True,
             )
+            timing["vector_ms"] = 0.0
+            metadata = {
+                **metadata,
+                "retrieval_mode": "lexical",
+                "degradation_reason": "qdrant_failed",
+            }
         else:
-            vec_result = vector_search(
-                conn,
-                query_embedding,
-                model_name=model_name,
-                filters=filters,
-                limit=vector_limit,
-                ef_search=ef_search,
-            )
-        timing["vector_ms"] = vec_result.timing_ms["vector_ms"]
-        results_lists.append(vec_result.papers)
+            timing["vector_ms"] = vec_result.timing_ms["vector_ms"]
+            results_lists.append(vec_result.papers)
     else:
         timing["vector_ms"] = 0.0
 

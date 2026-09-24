@@ -562,6 +562,41 @@ class TestQdrantFilteredRouting:
         assert mock_vs.call_args.kwargs["filters"] is selective_filters
         assert isinstance(result, SearchResult)
 
+    def test_hybrid_search_degrades_to_lexical_when_qdrant_fails(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A Qdrant outage drops only the dense lane and explains the fallback."""
+        import sys
+        from types import ModuleType, SimpleNamespace
+        from unittest.mock import MagicMock, patch
+
+        monkeypatch.setenv("QDRANT_URL", "http://localhost:6333")
+        qdrant_module = ModuleType("qdrant_client")
+        qdrant_module.models = SimpleNamespace(SearchParams=MagicMock())  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "qdrant_client", qdrant_module)
+        conn = MagicMock()
+        qdrant_client = MagicMock()
+        qdrant_client.query_points.side_effect = ConnectionError("connection refused")
+        lexical_result = SearchResult(
+            papers=[{"bibcode": "LEXICAL"}],
+            total=1,
+            timing_ms={"lexical_ms": 1.0},
+        )
+        body_result = SearchResult(papers=[], total=0, timing_ms={"body_lexical_ms": 1.0})
+
+        with (
+            patch("scix.search._get_qdrant_dense_client", return_value=qdrant_client),
+            patch("scix.search.lexical_search", return_value=lexical_result),
+            patch("scix.search.lexical_search_body", return_value=body_result),
+            caplog.at_level("WARNING", logger="scix.search"),
+        ):
+            result = hybrid_search(conn, "dark matter", query_embedding=[0.1] * 768)
+
+        assert [paper["bibcode"] for paper in result.papers] == ["LEXICAL"]
+        assert result.metadata["retrieval_mode"] == "lexical"
+        assert result.metadata["degradation_reason"] == "qdrant_failed"
+        assert "Qdrant dense lane failed" in caplog.text
+
 
 class TestHybridSearchEntityFilterWiring:
     """xz4.1.27: Entity filter params must propagate through hybrid_search subcalls."""

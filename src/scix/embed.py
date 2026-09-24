@@ -21,7 +21,7 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import date
-from typing import Any
+from typing import Any, Sequence
 
 import psycopg
 
@@ -391,12 +391,15 @@ _UNEMBEDDED_WHERE = """
 
 # How many years back from the current year the nightly run scans. The harvest
 # brings in current-year records plus late-arriving previous-year ones, so 1 is
-# enough to cover a nightly delta; anything older is a backfill and belongs to
-# an explicit --full run.
+# enough to cover a nightly delta; older records need explicit bibcodes or an
+# explicit --full backlog run.
 NIGHTLY_YEAR_LOOKBACK = 1
 
 
-def unembedded_predicate(year_floor: int | None) -> tuple[str, list[Any]]:
+def unembedded_predicate(
+    year_floor: int | None,
+    bibcodes: Sequence[str] = (),
+) -> tuple[str, list[Any]]:
     """Return ``(sql_fragment, params)`` selecting papers with no dense vector.
 
     ``year_floor`` bounds the scan to ``papers.year >= year_floor``, which the
@@ -409,12 +412,19 @@ def unembedded_predicate(year_floor: int | None) -> tuple[str, list[Any]]:
     540 s nightly drain whose actual GPU work was ~10 s. Bounded to year >= 2025
     the plan drops to ~2.06M on a bitmap index scan.
 
-    The trade-off is why --full exists: ``year`` is publication year, not ingest
-    date, so a newly ingested 1995 paper is invisible to a bounded run.
-    Backfills must pass ``year_floor=None``.
+    ``year`` is publication year, not ingest date, so a newly ingested 1995
+    paper is invisible to a plain bounded run. Incremental backfills must also
+    pass their explicit ``bibcodes``; arbitrary backlog drains use
+    ``year_floor=None``.
     """
     if year_floor is None:
         return _UNEMBEDDED_WHERE, []
+    unique_bibcodes = list(dict.fromkeys(bibcodes))
+    if unique_bibcodes:
+        return (
+            _UNEMBEDDED_WHERE + "      AND (p.year >= %s OR p.bibcode = ANY(%s))\n",
+            [year_floor, unique_bibcodes],
+        )
     return _UNEMBEDDED_WHERE + "      AND p.year >= %s\n", [year_floor]
 
 
@@ -431,6 +441,7 @@ def run_embedding_pipeline(
     limit: int | None = None,
     write_buffer: int = 2000,
     year_floor: int | None = None,
+    bibcodes: Sequence[str] = (),
 ) -> int:
     """Full embedding pipeline: stream unembedded papers, embed, upsert to Qdrant.
 
@@ -451,6 +462,8 @@ def run_embedding_pipeline(
         year_floor: Only consider papers with ``year >= year_floor``. ``None``
             scans the whole corpus — correct for a backfill, but see
             :func:`unembedded_predicate` for what it costs nightly.
+        bibcodes: Also consider these bibcodes when ``year_floor`` excludes
+            their publication year. Intended for bounded incremental runs.
 
     Returns total number of papers embedded.
     """
@@ -478,14 +491,18 @@ def run_embedding_pipeline(
         read_conn = get_connection(dsn)
         write_conn = get_connection(dsn)
 
-        where_sql, where_params = unembedded_predicate(year_floor)
+        where_sql, where_params = unembedded_predicate(year_floor, bibcodes)
         # Say which scope ran. A bounded run that finds nothing and a full run
         # that finds nothing are different facts, and the log is the only place
         # an operator can tell them apart after the fact.
         if year_floor is None:
             logger.info("Scanning the full corpus for unembedded papers (no year bound)")
         else:
-            logger.info("Scanning papers with year >= %d for unembedded papers", year_floor)
+            logger.info(
+                "Scanning papers with year >= %d plus %d explicit bibcodes for unembedded papers",
+                year_floor,
+                len(set(bibcodes)),
+            )
 
         # Count papers needing embeddings
         with read_conn.cursor() as cur:

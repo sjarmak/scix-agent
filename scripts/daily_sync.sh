@@ -213,15 +213,22 @@ fi
 # -v is kept here: scix.embed does emit DEBUG worth having, and the third-party
 # HTTP/model loggers are clamped to WARNING inside the pipeline (bead dxa).
 #
-# The scan is bounded to `year >= current_year - 1` by default (bead ws5), which
-# rides idx_papers_year. Unbounded it was a seq scan over every paper: 530 s
-# before the first row on a cold cache, 98% of a 540 s drain whose GPU work was
-# ~10 s. The bound is on PUBLICATION year, not ingest date, so a backfill of
-# older papers is invisible here and must be run by hand with --full.
+# The scan stays bounded to `year >= current_year - 1` by default (bead ws5),
+# which rides idx_papers_year. Files successfully ingested by this run are also
+# supplied as explicit bibcode sources so older backfills are included without
+# reverting to the 530-second whole-corpus scan.
 
 if [ "$RECORD_COUNT" -gt 0 ] || [ "$BACKFILL_COUNT" -gt 0 ]; then
+    EMBED_SOURCES=()
+    if step_ok 2; then
+        EMBED_SOURCES+=(--bibcodes-from-jsonl "$HARVEST_FILE")
+    fi
+    if step_ok 4; then
+        EMBED_SOURCES+=(--bibcodes-from-jsonl "$BACKFILL_FILE")
+    fi
     echo "[$(ts)] Step 5/6: Embedding new papers (INDUS)..."
-    run_step 5 $PYTHON scripts/embed.py --model indus --batch-size 256 --device cuda -v
+    run_step 5 $PYTHON scripts/embed.py --model indus --batch-size 256 --device cuda \
+        "${EMBED_SOURCES[@]}" -v
 else
     echo "[$(ts)] Step 5/6: Skipped (no new records to embed)"
     record_step 5 skipped

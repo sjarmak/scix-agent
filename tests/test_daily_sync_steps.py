@@ -26,6 +26,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+from datetime import datetime, timezone
 
 import pytest
 
@@ -40,10 +41,18 @@ printf '{"bibcode":"2026test..1"}\\n' | gzip -c \\
     > "data/daily_harvest/ads_daily_$(date -u +%Y-%m-%d).jsonl.gz"
 """
 
+_BACKFILL_BODY = """
+if [ "${DAILY_SYNC_TEST_BACKFILL:-0}" = 1 ]; then
+    mkdir -p data/daily_harvest
+    printf '{"bibcode":"1995test..1"}\\n' | gzip -c \\
+        > "data/daily_harvest/ads_backfill_$(date -u +%Y-%m-%d).jsonl.gz"
+fi
+"""
+
 _STUBS: dict[str, str] = {
     "harvest_daily.py": _HARVEST_BODY,
     "ingest.py": "",
-    "backfill_recent_from_ads.py": "",
+    "backfill_recent_from_ads.py": _BACKFILL_BODY,
     "embed.py": "",
     "refresh_v_claim_edges.py": "",
     "check_pipeline_health.py": "",
@@ -134,7 +143,12 @@ def _assert_sandbox_seams_present(script_path: pathlib.Path) -> None:
         )
 
 
-def _run_sync(tmp_path: pathlib.Path, **exit_codes: int) -> SyncRun:
+def _run_sync(
+    tmp_path: pathlib.Path,
+    *,
+    backfill_record: bool = False,
+    **exit_codes: int,
+) -> SyncRun:
     """Run daily_sync.sh in a sandbox. Keyword args are per-stub exit codes,
     e.g. ``_run_sync(tmp_path, embed=1)``."""
     _assert_sandbox_seams_present(DAILY_SYNC)
@@ -145,6 +159,7 @@ def _run_sync(tmp_path: pathlib.Path, **exit_codes: int) -> SyncRun:
         "SCIX_REPO_DIR": str(sandbox),
         "SCIX_PYTHON": str(sandbox / "python-shim"),
         "DAILY_SYNC_TEST_CALLS": str(sandbox / "calls.txt"),
+        "DAILY_SYNC_TEST_BACKFILL": "1" if backfill_record else "0",
         "SCIX_BATCH": "",
     }
     proc = subprocess.run(
@@ -228,6 +243,28 @@ class TestStepDecoupling:
         assert set(status["steps"]) == {"1", "2", "3", "4", "5", "6"}
         assert all(v in {"ok", "skipped"} for v in status["steps"].values())
         assert status["harvest_records"] == 1
+
+
+class TestEmbedIngestedBibcodes:
+    def test_embed_includes_each_successfully_ingested_source_file(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        run = _run_sync(tmp_path, backfill_record=True)
+
+        argv = run.argv_for("embed.py")
+        source_indexes = [i for i, arg in enumerate(argv) if arg == "--bibcodes-from-jsonl"]
+        assert len(source_indexes) == 2
+        source_files = {argv[i + 1] for i in source_indexes}
+        today = datetime.now(timezone.utc).date().isoformat()
+        assert source_files == {
+            f"data/daily_harvest/ads_daily_{today}.jsonl.gz",
+            f"data/daily_harvest/ads_backfill_{today}.jsonl.gz",
+        }
+
+    def test_embed_does_not_include_files_whose_ingest_failed(self, tmp_path: pathlib.Path) -> None:
+        run = _run_sync(tmp_path, backfill_record=True, ingest=1)
+
+        assert "--bibcodes-from-jsonl" not in run.argv_for("embed.py")
 
 
 # ---------------------------------------------------------------------------

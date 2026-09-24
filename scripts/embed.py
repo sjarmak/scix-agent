@@ -4,14 +4,41 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
+from typing import Iterator, Sequence
 
 # Add src/ to path for direct script execution
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from scix.embed import NIGHTLY_YEAR_LOOKBACK, default_year_floor, run_embedding_pipeline
+from scix.ingest import open_jsonl
+
+
+def _iter_bibcodes(paths: Sequence[Path]) -> Iterator[str]:
+    """Yield validated bibcodes from ADS JSONL source files."""
+    for path in paths:
+        with open_jsonl(path) as stream:
+            for line_number, line in enumerate(stream, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"{path} line {line_number}: invalid JSON") from exc
+                if not isinstance(record, dict):
+                    raise ValueError(f"{path} line {line_number}: expected a JSON object")
+                bibcode = record.get("bibcode")
+                if not isinstance(bibcode, str) or not bibcode.strip():
+                    raise ValueError(f"{path} line {line_number}: missing or invalid bibcode")
+                yield bibcode
+
+
+def load_bibcodes(paths: Sequence[Path]) -> tuple[str, ...]:
+    """Read unique bibcodes from JSONL files, preserving their source order."""
+    return tuple(dict.fromkeys(_iter_bibcodes(paths)))
 
 
 def main() -> None:
@@ -49,10 +76,10 @@ def main() -> None:
         "--full",
         action="store_true",
         help=(
-            "Scan the whole corpus instead of recent years. Required to pick up "
-            "backfilled older papers, since the default bound is on publication "
-            "year, not ingest date. Costs a full seq scan of papers (~530 s "
-            "before the first row on a cold cache) — do not use for the nightly run."
+            "Scan the whole corpus instead of recent years. Use for an arbitrary "
+            "backlog; bounded incremental runs can use --bibcodes-from-jsonl. "
+            "Costs a full seq scan of papers (~530 s before the first row on a "
+            "cold cache) — do not use for the nightly run."
         ),
     )
     parser.add_argument(
@@ -62,6 +89,16 @@ def main() -> None:
         help=(
             "Only embed papers with year >= this value "
             f"(default: current year - {NIGHTLY_YEAR_LOOKBACK}). Ignored with --full."
+        ),
+    )
+    parser.add_argument(
+        "--bibcodes-from-jsonl",
+        type=Path,
+        action="append",
+        default=None,
+        help=(
+            "Also embed unembedded bibcodes listed in this ADS JSONL file, even when "
+            "their publication year is below --year-floor. May be repeated."
         ),
     )
     parser.add_argument(
@@ -76,6 +113,7 @@ def main() -> None:
     if args.full and args.year_floor is not None:
         parser.error("--full and --year-floor are mutually exclusive")
     year_floor = None if args.full else (args.year_floor or default_year_floor())
+    bibcodes = load_bibcodes(args.bibcodes_from_jsonl or ())
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -90,6 +128,7 @@ def main() -> None:
         device=args.device,
         limit=args.limit,
         year_floor=year_floor,
+        bibcodes=bibcodes,
     )
     logger = logging.getLogger(__name__)
     logger.info("Done. Embedded %d papers.", total)

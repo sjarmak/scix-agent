@@ -83,6 +83,26 @@ class TestBreachOpensExactlyOneBead:
         lookup = next(c for c in bd.calls if c[0] == "list")
         assert cph.NOTIFY_LABEL in lookup
 
+    def test_custom_channel_reuses_notifier_without_sharing_pipeline_bead(self) -> None:
+        bd = FakeBd([])
+        assert (
+            cph.notify(
+                BREACH,
+                now=NOW,
+                runner=bd,
+                label="retrieval-health",
+                title="three-lane retrieval health breach",
+                subject="The three-lane retrieval health prober",
+            )
+            == "created"
+        )
+        lookup = next(call for call in bd.calls if call[0] == "list")
+        create = next(call for call in bd.calls if call[0] == "create")
+        assert lookup[lookup.index("--label") + 1] == "retrieval-health"
+        assert create[1] == "three-lane retrieval health breach"
+        assert create[create.index("-l") + 1] == "retrieval-health"
+        assert "The three-lane retrieval health prober" in create[create.index("-d") + 1]
+
     def test_updates_instead_of_creating_when_one_is_already_open(self) -> None:
         bd = FakeBd([_issue()])
         assert cph.notify(BREACH, now=NOW, runner=bd) == "updated"

@@ -347,13 +347,13 @@ def _checked(runner, argv: list[str]) -> str:
     return result.stdout
 
 
-def find_open_notification(runner) -> dict | None:
+def find_open_notification(runner, *, label: str = NOTIFY_LABEL) -> dict | None:
     """Return the open pipeline-health bead, or None.
 
     More than one open bead means a previous run raced or a human filed one by
     hand; the oldest is kept as the canonical record so `first seen` stays true.
     """
-    raw = _checked(runner, ["list", "--status=open", "--label", NOTIFY_LABEL, "--json", "-n", "0"])
+    raw = _checked(runner, ["list", "--status=open", "--label", label, "--json", "-n", "0"])
     try:
         issues = json.loads(raw) if raw.strip() else []
     except json.JSONDecodeError as exc:
@@ -363,7 +363,13 @@ def find_open_notification(runner) -> dict | None:
     return sorted(issues, key=lambda i: i.get("created_at") or "")[0]
 
 
-def breach_body(results: list[CheckResult], *, now: _dt.datetime, first_seen: str | None) -> str:
+def breach_body(
+    results: list[CheckResult],
+    *,
+    now: _dt.datetime,
+    first_seen: str | None,
+    subject: str = "The daily ADS pipeline health gate",
+) -> str:
     """Render the bead description. Pure — the current state, not an append log.
 
     Deliberately overwritten each run rather than appended: the reader needs
@@ -371,7 +377,7 @@ def breach_body(results: list[CheckResult], *, now: _dt.datetime, first_seen: st
     """
     breaches = [r for r in results if not r.ok]
     lines = [
-        f"The daily ADS pipeline health gate is failing {len(breaches)} of {len(results)} checks.",
+        f"{subject} is failing {len(breaches)} of {len(results)} checks.",
         "",
         f"Last checked: {now.isoformat()}",
     ]
@@ -402,9 +408,17 @@ def breach_body(results: list[CheckResult], *, now: _dt.datetime, first_seen: st
     return "\n".join(lines)
 
 
-def notify(results: list[CheckResult], *, now: _dt.datetime, runner=_run_bd) -> str:
+def notify(
+    results: list[CheckResult],
+    *,
+    now: _dt.datetime,
+    runner=_run_bd,
+    label: str = NOTIFY_LABEL,
+    title: str = NOTIFY_TITLE,
+    subject: str = "The daily ADS pipeline health gate",
+) -> str:
     """Sync the pipeline-health bead to ``results``. Returns the action taken."""
-    existing = find_open_notification(runner)
+    existing = find_open_notification(runner, label=label)
     breached = [r for r in results if not r.ok]
 
     if not breached:
@@ -424,25 +438,35 @@ def notify(results: list[CheckResult], *, now: _dt.datetime, runner=_run_bd) -> 
         return "closed"
 
     if existing is None:
-        body = breach_body(results, now=now, first_seen=now.isoformat())
+        body = breach_body(
+            results,
+            now=now,
+            first_seen=now.isoformat(),
+            subject=subject,
+        )
         _checked(
             runner,
             [
                 "create",
-                NOTIFY_TITLE,
+                title,
                 "-t",
                 NOTIFY_TYPE,
                 "-p",
                 NOTIFY_PRIORITY,
                 "-l",
-                NOTIFY_LABEL,
+                label,
                 "-d",
                 body,
             ],
         )
         return "created"
 
-    body = breach_body(results, now=now, first_seen=existing.get("created_at"))
+    body = breach_body(
+        results,
+        now=now,
+        first_seen=existing.get("created_at"),
+        subject=subject,
+    )
     _checked(runner, ["update", existing["id"], "-d", body])
     return "updated"
 

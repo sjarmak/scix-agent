@@ -6,12 +6,15 @@
 
 ## Why this matters
 
-Two MCP tools — `claim_blame` and `find_replications` — read from the
-`v_claim_edges` materialized view (migration 057), which joins
-`citation_contexts` to `citation_edges` and `papers`. They power "who
-claimed this first?" and "who replicated / refuted this paper?" workflows.
+Three MCP paths — `claim_blame`, `forward_citations(annotate="relation")`, and
+`forward_citations(annotate="intent")` — depend on citation contexts. The
+first two read from the `v_claim_edges` materialized view (migration 057),
+which joins `citation_contexts` to `citation_edges` and `papers`; the intent
+path reads `citation_contexts` directly. Together they power "who claimed this
+first?", "who replicated / refuted this paper?", and "why was this paper
+cited?" workflows.
 
-Both tools can return an empty result for two very different reasons:
+These paths can return an empty result for two very different reasons:
 
 1. **No events** — the seed paper(s) ARE present in `citation_contexts`,
    but the citing literature genuinely has no replication / blame
@@ -43,8 +46,9 @@ the surface `claim_blame` walks.
 
 ## How the response block is computed
 
-Both tools call `scix.citation_contexts_coverage.compute_coverage(conn,
-seeds)`. The probe issues one SQL query against `v_claim_edges`:
+`claim_blame` and the relation-annotated forward-citation path call
+`scix.citation_contexts_coverage.compute_coverage(conn, seeds)`. The probe
+issues one SQL query against `v_claim_edges`:
 
 ```sql
 SELECT COUNT(DISTINCT bib) FROM (
@@ -65,9 +69,17 @@ the seed query (i.e. the papers whose reverse references the tool is
 about to walk). For `find_replications`, the seed is the single
 `target_bibcode` whose forward citations are being enumerated.
 
+The intent-annotated `forward_citations` path additionally calls
+`compute_forward_coverage(conn, target_bibcode)`. Its response reports
+`contexts_available`, the number of incoming citation edges with at least one
+context, and `total_edges`, the number of all incoming citation edges. Its
+`coverage_pct` is therefore the exact per-paper ratio
+`contexts_available / total_edges`, rather than the seed-presence ratio used by
+the broader multi-seed tools.
+
 ## Response shape
 
-Both tools' responses now include:
+The seed-coverage responses include:
 
 ```json
 {
@@ -76,6 +88,18 @@ Both tools' responses now include:
     "total_seeds": 20,
     "coverage_pct": 0.35,
     "note": "citation_contexts has ~0.27% edge coverage; results may be undercounting. See docs/citation_contexts_coverage.md for the no-events vs no-coverage distinction."
+  }
+}
+```
+
+Intent-annotated `forward_citations` also includes the exact counts:
+
+```json
+{
+  "coverage": {
+    "contexts_available": 1,
+    "total_edges": 340,
+    "coverage_pct": 0.0029411764705882353
   }
 }
 ```

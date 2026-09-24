@@ -64,6 +64,15 @@ class _FakeCursor:
 
     def execute(self, sql: str, params: Any = None) -> None:
         sql_lower = sql.lower()
+        if "from citation_edges" in sql_lower:
+            target = params[0] if params else None
+            covered = int(target in self._coverage)
+            self._last_rows = [(covered, covered)]
+            self.description = [
+                _Desc("contexts_available"),
+                _Desc("total_edges"),
+            ]
+            return
         if "count(distinct" in sql_lower and "v_claim_edges" in sql_lower:
             seeds = list(params[0]) if params else []
             covered = sum(1 for s in seeds if s in self._coverage)
@@ -212,7 +221,7 @@ def test_dedup_sql_uses_row_number_and_partition_by_source() -> None:
     class _CapturingCursor(_FakeCursor):
         def execute(self, sql: str, params: Any = None) -> None:
             sql_lower = sql.lower()
-            if "from citation_contexts" in sql_lower:
+            if "from citation_contexts cc" in sql_lower and "from citation_edges" not in sql_lower:
                 captured["sql"] = sql
             super().execute(sql, params)
 

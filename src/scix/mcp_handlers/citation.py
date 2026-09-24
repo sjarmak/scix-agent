@@ -552,7 +552,7 @@ def _handle_cited_by_intent(conn: psycopg.Connection, args: dict[str, Any]) -> s
     ``limit`` budget. ``n_contexts`` reports the per-source count so
     agents can see context density without the bloat.
     """
-    from scix.citation_contexts_coverage import compute_coverage
+    from scix.citation_contexts_coverage import compute_forward_coverage
 
     target_bibcode = args.get("target_bibcode")
     if not isinstance(target_bibcode, str) or not target_bibcode.strip():
@@ -613,7 +613,7 @@ def _handle_cited_by_intent(conn: psycopg.Connection, args: dict[str, Any]) -> s
         cols = [d.name for d in cur.description]
 
     papers = [dict(zip(cols, r)) for r in rows]
-    coverage = compute_coverage(conn, [target])
+    coverage = compute_forward_coverage(conn, target)
     return json.dumps(
         {
             "target_bibcode": target_bibcode,

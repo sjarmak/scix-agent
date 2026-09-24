@@ -1,4 +1,4 @@
-"""Citation-contexts coverage probe for claim_blame / find_replications.
+"""Citation-context coverage probes for claim and forward-citation tools.
 
 Surfaces *whether* a set of seed bibcodes is covered by the
 ``citation_contexts`` table at all (via the ``v_claim_edges`` view), so
@@ -96,6 +96,50 @@ def compute_coverage(
     return _coverage_block(covered=covered, total=total)
 
 
+def compute_forward_coverage(
+    conn: psycopg.Connection,
+    target_bibcode: str,
+) -> dict[str, Any]:
+    """Return exact context-backed edge coverage for one cited paper.
+
+    ``contexts_available`` counts incoming citation edges with at least one
+    matching context, rather than raw context rows: one edge can have several
+    in-text mentions. ``total_edges`` counts every incoming citation edge for
+    the same target.
+    """
+    sql = """
+        SELECT
+            COUNT(*) FILTER (
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM citation_contexts cc
+                    WHERE cc.source_bibcode = ce.source_bibcode
+                      AND cc.target_bibcode = ce.target_bibcode
+                )
+            ) AS contexts_available,
+            COUNT(*) AS total_edges
+        FROM citation_edges ce
+        WHERE ce.target_bibcode = %s
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (target_bibcode,))
+        row = cur.fetchone()
+
+    contexts_available = int(row[0]) if row and row[0] is not None else 0
+    total_edges = int(row[1]) if row and row[1] is not None else 0
+    coverage_pct = contexts_available / total_edges if total_edges > 0 else 0.0
+    return {
+        "contexts_available": contexts_available,
+        "total_edges": total_edges,
+        "coverage_pct": coverage_pct,
+        # Retain the seed-level fields consumed by older clients while the
+        # exact edge counts above carry the useful completeness signal.
+        "covered_seeds": int(contexts_available > 0),
+        "total_seeds": 1,
+        "note": DEFAULT_COVERAGE_NOTE,
+    }
+
+
 def empty_coverage() -> dict[str, Any]:
     """Return a zero-coverage block for response paths that bypass the DB.
 
@@ -119,5 +163,6 @@ __all__ = [
     "COVERAGE_DOC_PATH",
     "DEFAULT_COVERAGE_NOTE",
     "compute_coverage",
+    "compute_forward_coverage",
     "empty_coverage",
 ]

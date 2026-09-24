@@ -195,7 +195,9 @@ _TOOL_SPECS: tuple[dict[str, Any], ...] = (
             "(find_gaps, etc.) operate on it without re-listing bibcodes. "
             "Use this as the FIRST call when the user asks for a literature "
             "review or topic survey; use plain search instead when you only "
-            "need a flat ranked list."
+            "need a flat ranked list. For cross-disciplinary queries, pass "
+            "doctype='article' to keep award abstracts and other non-article "
+            "records out of the RRF seed set."
         ),
         inputSchema={
             "type": "object",
@@ -240,6 +242,13 @@ _TOOL_SPECS: tuple[dict[str, Any], ...] = (
                     "type": "string",
                     "description": "Optional discipline hint (currently "
                     "informational, surfaced in metadata).",
+                },
+                "doctype": {
+                    "type": "string",
+                    "description": "Optional ADS document-type filter for seed "
+                    "retrieval (for example, 'article'). Useful for excluding "
+                    "award abstracts and other non-literature records from the "
+                    "RRF seed set.",
                 },
             },
             "required": ["query"],

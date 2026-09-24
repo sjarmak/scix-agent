@@ -735,9 +735,9 @@ class TestHybridSearchLaneErrorHandling:
 
 
 class TestLitReviewCitationExpansionErrorHandling:
-    """otsm (DEEP_AUDIT A1): the citation-expansion loop in lit_review must wrap
-    each get_references/get_citations call in a savepoint and catch only a
-    recoverable QueryCanceled (statement_timeout) — dropping just that lane.
+    """otsm (DEEP_AUDIT A1): each batched citation-expansion direction in
+    lit_review must run in a savepoint and catch only a recoverable
+    QueryCanceled (statement_timeout) — dropping just that direction.
     Any other psycopg.Error (e.g. a class-25 tx-abort) must propagate rather
     than be swallowed by a bare ``except Exception``, which would let a poisoned
     connection silently degrade every later query in the same call."""
@@ -769,6 +769,45 @@ class TestLitReviewCitationExpansionErrorHandling:
         # except clause rather than being silently suppressed.
         return conn
 
+    def test_expansion_batches_each_direction_once_with_per_seed_limit(self) -> None:
+        from unittest.mock import patch
+
+        conn = self._empty_conn()
+        references = {
+            "2024ApJ...1A": [
+                {"bibcode": "2020ApJ...9X", "year": 2020},
+                {"bibcode": "2019ApJ...8Y", "year": 2019},
+            ],
+            "2024ApJ...2B": [
+                {"bibcode": "2020ApJ...9X", "year": 2020},
+                {"bibcode": "2024ApJ...1A", "year": 2024},
+            ],
+        }
+        citations = {
+            "2024ApJ...1A": [{"bibcode": "2021ApJ...7Z", "year": 2021}],
+            "2024ApJ...2B": [],
+        }
+
+        with (
+            patch("scix.search.hybrid_search", return_value=self._seed_result()),
+            patch("scix.search.get_references_batch", return_value=references) as refs_batch,
+            patch("scix.search.get_citations_batch", return_value=citations) as cites_batch,
+        ):
+            result = lit_review(conn, "dark matter", expansion_seeds=2, expand_per_seed=2)
+
+        seed_bibs = ["2024ApJ...1A", "2024ApJ...2B"]
+        refs_batch.assert_called_once_with(conn, seed_bibs, limit=2)
+        cites_batch.assert_called_once_with(conn, seed_bibs, limit=2)
+        assert result.papers == self._seed_result().papers
+        assert result.metadata["working_set_bibcodes"] == [
+            "2024ApJ...1A",
+            "2024ApJ...2B",
+            "2019ApJ...8Y",
+            "2020ApJ...9X",
+            "2021ApJ...7Z",
+        ]
+        assert "dropped_lanes" not in result.metadata
+
     def test_query_canceled_lane_is_dropped_and_review_completes(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -780,27 +819,30 @@ class TestLitReviewCitationExpansionErrorHandling:
             raise psycopg.errors.QueryCanceled("statement timeout")
 
         # __name__ mirrors the real function attribute the warning log reads.
-        refs = MagicMock(side_effect=_timeout, __name__="get_references")
-        expansion = SearchResult(
-            papers=[{"bibcode": "2020ApJ...9X", "year": 2020}], total=1, timing_ms={}
+        refs = MagicMock(side_effect=_timeout, __name__="get_references_batch")
+        cites = MagicMock(
+            return_value={"2024ApJ...1A": [{"bibcode": "2020ApJ...9X", "year": 2020}]},
+            __name__="get_citations_batch",
         )
-        cites = MagicMock(return_value=expansion, __name__="get_citations")
 
         with (
             patch("scix.search.hybrid_search", return_value=self._seed_result()),
-            patch("scix.search.get_references", refs),
-            patch("scix.search.get_citations", cites),
+            patch("scix.search.get_references_batch", refs),
+            patch("scix.search.get_citations_batch", cites),
             caplog.at_level(logging.WARNING, logger="scix.search"),
         ):
             result = lit_review(conn, "dark matter", expansion_seeds=1, expand_per_seed=5)
 
-        # The references lane timed out and was dropped, but lit_review still
+        # The references direction timed out and was dropped, but lit_review still
         # returns: seeds intact, the surviving citations lane folded in, and the
         # drop logged at WARNING.
         ws = result.metadata["working_set_bibcodes"]
         assert "2024ApJ...1A" in ws
         assert "2020ApJ...9X" in ws  # from the citations lane that survived
         assert "timed out" in caplog.text
+        assert result.metadata["dropped_lanes"] == ["get_references_batch"]
+        refs.assert_called_once_with(conn, ["2024ApJ...1A"], limit=5)
+        cites.assert_called_once_with(conn, ["2024ApJ...1A"], limit=5)
 
     def test_tx_abort_in_expansion_propagates(self) -> None:
         from unittest.mock import MagicMock, patch
@@ -813,11 +855,11 @@ class TestLitReviewCitationExpansionErrorHandling:
             # in the call fail silently.
             raise psycopg.errors.InFailedSqlTransaction("tx aborted")
 
-        refs = MagicMock(side_effect=_abort, __name__="get_references")
+        refs = MagicMock(side_effect=_abort, __name__="get_references_batch")
 
         with (
             patch("scix.search.hybrid_search", return_value=self._seed_result()),
-            patch("scix.search.get_references", refs),
+            patch("scix.search.get_references_batch", refs),
             pytest.raises(psycopg.errors.InFailedSqlTransaction),
         ):
             lit_review(conn, "dark matter", expansion_seeds=1, expand_per_seed=5)

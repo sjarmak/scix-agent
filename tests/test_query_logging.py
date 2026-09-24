@@ -262,14 +262,22 @@ class TestCallToolLogging:
                     "error": "query must be a non-empty string",
                     "error_code": "missing_required_params",
                 },
-                "missing_required_params: query must be a non-empty string",
+                "missing_required_params",
             ),
             (
                 {
                     "error": "Qdrant collection is unavailable",
                     "error_code": "vector_index_unavailable",
                 },
-                "vector_index_unavailable: Qdrant collection is unavailable",
+                "vector_index_unavailable",
+            ),
+            (
+                {
+                    "error": "Unscoped broad query rejected.",
+                    "error_code": "unscoped_broad_query",
+                    "unscoped_broad_blocked": True,
+                },
+                "unscoped_broad_query",
             ),
         ],
     )
@@ -283,7 +291,7 @@ class TestCallToolLogging:
         mock_dispatch: MagicMock,
         mock_log: MagicMock,
         mock_emit_trace: MagicMock,
-        payload: dict[str, str],
+        payload: dict[str, Any],
         expected_error: str,
     ) -> None:
         """A normal dispatch can still report an operation-level failure."""

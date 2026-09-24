@@ -502,11 +502,8 @@ def _expect_logged_named(captured: dict[str, Any]) -> dict[str, Any]:
     return captured["named"]
 
 
-def test_log_query_surfaces_unscoped_broad_tag() -> None:
-    """When result_json carries unscoped_broad_blocked=true, _log_query
-    sets error_msg='unscoped_broad_query' so operators can SELECT count(*)
-    FROM query_log WHERE error_msg='unscoped_broad_query' to track rate.
-    """
+def test_log_query_does_not_infer_error_from_result_json() -> None:
+    """The MCP call boundary, not _log_query, classifies result envelopes."""
     captured: dict[str, Any] = {}
 
     payload = json.dumps(
@@ -530,7 +527,7 @@ def test_log_query_surfaces_unscoped_broad_tag() -> None:
     )
 
     named = _expect_logged_named(captured)
-    assert named["error_msg"] == "unscoped_broad_query"
+    assert named["error_msg"] is None
     # Result count is 0 because the response carried an "error" key.
     assert named["result_count"] == 0
 

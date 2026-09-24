@@ -373,15 +373,15 @@ convention:
 | Outcome | `success` | `error_msg` | Examples |
 |---|---|---|---|
 | Tool raised an exception | `FALSE` | `str(exc)` | DB error, internal bug, timeout escalated to exception |
-| Tool returned a root-level structured error envelope | `FALSE` | `<error_code>: <error>` | validation failures, unavailable backends, guard blocks, unknown tools |
+| Tool returned a root-level structured error envelope | `FALSE` | `<error_code>` | validation failures, unavailable backends, guard blocks, unknown tools |
 | Tool returned a result without a root-level `error_code` | `TRUE` | `NULL` | successful searches and lookups |
 
 `success` records the MCP operation outcome, not whether dispatch returned a
 JSON string without raising. `call_tool` classifies every root-level
 `error_code` envelope before logging and trace emission. The JSON response is
 still returned normally to the MCP transport; no transport-level exception is
-introduced. `_log_query` retains the older `unscoped_broad_blocked` lift as a
-fallback for direct callers that do not pass the boundary classification.
+introduced. The human-readable error remains available in the response JSON;
+`error_msg` stays a stable, exact-matchable tag for grouping and dashboards.
 
 ### Recommended dashboard query
 
@@ -393,12 +393,12 @@ WHERE success = FALSE OR error_msg IS NOT NULL;
 This catches exceptions and current structured-error rows.
 The `OR error_msg IS NOT NULL` arm also includes historical guard rows written
 before all structured envelopes were classified as failures. For a specific
-stable error class, match the code prefix rather than the human message:
+stable error class, match the code exactly:
 
 ```sql
 SELECT count(*) FROM query_log
 WHERE success = FALSE
-  AND error_msg LIKE 'missing_required_params:%';
+  AND error_msg = 'missing_required_params';
 ```
 
 ## Structured-error envelope convention (bead `scix_experiments-x5jg`)
@@ -428,7 +428,7 @@ mode.
 | `error_code` | Returned by | Triggered when |
 |---|---|---|
 | `missing_required_params` | `citation_traverse` | mode-specific required params missing (e.g., `mode=chain` without `source_bibcode`/`target_bibcode`) |
-| `unscoped_broad_query` | `search` | unscoped broad query blocked by the upfront guard (also flagged via `unscoped_broad_blocked: true` for telemetry lift) |
+| `unscoped_broad_query` | `search` | unscoped broad query blocked by the upfront guard (response also carries `unscoped_broad_blocked: true` for clients) |
 | `entity_legacy_extraction_type` | `entity` | caller passes `entity_type='negative_result'` or `'quant_claim'` — these moved to `claim_search` under bead mh14/c996 |
 | `invalid_action` | `entity`, `claim_search` | `action` value is not in the enum |
 | `invalid_mode` | `citation_traverse` | `mode` value is not `'graph'` / `'chain'` |

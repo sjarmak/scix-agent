@@ -152,7 +152,11 @@ pytest
 pytest -m "not integration"
 ```
 
-The default DSN (`dbname=scix`) points at the production database with 32M papers. Integration tests that write data require `SCIX_TEST_DSN` to be set.
+The default DSN (`dbname=scix`) points at the production database with 32M papers.
+Integration tests that write data require `SCIX_TEST_DSN` to be set. At startup,
+pytest clones that schema database into a private `scix_test_run_<pid>_<token>`
+database, routes the entire run to it, and drops it on exit. Concurrent test runs
+can therefore use the same `SCIX_TEST_DSN` without sharing mutable state.
 
 ## MCP Tools
 

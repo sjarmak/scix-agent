@@ -20,7 +20,14 @@ their dependency-free tests still run in CI (e.g. ``test_project_embeddings_umap
 from __future__ import annotations
 
 import importlib.util
+import os
+import uuid
 import warnings
+
+import pytest
+from database_isolation import DatabaseIsolation
+
+_DATABASE_ISOLATION = pytest.StashKey[DatabaseIsolation]()
 
 # Map an importable module name -> the test files that cannot be collected
 # without it. Keep filenames bare (relative to this tests/ directory).
@@ -60,3 +67,26 @@ for _dep, _modules in _OPTIONAL_DEP_MODULES.items():
             f"{len(_modules)} test module(s): {', '.join(_modules)}",
             stacklevel=1,
         )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Give every database-enabled pytest process its own cloned database."""
+    source_dsn = os.environ.get("SCIX_TEST_DSN")
+    if source_dsn is None:
+        return
+
+    run_token = f"{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    isolation = DatabaseIsolation.from_dsn(source_dsn, run_token=run_token)
+    isolation.create()
+    config.stash[_DATABASE_ISOLATION] = isolation
+    os.environ["SCIX_TEST_DSN"] = isolation.run_dsn
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Drop the run-scoped database after every fixture and plugin is done."""
+    isolation = config.stash.get(_DATABASE_ISOLATION, None)
+    if isolation is None:
+        return
+
+    os.environ["SCIX_TEST_DSN"] = isolation.source_dsn
+    isolation.drop()

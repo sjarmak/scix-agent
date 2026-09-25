@@ -2555,9 +2555,10 @@ def lit_review(
     Composes the 4-5-call sequence every research-copilot agent makes:
 
     1. ``hybrid_search`` for ``top_seeds`` seed papers (year-filtered).
-    2. For each of the top ``expansion_seeds`` seeds, expand via
-       ``get_references`` + ``get_citations`` (``expand_per_seed`` each
-       direction). Year-filter the expansion.
+    2. Expand the top ``expansion_seeds`` seeds in two batched directions via
+       ``get_references_batch`` + ``get_citations_batch``
+       (``expand_per_seed`` per seed in each direction). Year-filter the
+       expansion.
     3. Aggregate seeds + expansion into a working set; populate
        ``_session_state`` so follow-up tool calls can read the set
        without re-listing bibcodes.
@@ -2605,34 +2606,37 @@ def lit_review(
     seed_bibs = [p["bibcode"] for p in seeds if p.get("bibcode")]
 
     # ---- Step 2: citation expansion ----------------------------------------
-    # Each per-seed citation lane runs inside a savepoint (conn.transaction) so
+    # Each citation direction runs inside a savepoint (conn.transaction) so
     # a statement_timeout (QueryCanceled) rolls back to the savepoint without
     # leaving the outer transaction InFailedSqlTransaction — which would poison
     # every later query in this lit_review call (the structural-characterization
     # query below, and downstream tool calls sharing the connection). Mirrors
     # the alias / body-BM25 lanes in hybrid_search (beads wzqz/uq28). Only
     # QueryCanceled is caught: any other psycopg.Error — notably a class-25
-    # tx-abort — propagates rather than being silently swallowed.
+    # tx-abort — propagates rather than being silently swallowed. A timeout
+    # drops only the affected direction; the other batch still runs.
     expanded: set[str] = set()
+    dropped_lanes: list[str] = []
     if expansion_seeds and expand_per_seed:
-        for bib in seed_bibs[:expansion_seeds]:
-            for fn in (get_references, get_citations):
-                try:
-                    with conn.transaction():
-                        cit = fn(conn, bib, limit=expand_per_seed)
-                except psycopg.errors.QueryCanceled:
-                    # Recoverable per-lane statement_timeout: the savepoint
-                    # rolled back cleanly, so the outer transaction is intact
-                    # and later seeds / lanes are safe to run. lit_review is
-                    # best-effort, so drop just this lane and continue.
-                    logger.warning(
-                        "Citation expansion (%s) timed out for %r; dropping lane",
-                        fn.__name__,
-                        bib,
-                        exc_info=True,
-                    )
-                    continue
-                for p in cit.papers:
+        expansion_bibs = seed_bibs[:expansion_seeds]
+        for fn in (get_references_batch, get_citations_batch):
+            try:
+                with conn.transaction():
+                    citations_by_seed = fn(conn, expansion_bibs, limit=expand_per_seed)
+            except psycopg.errors.QueryCanceled:
+                # Recoverable per-direction statement_timeout: the savepoint
+                # rolled back cleanly, so the outer transaction is intact and
+                # the other direction remains safe to run. lit_review is
+                # best-effort, so drop just this direction and continue.
+                logger.warning(
+                    "Citation expansion (%s) timed out; dropping direction",
+                    fn.__name__,
+                    exc_info=True,
+                )
+                dropped_lanes.append(fn.__name__)
+                continue
+            for bib in expansion_bibs:
+                for p in citations_by_seed.get(bib, []):
                     b = p.get("bibcode")
                     y = p.get("year")
                     if not b or b in seed_bibs:
@@ -2641,7 +2645,7 @@ def lit_review(
                         continue
                     if year_max is not None and (y is None or y > year_max):
                         continue
-                    expanded.add(b)
+                    expanded = expanded.union((b,))
 
     working_set = list(dict.fromkeys(seed_bibs + sorted(expanded)))
 
@@ -2802,6 +2806,7 @@ def lit_review(
                 "context_rows": contexts_rows,
                 "note": coverage_note,
             },
+            **({"dropped_lanes": dropped_lanes} if dropped_lanes else {}),
         },
     )
 

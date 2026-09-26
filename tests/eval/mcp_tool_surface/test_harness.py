@@ -12,7 +12,7 @@ from mcp.client.stdio import stdio_client
 from mcp.types import CallToolResult, TextContent
 
 from scix.eval.mcp_tool_surface.proxy import (
-    DEFAULT_INTERCEPTED_TOOLS,
+    DEFAULT_READ_ONLY_CALLS,
     ProxyRecorder,
     parse_server_command,
     route_tool_call,
@@ -20,6 +20,7 @@ from scix.eval.mcp_tool_surface.proxy import (
 from scix.eval.mcp_tool_surface.runner import (
     RunResult,
     build_mcp_config,
+    claude_environment,
     invoke_claude,
     parse_stream_json,
     run_matrix,
@@ -49,19 +50,25 @@ def test_parse_server_command_rejects_invalid_argv(raw: str) -> None:
         parse_server_command(raw)
 
 
-def test_default_intercepted_tools_match_upstream_mutations() -> None:
-    assert DEFAULT_INTERCEPTED_TOOLS == frozenset(
+def test_default_read_only_calls_match_upstream_tools() -> None:
+    assert DEFAULT_READ_ONLY_CALLS == frozenset(
         {
-            "create_library",
-            "delete_library",
-            "edit_library",
-            "manage_documents",
-            "add_documents_by_query",
-            "library_operation",
-            "update_permissions",
-            "transfer_library",
-            "manage_annotation",
-            "delete_annotation",
+            ("search", None),
+            ("search_docs", None),
+            ("get_paper", None),
+            ("get_citations", None),
+            ("get_references", None),
+            ("get_metrics", None),
+            ("export", None),
+            ("health_check", None),
+            ("get_libraries", None),
+            ("get_library", None),
+            ("get_permissions", None),
+            ("get_annotation", None),
+            ("library", "list"),
+            ("library", "get"),
+            ("library_permissions", "get"),
+            ("library_annotations", "get"),
         }
     )
 
@@ -79,7 +86,7 @@ def test_route_tool_call_intercepts_without_downstream_execution(tmp_path: Path)
         route_tool_call(
             "delete_library",
             {"library_id": "library-123"},
-            DEFAULT_INTERCEPTED_TOOLS,
+            DEFAULT_READ_ONLY_CALLS,
             recorder,
             call_downstream,
         )
@@ -106,7 +113,7 @@ def test_route_tool_call_forwards_read_only_tool(tmp_path: Path) -> None:
         route_tool_call(
             "get_paper",
             {"bibcode": "2024ApJ...001A...1A"},
-            DEFAULT_INTERCEPTED_TOOLS,
+            DEFAULT_READ_ONLY_CALLS,
             ProxyRecorder(log_path),
             call_downstream,
         )
@@ -116,19 +123,82 @@ def test_route_tool_call_forwards_read_only_tool(tmp_path: Path) -> None:
     assert json.loads(log_path.read_text())["disposition"] == "forwarded"
 
 
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    [
+        ("library", {"action": "delete", "library_id": "library-123"}),
+        ("library_documents", {"action": "add", "library_id": "library-123"}),
+        ("unknown_tool", {}),
+        ("library", {"library_id": "library-123"}),
+        ("library", {"action": ["get"]}),
+    ],
+)
+def test_route_tool_call_intercepts_every_call_outside_read_only_allowlist(
+    tmp_path: Path, name: str, arguments: dict[str, object]
+) -> None:
+    downstream_calls: list[tuple[str, dict[str, object]]] = []
+
+    async def call_downstream(tool: str, values: dict[str, object]) -> CallToolResult:
+        downstream_calls.append((tool, values))
+        return CallToolResult(content=[TextContent(type="text", text="executed")])
+
+    result = asyncio.run(
+        route_tool_call(
+            name,
+            arguments,
+            DEFAULT_READ_ONLY_CALLS,
+            ProxyRecorder(tmp_path / "calls.jsonl"),
+            call_downstream,
+        )
+    )
+
+    assert downstream_calls == []
+    assert "intercepted" in result.content[0].text
+
+
+@pytest.mark.parametrize(
+    ("name", "action"),
+    [
+        ("library", "list"),
+        ("library", "get"),
+        ("library_permissions", "get"),
+        ("library_annotations", "get"),
+    ],
+)
+def test_route_tool_call_forwards_merged_reads(tmp_path: Path, name: str, action: str) -> None:
+    downstream_calls: list[tuple[str, dict[str, object]]] = []
+
+    async def call_downstream(tool: str, values: dict[str, object]) -> CallToolResult:
+        downstream_calls.append((tool, values))
+        return CallToolResult(content=[TextContent(type="text", text="executed")])
+
+    result = asyncio.run(
+        route_tool_call(
+            name,
+            {"action": action},
+            DEFAULT_READ_ONLY_CALLS,
+            ProxyRecorder(tmp_path / "calls.jsonl"),
+            call_downstream,
+        )
+    )
+
+    assert downstream_calls == [(name, {"action": action})]
+    assert result.content[0].text == "executed"
+
+
 def test_build_mcp_config_wraps_arbitrary_server_command(tmp_path: Path) -> None:
     config = build_mcp_config(
         ["npx", "-y", "scix-mcp"],
         tmp_path / "calls.jsonl",
-        frozenset({"delete_library"}),
+        frozenset({("search", None), ("library", "get")}),
     )
 
     entry = config["mcpServers"]["eval_target"]
     assert entry["args"][0:2] == ["-m", "scix.eval.mcp_tool_surface.proxy"]
     command_index = entry["args"].index("--server-command-json") + 1
-    blocked_index = entry["args"].index("--intercepted-tools-json") + 1
+    allowlist_index = entry["args"].index("--read-only-calls-json") + 1
     assert json.loads(entry["args"][command_index]) == ["npx", "-y", "scix-mcp"]
-    assert json.loads(entry["args"][blocked_index]) == ["delete_library"]
+    assert json.loads(entry["args"][allowlist_index]) == [["library", "get"], ["search", None]]
     assert "ADS_API_KEY" not in json.dumps(config)
 
 
@@ -149,8 +219,8 @@ def test_proxy_stdio_forwards_reads_and_intercepts_writes(tmp_path: Path) -> Non
             "scix.eval.mcp_tool_surface.proxy",
             "--server-command-json",
             json.dumps(downstream_command),
-            "--intercepted-tools-json",
-            json.dumps(["write_tool"]),
+            "--read-only-calls-json",
+            json.dumps([["read_tool", None]]),
             "--log-file",
             str(proxy_log),
         ],
@@ -234,6 +304,18 @@ def test_invoke_claude_returns_process_output(
     result = asyncio.run(invoke_claude(["claude", "-p"], "Find papers", tmp_path, 5))
 
     assert result == (b"stdout", b"stderr", 7)
+
+
+def test_claude_environment_removes_paid_api_key_and_disables_tool_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "paid-secret")
+    monkeypatch.setenv("ENABLE_TOOL_SEARCH", "true")
+
+    environment = claude_environment()
+
+    assert "ANTHROPIC_API_KEY" not in environment
+    assert environment["ENABLE_TOOL_SEARCH"] == "false"
 
 
 def test_invoke_claude_kills_timed_out_process(
@@ -332,6 +414,54 @@ def test_score_run_checks_tool_required_keys_and_exact_values() -> None:
     }
 
     scored = score_run(run, task)
+
+    assert scored["tool_correct"] is True
+    assert scored["params_correct"] is True
+
+
+@pytest.mark.parametrize(
+    ("oracle", "call"),
+    [
+        (
+            {"tool": "get_library", "args_subset": {"library_id": "lib-1"}},
+            {
+                "name": "mcp__eval_target__library",
+                "input": {"action": "get", "library_id": "lib-1"},
+            },
+        ),
+        (
+            {
+                "tool": "manage_documents",
+                "args_subset": {"library_id": "lib-1", "bibcodes": ["code"], "action": "remove"},
+            },
+            {
+                "name": "mcp__eval_target__library_documents",
+                "input": {"action": "remove", "library_id": "lib-1", "bibcodes": ["code"]},
+            },
+        ),
+        (
+            {
+                "tool": "manage_documents",
+                "args_subset": {"library_id": "lib-1", "bibcodes": ["code"], "action": "add"},
+            },
+            {
+                "name": "mcp__eval_target__library_documents",
+                "input": {"action": "add", "library_id": "lib-1", "bibcodes": ["code"]},
+            },
+        ),
+    ],
+)
+def test_score_run_maps_merged_tool_names_and_actions(
+    oracle: dict[str, object], call: dict[str, object]
+) -> None:
+    task = {"id": "task-1", "intent": "library", "execution": "live", "oracle": oracle}
+    run = {"task_id": "task-1", "model": "sonnet", "tool_calls": [call]}
+    mapping = {
+        "get_library": {"tool": "library", "action": "get"},
+        "manage_documents": {"tool": "library_documents", "action_from": "action"},
+    }
+
+    scored = score_run(run, task, mapping)
 
     assert scored["tool_correct"] is True
     assert scored["params_correct"] is True

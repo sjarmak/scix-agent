@@ -9,6 +9,22 @@ from typing import Any
 from scix.eval.mcp_tool_surface.tasks import load_tasks
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+SCIX_MERGED_TOOL_MAPPING = {
+    "get_libraries": {"tool": "library", "action": "list"},
+    "get_library": {"tool": "library", "action": "get"},
+    "create_library": {"tool": "library", "action": "create"},
+    "delete_library": {"tool": "library", "action": "delete"},
+    "edit_library": {"tool": "library", "action": "edit"},
+    "library_operation": {"tool": "library", "action": "operate"},
+    "manage_documents": {"tool": "library_documents", "action_from": "action"},
+    "add_documents_by_query": {"tool": "library_documents", "action": "add_by_query"},
+    "get_permissions": {"tool": "library_permissions", "action": "get"},
+    "update_permissions": {"tool": "library_permissions", "action": "update"},
+    "transfer_library": {"tool": "library_permissions", "action": "transfer"},
+    "get_annotation": {"tool": "library_annotations", "action": "get"},
+    "manage_annotation": {"tool": "library_annotations", "action": "manage"},
+    "delete_annotation": {"tool": "library_annotations", "action": "delete"},
+}
 
 
 def strip_mcp_prefix(name: str) -> str:
@@ -19,7 +35,11 @@ def strip_mcp_prefix(name: str) -> str:
     return name
 
 
-def score_run(run: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
+def score_run(
+    run: dict[str, Any],
+    task: dict[str, Any],
+    variant_mapping: dict[str, dict[str, str]] | None = None,
+) -> dict[str, Any]:
     base = {
         "session_id": run.get("session_id"),
         "model": run["model"],
@@ -50,16 +70,23 @@ def score_run(run: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
     first_tool = strip_mcp_prefix(first["name"])
     arguments = first.get("input", {})
     oracle = task["oracle"]
-    tool_correct = first_tool == oracle["tool"]
+    mapped = (variant_mapping or {}).get(oracle["tool"], {})
+    expected_tool = mapped.get("tool", oracle["tool"])
+    expected_action = mapped.get("action")
+    action_source = mapped.get("action_from")
+    if action_source:
+        expected_action = oracle.get("args_subset", {}).get(action_source)
+    tool_correct = first_tool == expected_tool
     required_keys = oracle.get("required_keys", [])
     subset = oracle.get("args_subset", {})
     keys_correct = all(key in arguments for key in required_keys)
     values_correct = all(arguments.get(key) == value for key, value in subset.items())
+    action_correct = expected_action is None or arguments.get("action") == expected_action
     return {
         **base,
         "capability_gap": False,
         "tool_correct": tool_correct,
-        "params_correct": tool_correct and keys_correct and values_correct,
+        "params_correct": tool_correct and keys_correct and values_correct and action_correct,
         "first_tool": first_tool,
         "first_args": arguments,
     }
@@ -99,10 +126,12 @@ def main() -> None:
         default=REPO_ROOT / "eval/mcp_tool_surface/scix_mcp_tasks.jsonl",
     )
     parser.add_argument("--out-dir", type=Path, default=REPO_ROOT / "results/mcp_tool_surface")
+    parser.add_argument("--variant", choices=["shipped", "merged"], default="shipped")
     args = parser.parse_args()
     tasks = {task["id"]: task for task in load_tasks(args.tasks)}
     runs = [json.loads(line) for line in args.runs.read_text().splitlines() if line.strip()]
-    scored = [score_run(run, tasks[run["task_id"]]) for run in runs]
+    variant_mapping = SCIX_MERGED_TOOL_MAPPING if args.variant == "merged" else None
+    scored = [score_run(run, tasks[run["task_id"]], variant_mapping) for run in runs]
     args.out_dir.mkdir(parents=True, exist_ok=True)
     with (args.out_dir / "scored.jsonl").open("w") as handle:
         for row in scored:

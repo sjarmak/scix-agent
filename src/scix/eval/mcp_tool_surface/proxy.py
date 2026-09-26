@@ -15,18 +15,24 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import CallToolResult, TextContent
 
-DEFAULT_INTERCEPTED_TOOLS = frozenset(
+DEFAULT_READ_ONLY_CALLS = frozenset(
     {
-        "create_library",
-        "delete_library",
-        "edit_library",
-        "manage_documents",
-        "add_documents_by_query",
-        "library_operation",
-        "update_permissions",
-        "transfer_library",
-        "manage_annotation",
-        "delete_annotation",
+        ("search", None),
+        ("search_docs", None),
+        ("get_paper", None),
+        ("get_citations", None),
+        ("get_references", None),
+        ("get_metrics", None),
+        ("export", None),
+        ("health_check", None),
+        ("get_libraries", None),
+        ("get_library", None),
+        ("get_permissions", None),
+        ("get_annotation", None),
+        ("library", "list"),
+        ("library", "get"),
+        ("library_permissions", "get"),
+        ("library_annotations", "get"),
     }
 )
 
@@ -55,11 +61,13 @@ class ProxyRecorder:
 async def route_tool_call(
     name: str,
     arguments: dict[str, Any],
-    intercepted_tools: frozenset[str],
+    read_only_calls: frozenset[tuple[str, str | None]],
     recorder: ProxyRecorder,
     call_downstream: Callable[[str, dict[str, Any]], Awaitable[CallToolResult]],
 ) -> CallToolResult:
-    if name in intercepted_tools:
+    action = arguments.get("action")
+    is_read_only = isinstance(action, str | type(None)) and (name, action) in read_only_calls
+    if not is_read_only:
         recorder.record(name, arguments, "intercepted")
         return CallToolResult(
             content=[
@@ -91,7 +99,7 @@ def downstream_environment() -> dict[str, str]:
 
 async def run_proxy(
     server_command: list[str],
-    intercepted_tools: frozenset[str],
+    read_only_calls: frozenset[tuple[str, str | None]],
     log_path: Path,
 ) -> None:
     parameters = StdioServerParameters(
@@ -115,7 +123,7 @@ async def run_proxy(
                 return await route_tool_call(
                     name,
                     arguments,
-                    intercepted_tools,
+                    read_only_calls,
                     recorder,
                     client.call_tool,
                 )
@@ -131,12 +139,12 @@ async def run_proxy(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--server-command-json", required=True)
-    parser.add_argument("--intercepted-tools-json", required=True)
+    parser.add_argument("--read-only-calls-json", required=True)
     parser.add_argument("--log-file", type=Path, required=True)
     args = parser.parse_args()
     server_command = parse_server_command(args.server_command_json)
-    intercepted = frozenset(json.loads(args.intercepted_tools_json))
-    asyncio.run(run_proxy(server_command, intercepted, args.log_file))
+    read_only_calls = frozenset(tuple(call) for call in json.loads(args.read_only_calls_json))
+    asyncio.run(run_proxy(server_command, read_only_calls, args.log_file))
 
 
 if __name__ == "__main__":

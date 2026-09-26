@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from scix.eval.mcp_tool_surface.proxy import DEFAULT_INTERCEPTED_TOOLS, parse_server_command
+from scix.eval.mcp_tool_surface.proxy import DEFAULT_READ_ONLY_CALLS, parse_server_command
 from scix.eval.mcp_tool_surface.tasks import load_tasks
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -42,7 +42,7 @@ class RunResult:
 def build_mcp_config(
     server_command: list[str],
     log_path: Path,
-    intercepted_tools: frozenset[str],
+    read_only_calls: frozenset[tuple[str, str | None]],
 ) -> dict[str, Any]:
     return {
         "mcpServers": {
@@ -53,8 +53,8 @@ def build_mcp_config(
                     "scix.eval.mcp_tool_surface.proxy",
                     "--server-command-json",
                     json.dumps(server_command),
-                    "--intercepted-tools-json",
-                    json.dumps(sorted(intercepted_tools)),
+                    "--read-only-calls-json",
+                    json.dumps(sorted(read_only_calls, key=lambda call: (call[0], call[1] or ""))),
                     "--log-file",
                     str(log_path),
                 ],
@@ -94,7 +94,7 @@ async def invoke_claude(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=config_dir,
-        env=dict(os.environ),
+        env=claude_environment(),
     )
     try:
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -108,6 +108,11 @@ async def invoke_claude(
         return b"", b"timeout", -1
 
 
+def claude_environment() -> dict[str, str]:
+    environment = {key: value for key, value in os.environ.items() if key != "ANTHROPIC_API_KEY"}
+    return {**environment, "ENABLE_TOOL_SEARCH": "false"}
+
+
 async def run_one(
     task: dict[str, Any],
     model: str,
@@ -117,7 +122,7 @@ async def run_one(
 ) -> RunResult:
     session_id = uuid.uuid4().hex[:12]
     proxy_log = out_dir / "proxy_logs" / f"{session_id}.jsonl"
-    config = build_mcp_config(server_command, proxy_log, DEFAULT_INTERCEPTED_TOOLS)
+    config = build_mcp_config(server_command, proxy_log, DEFAULT_READ_ONLY_CALLS)
     config_dir = Path(tempfile.mkdtemp(prefix="mcp-surface-eval-"))
     config_path = config_dir / "mcp.json"
     config_path.write_text(json.dumps(config))

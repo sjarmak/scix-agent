@@ -77,6 +77,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
     run_token = f"{os.getpid()}_{uuid.uuid4().hex[:8]}"
     isolation = DatabaseIsolation.from_dsn(source_dsn, run_token=run_token)
+    isolation.drop_stale()
     isolation.create()
     config.stash[_DATABASE_ISOLATION] = isolation
     os.environ["SCIX_TEST_DSN"] = isolation.run_dsn

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,7 +13,17 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 _RUN_TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9_]{1,32}")
-_RUN_DATABASE_PATTERN = re.compile(r"scix_test_run_[a-zA-Z0-9_]{1,32}")
+_RUN_DATABASE_PATTERN = re.compile(r"scix_test_run_(?P<pid>[0-9]+)_[a-zA-Z0-9_]{1,32}")
+
+
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 class _Connection(Protocol):
@@ -66,6 +77,30 @@ class DatabaseIsolation:
                     sql.Identifier(self.source_database),
                 )
             )
+
+    def drop_stale(
+        self,
+        *,
+        pid_is_alive: Callable[[int], bool] = _pid_is_alive,
+        connect: Connect = psycopg.connect,
+    ) -> None:
+        with connect(self.admin_dsn, autocommit=True) as connection:
+            databases = connection.execute(
+                sql.SQL(
+                    "SELECT database.datname, "
+                    "EXISTS (SELECT 1 FROM pg_stat_activity AS activity "
+                    "WHERE activity.datname = database.datname) "
+                    "FROM pg_database AS database "
+                    "WHERE database.datname LIKE 'scix_test_run_%'"
+                )
+            )
+            for database, has_connections in databases:
+                match = _RUN_DATABASE_PATTERN.fullmatch(database)
+                if match is None or has_connections or pid_is_alive(int(match.group("pid"))):
+                    continue
+                connection.execute(
+                    sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(database))
+                )
 
     def drop(self, *, connect: Connect = psycopg.connect) -> None:
         """Remove this run's database, terminating leaked test connections."""

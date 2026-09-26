@@ -1,0 +1,18 @@
+{
+  "models": {
+    "sonnet": {
+      "total_tasks": 90,
+      "scored_tasks": 87,
+      "capability_gaps": 3,
+      "tool_accuracy": 0.9080459770114943,
+      "param_accuracy": 0.7931034482758621
+    },
+    "haiku": {
+      "total_tasks": 90,
+      "scored_tasks": 87,
+      "capability_gaps": 3,
+      "tool_accuracy": 0.9655172413793104,
+      "param_accuracy": 0.896551724137931
+    }
+  }
+}

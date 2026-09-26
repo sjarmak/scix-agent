@@ -252,6 +252,10 @@ class TestIncludeClosedFlag:
     ``run_pipeline`` (and from there into ``_build_papers_select``).
     """
 
+    @pytest.fixture(autouse=True)
+    def _stub_free_disk_guard(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(extract_cli, "enforce_free_disk_guard", lambda **_: None)
+
     def test_main_default_passes_oa_only_true(
         self,
         monkeypatch: pytest.MonkeyPatch,

@@ -1,5 +1,3 @@
-"""Tests for PRD §M4.5 lane-consistency + gate (u12)."""
-
 from __future__ import annotations
 
 import sys
@@ -7,6 +5,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from hypothesis import example, given
+from hypothesis import strategies as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
@@ -73,10 +73,22 @@ class TestAdjustedJaccard:
         assert adjusted_jaccard(a, b, delta) == pytest.approx(1.0)
 
 
-class TestLaneDeltaStub:
-    def test_empty_at_u12(self):
-        # u12 stub must return an empty set; u07 will replace later.
-        assert compute_lane_delta_set("2024ApJ...1A") == frozenset()
+class TestLaneDelta:
+    def test_static_entities_missing_from_jit_form_non_empty_delta(self):
+        assert compute_lane_delta_set(
+            frozenset({10, 20, 30}),
+            frozenset({10, 30}),
+        ) == frozenset({20})
+
+    @example(frozenset({1}), frozenset())
+    @given(
+        st.frozensets(st.integers(min_value=0, max_value=10_000)),
+        st.frozensets(st.integers(min_value=0, max_value=10_000)),
+    )
+    def test_delta_equals_static_set_difference(self, static_entities, jit_entities):
+        assert compute_lane_delta_set(static_entities, jit_entities) == (
+            static_entities - jit_entities
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +179,15 @@ class TestGate:
 
 
 class TestEvalLaneConsistencyScript:
-    def test_run_writes_all_three_artifact_files(self, tmp_path):
+    def test_real_data_mode_is_rejected_without_a_persisted_jit_lane(self, monkeypatch):
+        import eval_lane_consistency
+
+        monkeypatch.setattr(sys, "argv", ["eval_lane_consistency.py", "--real-data"])
+        with pytest.raises(SystemExit) as exc_info:
+            eval_lane_consistency.main()
+        assert exc_info.value.code == 2
+
+    def test_run_writes_all_artifact_files(self, tmp_path):
         import eval_lane_consistency
 
         consistency_path = tmp_path / "m45_consistency.md"
@@ -178,12 +198,14 @@ class TestEvalLaneConsistencyScript:
         )
         assert consistency_path.exists()
         assert delta_path.exists()
-        # AC4 — lane delta artifact exists (header + one-row-per-entity
-        # contract; u12 stub may produce zero rows, which is documented
-        # in the artifact itself).
         delta_content = delta_path.read_text()
         assert "Lane Delta" in delta_content
         assert "bibcode" in delta_content
+        assert inputs.lane_delta_rows == [
+            ("2024M45..4", 61, "wikidata-backfill-unreachable"),
+            ("2024M45..5", 70, "wikidata-backfill-unreachable"),
+        ]
+        assert "| 2024M45..4 | 61 | wikidata-backfill-unreachable |" in delta_content
         # AC3 — consistency artifact has raw + adjusted + distribution +
         # per-lane-pair breakdown.
         consistency_content = consistency_path.read_text()

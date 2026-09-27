@@ -481,25 +481,17 @@ def _handle_find_gaps(conn: psycopg.Connection, args: dict[str, Any]) -> str:
     # logic, just bootstrapped.
     seed_query = args.get("query")
     if not ws_bibcodes and isinstance(seed_query, str) and seed_query.strip():
-        try:
-            from scix.search import concept_search as _concept_search
+        from scix.search import concept_search as _concept_search
 
+        with conn.transaction():
             seed_result = _concept_search(
                 conn, seed_query.strip(), limit=20, include_subtopics=False
             )
-            ws_bibcodes = [
-                p["bibcode"]
-                for p in (seed_result.papers or [])
-                if isinstance(p, dict) and p.get("bibcode")
-            ]
-        except Exception:
-            # Best-effort: fall through to the no-papers branch below.
-            logger.debug(
-                "find_gaps auto-seed via concept_search failed for query=%r",
-                seed_query,
-                exc_info=True,
-            )
-            ws_bibcodes = []
+        ws_bibcodes = [
+            p["bibcode"]
+            for p in (seed_result.papers or [])
+            if isinstance(p, dict) and p.get("bibcode")
+        ]
 
     if not ws_bibcodes:
         return json.dumps(

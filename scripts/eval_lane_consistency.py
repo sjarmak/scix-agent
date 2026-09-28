@@ -15,10 +15,6 @@ Computes per-bibcode Jaccard across three entity-resolution lanes:
    between the two resolver modes; if a future refactor introduces
    a discrepancy, it will show up here.
 
-The report adjusts every Jaccard by subtracting the Wikidata-backfill
-``lane_delta_set`` (empty at u12 — TODO in
-``src/scix/eval/lane_delta.py``).
-
 Gate: ``np.percentile(divergences, 90) <= 0.05``.
 """
 
@@ -213,7 +209,7 @@ def compute_lane_consistency(
             hybrid_enrich=hybrid_search_entities(item.bibcode),
             static_canonical=static_canonical_entities(item.bibcode),
         )
-        delta = compute_lane_delta_set(item.bibcode)
+        delta = compute_lane_delta_set(sets.hybrid_enrich, sets.static_canonical)
         for entity_id in sorted(delta):
             lane_delta_rows.append((item.bibcode, entity_id, "wikidata-backfill-unreachable"))
         records.append(per_bibcode_divergence(sets, lane_delta_set=delta))
@@ -306,62 +302,15 @@ def format_lane_delta_report(inputs: LaneConsistencyReportInputs) -> str:
         "candidate derivation."
     )
     lines.append("")
-    lines.append(
-        "> u12 status: the lane_delta_set is a stub (empty). The real "
-        "set will land with u07 Wikidata backfill; the arithmetic path "
-        "already subtracts this set from the numerator and denominator "
-        "of the adjusted Jaccard."
-    )
-    lines.append("")
     lines.append("| bibcode | entity_id | reason |")
     lines.append("|---------|-----------|--------|")
     if not inputs.lane_delta_rows:
-        lines.append("| _(none)_ | _(none)_ | _(none — stub returns empty set)_ |")
+        lines.append("| _(none)_ | _(none)_ | _(none)_ |")
     else:
         for bib, eid, reason in inputs.lane_delta_rows:
             lines.append(f"| {bib} | {eid} | {reason} |")
     lines.append("")
     return "\n".join(lines) + "\n"
-
-
-def compute_lane_consistency_real_data(
-    bibcodes: list[str],
-) -> LaneConsistencyReportInputs:
-    """Run M4.5 lane consistency against the populated prod DB."""
-    # Deferred imports so CI fixture mode never pulls the DB.
-    from scix.db import get_connection  # noqa: WPS433
-    from scix.eval import real_data as rd  # noqa: WPS433
-
-    conn = get_connection()
-    try:
-        ctx = rd.RealEvalContext(conn=conn)
-        records: list[BibcodeDivergence] = []
-        lane_delta_rows: list[tuple[str, int, str]] = []
-
-        for bib in bibcodes:
-            chain = rd.citation_chain_entities(ctx, bib)
-            enrich = rd.hybrid_enrich_entities(ctx, bib)
-            canonical = rd.static_canonical_entities(ctx, bib)
-            sets = LaneEntitySets(
-                bibcode=bib,
-                citation_chain=chain,
-                hybrid_enrich=enrich,
-                static_canonical=canonical,
-            )
-            delta = compute_lane_delta_set(bib)
-            for entity_id in sorted(delta):
-                lane_delta_rows.append((bib, entity_id, "wikidata-backfill-unreachable"))
-            records.append(per_bibcode_divergence(sets, lane_delta_set=delta))
-
-        aggregate = aggregate_divergence(records)
-    finally:
-        conn.close()
-
-    return LaneConsistencyReportInputs(
-        records=records,
-        aggregate=aggregate,
-        lane_delta_rows=lane_delta_rows,
-    )
 
 
 def run(
@@ -371,31 +320,6 @@ def run(
     fixture = build_fixture()
     seed_resolver_from_fixture(fixture)
     inputs = compute_lane_consistency(fixture)
-    _write_reports(inputs, consistency_output, lane_delta_output)
-    return inputs
-
-
-def run_real_data(
-    consistency_output: Path = DEFAULT_CONSISTENCY_OUTPUT,
-    lane_delta_output: Path = DEFAULT_LANE_DELTA_OUTPUT,
-    n_samples: int = 100,
-    min_entities: int = 2,
-    random_seed: int = 42,
-) -> LaneConsistencyReportInputs:
-    """Sample real bibcodes from prod and run the §M4.5 consistency gate."""
-    from scix.db import get_connection  # noqa: WPS433
-    from scix.eval import real_data as rd  # noqa: WPS433
-
-    with get_connection() as conn:
-        bibcodes = rd.sample_lane_consistency_bibcodes(
-            conn,
-            n_samples=n_samples,
-            min_entities=min_entities,
-            random_seed=random_seed,
-        )
-    logger.info("Sampled %d bibcodes for M4.5 consistency eval", len(bibcodes))
-
-    inputs = compute_lane_consistency_real_data(bibcodes)
     _write_reports(inputs, consistency_output, lane_delta_output)
     return inputs
 
@@ -434,43 +358,11 @@ def main() -> None:
         type=Path,
         default=DEFAULT_LANE_DELTA_OUTPUT,
     )
-    parser.add_argument(
-        "--real-data",
-        action="store_true",
-        help="Run against prod DB instead of in-process fixture.",
-    )
-    parser.add_argument(
-        "--n-samples",
-        type=int,
-        default=100,
-        help="Number of bibcodes to sample in --real-data mode (default: 100).",
-    )
-    parser.add_argument(
-        "--min-entities",
-        type=int,
-        default=2,
-        help="Minimum canonical entities per sampled bibcode (default: 2).",
-    )
-    parser.add_argument(
-        "--random-seed",
-        type=int,
-        default=42,
-        help="Sampling seed for reproducibility (default: 42).",
-    )
     args = parser.parse_args()
-    if args.real_data:
-        run_real_data(
-            consistency_output=args.consistency_output,
-            lane_delta_output=args.lane_delta_output,
-            n_samples=args.n_samples,
-            min_entities=args.min_entities,
-            random_seed=args.random_seed,
-        )
-    else:
-        run(
-            consistency_output=args.consistency_output,
-            lane_delta_output=args.lane_delta_output,
-        )
+    run(
+        consistency_output=args.consistency_output,
+        lane_delta_output=args.lane_delta_output,
+    )
 
 
 if __name__ == "__main__":

@@ -1,19 +1,3 @@
-"""Lane-consistency arithmetic for PRD §M4.5.
-
-Computes per-bibcode Jaccard across three entity-resolution lanes
-(citation-chain, hybrid_search[enrich_entities=True], canonical static
-read) with optional adjustment for a Wikidata-backfill ``lane_delta_set``
-— entities that exist in the static lane via Wikidata backfill but are
-structurally unreachable from the JIT lane's candidate derivation.
-
-At u12 the ``lane_delta_set`` is a stub returning an empty set; the
-arithmetic path still subtracts it from both numerator and denominator so
-that the API shape is correct when u07's Wikidata backfill lands.
-
-The 90th-percentile-of-divergence gate uses :func:`numpy.percentile` and
-passes when ``p90 ≤ 0.05``.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -36,8 +20,6 @@ def jaccard(a: frozenset[int], b: frozenset[int]) -> float:
         return 1.0
     inter = a & b
     union = a | b
-    if not union:
-        return 1.0
     return len(inter) / len(union)
 
 
@@ -50,8 +32,7 @@ def adjusted_jaccard(
     denominator.
 
     Both the intersection and the union are recomputed after subtracting
-    ``lane_delta_set`` from both input sets. This is the shape the PRD
-    specifies even though ``lane_delta_set`` is empty at u12.
+    ``lane_delta_set`` from both input sets.
     """
     a_adj = a - lane_delta_set
     b_adj = b - lane_delta_set
@@ -63,23 +44,11 @@ def divergence(jaccard_value: float) -> float:
     return max(0.0, min(1.0, 1.0 - jaccard_value))
 
 
-# ---------------------------------------------------------------------------
-# Lane delta stub — will be replaced by u07's Wikidata backfill
-# ---------------------------------------------------------------------------
-
-
-def compute_lane_delta_set(bibcode: str) -> frozenset[int]:
-    """Return the Wikidata-backfill ``lane_delta_set`` for ``bibcode``.
-
-    u12 in-scope: returns an empty set. The structurally-unreachable
-    entity list is owned by u07 (Wikidata backfill) and the surrounding
-    arithmetic is already plumbed so that substituting a real set here
-    will immediately adjust the §M4.5 gate computation.
-
-    TODO(u07-wikidata-backfill): replace with real lookup.
-    """
-    _ = bibcode  # documented parameter, kept for API stability
-    return frozenset()
+def compute_lane_delta_set(
+    static_entities: frozenset[int],
+    jit_entities: frozenset[int],
+) -> frozenset[int]:
+    return static_entities - jit_entities
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +94,11 @@ def per_bibcode_divergence(
     lane_delta_set: frozenset[int] | None = None,
 ) -> BibcodeDivergence:
     """Compute raw + adjusted Jaccard for all three lane pairs."""
-    delta = lane_delta_set if lane_delta_set is not None else compute_lane_delta_set(sets.bibcode)
+    delta = (
+        lane_delta_set
+        if lane_delta_set is not None
+        else compute_lane_delta_set(sets.hybrid_enrich, sets.static_canonical)
+    )
 
     raw_ch = jaccard(sets.citation_chain, sets.hybrid_enrich)
     raw_cs = jaccard(sets.citation_chain, sets.static_canonical)

@@ -66,8 +66,9 @@ def test_database_isolation_is_immutable() -> None:
 
 
 class _RecordingConnection:
-    def __init__(self) -> None:
+    def __init__(self, rows: tuple[tuple[str, bool], ...] = ()) -> None:
         self.statements: list[str] = []
+        self.rows = rows
 
     def __enter__(self) -> _RecordingConnection:
         return self
@@ -75,8 +76,52 @@ class _RecordingConnection:
     def __exit__(self, *_args: object) -> None:
         return None
 
-    def execute(self, query: object) -> None:
+    def execute(self, query: object) -> tuple[tuple[str, bool], ...]:
         self.statements.append(query.as_string(None))
+        return self.rows
+
+
+def _cleanup_statements(rows: tuple[tuple[str, bool], ...], live_pids: frozenset[int]) -> list[str]:
+    isolation = DatabaseIsolation.from_dsn("dbname=scix_test", run_token="1234_abcd")
+    connection = _RecordingConnection(rows)
+
+    def connect(_dsn: str, *, autocommit: bool) -> _RecordingConnection:
+        assert autocommit is True
+        return connection
+
+    isolation.drop_stale(
+        pid_is_alive=lambda pid: pid in live_pids,
+        connect=connect,
+    )
+    return connection.statements
+
+
+def test_drop_stale_removes_database_for_dead_pid() -> None:
+    statements = _cleanup_statements((("scix_test_run_1234_deadbeef", False),), frozenset())
+
+    assert statements[-1] == 'DROP DATABASE IF EXISTS "scix_test_run_1234_deadbeef"'
+
+
+def test_drop_stale_keeps_database_for_live_pid() -> None:
+    statements = _cleanup_statements((("scix_test_run_1234_deadbeef", False),), frozenset({1234}))
+
+    assert all(not statement.startswith("DROP DATABASE") for statement in statements)
+
+
+def test_drop_stale_keeps_database_with_active_connections() -> None:
+    statements = _cleanup_statements((("scix_test_run_1234_deadbeef", True),), frozenset())
+
+    assert all(not statement.startswith("DROP DATABASE") for statement in statements)
+
+
+@pytest.mark.parametrize(
+    "database",
+    ["scix", "scix_test", "scix_test_run_bad!"],
+)
+def test_drop_stale_never_drops_nonmatching_database(database: str) -> None:
+    statements = _cleanup_statements(((database, False),), frozenset())
+
+    assert all(not statement.startswith("DROP DATABASE") for statement in statements)
 
 
 def test_create_and_drop_use_autocommit_admin_connection() -> None:

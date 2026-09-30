@@ -23,11 +23,9 @@ from scix.search import (
     _LEXICAL_POOL_DEFAULT,
     _LEXICAL_RANK_FLAG_DEFAULT,
     _TS_CONFIG_WHITELIST,
-    SELECTIVITY_THRESHOLD,
     SearchFilters,
     SearchResult,
     _elapsed_ms,
-    _estimate_filter_selectivity,
     _filter_first_vector_search,
     _resolve_lexical_pool,
     _resolve_lexical_rank_flag,
@@ -416,107 +414,6 @@ class TestHybridSearchDefaultModel:
         assert sig.parameters["model_name"].default == "indus"
 
 
-class TestCardinalityRouting:
-    """Verify filter-first fallback triggers for selective filters."""
-
-    def test_selectivity_threshold_is_one_percent(self) -> None:
-        assert SELECTIVITY_THRESHOLD == 0.01
-
-    def test_estimate_no_filters_returns_one(self) -> None:
-        """Empty filters should return selectivity 1.0 without hitting DB."""
-        result = _estimate_filter_selectivity(None, SearchFilters())  # type: ignore[arg-type]
-        assert result == 1.0
-
-    def test_cardinality_routing_uses_filter_first(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When selectivity < threshold, hybrid_search should use filter-first CTE."""
-        from unittest.mock import MagicMock, patch
-
-        # Filter-first is the pg lane; it only routes when the Qdrant gate is off.
-        monkeypatch.delenv("QDRANT_URL", raising=False)
-        mock_conn = MagicMock()
-
-        fake_embedding = [0.1] * 768
-        selective_filters = SearchFilters(year_min=2026, year_max=2026, doctype="article")
-
-        # Make _estimate_filter_selectivity return very low selectivity
-        # Make _filter_first_vector_search return a result
-        # Make lexical_search return a result
-        fake_search_result = SearchResult(
-            papers=[{"bibcode": "TEST"}],
-            total=1,
-            timing_ms={"vector_ms": 1.0},
-            metadata={"filter_first": True},
-        )
-        fake_lex_result = SearchResult(
-            papers=[],
-            total=0,
-            timing_ms={"lexical_ms": 1.0},
-        )
-
-        with (
-            patch("scix.search._estimate_filter_selectivity", return_value=0.001) as mock_est,
-            patch(
-                "scix.search._filter_first_vector_search",
-                return_value=fake_search_result,
-            ) as mock_ff,
-            patch("scix.search.lexical_search", return_value=fake_lex_result),
-        ):
-            result = hybrid_search(
-                mock_conn,
-                "test query",
-                query_embedding=fake_embedding,
-                filters=selective_filters,
-            )
-
-            # filter-first should have been called
-            mock_est.assert_called_once_with(mock_conn, selective_filters)
-            mock_ff.assert_called_once()
-
-            # Result should contain the fused papers
-            assert isinstance(result, SearchResult)
-            assert "vector_ms" in result.timing_ms
-
-    def test_cardinality_routing_uses_hnsw_for_broad_filters(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """When selectivity >= threshold, hybrid_search should use normal vector_search."""
-        from unittest.mock import MagicMock, patch
-
-        monkeypatch.delenv("QDRANT_URL", raising=False)
-        mock_conn = MagicMock()
-
-        fake_embedding = [0.1] * 768
-        broad_filters = SearchFilters(year_min=2020)
-
-        fake_vec_result = SearchResult(
-            papers=[{"bibcode": "TEST"}],
-            total=1,
-            timing_ms={"vector_ms": 1.0},
-            metadata={"iterative_scan": True},
-        )
-        fake_lex_result = SearchResult(
-            papers=[],
-            total=0,
-            timing_ms={"lexical_ms": 1.0},
-        )
-
-        with (
-            patch("scix.search._estimate_filter_selectivity", return_value=0.5),
-            patch("scix.search.vector_search", return_value=fake_vec_result) as mock_vs,
-            patch("scix.search.lexical_search", return_value=fake_lex_result),
-        ):
-            result = hybrid_search(
-                mock_conn,
-                "test query",
-                query_embedding=fake_embedding,
-                filters=broad_filters,
-            )
-
-            # Normal vector_search should have been called
-            mock_vs.assert_called_once()
-            assert isinstance(result, SearchResult)
-
-
 class TestQdrantFilteredRouting:
     """Filtered dense lanes must not touch the dropped paper_embeddings table
     when the Qdrant gate is active (bead miw9, jg4a FAIL 1 follow-up)."""
@@ -602,12 +499,9 @@ class TestQdrantFilteredRouting:
 
         conn.cursor.assert_not_called()
 
-    def test_hybrid_search_skips_selectivity_probe_when_gated(
+    def test_hybrid_search_routes_filtered_dense_to_qdrant(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Under QDRANT_URL, hybrid_search must not run the selectivity probe
-        or the filter-first CTE — filtered dense goes through vector_search,
-        whose Qdrant lane applies filters as a PG post-filter."""
         from unittest.mock import MagicMock, patch
 
         monkeypatch.setenv("QDRANT_URL", "http://localhost:6333")
@@ -623,8 +517,6 @@ class TestQdrantFilteredRouting:
         fake_body_result = SearchResult(papers=[], total=0, timing_ms={"body_lexical_ms": 1.0})
 
         with (
-            patch("scix.search._estimate_filter_selectivity") as mock_est,
-            patch("scix.search._filter_first_vector_search") as mock_ff,
             patch("scix.search.vector_search", return_value=fake_vec_result) as mock_vs,
             patch("scix.search.lexical_search", return_value=fake_lex_result),
             patch("scix.search.lexical_search_body", return_value=fake_body_result),
@@ -636,8 +528,6 @@ class TestQdrantFilteredRouting:
                 filters=selective_filters,
             )
 
-        mock_est.assert_not_called()
-        mock_ff.assert_not_called()
         mock_vs.assert_called_once()
         assert mock_vs.call_args.kwargs["filters"] is selective_filters
         assert isinstance(result, SearchResult)
@@ -695,7 +585,12 @@ class TestQdrantFilteredRouting:
             patch("scix.search.lexical_search", return_value=lexical_result),
             patch("scix.search.lexical_search_body", return_value=body_result),
         ):
-            result = hybrid_search(conn, "dark matter", query_embedding=[0.1] * 768)
+            result = hybrid_search(
+                conn,
+                "dark matter",
+                query_embedding=[0.1] * 768,
+                filters=SearchFilters(year_min=2026),
+            )
 
         assert [paper["bibcode"] for paper in result.papers] == ["LEXICAL"]
         assert result.metadata["retrieval_mode"] == "lexical"
@@ -745,7 +640,6 @@ class TestHybridSearchEntityFilterWiring:
         with (
             patch("scix.search.lexical_search", return_value=fake_lex),
             patch("scix.search.lexical_search_body", return_value=fake_body),
-            patch("scix.search._estimate_filter_selectivity", return_value=0.5),
             patch("scix.search.vector_search", return_value=fake_vec) as mock_vs,
         ):
             hybrid_search(

@@ -676,59 +676,6 @@ def rrf_fuse(
     return fused
 
 
-# ---------------------------------------------------------------------------
-# Cardinality estimation and filter-first vector search
-# ---------------------------------------------------------------------------
-
-# Selectivity threshold: filters matching < 1% of the corpus use
-# filter-first CTE + brute-force cosine instead of HNSW iterative scan.
-SELECTIVITY_THRESHOLD = 0.01
-
-
-def _estimate_filter_selectivity(
-    conn: psycopg.Connection,
-    filters: SearchFilters,
-) -> float:
-    """Estimate the fraction of the corpus matching *filters*.
-
-    Uses pg_class.reltuples for the total corpus size (no seq scan) and a
-    fast COUNT on the filtered subset.  Returns a ratio in [0.0, 1.0].
-    A return value of 1.0 means "no filters" or "cannot estimate".
-    """
-    filter_clause, filter_params = filters.to_where_clause("p")
-    entity_clause, entity_params = filters.to_entity_filter_clause("p")
-    if not filter_clause and not entity_clause:
-        return 1.0
-
-    with conn.cursor() as cur:
-        # Total corpus estimate from planner stats (instant, no scan)
-        cur.execute("SELECT GREATEST(reltuples, 1) FROM pg_class WHERE relname = 'papers'")
-        row = cur.fetchone()
-        if row is None:
-            return 1.0
-        total: float = float(row[0])
-
-        # Cap the probe: if we find more than (threshold * total + 1) rows,
-        # selectivity is already above threshold — no need to count further.
-        # This bounds worst-case scan to ~1% of the corpus (~320K rows on
-        # 32M) instead of a full sequential scan.
-        cap = max(1, int(SELECTIVITY_THRESHOLD * total) + 1)
-        count_sql = (
-            f"SELECT count(*) FROM ("
-            f"SELECT 1 FROM papers p WHERE TRUE {filter_clause} {entity_clause} LIMIT {cap}"
-            f") sub"
-        )
-        cur.execute(count_sql, filter_params + entity_params)
-        matched: int = cur.fetchone()[0]
-
-        # If we hit the cap, we know selectivity ≥ threshold — return a
-        # value just above threshold so the caller routes to HNSW.
-        if matched >= cap:
-            return SELECTIVITY_THRESHOLD + 0.001
-
-    return matched / total if total > 0 else 1.0
-
-
 def _filter_first_vector_search(
     conn: psycopg.Connection,
     query_embedding: list[float],
@@ -854,9 +801,6 @@ def hybrid_search(
 
     If query_embedding is None, falls back to lexical-only mode (BM25-only).
     If reranker is provided, re-ranks the top RRF results.
-
-    Cardinality-aware routing: when filters match <1% of the corpus, uses a
-    filter-first CTE with brute-force cosine instead of HNSW iterative scan.
 
     Args:
         model_name: Embedding model for primary vector search (default: indus).
@@ -988,41 +932,16 @@ def hybrid_search(
             logger.warning("Body BM25 search timed out; dropping lane", exc_info=True)
             dropped_lanes.append("body_bm25")
 
-    # Cardinality-aware routing: estimate filter selectivity once for reuse.
-    # Skipped when the Qdrant gate is active — filter-first is a pg lane over
-    # the dropped paper_embeddings table (ADR-013), so the probe result would
-    # be ignored; filtered dense goes through vector_search's Qdrant lane.
-    use_filter_first = False
-    if query_embedding is not None and filters is not None and not _qdrant_dense_gated(model_name):
-        selectivity = _estimate_filter_selectivity(conn, filters)
-        if selectivity < SELECTIVITY_THRESHOLD:
-            use_filter_first = True
-            logger.debug(
-                "Filter selectivity %.4f < %.2f — using filter-first CTE",
-                selectivity,
-                SELECTIVITY_THRESHOLD,
-            )
-
-    # Primary vector search (if embeddings available)
     if query_embedding is not None:
         try:
-            if use_filter_first:
-                vec_result = _filter_first_vector_search(
-                    conn,
-                    query_embedding,
-                    model_name=model_name,
-                    filters=filters,
-                    limit=vector_limit,
-                )
-            else:
-                vec_result = vector_search(
-                    conn,
-                    query_embedding,
-                    model_name=model_name,
-                    filters=filters,
-                    limit=vector_limit,
-                    ef_search=ef_search,
-                )
+            vec_result = vector_search(
+                conn,
+                query_embedding,
+                model_name=model_name,
+                filters=filters,
+                limit=vector_limit,
+                ef_search=ef_search,
+            )
         except QdrantSearchError:
             logger.warning(
                 "Qdrant dense lane failed; falling back to lexical-only",

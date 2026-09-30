@@ -551,28 +551,56 @@ class TestQdrantFilteredRouting:
         assert result is fake_result
         mock_conn.cursor.assert_not_called()
 
-    def test_filter_first_uses_pg_when_not_gated(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Without QDRANT_URL the legacy pg path is preserved (rollback lane)."""
+    def test_filter_first_fails_explicitly_when_qdrant_url_is_unset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from unittest.mock import MagicMock
+
+        from scix.search import QdrantSearchError
 
         monkeypatch.delenv("QDRANT_URL", raising=False)
         conn = MagicMock()
-        cursor = MagicMock()
-        cursor.__enter__ = MagicMock(return_value=cursor)
-        cursor.__exit__ = MagicMock(return_value=False)
-        cursor.fetchall.return_value = []
-        conn.cursor.return_value = cursor
 
-        _filter_first_vector_search(
-            conn,
-            [0.1] * 768,
-            model_name="indus",
-            filters=SearchFilters(year_min=2026),
-            limit=5,
-        )
+        with pytest.raises(QdrantSearchError, match="QDRANT_URL is unset"):
+            _filter_first_vector_search(
+                conn,
+                [0.1] * 768,
+                model_name="indus",
+                filters=SearchFilters(year_min=2026),
+                limit=5,
+            )
 
-        sql, _params = cursor.execute.call_args.args
-        assert "paper_embeddings" in sql
+        conn.cursor.assert_not_called()
+
+    def test_vector_search_fails_explicitly_when_qdrant_url_is_unset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        from scix.search import QdrantSearchError
+
+        monkeypatch.delenv("QDRANT_URL", raising=False)
+        conn = MagicMock()
+
+        with pytest.raises(QdrantSearchError, match="QDRANT_URL is unset"):
+            vector_search(conn, [0.1] * 768, model_name="indus", limit=5)
+
+        conn.cursor.assert_not_called()
+
+    def test_vector_search_rejects_model_without_qdrant_collection(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        from scix.search import QdrantSearchError
+
+        monkeypatch.setenv("QDRANT_URL", "http://localhost:6333")
+        conn = MagicMock()
+
+        with pytest.raises(QdrantSearchError, match="no Qdrant collection configured"):
+            vector_search(conn, [0.1] * 768, model_name="specter2", limit=5)
+
+        conn.cursor.assert_not_called()
 
     def test_hybrid_search_skips_selectivity_probe_when_gated(
         self, monkeypatch: pytest.MonkeyPatch
@@ -648,6 +676,31 @@ class TestQdrantFilteredRouting:
         assert result.metadata["retrieval_mode"] == "lexical"
         assert result.metadata["degradation_reason"] == "qdrant_failed"
         assert "Qdrant dense lane failed" in caplog.text
+
+    def test_hybrid_search_degrades_without_qdrant_url(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import MagicMock, patch
+
+        monkeypatch.delenv("QDRANT_URL", raising=False)
+        conn = MagicMock()
+        lexical_result = SearchResult(
+            papers=[{"bibcode": "LEXICAL"}],
+            total=1,
+            timing_ms={"lexical_ms": 1.0},
+        )
+        body_result = SearchResult(papers=[], total=0, timing_ms={"body_lexical_ms": 1.0})
+
+        with (
+            patch("scix.search.lexical_search", return_value=lexical_result),
+            patch("scix.search.lexical_search_body", return_value=body_result),
+        ):
+            result = hybrid_search(conn, "dark matter", query_embedding=[0.1] * 768)
+
+        assert [paper["bibcode"] for paper in result.papers] == ["LEXICAL"]
+        assert result.metadata["retrieval_mode"] == "lexical"
+        assert result.metadata["degradation_reason"] == "qdrant_failed"
+        conn.cursor.assert_not_called()
 
 
 class TestHybridSearchEntityFilterWiring:

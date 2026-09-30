@@ -20,7 +20,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
-from scix.db import IterativeScanMode, configure_iterative_scan
+from scix.db import IterativeScanMode
 from scix.facet_coverage import facet_coverage
 from scix.sources.ar5iv import _ARXIV_ID_RE, LATEX_DERIVED_SOURCES, _build_canonical_url
 from scix.sources.licensing import enforce_snippet_budget
@@ -33,16 +33,6 @@ STUB_COLUMNS = "p.bibcode, p.title, p.first_author, p.year, p.citation_count, p.
 
 # Default RRF constant (controls how much rank position matters vs raw score)
 RRF_K = 60
-
-# Halfvec cutover gate. Migrations 053/054 add paper_embeddings.embedding_hv
-# + idx_embed_hnsw_indus_hv (halfvec_cosine_ops). Applied to prod scix on
-# 2026-04-29; backfill of all 32.4M INDUS rows + new HNSW build completed
-# the same day. The legacy idx_embed_hnsw_indus was dropped pre-backfill
-# (per docs/runbooks/halfvec_migration.md §0/§4) — when SCIX_USE_HALFVEC=0
-# INDUS dense queries fall back to seq-scan over the legacy `embedding`
-# column (~44 s/query). Flip to 1 after the 50-query post-migration eval
-# acceptance gate passes (runbook §7).
-_HALFVEC_ENABLED = os.environ.get("SCIX_USE_HALFVEC", "0") == "1"
 
 # Qdrant dense-lane gate (bead 5jtf). When QDRANT_URL is set and the model
 # has a collection here, vector_search() routes kNN to Qdrant instead of
@@ -634,100 +624,19 @@ def vector_search(
     ef_search: int = 100,
     iterative_scan: IterativeScanMode | None = None,
 ) -> SearchResult:
-    """Approximate nearest neighbor search using pgvector HNSW.
-
-    Args:
-        query_embedding: 768-dim float vector.
-        model_name: Filter to a specific embedding model (default: indus).
-        ef_search: HNSW ef_search parameter (higher = more accurate, slower).
-            When iterative_scan is enabled, ef_search is less critical because
-            pgvector automatically expands the search to satisfy the LIMIT.
-        iterative_scan: pgvector 0.8.0+ iterative scan mode. When set to
-            "relaxed_order" or "strict_order", pgvector automatically expands
-            the index scan until LIMIT results pass the WHERE filters.
-            When None (default), iterative scan is auto-enabled with
-            "relaxed_order" if filters are present and pgvector >= 0.8.0.
-    """
-    if _qdrant_dense_gated(model_name):
-        return _vector_search_qdrant(
-            conn,
-            query_embedding,
-            model_name=model_name,
-            filters=filters,
-            limit=limit,
-            ef_search=ef_search,
+    if _qdrant_dense_url() is None:
+        raise QdrantSearchError("Dense search is unavailable because QDRANT_URL is unset")
+    if model_name not in _QDRANT_DENSE_COLLECTIONS:
+        raise QdrantSearchError(
+            f"Dense search is unavailable for model {model_name!r}: no Qdrant collection configured"
         )
-
-    t0 = time.perf_counter()
-
-    ndim = len(query_embedding)
-    vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
-    # INDUS halfvec path is gated on SCIX_USE_HALFVEC=1. Migrations 053/054
-    # are applied and embedding_hv is fully backfilled (2026-04-29); flip
-    # only after the 50-query eval clears the runbook §7 gates.
-    use_halfvec = _HALFVEC_ENABLED and model_name == "indus"
-    vec_col = "pe.embedding_hv" if use_halfvec else "pe.embedding"
-    vec_cast = f"halfvec({ndim})" if use_halfvec else f"vector({ndim})"
-    effective = filters or SearchFilters()
-    filter_clause, filter_params = effective.to_where_clause("p")
-    entity_clause, entity_params = effective.to_entity_filter_clause("p")
-
-    with conn.cursor() as cur:
-        # Tune HNSW probe depth for this transaction
-        cur.execute(f"SET LOCAL hnsw.ef_search = {int(ef_search)}")
-
-    # Auto-enable iterative scan for filtered queries on pgvector >= 0.8.0
-    has_filters = bool(filter_clause) or bool(entity_clause)
-    scan_mode = iterative_scan
-    if scan_mode is None and has_filters:
-        scan_mode = "relaxed_order"
-
-    iterative_applied = False
-    if scan_mode is not None:
-        iterative_applied = configure_iterative_scan(conn, mode=scan_mode)
-
-    # Match the per-model partial HNSW expression so the planner picks the
-    # right index, not a Seq Scan over 32M rows + Sort:
-    #   - INDUS halfvec: idx_embed_hnsw_indus_hv on `embedding_hv` (no cast).
-    #     The LHS must be the bare column; adding `::halfvec(768)` defeats
-    #     the planner match (verified 2026-04-30: ~12 min wall-clock vs
-    #     sub-100ms when the cast is omitted).
-    #   - Pilots (vector path): idx_embed_hnsw_{nomic,specter2} on
-    #     `((embedding)::vector(768))`. The LHS cast is required for the
-    #     planner to match the indexed expression (verified 2026-04-26:
-    #     omitting the cast produces cost=11.5M / ~44s wall-clock; adding
-    #     it produces cost=4k / sub-100ms HNSW lookup).
-    cast_vec = vec_col if use_halfvec else f"({vec_col})::{vec_cast}"
-    query = f"""
-        SELECT {STUB_COLUMNS},
-               1 - ({cast_vec} <=> %s::{vec_cast}) AS similarity
-        FROM paper_embeddings pe
-        JOIN papers p ON p.bibcode = pe.bibcode
-        WHERE pe.model_name = %s
-        {filter_clause}
-        {entity_clause}
-        ORDER BY {cast_vec} <=> %s::{vec_cast}
-        LIMIT %s
-    """
-    params: list[Any] = [vec_str, model_name] + filter_params + entity_params + [vec_str, limit]
-
-    with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(query, params)
-        rows = cur.fetchall()
-
-    vector_ms = _elapsed_ms(t0)
-
-    papers = []
-    for row in rows:
-        stub = PaperStub.from_row(row).to_dict()
-        stub["score"] = float(row["similarity"])
-        papers.append(stub)
-
-    return SearchResult(
-        papers=papers,
-        total=len(papers),
-        timing_ms={"vector_ms": vector_ms},
-        metadata={"iterative_scan": iterative_applied},
+    return _vector_search_qdrant(
+        conn,
+        query_embedding,
+        model_name=model_name,
+        filters=filters,
+        limit=limit,
+        ef_search=ef_search,
     )
 
 
@@ -828,71 +737,12 @@ def _filter_first_vector_search(
     filters: SearchFilters | None = None,
     limit: int = 20,
 ) -> SearchResult:
-    """Filter-first CTE: get matching bibcodes, then brute-force cosine.
-
-    Used when filter selectivity is very low (<1% of corpus) so that HNSW
-    iterative scan would waste I/O expanding the index.  Instead we
-    materialise the small filtered set and compute exact cosine distance.
-    """
-    # Qdrant gate (bead miw9): the pg CTE below targets paper_embeddings,
-    # dropped in ADR-013. Delegate to vector_search, the single owner of
-    # dense-lane routing.
-    if _qdrant_dense_gated(model_name):
-        return vector_search(
-            conn,
-            query_embedding,
-            model_name=model_name,
-            filters=filters,
-            limit=limit,
-        )
-
-    t0 = time.perf_counter()
-
-    ndim = len(query_embedding)
-    vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
-    # See gate explanation on _vector_search_hnsw — same story here.
-    use_halfvec = _HALFVEC_ENABLED and model_name == "indus"
-    vec_col = "pe.embedding_hv" if use_halfvec else "pe.embedding"
-    vec_cast = f"halfvec({ndim})" if use_halfvec else f"vector({ndim})"
-    effective = filters or SearchFilters()
-    filter_clause, filter_params = effective.to_where_clause("p")
-    entity_clause, entity_params = effective.to_entity_filter_clause("p")
-
-    query = f"""
-        WITH filtered AS MATERIALIZED (
-            SELECT p.bibcode
-            FROM papers p
-            WHERE TRUE {filter_clause}
-            {entity_clause}
-        )
-        SELECT {STUB_COLUMNS},
-               1 - ({vec_col} <=> %s::{vec_cast}) AS similarity
-        FROM paper_embeddings pe
-        JOIN filtered f ON f.bibcode = pe.bibcode
-        JOIN papers p   ON p.bibcode = pe.bibcode
-        WHERE pe.model_name = %s
-        ORDER BY {vec_col} <=> %s::{vec_cast}
-        LIMIT %s
-    """
-    params: list[Any] = filter_params + entity_params + [vec_str, model_name, vec_str, limit]
-
-    with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(query, params)
-        rows = cur.fetchall()
-
-    vector_ms = _elapsed_ms(t0)
-
-    papers = []
-    for row in rows:
-        stub = PaperStub.from_row(row).to_dict()
-        stub["score"] = float(row["similarity"])
-        papers.append(stub)
-
-    return SearchResult(
-        papers=papers,
-        total=len(papers),
-        timing_ms={"vector_ms": vector_ms},
-        metadata={"filter_first": True},
+    return vector_search(
+        conn,
+        query_embedding,
+        model_name=model_name,
+        filters=filters,
+        limit=limit,
     )
 
 

@@ -35,6 +35,7 @@
     "qdrant_failed",
     "seed_too_broad",
     "tool_removed",
+    "tool_timeout",
     "unknown_tool",
     "unscoped_broad_query",
     "vector_index_unavailable"

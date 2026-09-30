@@ -41,15 +41,18 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
+from queue import Empty, SimpleQueue
 from typing import Any, Callable, Generator, Mapping
 
 import psycopg
@@ -880,7 +883,7 @@ def create_server(_run_self_test: bool = True, _preload_model: bool = True):
 
     @server.call_tool()
     async def call_tool_handler(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-        result_json = call_tool(name, arguments)
+        result_json = await _call_tool_async(name, arguments)
         return [TextContent(type="text", text=result_json)]
 
     if _run_self_test:
@@ -898,56 +901,233 @@ def create_server(_run_self_test: bool = True, _preload_model: bool = True):
 # ---------------------------------------------------------------------------
 
 
-def call_tool(name: str, arguments: dict[str, Any]) -> str:
-    """Synchronously dispatch a tool by name and return its JSON result.
+def _tool_timeout_result(name: str, timeout: float) -> str:
+    return json.dumps(
+        {
+            "error": f"{name} exceeded its {timeout:g} second call deadline",
+            "error_code": ErrorCode.TOOL_TIMEOUT,
+        }
+    )
 
-    Mirrors the lifecycle of the MCP request handler registered in
-    :func:`create_server`: acquires a pooled connection, sets the per-tool
-    statement_timeout, dispatches via :func:`_dispatch_tool`, and — in a
-    ``finally`` block — records a ``query_log`` row and emits a
-    :class:`scix.viz.trace_stream.TraceEvent`. Lets callers (e.g. the viz
-    demo endpoint) drive the MCP tool surface in-process without going
-    through the asyncio request handler, while still producing exactly one
-    log row and one trace event per call.
-    """
-    with _get_conn() as conn:
-        spec = _ALIAS_TRANSFORMS.get(name)
-        resolved_name = spec.guidance if spec is not None else name
-        _set_timeout(conn, resolved_name)
-        t0 = time.monotonic()
-        success = True
-        error_msg: str | None = None
-        result_json: str = "{}"
-        try:
+
+def _tool_timeout(name: str) -> float:
+    spec = _ALIAS_TRANSFORMS.get(name)
+    resolved_name = spec.guidance if spec is not None else name
+    return TOOL_TIMEOUTS.get(resolved_name, 30)
+
+
+def _record_tool_call(
+    conn: psycopg.Connection,
+    name: str,
+    arguments: dict[str, Any],
+    started_at: float,
+    success: bool,
+    error_msg: str | None,
+    result_json: str,
+) -> None:
+    latency_ms = (time.monotonic() - started_at) * 1000
+    _log_query(
+        conn,
+        name,
+        arguments,
+        latency_ms,
+        success,
+        error_msg,
+        result_json=result_json,
+        session_id=_server_session_id,
+        is_test=_is_test_session,
+    )
+    _emit_trace_event(name, latency_ms, arguments, result_json, success)
+
+
+def _call_tool_on_connection(
+    conn: psycopg.Connection,
+    name: str,
+    arguments: dict[str, Any],
+    deadline_expired: threading.Event,
+    result_ready: Callable[[str, BaseException | None], None],
+) -> None:
+    spec = _ALIAS_TRANSFORMS.get(name)
+    resolved_name = spec.guidance if spec is not None else name
+    timeout = _tool_timeout(name)
+    t0 = time.monotonic()
+    success = True
+    error_msg: str | None = None
+    result_json: str = "{}"
+    caught: BaseException | None = None
+    try:
+        if deadline_expired.is_set():
+            error_msg = ErrorCode.TOOL_TIMEOUT
+            result_json = _tool_timeout_result(name, timeout)
+            success = False
+        else:
+            _set_timeout(conn, resolved_name)
             result_json = _dispatch_tool(conn, name, arguments)
+            if deadline_expired.is_set():
+                error_msg = ErrorCode.TOOL_TIMEOUT
+                result_json = _tool_timeout_result(name, timeout)
+                success = False
+        if success:
             error_msg = _structured_error_code(result_json)
             success = error_msg is None
-        except Exception as exc:
+    except Exception as exc:
+        if deadline_expired.is_set():
+            success = False
+            error_msg = ErrorCode.TOOL_TIMEOUT
+            result_json = _tool_timeout_result(name, timeout)
+        else:
             success = False
             error_msg = str(exc)
             result_json = json.dumps({"error": error_msg, "error_code": ErrorCode.INTERNAL_ERROR})
-            raise
+            caught = exc
+    finally:
+        result_ready(result_json, caught)
+        _record_tool_call(conn, name, arguments, t0, success, error_msg, result_json)
+
+
+def _call_tool_owned(
+    name: str,
+    arguments: dict[str, Any],
+    deadline_expired: threading.Event,
+    connections: SimpleQueue[psycopg.Connection],
+    result_ready: Callable[[str, BaseException | None], None],
+) -> None:
+    with _get_conn() as conn:
+        connections.put(conn)
+        _call_tool_on_connection(
+            conn,
+            name,
+            arguments,
+            deadline_expired,
+            result_ready,
+        )
+
+
+def _run_tool_thread(
+    name: str,
+    arguments: dict[str, Any],
+    deadline_expired: threading.Event,
+    connections: SimpleQueue[psycopg.Connection],
+    result_ready: Callable[[str, BaseException | None], None],
+) -> None:
+    delivered = threading.Event()
+
+    def deliver(result_json: str, caught: BaseException | None) -> None:
+        if delivered.is_set():
+            return
+        delivered.set()
+        result_ready(result_json, caught)
+
+    try:
+        _call_tool_owned(name, arguments, deadline_expired, connections, deliver)
+    except BaseException as exc:
+        if not delivered.is_set():
+            deliver("{}", exc)
+            return
+        logger.error(
+            "background tool cleanup failed",
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+
+
+def _complete_tool_result(
+    result_future: asyncio.Future[str],
+    result_json: str,
+    caught: BaseException | None,
+) -> None:
+    if result_future.done():
+        return
+    if caught is None:
+        result_future.set_result(result_json)
+    else:
+        result_future.set_exception(caught)
+
+
+def _cancel_tool_connection(connections: SimpleQueue[psycopg.Connection]) -> None:
+    try:
+        connections.get_nowait().cancel()
+    except Empty:
+        pass
+
+
+def _start_tool_thread(
+    name: str,
+    arguments: dict[str, Any],
+    result_ready: Callable[[str, BaseException | None], None],
+) -> tuple[threading.Event, SimpleQueue[psycopg.Connection], threading.Event]:
+    deadline_expired = threading.Event()
+    connections: SimpleQueue[psycopg.Connection] = SimpleQueue()
+    completed = threading.Event()
+
+    def run() -> None:
+        try:
+            _run_tool_thread(name, arguments, deadline_expired, connections, result_ready)
         finally:
-            latency_ms = (time.monotonic() - t0) * 1000
-            _log_query(
-                conn,
-                name,
-                arguments,
-                latency_ms,
-                success,
-                error_msg,
-                result_json=result_json,
-                session_id=_server_session_id,
-                is_test=_is_test_session,
-            )
-            _emit_trace_event(
-                name,
-                latency_ms,
-                arguments,
-                result_json,
-                success,
-            )
-        return result_json
+            completed.set()
+
+    worker = threading.Thread(
+        target=run,
+        daemon=True,
+    )
+    worker.start()
+    return deadline_expired, connections, completed
+
+
+async def _call_tool_async(name: str, arguments: dict[str, Any]) -> str:
+    timeout = _tool_timeout(name)
+    started_at = time.monotonic()
+    loop = asyncio.get_running_loop()
+    result_future: asyncio.Future[str] = loop.create_future()
+
+    def result_ready(result_json: str, caught: BaseException | None) -> None:
+        if loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(_complete_tool_result, result_future, result_json, caught)
+        except RuntimeError:
+            if not loop.is_closed():
+                raise
+
+    deadline_expired, connections, completed = _start_tool_thread(
+        name,
+        arguments,
+        result_ready,
+    )
+    try:
+        result_json = await asyncio.wait_for(asyncio.shield(result_future), timeout)
+    except (TimeoutError, asyncio.CancelledError) as exc:
+        deadline_expired.set()
+        _cancel_tool_connection(connections)
+        if isinstance(exc, asyncio.CancelledError):
+            raise
+        return _tool_timeout_result(name, timeout)
+    remaining = max(0.0, timeout - (time.monotonic() - started_at))
+    if remaining:
+        await asyncio.to_thread(completed.wait, remaining)
+    return result_json
+
+
+def call_tool(name: str, arguments: dict[str, Any]) -> str:
+    timeout = _tool_timeout(name)
+    started_at = time.monotonic()
+    outcomes: SimpleQueue[tuple[str, BaseException | None]] = SimpleQueue()
+    deadline_expired, connections, completed = _start_tool_thread(
+        name,
+        arguments,
+        lambda result_json, caught: outcomes.put((result_json, caught)),
+    )
+    try:
+        result_json, caught = outcomes.get(timeout=timeout)
+    except Empty:
+        deadline_expired.set()
+        _cancel_tool_connection(connections)
+        return _tool_timeout_result(name, timeout)
+    remaining = max(0.0, timeout - (time.monotonic() - started_at))
+    if remaining:
+        completed.wait(remaining)
+    if caught is not None:
+        raise caught
+    return result_json
 
 
 def _dispatch_tool(conn: psycopg.Connection, name: str, args: dict[str, Any]) -> str:

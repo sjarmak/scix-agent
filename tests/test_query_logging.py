@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
+from contextlib import contextmanager
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -307,6 +310,105 @@ class TestCallToolLogging:
         assert mock_log.call_args.args[5] == expected_error
         assert mock_log.call_args.kwargs["result_json"] == result_json
         assert mock_emit_trace.call_args.args[4] is False
+
+    def test_mcp_deadline_spans_multiple_statements(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import asyncio
+
+        fake_conn = MagicMock()
+
+        @contextmanager
+        def fake_get_conn():
+            yield fake_conn
+
+        def multi_statement_dispatch(conn, name, arguments):
+            time.sleep(0.03)
+            time.sleep(0.2)
+            return '{"ok": true}'
+
+        logged = threading.Event()
+        log_query = MagicMock(side_effect=lambda *args, **kwargs: logged.set())
+        monkeypatch.setattr(mcp_server, "_get_conn", fake_get_conn)
+        monkeypatch.setattr(mcp_server, "_set_timeout", lambda *args: None)
+        monkeypatch.setattr(mcp_server, "_dispatch_tool", multi_statement_dispatch)
+        monkeypatch.setattr(mcp_server, "_log_query", log_query)
+        monkeypatch.setattr(mcp_server, "_emit_trace_event", lambda *args: None)
+        monkeypatch.setitem(mcp_server.TOOL_TIMEOUTS, "lit_review", 0.05)
+
+        async def run_call():
+            started = time.monotonic()
+            raw_result = await mcp_server._call_tool_async("lit_review", {"query": "x"})
+            return json.loads(raw_result), time.monotonic() - started
+
+        result, elapsed = asyncio.run(run_call())
+
+        assert result["error_code"] == "tool_timeout"
+        assert elapsed < 0.15
+        fake_conn.cancel.assert_called_once_with()
+        assert logged.wait(0.5)
+        assert log_query.call_args.args[4] is False
+        assert log_query.call_args.args[5] == "tool_timeout"
+
+    def test_sync_deadline_spans_multiple_statements(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake_conn = MagicMock()
+        finished = threading.Event()
+
+        @contextmanager
+        def fake_get_conn():
+            yield fake_conn
+
+        def multi_statement_dispatch(conn, name, arguments):
+            time.sleep(0.03)
+            time.sleep(0.2)
+            return '{"ok": true}'
+
+        monkeypatch.setattr(mcp_server, "_get_conn", fake_get_conn)
+        monkeypatch.setattr(mcp_server, "_set_timeout", lambda *args: None)
+        monkeypatch.setattr(mcp_server, "_dispatch_tool", multi_statement_dispatch)
+        monkeypatch.setattr(mcp_server, "_log_query", lambda *args, **kwargs: None)
+        monkeypatch.setattr(mcp_server, "_emit_trace_event", lambda *args: finished.set())
+        monkeypatch.setitem(mcp_server.TOOL_TIMEOUTS, "lit_review", 0.05)
+
+        started = time.monotonic()
+        result = json.loads(mcp_server.call_tool("lit_review", {"query": "x"}))
+        elapsed = time.monotonic() - started
+
+        assert result["error_code"] == "tool_timeout"
+        assert elapsed < 0.15
+        fake_conn.cancel.assert_called_once_with()
+        assert finished.wait(0.5)
+
+    def test_mcp_deadline_excludes_query_logging(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import asyncio
+
+        fake_conn = MagicMock()
+        logged = threading.Event()
+
+        @contextmanager
+        def fake_get_conn():
+            yield fake_conn
+
+        def slow_log(*args, **kwargs):
+            time.sleep(0.2)
+            logged.set()
+
+        monkeypatch.setattr(mcp_server, "_get_conn", fake_get_conn)
+        monkeypatch.setattr(mcp_server, "_set_timeout", lambda *args: None)
+        monkeypatch.setattr(mcp_server, "_dispatch_tool", lambda *args: '{"ok": true}')
+        monkeypatch.setattr(mcp_server, "_log_query", slow_log)
+        monkeypatch.setattr(mcp_server, "_emit_trace_event", lambda *args: None)
+        monkeypatch.setitem(mcp_server.TOOL_TIMEOUTS, "lit_review", 0.05)
+
+        async def run_call():
+            started = time.monotonic()
+            raw_result = await mcp_server._call_tool_async("lit_review", {"query": "x"})
+            return json.loads(raw_result), time.monotonic() - started
+
+        result, elapsed = asyncio.run(run_call())
+
+        assert result == {"ok": True}
+        assert elapsed < 0.15
+        fake_conn.cancel.assert_not_called()
+        assert logged.wait(0.5)
 
 
 # ---------------------------------------------------------------------------

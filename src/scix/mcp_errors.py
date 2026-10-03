@@ -56,6 +56,7 @@ class ErrorCode:
     QDRANT_FAILED = "qdrant_failed"
     DENSE_RETRIEVE_FAILED = "dense_retrieve_failed"
     BM25_RETRIEVE_FAILED = "bm25_retrieve_failed"
+    TOOL_TIMEOUT = "tool_timeout"
     INTERNAL_ERROR = "internal_error"
 
 

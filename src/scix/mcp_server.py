@@ -1333,7 +1333,8 @@ def _maybe_disambiguate(conn: psycopg.Connection, query: str) -> str | None:
     rather than surfacing an opaque error at the MCP boundary.
     """
     try:
-        mentions = disambiguate_query(conn, query)
+        with conn.transaction():
+            mentions = disambiguate_query(conn, query)
     except Exception:
         logger.exception("disambiguate_query failed; continuing with search")
         return None
